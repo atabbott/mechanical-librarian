@@ -319,13 +319,8 @@ def _observation_rows(
     references: tuple[str, ...],
     profile_payload: bytes | None,
 ) -> dict[str, object]:
-    value, expected_instruction, expected_schema, taxonomy_reference = (
-        _observation_document_rows(
-            document,
-            packet_reference,
-            candidates,
-            references,
-        )
+    value, taxonomy, taxonomy_reference, expected_instruction, expected_schema = (
+        _observation_header(document, references)
     )
     if type(profile_payload) is not bytes:
         raise ValueError("cover observation profile is invalid")
@@ -334,6 +329,16 @@ def _observation_rows(
         expected_instruction,
         expected_schema,
         taxonomy_reference,
+    )
+    value = _validated_observation_rows(
+        value,
+        packet_reference,
+        candidates,
+        references,
+        taxonomy,
+        taxonomy_reference,
+        expected_instruction,
+        expected_schema,
     )
     if value["observer_reference"] != expected_observer:
         raise ValueError("cover observation report is invalid")
@@ -347,6 +352,36 @@ def _observation_document_rows(
     references: tuple[str, ...],
 ) -> tuple[dict[str, object], str, str, str]:
     """Validate retained observation semantics without claiming profile identity."""
+    value, taxonomy, taxonomy_reference, expected_instruction, expected_schema = (
+        _observation_header(document, references)
+    )
+    return (
+        _validated_observation_rows(
+            value,
+            packet_reference,
+            candidates,
+            references,
+            taxonomy,
+            taxonomy_reference,
+            expected_instruction,
+            expected_schema,
+        ),
+        expected_instruction,
+        expected_schema,
+        taxonomy_reference,
+    )
+
+
+def _observation_header(
+    document: str,
+    references: tuple[str, ...],
+) -> tuple[
+    dict[str, object],
+    tuple[tuple[str, tuple[tuple[str, str], ...]], ...],
+    str,
+    str,
+    str,
+]:
     value = _load_object(document, "cover observation")
     schema_version = value.get("schema_version")
     if type(schema_version) is not str:
@@ -370,10 +405,30 @@ def _observation_document_rows(
             ),
         ).encode("utf-8")
     ).hexdigest()
-    taxonomy_names = tuple(name for name, _values in taxonomy)
-    taxonomy_values = {name: frozenset(dict(values)) for name, values in taxonomy}
     if expected_instruction is None:
         raise ValueError("cover observation report is invalid")
+    return (
+        value,
+        taxonomy,
+        taxonomy_reference,
+        expected_instruction,
+        expected_schema,
+    )
+
+
+def _validated_observation_rows(
+    value: dict[str, object],
+    packet_reference: object,
+    candidates: list[dict[str, object]],
+    references: tuple[str, ...],
+    taxonomy: tuple[tuple[str, tuple[tuple[str, str], ...]], ...],
+    taxonomy_reference: str,
+    expected_instruction: str,
+    expected_schema: str,
+) -> dict[str, object]:
+    taxonomy_names = tuple(name for name, _values in taxonomy)
+    taxonomy_values = {name: frozenset(dict(values)) for name, values in taxonomy}
+    schema_version = value["schema_version"]
     valid_shape = (
         schema_version == LEGACY_SCHEMA_VERSION
         and set(value)
@@ -411,8 +466,8 @@ def _observation_document_rows(
         }
         or value["cover_packet_reference"] != packet_reference
         or value["taxonomy_reference"] != taxonomy_reference
-        or _required_reference(value["observer_reference"])
-        != value["observer_reference"]
+        or type(value["observer_reference"]) is not str
+        or _REFERENCE.fullmatch(value["observer_reference"]) is None
         or value["instruction_sha256"] != expected_instruction
         or value["output_schema_sha256"] != expected_schema
         or type(value["observations"]) is not list
@@ -445,7 +500,7 @@ def _observation_document_rows(
         sorted(references)
     ):
         raise ValueError("cover observation report is invalid")
-    return value, expected_instruction, expected_schema, taxonomy_reference
+    return value
 
 
 def _attempt_evidence(value: object) -> bool:

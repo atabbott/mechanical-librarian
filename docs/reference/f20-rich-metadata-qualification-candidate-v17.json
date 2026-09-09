@@ -61,7 +61,7 @@
         "src/mechanical_librarian/application/cover_identity.py": "ca8b8eca6ba96d6dad83ec9c9b705ae6d5f01223bd52afa657667bdcb5b74311",
         "src/mechanical_librarian/application/cover_packet_semantics.py": "7ba106d2daaa3ca28b85745b6ce851d91f796f4805efd2df264cdaffc056602e",
         "src/mechanical_librarian/application/cover_packets.py": "cca8df2b52cb4abccee54843b81f9e9e2ad69f0be493e236c624e2f9f543c176",
-        "src/mechanical_librarian/application/cover_policy.py": "9c202bdfca130cd99fd0b7b833f8e82ac83c224976ba47847cb913fc0259023b",
+        "src/mechanical_librarian/application/cover_policy.py": "870c4b4a2a9b4d576a93a14bad2c54f31f10852733353c8ceab2f1a3907c5038",
         "src/mechanical_librarian/bootstrap/composition.py": "3e4aad71bb005089d2d43230004e3e2ec794cf8535798688c97d9578d49d3d42"
       },
       "f20_option_outcomes_changed": false,
