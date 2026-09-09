@@ -1197,7 +1197,11 @@ current-state recovery, and private-cache headers.
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,
 library-scoped consent for the exact eligible destination subset disclosed in
-Activity. The submitted destination matrix must still equal a fresh capability
+Activity. That set is the fifteen book-media destinations, identical on ebooks
+and audiobooks (ADR-0071); because the consent envelope identity digests the
+whole set, a build that adds one -- narrators, with F47 -- lapses every
+existing library consent, and Activity re-offers it before anything is
+scheduled. The submitted destination matrix must still equal a fresh capability
 probe before its atomic consent replacement is accepted; a changed subset fails
 closed and must be reviewed again. A partially consented library remains
 available when a newly eligible destination needs incremental consent. Only exact
@@ -1324,7 +1328,7 @@ or arbitrary response payload fields enter this contract.
 
 ## Explicit local transport
 
-[ADR-0071](decisions/0071-explicit-local-transport.md) admits explicit HTTP
+[ADR-0072](decisions/0072-explicit-local-transport.md) admits explicit HTTP
 Audiobookshelf origins and three browser modes. HTTP carries credentials,
 metadata and effect requests in plaintext and is limited operationally to an
 owner-controlled local network or VPN. It grants no new effect authority.

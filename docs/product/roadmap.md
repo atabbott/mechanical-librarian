@@ -84,7 +84,9 @@ permanent Activity destination. It supports one Audiobookshelf instance and any
 accessible libraries, covering all 14 reviewable ebook destinations. It
 excludes contributor or owner production libraries, audiobooks, destructive or
 embedded-media writes, bulk operation, general rollback, older-schema
-migration, release, and tag.
+migration, release, and tag. Audiobook application arrived with F47, #968,
+ADR-0071, which extended the same envelope to the fifteen book-media
+destinations.
 
 ### Completed 0.14.0 release-candidate simplification
 

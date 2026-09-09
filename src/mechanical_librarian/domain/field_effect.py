@@ -33,15 +33,11 @@ SCALAR_DESTINATIONS = frozenset(
 )
 LIST_DESTINATIONS = frozenset({"authors", "genres", "narrators", "tags"})
 SERIES_DESTINATION = "series"
-# A narrator cast is carried in the list envelope wherever it is read, but
-# nothing may plan a write for it on either medium: F47 brings audiobook
-# writes, and the ADR-0039 guarded-effect envelope excludes the field until
-# then. Withholding it here keeps consent, planning, and target-value
-# validation out of it in one place rather than at each of their seams (#966).
-WRITE_WITHHELD_DESTINATIONS = frozenset({"narrators"})
-SUPPORTED_DESTINATIONS = (
-    SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION}
-) - WRITE_WITHHELD_DESTINATIONS
+# The guarded envelope is the same fifteen book-media destinations on both
+# media. A narrator cast joined it with F47, which earned audiobook write
+# authority and extended ADR-0039's ebook envelope to book media (ADR-0071,
+# #968).
+SUPPORTED_DESTINATIONS = SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION}
 TERMINAL_STATES = frozenset({"verified", "stale", "superseded", "abandoned"})
 FIELD_EFFECT_FAILURES = frozenset(
     {
@@ -127,7 +123,7 @@ def _valid_service_token(value: object) -> bool:
 
 
 def validate_effect_value(destination: str, value: object) -> object:
-    """Validate and normalize the closed fake-service ebook value vocabulary."""
+    """Validate and normalize the closed fake-service book-media value vocabulary."""
     if destination not in SUPPORTED_DESTINATIONS:
         raise FieldEffectError("unsupported_destination")
     if destination in LIST_DESTINATIONS:

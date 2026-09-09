@@ -481,10 +481,15 @@ and never uses direct database or browser writes.
 Run the canary from a clean exact head. It archives that head before importing
 or running the adapter, creates scoped disposable API-key users, deletes those
 keys during teardown where the service remains available, and removes only its
-labelled container. Its `audiobookshelf-field-effect-v2` aggregate receipt adds
-an `installed_continuous` lifecycle summary to the image digests and field
-outcomes, never credentials, user tokens, passwords, source metadata, or image
-bytes:
+labelled container. A third disposable book-media library holds one generated
+audiobook, written from the same code the audio fixtures use rather than
+committed as bytes, and each book-media destination is discovered and applied on
+it; a destination whose shape the service rejects is recorded as
+`field_unavailable` without disabling the library. Its
+`audiobookshelf-field-effect-v3` aggregate receipt adds an
+`installed_continuous` lifecycle summary and that `audiobook` section to the
+image digests and field outcomes, never credentials, user tokens, passwords,
+source metadata, or image bytes:
 
 ```bash
 uv run python scripts/qualify_audiobookshelf_field_effect.py \

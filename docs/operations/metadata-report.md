@@ -203,9 +203,10 @@ candidate the report retains -- one stating this recording's own running time
 -- preparation queues the proposal stage exactly as an ebook's does, and the
 recording becomes a review case the owner decides
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
-Those decisions are recorded and not applied; the writes arrive with F47. When
-no candidate is admitted -- unanswered, answered about a work rather than this
-product, or stating a running time this recording does not have -- there is
+Those decisions are applied through the same guarded path an ebook's take
+([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
+When no candidate is admitted -- unanswered, answered about a work rather than
+this product, or stating a running time this recording does not have -- there is
 nothing to compare a proposal against, so
 preparation completes on the `evidence_only` outcome in the same transaction
 that publishes the report, and that transaction records the item's review

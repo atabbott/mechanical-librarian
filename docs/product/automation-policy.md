@@ -30,10 +30,10 @@ that exact envelope remains human-routed until separately qualified.
 
 No automatic authority reaches an audiobook. A recording's review case is
 decided by the owner alone: the shadow projection abstains before it reads
-policy, so no outcome exists for an automatic decision to be minted from, and
-the decision the owner does record is recorded rather than applied until F47
-brings audiobook writes
-([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
+policy, so no outcome exists for an automatic decision to be minted from, while
+the decision the owner does record applies through the guarded path
+([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md),
+[ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
 F46 is where the dominant audiobook decision classes may earn automatic
 authority, through the same qualification route every other option uses.
 

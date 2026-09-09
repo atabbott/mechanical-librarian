@@ -1971,7 +1971,9 @@ def test_readiness_is_exactly_field_bounded_and_connection_fail_closed(
     )
     readiness = service._capability_readiness(("alpha",), force=True)[0]
     assert readiness["state"] == state
-    assert len(readiness["destinations"]) == 14
+    # The fifteenth is narrators, which joined the envelope with F47 (#968).
+    assert len(readiness["destinations"]) == 15
+    assert "narrators" in {value["destination"] for value in readiness["destinations"]}
     assert {value["destination"] for value in readiness["destinations"]} == set(
         SUPPORTED_DESTINATIONS
     )

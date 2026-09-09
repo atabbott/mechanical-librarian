@@ -1,4 +1,4 @@
-# ADR-0071: Explicit local transport
+# ADR-0072: Explicit local transport
 
 - Status: accepted
 - Date: 2026-09-09

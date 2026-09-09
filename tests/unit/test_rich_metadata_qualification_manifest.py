@@ -1533,3 +1533,33 @@ def test_provider_contract_rotation_binds_complete_sources_without_rescoring():
                 hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
                 == digest
             )
+
+
+def test_v20_binds_the_book_media_guarded_application_rotation() -> None:
+    manifest = json.loads(LATEST_MANIFEST.read_text())
+    sources = manifest["frozen_contract"]["behavior_sources"]
+    closure = manifest["authority_rotation"]["source_closure"]
+
+    assert closure["f20_option_outcomes_changed"] is False
+    assert closure["f20_scoring_inputs_changed"] is False
+    assert len(closure["bound_source_classification"]) == 36
+    assert set(closure["bound_source_classification"]) == set(sources)
+    assert set(closure["bound_source_classification"].values()) == {
+        "unchanged",
+        "book_media_guarded_application",
+        "historical_reader_only",
+    }
+    assert "All 36 F20 behavior-source hashes were checked." in closure["proof"]
+    for source, digest in closure["current_byte_bindings"].items():
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
+            == digest
+        )
+    history = manifest["authority_rotation"]["historical_reader_delta"]
+    assert history["current_sha256"] == sources[history["identity"]]
+    assert (
+        history["measured_sha256"]
+        == json.loads(V19_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
+            history["identity"]
+        ]
+    )

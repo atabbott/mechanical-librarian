@@ -84,8 +84,9 @@ context and consequences rather than reproducing code.
 | [0068](0068-latin-combining-mark-work-identity.md) | accepted | Admit exact Latin combining-mark work identity |
 | [0069](0069-audiobook-review-cases-and-terminal-outcomes.md) | accepted | Form audiobook review cases and record caseless-complete terminals |
 | [0070](0070-isbn-backed-series-identity.md) | accepted | Admit source-attested ISBN identity formatting only for automatic series fill |
+| [0071](0071-book-media-guarded-application.md) | accepted | Extend guarded application to book-media destinations including narrators |
 
-| [0071](0071-explicit-local-transport.md) | accepted | Admit explicit local HTTP and direct or proxied browser HTTPS |
+| [0072](0072-explicit-local-transport.md) | accepted | Admit explicit local HTTP and direct or proxied browser HTTPS |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

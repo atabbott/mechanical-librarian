@@ -52,7 +52,9 @@ role, edition-work relation, first-publication date, and cover IDs.
 Google Books retains only bounded volume IDs, qualified claims, format and
 edition signals, and an explicit unresolved work-link marker. Its
 `publishedDate` value is typed evidence, never a selectable date claim.
-The target projection retains exactly 16 bounded Audiobookshelf destinations.
+The target projection retains exactly 16 bounded Audiobookshelf destinations,
+fifteen of which are write-capable guarded destinations (narrators joined with
+F47).
 Provider cover rows retain only safe opaque source/work/edition identities,
 typed designation, allowlisted edition context, artifact digests, dimensions,
 media type, and preview references.
