@@ -2269,8 +2269,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   }, [preparationSelected, presentation?.run_id])
   const identityPending = !displayedIdentity && attention.isPending
   const identityError = !displayedIdentity && attention.isError
-  const selectedReadPending = detail.isPending || identityPending
-  const selectedReadError = detail.isError || identityError
+  const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
+  const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
   const selectedDetailReady =
     !preparationSelected &&
     Boolean(search.preview) &&
@@ -2931,11 +2931,34 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 Its current values and field position stay here while you move through attention.
               </p>
             </div>
-          ) : selectedReadPending ? (
+          ) : !displayedIdentity ? (
+            identityPending ? (
+              <p role="status">Loading selected work…</p>
+            ) : identityError ? (
+              <p role="alert">
+                Selected work could not be loaded.{' '}
+                <button
+                  ref={selectedDetailRetryButton}
+                  onClick={() => {
+                    selectedDetailRetry.current = search.preview ?? null
+                    void attention.refetch()
+                  }}
+                >
+                  Try again
+                </button>
+              </p>
+            ) : (
+              <div className="library-selection">
+                <h2>Selected work</h2>
+                <p>Readable work identity is not available on this Library page.</p>
+                <p role="status">This work is not available in the current Library result.</p>
+              </div>
+            )
+          ) : detail.isPending ? (
             <p role="status">Loading selected work…</p>
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice
-          ) : selectedReadError ? (
+          ) : detail.isError ? (
             <p role="alert">
               {controller.messageFor(search.field ?? selected?.destination ?? '') ??
                 'Selected work could not be loaded.'}{' '}
@@ -2943,19 +2966,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 ref={selectedDetailRetryButton}
                 onClick={() => {
                   selectedDetailRetry.current = search.preview ?? null
-                  if (identityError) void attention.refetch()
-                  else void detail.refetch()
+                  void detail.refetch()
                 }}
               >
                 Try again
               </button>{' '}
             </p>
-          ) : !displayedIdentity ? (
-            <div className="library-selection">
-              <h2>Selected work</h2>
-              <p>Readable work identity is not available on this Library page.</p>
-              <p role="status">This work is not available in the current Library result.</p>
-            </div>
           ) : !detail.data.current ? (
             <div className="library-selection">
               <p>Case superseded</p>

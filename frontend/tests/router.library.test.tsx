@@ -4849,6 +4849,24 @@ describe('Library route', () => {
     },
   )
 
+  it.each(['not_found', 'pending'])(
+    'keeps successful identity absence authoritative when detail is %s',
+    async (state) => {
+      const http = createHttp()
+      http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async () => {
+        if (state === 'pending') return new Promise<CaseDetailView>(() => undefined)
+        throw new ApiError(404, 'not_found')
+      })
+      renderRoute('/library?lens=all&preview=missing-case', http)
+      expect(
+        await screen.findByText('This work is not available in the current Library result.'),
+      ).toBeVisible()
+      expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
+      expect(screen.queryByText('Case superseded')).toBeNull()
+      expect(http.getCaseDetail).toHaveBeenCalledWith('missing-case', expect.any(AbortSignal))
+    },
+  )
+
   it('recovers and paginates the contextual attention queue', async () => {
     const user = userEvent.setup()
     let calls = 0
