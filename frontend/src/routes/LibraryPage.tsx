@@ -2563,7 +2563,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const remainingFields = attentionFields.length
   const railPosition =
     complete?.id === selectedReviewCaseId && completionInspection === null
-      ? `${String(railFields.length)} recorded · work complete`
+      ? `${String(complete.fields.length)} recorded · work complete`
       : selected
         ? `${String(remainingFields)} remaining · field ${String(
             renderedRailFields.indexOf(selected) + 1,

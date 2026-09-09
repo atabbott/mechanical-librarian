@@ -3454,6 +3454,9 @@ describe('Library route', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Choose proposed value: Mistborn' }))
     await screen.findByRole('heading', { name: 'Review complete' })
+    // The preserved title is inspectable, but no decision was recorded for it.
+    expect(screen.getByText('1 recorded · work complete')).toBeVisible()
+    expect(screen.getByText('1 recorded field outcome. No library data changed.')).toBeVisible()
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
     await user.click(within(rail).getByRole('button', { name: /^Title/u }))
     expect(await screen.findByRole('heading', { name: 'Title' })).toBeVisible()

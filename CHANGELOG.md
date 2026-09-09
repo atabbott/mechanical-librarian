@@ -11,7 +11,7 @@
 - Qualified title decoration tidies retain independently supported subtitle and
   series components in complete review choices; existing evidence and automatic
   authority guards remain in force. Proposal policy v23 requires a clean rebuild
-  of earlier state (#1002).
+  of earlier state. Owner review counts only recorded outcomes (#1002).
 
 - Cover comparisons keep the exact Audiobookshelf incumbent artifact and
   dimensions when another source has the same preview bytes. Library attention
