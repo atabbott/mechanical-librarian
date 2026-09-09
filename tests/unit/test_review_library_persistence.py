@@ -2926,3 +2926,49 @@ def test_existing_automatic_outcome_never_gets_provider_withheld_claim(tmp_path)
     assert series["automatic_decision"] is not None
     assert series["automatic_withheld_reason"] is None
     repository.close()
+
+
+def test_non_provider_abstention_keeps_review_without_provider_claim(tmp_path):
+    from mechanical_librarian.domain.rich_metadata_preview import (
+        compile_rich_metadata_preview,
+    )
+    from tests.support.provider_recovery_rail import (
+        _automatic_series_report,
+        _series_claims,
+        _series_provider,
+        publish_provider_failure_case,
+    )
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    _, original, policy, _ = publish_provider_failure_case(repository)
+    report = _automatic_series_report(
+        _series_provider("catalogue", "edition-1", "hardcover"),
+        _series_provider(
+            "search",
+            "edition-2",
+            "open_library",
+            _series_claims("search", "edition-2", sequence="3"),
+        ),
+    )
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    preview = next(
+        field
+        for field in compile_rich_metadata_preview(policy, report, proposal).fields
+        if field.field == "series"
+    )
+    assert (preview.outcome, preview.reason) == (
+        "abstain",
+        "series_conflicting_membership",
+    )
+    repository.publish(report, lambda: True, expected_current=original.report_id)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    repository.persist_shadow_outcome(case_id, 4)
+    field = next(
+        field
+        for field in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+        if field["destination"] == "series"
+    )
+    assert field["needs_attention"] is True
+    assert field["automatic_withheld_reason"] is None
+    repository.close()
