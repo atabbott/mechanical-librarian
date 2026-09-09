@@ -158,6 +158,11 @@ failure before the shared repository closes, and resumes from its durable
 checkpoint on restart. No fake target, direct database write or writable media
 path is composed.
 
+A build that adds a write destination -- narrators, with F47 -- invalidates
+every existing library consent, because the consent envelope identity digests
+the whole destination set. Nothing is planned or claimed under a lapsed
+consent, and Activity offers re-consent before anything is scheduled.
+
 The supported Compose stop budget is 610 seconds. Uvicorn can first use the
 configured maximum 300 seconds to drain HTTP requests, then lifespan shutdown
 can use the application's separate 300-second worker deadline before repository

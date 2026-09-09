@@ -35,10 +35,16 @@ ProposalSet, including any changed or omitted compatible-combination tuple, is
 pointer that loses currentness returns `stale`.
 A case names the media its proposals were formed for. An audiobook case is
 admitted, decided, and read exactly as an ebook's, and the decision it records
-carries `application='recorded_only'`: the guarded application planner refuses
-one by name, the continuous scheduler never plans one, the shadow projection
-abstains before it reads policy, and the history states that the decision was
-recorded rather than applied. The writes arrive with F47
+carries `application='apply'` on either medium: it plans and applies through
+the one guarded path
+([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
+Nothing automatic reaches a recording -- the shadow projection abstains before
+it reads policy -- so an audiobook case is the owner's alone until F46. A
+`recorded_only` document retained from before audiobook writes existed is
+readable history on an audiobook case only: it is stale against an ebook case,
+is refused as a new command, is excluded from both pending-write queries, is
+never planned by the continuous scheduler, is refused by name by the planner,
+and the history says so where the owner reads it
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
 
 Lineage checkpoints retain an attributable fixed-system audit transition. A

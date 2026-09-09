@@ -46,10 +46,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     FieldEffectPlan,
 )
-from mechanical_librarian.domain.human_decision import (
-    RECORDED_ONLY_REASON,
-    HumanDecision,
-)
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -591,7 +588,8 @@ def test_audible_rendered_description_owner_choice_reopens_in_activity(
         occurred_at=1_000,
     )
     effects.repository.record_human_decision(decision)
-    assert decision.application == "recorded_only"
+    # An audiobook decision carries `apply` like any other since F47 (#968).
+    assert decision.application == "apply"
 
     effects.repository.close()
     effects.repository = open_repository(
@@ -604,8 +602,8 @@ def test_audible_rendered_description_owner_choice_reopens_in_activity(
     assert reopened_description["automatic_decision"] is None
     assert reopened_description["human_decision"] == {
         "actor": "owner",
-        "application": "recorded_only",
-        "application_reason": RECORDED_ONLY_REASON,
+        "application": "apply",
+        "application_reason": None,
         "decision_id": decision.decision_id,
         "destination": "description",
         "occurred_at": 1_000,

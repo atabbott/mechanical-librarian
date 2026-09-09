@@ -296,9 +296,13 @@ class AudiobookshelfFieldEffectTarget:
                     "sequence": None if sequence is None else str(sequence),
                 })
             return normalized or None
-        if plan.destination == "tags" and value is None:
+        if plan.destination in {"narrators", "tags"} and value is None:
+            # An item that has never carried a narrator cast or a tag omits
+            # the key entirely on some responses and answers `null` on others.
+            # Capability discovery already reads both as allowed, so the
+            # pre-read has to agree: absent is no value, exactly as `[]` is.
             return None
-        if plan.destination in {"genres", "tags"}:
+        if plan.destination in {"genres", "narrators", "tags"}:
             if type(value) is not list or any(type(item) is not str for item in value):
                 raise TargetServiceUnavailable("destination")
             return value or None
@@ -411,8 +415,20 @@ def _capability_value_shape(detail: dict[str, Any], destination: str) -> None:
             or any(type(item) is not str for item in value)
         ):
             raise ValueError("Audiobookshelf tag capability invalid")
-    elif type(media.get("metadata")) is not dict:
-        raise ValueError("Audiobookshelf metadata capability invalid")
+    else:
+        metadata = media.get("metadata")
+        if type(metadata) is not dict:
+            raise ValueError("Audiobookshelf metadata capability invalid")
+        # A narrator cast is a plain string list on both media. A service that
+        # answers with any other shape disables only that destination, never
+        # the library (ADR-0071).
+        if destination == "narrators":
+            narrators = metadata.get("narrators")
+            if narrators is not None and (
+                type(narrators) is not list
+                or any(type(item) is not str for item in narrators)
+            ):
+                raise ValueError("Audiobookshelf narrator capability invalid")
 
 
 def _image_media_type(body: bytes) -> str:

@@ -1,14 +1,12 @@
 """What an owner may decide about a recording, and what may act on it.
 
-F45 forms audiobook proposals and records the owner's decisions. F47 owns the
-writes, so every decision made here says so about itself, nothing automatic
-reaches a recording at all, and the guarded planner refuses one by name rather
-than quietly skipping it (#966).
+F45 forms audiobook proposals and records the owner's decisions; F47 applies
+them through the same guarded path an ebook takes. Nothing automatic reaches a
+recording at all, and a decision retained from before audiobook writes existed
+stays readable history the planner refuses by name (ADR-0071, #968).
 """
 
 from __future__ import annotations
-
-import json
 
 import pytest
 
@@ -23,10 +21,8 @@ from mechanical_librarian.application.review_web import (
     _attention_item,
     _decision_projection,
 )
-from mechanical_librarian.domain import human_decision
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
-    FieldEffectError,
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import (
@@ -44,6 +40,7 @@ from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asserted_asin_report,
+    retained_recorded_only_decision,
 )
 from tests.support.proposal_evidence import _fields as _proposal_fields
 from tests.support.proposal_evidence import _provider as _proposal_provider
@@ -88,20 +85,22 @@ def test_an_admitted_recording_is_a_case_the_owner_can_decide() -> None:
     }
 
 
-def test_a_recording_decision_records_itself_as_never_applied() -> None:
+def test_a_recording_decision_applies_exactly_as_an_ebook_one_does() -> None:
     case = _case(admitted_audiobook_report())
 
     decision = _accept(case, TargetDestination.ASIN)
 
-    assert "recorded_only" == decision.application
+    assert "apply" == decision.application
     # The posture is bound into the decision's identity, so it cannot be
     # edited off the retained fact without breaking the document.
     assert decision == HumanDecision.from_json(decision.to_json())
     projected = _decision_projection(decision)
-    assert "recorded_only" == projected["application"]
-    assert RECORDED_ONLY_REASON == projected["application_reason"]
-    assert "recorded, not applied" in RECORDED_ONLY_REASON
-    assert "F47" in RECORDED_ONLY_REASON
+    assert "apply" == projected["application"]
+    assert projected["application_reason"] is None
+    authority = authority_from_decision(decision)
+    assert authority is not None
+    assert "human" == authority.origin
+    assert decision.decision_id == authority.decision_id
 
 
 def test_an_ebook_decision_is_unchanged_and_still_applies() -> None:
@@ -114,9 +113,16 @@ def test_an_ebook_decision_is_unchanged_and_still_applies() -> None:
     assert _decision_projection(decision)["application_reason"] is None
 
 
-def test_the_guarded_planner_refuses_a_recording_decision_by_name() -> None:
-    """A silent `None` is what an unaccepted decision returns; this is not that."""
-    decision = _accept(_case(admitted_audiobook_report()), TargetDestination.ASIN)
+def test_the_guarded_planner_refuses_a_retained_decision_by_name() -> None:
+    """A silent `None` is what an unaccepted decision returns; this is not that.
+
+    The scheduler and the pending-write SQL both filter a retained document out
+    long before the planner sees it, so reaching this seam is a defect and it
+    says which one.
+    """
+    decision = retained_recorded_only_decision(
+        _case(admitted_audiobook_report()), TargetDestination.ASIN
+    )
 
     with pytest.raises(GuardedApplicationError) as raised:
         authority_from_decision(decision)
@@ -141,48 +147,30 @@ def test_no_automatic_authority_is_ever_offered_a_recording() -> None:
     assert packet.review_case_id == case.review_case_id
 
 
-def test_a_self_consistent_apply_document_is_stale_against_a_recording() -> None:
+def test_a_retained_recorded_only_decision_is_history_on_a_recording_only() -> None:
     """The posture is re-derived from the case, not trusted from the document.
 
-    Rewriting `application` and re-sealing every digest produces a document
-    that validates against itself; it still has to agree with the case it
-    names, and against a recording it never can.
+    An F45 document re-sealed with every digest validates against itself; it
+    still has to agree with the case it names. A recording may carry it as
+    history, an ebook case never could, and no owner may submit one as new
+    work on either medium.
     """
     case = _case(admitted_audiobook_report())
-    document = _accept(case, TargetDestination.ASIN).to_data()
-    document["application"] = "apply"
-    request = {
-        key: document[key]
-        for key in (
-            "actor",
-            "application",
-            "destination",
-            "idempotency_digest",
-            "outcome",
-            "proposal_id",
-            "review_case_id",
-            "selected_value",
-            "target_fingerprint",
-        )
-    }
-    document["request_digest"] = human_decision._sha256(
-        human_decision._canonical(request)
-    )
-    document["decision_id"] = "human_decision_" + human_decision._sha256(
-        human_decision._canonical(
-            {
-                "request_digest": document["request_digest"],
-                "occurred_at": document["occurred_at"],
-            }
-        )
-    )
-    forged = HumanDecision.from_json(json.dumps(document))
+    retained = retained_recorded_only_decision(case, TargetDestination.ASIN)
 
-    assert "apply" == forged.application
-    with pytest.raises(HumanDecisionError) as raised:
-        forged.validate_for(case)
+    assert "recorded_only" == retained.application
+    assert RECORDED_ONLY_REASON == _decision_projection(retained)["application_reason"]
+    assert "recorded, not applied" in RECORDED_ONLY_REASON
+    assert "before audiobook writes were available" in RECORDED_ONLY_REASON
+    # Readable history: the retained document still validates against the case
+    # it was decided on.
+    retained.validate_for(case)
 
-    assert "stale" == str(raised.value)
+    # It is never new work, on the case it names or any other.
+    with pytest.raises(HumanDecisionError) as submitted:
+        retained.validate_new_for(case)
+
+    assert "stale" == str(submitted.value)
 
     # P2-2: the browse projection holds the proposal document rather than the
     # case, and clears attention from what it validates, so it has to reach the
@@ -196,8 +184,31 @@ def test_a_self_consistent_apply_document_is_stale_against_a_recording() -> None
             for value in ProposalSet.from_json(case.proposal_document).results
         ],
     }
+    retained.validate_for_browse_case(case.review_case_id, browse)
+
+
+def test_a_retained_recorded_only_decision_is_stale_against_an_ebook_case() -> None:
+    """`recorded_only` was never an ebook posture, so it cannot become one."""
+    case = _case(ebook_report())
+    retained = retained_recorded_only_decision(case, TargetDestination.TITLE)
+
+    assert "ebook" == case.media_kind
+    with pytest.raises(HumanDecisionError) as raised:
+        retained.validate_for(case)
+
+    assert "stale" == str(raised.value)
+
+    browse: dict[str, object] = {
+        "target_fingerprint": case.target_fingerprint,
+        "proposal_set_id": case.proposal_set_id,
+        "proposal_document": case.proposal_document,
+        "results": [
+            value.to_data()
+            for value in ProposalSet.from_json(case.proposal_document).results
+        ],
+    }
     with pytest.raises(HumanDecisionError) as browsed:
-        forged.validate_for_browse_case(case.review_case_id, browse)
+        retained.validate_for_browse_case(case.review_case_id, browse)
 
     assert "stale" == str(browsed.value)
 
@@ -264,23 +275,21 @@ def _epub_narrator_case() -> ReviewCase:
     return _case(report)
 
 
-def test_an_epub_narrator_decision_can_never_become_a_plan() -> None:
-    """P1-2: a decided narrator cast is not a write on either medium.
+def test_an_epub_narrator_decision_now_becomes_a_plannable_value() -> None:
+    """P1-2: a decided narrator cast is a write on both media.
 
-    The EPUB path is the exposed one -- its decision is `apply` -- so the
-    withheld destination has to refuse it, not the media check.
+    The EPUB path is the exposed one, so it is where the fifteenth destination
+    joining the guarded envelope is proven from the decision inward.
     """
     case = _epub_narrator_case()
     decision = _accept(case, TargetDestination.NARRATORS)
 
     assert "ebook" == case.media_kind
     assert "apply" == decision.application
-    assert "narrators" not in SUPPORTED_DESTINATIONS
-
-    with pytest.raises(FieldEffectError) as refused:
-        project_decision_value(decision.destination, decision.selected_value)
-
-    assert "unsupported_destination" == refused.value.code
+    assert "narrators" in SUPPORTED_DESTINATIONS
+    assert ["Nia Narrator"] == project_decision_value(
+        decision.destination, decision.selected_value
+    )
 
 
 def test_the_attention_lens_lists_the_field_the_library_row_counted() -> None:

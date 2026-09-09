@@ -7,6 +7,7 @@ import pytest
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
+    admitted_applications,
     decision_actions,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
@@ -230,3 +231,15 @@ def test_owner_can_replace_an_automatic_actionable_selection(
         occurred_at=1_000,
     )
     decision.validate_for(replacement)
+
+
+def test_admitted_applications_names_the_retained_history_one_medium_may_carry() -> (
+    None
+):
+    """Every decision formed since F47 says `apply`; only history says otherwise.
+
+    A recording is the only case that may carry an F45 `recorded_only`
+    document, and no medium admits one as a new command (ADR-0071, #968).
+    """
+    assert frozenset({"apply"}) == admitted_applications("ebook")
+    assert frozenset({"apply", "recorded_only"}) == admitted_applications("audiobook")

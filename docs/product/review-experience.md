@@ -327,12 +327,14 @@ outcome, retains work identity, and offers deliberate next-work continuation.
 It does not imply external application or verification.
 
 An audiobook is reviewed through the same rail as an ebook, with Narrators and
-ASIN among its ordered fields. Its decisions are recorded and not applied until
-F47 brings audiobook writes, and the history says so in those words beside the
-decision it describes. Narrators is not a written field on either medium until
-then. A prepared audiobook that produced no case at all is not
-a failure: the library counts it as recorded, and its row opens the evidence its
-report retained
+ASIN among its ordered fields, and its decisions apply through the same guarded
+path
+([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
+Narrators is a written field on both media. A decision retained from before
+audiobook writes existed still reads as recorded and not applied, in those
+words beside the decision it describes. A prepared audiobook that produced no
+case at all is not a failure: the library counts it as recorded, and its row
+opens the evidence its report retained
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
 
 Cover review remains advisory: small eligible sets compare current and

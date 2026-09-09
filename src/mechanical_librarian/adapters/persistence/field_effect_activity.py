@@ -131,10 +131,10 @@ _ACTIVITY_PAGE_CACHE_MAX_BYTES = MAX_REPORT_BYTES
 _ActivityRead = TypeVar("_ActivityRead")
 _ActivityDatabaseIdentity = tuple[int, int, int, int]
 
-# F47 owns audiobook writes, so a decision that says it is recorded rather than
-# applied is not pending work: it must not be offered for consent, counted as
-# prepared, or handed to the scheduler at all.  The scheduler skips one too,
-# but a decision the owner is told about is decided here (#966).
+# A decision retained from before audiobook writes existed is history, not
+# pending work: it must not be offered for consent, counted as prepared, or
+# handed to the scheduler at all.  The scheduler skips one too, but a decision
+# the owner is told about is decided here (#968).
 _RECORDED_ONLY_EXCLUDED_SQL = (
     "json_extract(human.document,'$.application') IS NOT 'recorded_only' AND "
 )
@@ -144,11 +144,13 @@ _CORRECTIVE_KEEP_CURRENT_SQL = (
     "json_each(review.document,'$.target.fields') target WHERE review.review_case_id=human.review_case_id "
     "AND json_extract(target.value,'$.destination')=human.destination "
     "AND json_extract(target.value,'$.state')='value' AND ((human.destination IN "
-    "('authors','genres','tags','series') AND json_type(target.value,'$.value')='array' "
+    "('authors','genres','narrators','tags','series') AND "
+    "json_type(target.value,'$.value')='array' "
     "AND json_array_length(json_extract(target.value,'$.value'))>0) OR "
     "(human.destination='cover' AND json_type(target.value,'$.value')='text' "
     "AND json_extract(target.value,'$.value') GLOB 'cover_[0-9a-f]*') OR "
-    "(human.destination NOT IN ('authors','genres','tags','series','cover') "
+    "(human.destination NOT IN "
+    "('authors','genres','narrators','tags','series','cover') "
     "AND json_type(target.value,'$.value')='text' "
     "AND length(json_extract(target.value,'$.value'))>0)) AND EXISTS (SELECT 1 FROM field_effects prior "
     "JOIN (SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
