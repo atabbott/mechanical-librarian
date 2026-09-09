@@ -493,6 +493,8 @@ def _pipeline_configuration(
         review=ReviewWebConfiguration(
             "https://review.example.invalid",
             "/run/owner-password",
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             cover_reviewer_profile_file=cover_reviewer_profile_file,
         ),
     )

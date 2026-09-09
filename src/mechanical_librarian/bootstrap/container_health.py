@@ -11,27 +11,16 @@ exempts from origin checking and which answers `ready` / 200 or `draining` /
 authenticated surface, and the endpoint it reads returns two fixed words rather
 than anything drawn from the library.
 
-The server refuses to start without TLS, so the probe speaks HTTPS. It verifies
-that connection fully:
-
-- the operator's own configured certificate is the single trust anchor, loaded
-  by the path this module reads out of the same `config-v8` document the server
-  reads, so no system trust store and no other issuer can satisfy the probe;
-- the hostname is checked against the configured `canonical_origin`, the name
-  that certificate is meant to carry, while the connection itself goes to
-  loopback.
-
-Neither `CERT_NONE` nor a relaxed hostname check is needed to reach a running
-server, so neither is used: this image is security-reviewed, and a probe that
-disabled verification would be the only unverified TLS client in the product.
-Reading the configured certificate is not a change to how the server serves
-TLS, which remains out of scope.
+The validated listener identity selects transport: HTTP and proxied HTTPS use
+loopback HTTP; direct HTTPS pins the configured certificate and checks the
+canonical hostname. The probe never reads a credential or disables TLS checks.
 """
 
 from __future__ import annotations
 
 import socket
 import ssl
+from contextlib import nullcontext
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -81,7 +70,7 @@ def check(
     try:
         configuration = load_configuration_file(config_path)
         review = configuration.review
-        if review is None or review.tls_certificate_file is None:
+        if review is None:
             return "review_surface_unconfigured"
         canonical_origin = review.canonical_origin
         tls_certificate_file = review.tls_certificate_file
@@ -100,7 +89,11 @@ def check(
     if origin.hostname is None:
         return "canonical_origin_unusable"
     try:
-        context = ssl.create_default_context(cafile=tls_certificate_file)
+        context = (
+            ssl.create_default_context(cafile=tls_certificate_file)
+            if tls_certificate_file is not None
+            else None
+        )
     except (OSError, ValueError):
         return "tls_identity_unavailable"
     request = (
@@ -113,7 +106,11 @@ def check(
     payload = b""
     try:
         with socket.create_connection((host, port), timeout=timeout) as raw:
-            with context.wrap_socket(raw, server_hostname=origin.hostname) as stream:
+            with (
+                context.wrap_socket(raw, server_hostname=origin.hostname)
+                if context is not None
+                else nullcontext(raw)
+            ) as stream:
                 stream.sendall(request)
                 while len(payload) < _RESPONSE_LIMIT_BYTES:
                     block = stream.recv(_RESPONSE_LIMIT_BYTES - len(payload))

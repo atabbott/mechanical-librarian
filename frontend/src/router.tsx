@@ -627,7 +627,7 @@ const ThemeControl = () => {
   }, [theme])
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
-    document.cookie = `ml_theme=${next}; Path=/; Max-Age=31536000; SameSite=Strict; Secure`
+    document.cookie = `ml_theme=${next}; Path=/; Max-Age=31536000; SameSite=Strict${location.protocol === 'https:' ? '; Secure' : ''}`
     setTheme(next)
   }
   return (

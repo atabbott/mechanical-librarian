@@ -42,6 +42,7 @@ from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.domain.validation import OWNER_SESSION_LIFETIME_DEFAULT
 from mechanical_librarian.interfaces.web.app import (
     BodyLimitMiddleware,
+    _request_matches_origin,
     reviewer_failure_response,
 )
 from mechanical_librarian.interfaces.web.setup_frontend import (
@@ -202,7 +203,7 @@ class _KickOffRequest(BaseModel):
     expected_revision: StrictInt = Field(ge=1)
 
 
-def _secure_setup_response(response: Response) -> Response:
+def _secure_setup_response(response: Response, *, hsts: bool) -> Response:
     response.headers["cache-control"] = "private, no-store"
     response.headers["content-security-policy"] = (
         "default-src 'none'; script-src 'self'; style-src 'self'; "
@@ -212,7 +213,8 @@ def _secure_setup_response(response: Response) -> Response:
     response.headers["referrer-policy"] = "no-referrer"
     response.headers["x-content-type-options"] = "nosniff"
     response.headers["x-frame-options"] = "DENY"
-    response.headers["strict-transport-security"] = "max-age=31536000"
+    if hsts:
+        response.headers["strict-transport-security"] = "max-age=31536000"
     return response
 
 
@@ -228,12 +230,16 @@ def create_setup_app(
     activate: Callable[[int], None] | None = None,
     clock: Callable[[], int] = lambda: int(time.time()),
     token_factory: Callable[[int], str] = secrets.token_urlsafe,
+    *,
+    trusted_proxy_ips: tuple[str, ...] = (),
+    require_forwarding: bool = False,
 ) -> FastAPI:
     """Compose no normal route, worker, target client, or write authority."""
 
     app = FastAPI(docs_url=None, openapi_url=None, redoc_url=None)
     app.add_middleware(
         BodyLimitMiddleware,
+        hsts=canonical_origin.startswith("https://"),
         maximum_bytes=2_048,
         decision_maximum_bytes=16_384,
         path_limits=_SETUP_BODY_LIMITS,
@@ -253,10 +259,19 @@ def create_setup_app(
     async def close_completed_setup(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        path = request.url.path
+        path = request.scope["path"]
         response: Response
         try:
-            if app.state.setup_complete and path != "/health/ready":
+            if path != "/health/ready" and not _request_matches_origin(
+                request,
+                canonical_origin,
+                trusted_proxy_ips,
+                require_forwarding=require_forwarding,
+            ):
+                response = JSONResponse(
+                    {"detail": {"error": "invalid_origin"}}, status_code=400
+                )
+            elif app.state.setup_complete and path != "/health/ready":
                 response = PlainTextResponse("not found\n", status_code=404)
             else:
                 response = await call_next(request)
@@ -264,7 +279,9 @@ def create_setup_app(
             response = JSONResponse(
                 {"detail": {"error": "unavailable"}}, status_code=500
             )
-        return _secure_setup_response(response)
+        return _secure_setup_response(
+            response, hsts=canonical_origin.startswith("https://")
+        )
 
     @app.get("/health/ready", response_class=PlainTextResponse)
     def ready() -> str:
@@ -296,7 +313,7 @@ def create_setup_app(
             "ml_setup_nonce",
             nonce,
             httponly=False,
-            secure=True,
+            secure=canonical_origin.startswith("https://"),
             samesite="strict",
             path="/api/setup/session",
             max_age=600,
@@ -331,6 +348,8 @@ def create_setup_app(
             current = state.read(bootstrap_verifier)
         except Exception as error:
             raise HTTPException(503, {"error": "unavailable"}) from error
+        if origin != canonical_origin:
+            raise HTTPException(403, {"error": "csrf"})
         if not current.claimed:
             now = clock()
             nonces: dict[str, int] = app.state.claim_nonces
@@ -357,7 +376,12 @@ def create_setup_app(
                 )
             except Exception as error:
                 raise HTTPException(409, {"error": "claimed"}) from error
-            response.delete_cookie("ml_setup_nonce", path="/api/setup/session")
+            response.delete_cookie(
+                "ml_setup_nonce",
+                path="/api/setup/session",
+                secure=canonical_origin.startswith("https://"),
+                samesite="strict",
+            )
             # The first session is issued through the ordinary login path
             # below: the claim itself is atomic in the application database,
             # while sessions live in their own database (#912). If session
@@ -378,7 +402,7 @@ def create_setup_app(
             "ml_session",
             tokens.session_token,
             httponly=True,
-            secure=True,
+            secure=canonical_origin.startswith("https://"),
             samesite="strict",
             path="/",
             max_age=session_lifetime_seconds,

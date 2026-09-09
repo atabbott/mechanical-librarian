@@ -7,7 +7,14 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Literal, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictStr,
+    ValidationError,
+    model_validator,
+)
 
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -42,10 +49,14 @@ class BootstrapMount(_Closed):
 
 
 class ReviewBootstrap(_Closed):
-    schema_version: Literal["review-bootstrap-v1"]
+    schema_version: Literal["review-bootstrap-v2"]
     canonical_origin: Annotated[StrictStr, Field(min_length=8, max_length=512)]
-    tls_certificate_file: Annotated[StrictStr, Field(min_length=1, max_length=1024)]
-    tls_private_key_file: Annotated[StrictStr, Field(min_length=1, max_length=1024)]
+    tls_certificate_file: (
+        Annotated[StrictStr, Field(min_length=1, max_length=1024)] | None
+    ) = None
+    tls_private_key_file: (
+        Annotated[StrictStr, Field(min_length=1, max_length=1024)] | None
+    ) = None
     trusted_proxy_ips: Annotated[
         list[Annotated[StrictStr, Field(min_length=1, max_length=64)]],
         Field(max_length=16),
@@ -54,6 +65,17 @@ class ReviewBootstrap(_Closed):
     cover_reviewer_profile_file: (
         Annotated[StrictStr, Field(min_length=1, max_length=1024)] | None
     ) = None
+
+    @model_validator(mode="after")
+    def validate_transport(self) -> ReviewBootstrap:
+        ReviewWebConfiguration(
+            canonical_origin=self.canonical_origin,
+            owner_password_hash_file="/data/.owner-verifier-store",
+            tls_certificate_file=self.tls_certificate_file,
+            tls_private_key_file=self.tls_private_key_file,
+            trusted_proxy_ips=tuple(sorted(self.trusted_proxy_ips)),
+        )
+        return self
 
 
 def load_review_bootstrap(path: Path) -> ReviewBootstrap:

@@ -1,5 +1,9 @@
 # ADR-0038: Bound operational evidence inside the single container
 
+Transport provisions are superseded by [ADR-0071](0071-explicit-local-transport.md);
+all other provisions remain in force.
+
+
 Status: accepted
 
 ## Context

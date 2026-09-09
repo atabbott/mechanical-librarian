@@ -158,7 +158,10 @@ def _recovery_configuration() -> ApplicationConfiguration:
         (ProviderConnectionConfiguration("google", True, False, None, "google_books"),),
         provider_recovery_generation=1,
         review=ReviewWebConfiguration(
-            "https://review.example.invalid", "/run/owner-password"
+            "https://review.example.invalid",
+            "/run/owner-password",
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
         ),
     )
 
@@ -321,7 +324,10 @@ def test_generation_rollback_rejects_before_cutover_delivery() -> None:
             ),
             provider_recovery_generation=1,
             review=ReviewWebConfiguration(
-                "https://review.example.invalid", "/run/owner-password"
+                "https://review.example.invalid",
+                "/run/owner-password",
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
             ),
         )
         composition.CoverArtifactStore(root / "artifacts", create=True)
@@ -507,7 +513,10 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
             ),
             provider_recovery_generation=1,
             review=ReviewWebConfiguration(
-                "https://review.example.invalid", "/run/owner-password"
+                "https://review.example.invalid",
+                "/run/owner-password",
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
             ),
         )
         recovery.observe_failure(
@@ -755,7 +764,10 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
             ),
             provider_recovery_generation=1,
             review=ReviewWebConfiguration(
-                "https://review.example.invalid", "/run/owner-password"
+                "https://review.example.invalid",
+                "/run/owner-password",
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
             ),
         )
         recovery.observe_failure(

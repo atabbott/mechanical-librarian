@@ -1299,7 +1299,7 @@ def _installed_continuous_qualification(
         provider_secrets[suffix] = provider_secret
     config_path = root / "installed-config.json"
     configuration_document = {
-        "schema_version": "config-v8",
+        "schema_version": "config-v9",
         "provider_recovery_generation": 1,
         "connections": [
             {

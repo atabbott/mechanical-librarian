@@ -2,18 +2,16 @@
 
 from __future__ import annotations
 
-import ipaddress
 import os
 import re
 import stat
 from collections.abc import Generator
 from pathlib import Path
-from urllib.parse import urlsplit
 
 import httpx
 
 from mechanical_librarian.application.metadata_report import CredentialError
-from mechanical_librarian.domain.validation import credential
+from mechanical_librarian.domain.validation import credential, http_origin
 
 
 def read_secret(path_value: str) -> str:
@@ -291,25 +289,7 @@ class _HardcoverAuth(httpx.Auth):
 
 
 def _target_origin_allowed(value: str) -> bool:
-    try:
-        parsed = urlsplit(value)
-        if (
-            parsed.path not in {"", "/"}
-            or parsed.query
-            or parsed.fragment
-            or parsed.username
-            or parsed.password
-            or parsed.hostname is None
-        ):
-            return False
-        if parsed.scheme == "https":
-            return True
-        return parsed.scheme == "http" and (
-            parsed.hostname == "localhost"
-            or ipaddress.ip_address(parsed.hostname).is_loopback
-        )
-    except ValueError:
-        return False
+    return http_origin(value)
 
 
 __all__ = [

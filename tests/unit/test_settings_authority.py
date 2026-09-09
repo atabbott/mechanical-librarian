@@ -45,7 +45,7 @@ def test_bootstrap_is_strict_private_and_closed(tmp_path: Path) -> None:
     path.write_text(
         json.dumps(
             {
-                "schema_version": "review-bootstrap-v1",
+                "schema_version": "review-bootstrap-v2",
                 "canonical_origin": "https://review.example.invalid",
                 "tls_certificate_file": "/run/secrets/tls.crt",
                 "tls_private_key_file": "/run/secrets/tls.key",
@@ -99,7 +99,7 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
     )
     bootstrap = ReviewBootstrap.model_validate(
         {
-            "schema_version": "review-bootstrap-v1",
+            "schema_version": "review-bootstrap-v2",
             "canonical_origin": "https://review.example.invalid",
             "tls_certificate_file": "/run/secrets/tls.crt",
             "tls_private_key_file": "/run/secrets/tls.key",
@@ -294,7 +294,7 @@ def test_only_audible_and_itunes_may_carry_a_cover_switch() -> None:
 def test_store_authority_carries_the_order_only_while_audible_is_enabled() -> None:
     bootstrap = ReviewBootstrap.model_validate(
         {
-            "schema_version": "review-bootstrap-v1",
+            "schema_version": "review-bootstrap-v2",
             "canonical_origin": "https://review.example.invalid",
             "tls_certificate_file": "/run/secrets/tls.crt",
             "tls_private_key_file": "/run/secrets/tls.key",
@@ -365,3 +365,55 @@ def test_the_settings_marketplace_vocabulary_stays_one_closed_set() -> None:
     assert not set(vocabulary["keyless_provider_adapters"]) & set(
         vocabulary["required_provider_keys"]
     )
+
+
+@pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
+def test_bootstrap_accepts_exact_browser_modes(tmp_path: Path, mode: str) -> None:
+    source = {
+        "schema_version": "review-bootstrap-v2",
+        "canonical_origin": "http://review.test"
+        if mode == "http"
+        else "https://review.test",
+        "tls_certificate_file": "/synthetic/review.crt" if mode == "direct" else None,
+        "tls_private_key_file": "/synthetic/review.key" if mode == "direct" else None,
+        "trusted_proxy_ips": ["127.0.0.1"] if mode == "proxy" else [],
+    }
+    path = tmp_path / "bootstrap.json"
+    path.write_text(json.dumps(source))
+    path.chmod(0o600)
+    value = load_review_bootstrap(path)
+    assert value.model_dump()["canonical_origin"] == source["canonical_origin"]
+    assert value.tls_certificate_file == source["tls_certificate_file"]
+
+
+@pytest.mark.parametrize(
+    "amendment",
+    [
+        {"schema_version": "review-bootstrap-v99"},
+        {"canonical_origin": "http://review.test"},
+        {"tls_certificate_file": None},
+        {"tls_certificate_file": None, "tls_private_key_file": None},
+        {"trusted_proxy_ips": ["127.0.0.1", "127.0.0.1"]},
+        {"trusted_proxy_ips": ["127.0.0.0/8"]},
+        {"allow_http": True},
+        {},
+    ],
+)
+def test_bootstrap_predecessor_and_invalid_modes_fail_closed(
+    tmp_path: Path, amendment: dict[str, object]
+) -> None:
+    source = (
+        Path(__file__).parents[1]
+        / "support/configuration_predecessors/review-bootstrap-v1.json"
+    )
+    document = json.loads(source.read_bytes())
+    if amendment:
+        document.update({"schema_version": "review-bootstrap-v2", **amendment})
+    path = tmp_path / "bootstrap.json"
+    payload = json.dumps(document).encode()
+    path.write_bytes(payload)
+    path.chmod(0o600)
+    with pytest.raises(ConfigurationError):
+        load_review_bootstrap(path)
+    assert path.read_bytes() == payload
+    assert list(tmp_path.iterdir()) == [path]

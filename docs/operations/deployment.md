@@ -3,26 +3,48 @@
 ## Supported single container
 
 `Dockerfile` and `compose.yaml` define the pre-release installed runtime. It is
-one non-root container, one named `/data` volume, one HTTPS port, a read-only
+one non-root container, one named `/data` volume, one web port, a read-only
 root filesystem, and no runtime package installation or extra application
-process. Existing deployments may put the exact `config-v8` document at
+process. Existing deployments may put the exact `config-v9` document at
 `/data/config.json` and keep its referenced owner-only TLS, password and
 service-secret files within explicitly mounted private locations. When that
 file is absent, store mode instead requires the exact-current owner settings and
 verifier in `/data/application.sqlite3` and an owner-only, read-only
-`/run/secrets/review-bootstrap.json` containing deploy-side TLS, canonical
+`/run/secrets/review-bootstrap.json` containing optional deploy-side TLS, canonical
 origin, trusted proxies, read-only mount mappings, and any contained-reviewer
 profile path. It supplies no owner credential; the first visitor creates the
 owner password inside the bounded guided first run.
 Add ebook media mounts as read-only Compose overrides; never grant
 a writable media mount or Docker socket.
 
-The published mapping is `127.0.0.1:8443:8443`, so the review surface reaches
-the host and nothing further. Exposing it to a LAN is an owner decision rather
-than a default: republish it as `8443:8443`, or on a chosen host address, only
-together with the canonical origin, certificate names, and network path that
-decision implies. Nothing but TLS and the owner password stands in front of that
-surface. Owner sessions are persistent opaque cookies with a fixed absolute
+The published mapping is `127.0.0.1:8080:8443`: open
+`http://localhost:8080` on the container host. Before starting Compose, copy the
+[bootstrap example](../examples/review-bootstrap.json) to `review-bootstrap.json`
+beside `compose.yaml`. Make it a regular owner-only file readable by container
+UID 65532 (for example `sudo chown 65532:65532 review-bootstrap.json` and
+`sudo chmod 600 review-bootstrap.json`). Compose mounts that explicit document
+read-only; add deployment-owned media mappings and matching read-only mounts
+before setup. Bare Compose without this prepared bootstrap is not supported.
+
+HTTP carries passwords, session cookies, metadata, and guarded-effect traffic
+in plaintext. Use it only on an owner-controlled local network or VPN. To expose
+it to a chosen LAN address, explicitly replace the host binding and set the
+matching canonical origin; for example `192.0.2.10:8080:8443` with
+`http://192.0.2.10:8080` (replace this documentation address with yours).
+Do not expose plaintext directly to the internet. The browser's passive
+insecure-connection indicator truthfully describes HTTP; no interstitial bypass
+is needed.
+
+For direct HTTPS, configure the external HTTPS origin and both certificate
+paths, mount the matching files, and publish the desired host port. Use a
+certificate already trusted by the browser. For HTTPS at an existing reverse
+proxy, omit the TLS paths and list the exact backend peer IP in
+`trusted_proxy_ips`. The proxy terminates browser-trusted TLS, forwards one
+canonical `X-Forwarded-Host`/`X-Forwarded-Proto` pair, and must support streaming
+without buffering live updates. Restrict backend reachability to that edge;
+there is no automatic proxy discovery, certificate issuance, or trust setup.
+
+Owner sessions are persistent opaque cookies with a fixed absolute
 lifetime of up to 30 days (the default); choose a shorter
 `review.session_lifetime_seconds` value when the deployment requires it. A
 remembered browser session is still a bearer credential, so do not use it on an
@@ -40,8 +62,8 @@ The container declares its own health. `HEALTHCHECK` runs the installed
 `mechanical-librarian-container-health` and the Compose `healthcheck` block runs
 the same command, so `docker inspect` and an orchestrator both see the readiness
 defined in [observability and support](observability.md). That probe reads
-`/health/ready` over loopback HTTPS and verifies the connection against the
-configured certificate as its own trust anchor and the configured canonical
+`/health/ready` over loopback HTTP for HTTP/proxy listeners. For direct TLS it
+verifies the configured certificate as its own trust anchor and the canonical
 origin as its hostname. It presents no credential, returns no library data, and
 adds no `curl` or `wget` to the image.
 
@@ -192,7 +214,7 @@ source-bound as documented in the
 
 ## Runtime prerequisites
 
-Run as a non-root dedicated identity with an explicit `config-v8` file and
+Run as a non-root dedicated identity with an explicit `config-v9` file and
 application and catalogue database paths on reliable local storage. Each
 database path is either absent for its clean first invocation or already holds
 the exact-current schema. The owner-controlled artifact-store directory must

@@ -351,7 +351,7 @@ stale. Retry and acknowledgement are owner-only mutations; neither can
 reacquire provider data, transfer a decision, authorize Automatic, construct an
 apply plan, or access target/media write capability.
 
-The supported network path terminates TLS directly in `review-serve`. Its
+Direct HTTPS terminates TLS in `review-serve`. Its
 certificate and private-key paths are explicit schema fields, must be supplied
 together as bounded owner-controlled regular no-follow files with an owner-only
 unencrypted private key, and are opened and validated noninteractively as one
@@ -363,7 +363,7 @@ mutation from changing the served identity after validation. The direct H11
 edge admits at most 100 connections, limits incomplete events to 16 KiB, and
 closes incomplete headers after 10 seconds. TLS 1.2 is confined to ECDHE AEAD
 ciphers while TLS 1.3 retains the runtime suites. No environment substitution,
-plaintext mode, TLS-disable flag, ambient proxy-header handling, certificate
+TLS-disable flag, ambient proxy-header handling, certificate
 issuance, or certificate renewal authority is present. Both the preflight and
 Uvicorn load use an explicit non-passphrase rejection value, so neither load
 can fall back to OpenSSL's interactive password channel.
@@ -516,12 +516,12 @@ before or wholly after a response; a failed snapshot yields only the existing
 bounded unavailable response.
 
 The reachable assets are private case metadata and evidence plus session
-authority. Exact canonical HTTPS Host and state-changing Origin checks prevent
-cross-origin use; secure HttpOnly SameSite cookies and per-session CSRF protect
+authority. Exact canonical Host and state-changing Origin checks prevent
+cross-origin use; HttpOnly SameSite cookies (Secure for browser HTTPS) and per-session CSRF protect
 browser mutation. Forwarded Host or scheme is rejected unless the direct peer
 is explicitly configured, and Uvicorn ambient proxy handling remains disabled.
 Every response is private/no-store with a restrictive CSP, frame denial,
-no-referrer, no-sniff, and HSTS. Validation and runtime errors use fixed
+no-referrer, and no-sniff; browser HTTPS additionally receives HSTS. Validation and runtime errors use fixed
 value-free codes, so passwords, tokens, paths, hostile metadata, and internal
 exceptions do not enter responses. The one #449 mutation accepts only a
 server-presented exact ordinary-field proposal under owner session, CSRF,
@@ -844,7 +844,7 @@ reviewer identity, decision, or target-write capability.
 
 ### Schema admission
 
-The report database, `catalogue-v2` database, `config-v8`, artifact records,
+The report database, `catalogue-v2` database, `config-v9`, artifact records,
 and `batch-manifest-v5` each accept only absent or their exact current schema.
 An earlier schema, an extra object, altered SQL, or a failed integrity check
 fails closed before mutation, and is never migrated, imported, preserved, or
@@ -1320,3 +1320,24 @@ persisted or exposed. Descriptor locators and pacing callbacks remain confined
 to acquisition. Cancellation-compatible carriers preserve shutdown semantics
 and the original cause even when client cleanup fails. No provider credentials
 or arbitrary response payload fields enter this contract.
+
+
+## Explicit local transport
+
+[ADR-0071](decisions/0071-explicit-local-transport.md) admits explicit HTTP
+Audiobookshelf origins and three browser modes. HTTP carries credentials,
+metadata and effect requests in plaintext and is limited operationally to an
+owner-controlled local network or VPN. It grants no new effect authority.
+Target HTTPS retains strict certificate/hostname verification, no redirects,
+no ambient proxies and same-origin closed-route authentication. Provider, cover
+and reviewer egress remain under their existing HTTPS contracts.
+
+HTTP listeners require no TLS identity. Direct HTTPS requires the existing
+validated paired identity before database/listener creation. Proxied HTTPS
+requires no local identity and at least one exact trusted peer IP; only that
+actual peer may provide one complete canonical X-Forwarded-Host/Proto pair.
+Duplicate Host/forwarding fields, partial pairs, chains and Forwarded are
+rejected, with Uvicorn proxy handling disabled. Setup uses the same boundary.
+Cookie creation/deletion and HSTS follow the canonical browser scheme, including
+body limits and other early failures. All other authentication, CSRF, request
+bounds, build checks and shutdown controls are unchanged.

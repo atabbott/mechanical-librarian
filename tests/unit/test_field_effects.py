@@ -2349,6 +2349,8 @@ def test_apply_maps_a_faulted_currentness_database_instead_of_escaping(
     app = create_transport_test_app(
         effects.repository,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -3923,6 +3925,8 @@ def test_authenticated_api_uses_the_same_service_and_blocks_anonymous_mutation(
     app = create_transport_test_app(
         effects.repository,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -3967,6 +3971,8 @@ def test_web_maps_permanent_refusals_to_conflict_and_outages_to_unavailable(
     app = create_transport_test_app(
         effects.repository,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -4045,6 +4051,8 @@ def test_web_pause_and_resume_bound_persistence_failures(
     app = create_transport_test_app(
         failing,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -4105,6 +4113,8 @@ def test_web_field_effect_and_review_reads_share_one_repository_lock(
     app = create_transport_test_app(
         blocking,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,

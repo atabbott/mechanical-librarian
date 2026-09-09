@@ -34,6 +34,8 @@ def generate() -> str:
         os.chmod(password_hash, 0o600)
         repository = _SchemaRepository()
         configuration = ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.invalid",
             owner_password_hash_file=str(password_hash),
         )

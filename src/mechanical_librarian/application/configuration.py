@@ -15,6 +15,7 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
 from mechanical_librarian.domain.validation import (
     OWNER_SESSION_LIFETIME_DEFAULT,
+    http_origin,
     owner_session_lifetime,
 )
 
@@ -78,25 +79,13 @@ class ReviewWebConfiguration:
     cover_prefer_minimal_composition: bool = False
 
     def __post_init__(self) -> None:
-        try:
-            origin = urlsplit(self.canonical_origin)
-        except ValueError as error:
-            raise ConfigurationError("review canonical origin is invalid") from error
         if (
-            type(self.canonical_origin) is not str
+            not http_origin(self.canonical_origin)
             or len(self.canonical_origin) > 512
-            or origin.scheme not in {"http", "https"}
-            or not origin.hostname
-            or origin.username is not None
-            or origin.password is not None
-            or origin.path not in {"", "/"}
-            or origin.query
-            or origin.fragment
-            or self.canonical_origin.rstrip("/") != self.canonical_origin
+            or self.canonical_origin.endswith("/")
         ):
             raise ConfigurationError("review canonical origin is invalid")
-        if origin.scheme != "https":
-            raise ConfigurationError("review canonical origin is invalid")
+        origin = urlsplit(self.canonical_origin)
         _absolute_path(self.owner_password_hash_file, "owner password hash file")
         if (self.tls_certificate_file is None) != (self.tls_private_key_file is None):
             raise ConfigurationError("review TLS configuration is invalid")
@@ -140,6 +129,12 @@ class ReviewWebConfiguration:
                 ip_address(value)
         except ValueError as error:
             raise ConfigurationError("review web configuration is invalid") from error
+        if (origin.scheme == "http" and self.tls_certificate_file is not None) or (
+            origin.scheme == "https"
+            and self.tls_certificate_file is None
+            and not self.trusted_proxy_ips
+        ):
+            raise ConfigurationError("review TLS configuration is invalid")
 
 
 @dataclass(frozen=True, repr=False, slots=True)
@@ -352,12 +347,12 @@ class ApplicationConfiguration:
     mounts: tuple[MediaMountConfiguration, ...]
     providers: tuple[ProviderConnectionConfiguration, ...]
     limits: ReportLimits = ReportLimits()
-    schema_version: str = "config-v8"
+    schema_version: str = "config-v9"
     provider_recovery_generation: int = 1
     review: ReviewWebConfiguration | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != "config-v8":
+        if self.schema_version != "config-v9":
             raise ConfigurationError("configuration schema is unsupported")
         # Recovery is deliberately tied to an operator-visible configuration
         # generation.  There is no file watcher, hash, or environment override:

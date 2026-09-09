@@ -27,7 +27,7 @@ def test_generated_container_configuration_admits_the_current_schema() -> None:
 
     admitted = ConfigurationInput.model_validate(configuration)
 
-    assert admitted.schema_version == "config-v8"
+    assert admitted.schema_version == "config-v9"
 
 
 def test_first_run_partial_volume_creation_enters_owned_cleanup(

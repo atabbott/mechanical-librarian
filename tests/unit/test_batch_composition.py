@@ -232,9 +232,12 @@ def test_google_books_keyless_keyed_and_disabled_composition():
     assert ("private-key", None) == tuple(item[1]["api_key"] for item in constructed)
 
 
-def test_store_runtime_uses_only_injected_target_and_provider_credentials():
+@pytest.mark.parametrize(
+    "endpoint", ["https://example.invalid", "http://audiobookshelf:13378"]
+)
+def test_store_runtime_uses_only_injected_target_and_provider_credentials(endpoint):
     config = ApplicationConfiguration(
-        (TargetConnectionConfiguration("primary", "https://example.invalid", None),),
+        (TargetConnectionConfiguration("primary", endpoint, None),),
         (
             LibraryConfiguration(
                 "books",
@@ -295,7 +298,7 @@ def test_store_runtime_uses_only_injected_target_and_provider_credentials():
         for binding in generate.call_args.kwargs["providers"]:
             binding.factory()
 
-    target_token.assert_called_once_with("https://example.invalid", "target-token", 30)
+    target_token.assert_called_once_with(endpoint, "target-token", 30)
     hardcover_token.assert_called_once_with("hardcover-token", 30)
     assert google_provider.call_args.kwargs["api_key"] == "google-token"
     target_file_client.assert_not_called()

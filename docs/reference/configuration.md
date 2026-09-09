@@ -1,11 +1,11 @@
 # Configuration reference
 
 The installed `review-serve` runtime and the shared application composition
-accept one strict UTF-8 JSON document with schema version `config-v8`. The
+accept one strict UTF-8 JSON document with schema version `config-v9`. The
 source-only contributor workbench may load the same schema only inside its
 disposable or explicitly approved test context. Unknown and duplicate fields
 are rejected. The generated schema is
-[`config-v8.schema.json`](config-v8.schema.json) and is regenerated with:
+[`config-v9.schema.json`](config-v9.schema.json) and is regenerated with:
 
 ```text
 uv run --frozen python scripts/generate_configuration_schema.py
@@ -14,7 +14,7 @@ uv run --frozen python scripts/generate_configuration_schema.py
 The file remains the complete authority while `/data/config.json` exists.
 The accepted store-mode, first-boot, secret, authority, and apply rules are
 [ADR-0058](../architecture/decisions/0058-settings-authority-and-first-boot.md);
-this reference describes the file-managed `config-v8` contract. In that mode it
+this reference describes the file-managed `config-v9` contract. In that mode it
 also solely supplies the review TLS identity, canonical origin, and trusted
 proxy IPs; the store/setup bootstrap document is neither required nor read.
 
@@ -25,8 +25,8 @@ exact-current owner-settings document and owner verifier in
 guided setup flow; an exact bootstrap-bound incomplete setup store resumes it.
 Every other missing, malformed, mixed, or orphaned store/bootstrap state stops
 startup without fallback, import, migration, or repair. The bootstrap is a
-closed `review-bootstrap-v1` document containing only
-`canonical_origin`, the TLS certificate and key paths, up to 16
+closed `review-bootstrap-v2` document containing only
+`canonical_origin`, optional paired TLS certificate and key paths, up to 16
 `trusted_proxy_ips`, up to 32 read-only mount mappings, and the optional
 contained-reviewer profile path. It contains no owner credential: the first
 visitor creates the owner password in the ordinary application. Ports,
@@ -60,7 +60,7 @@ derive hashes, or accept environment overrides.
 
 ```json
 {
-  "schema_version": "config-v8",
+  "schema_version": "config-v9",
   "provider_recovery_generation": 1,
   "connections": [
     {
@@ -289,7 +289,7 @@ ranking policy:
 Optional `review` configuration is required by `review-serve` and ignored by
 report-only commands. The server also requires explicit `--catalogue` and
 `--artifacts` paths; neither is inferred from configuration or an environment
-variable. `canonical_origin` is one exact HTTPS origin. The owner
+variable. `canonical_origin` is one exact HTTP or HTTPS browser origin. The owner
 hash file is an absolute, owner-only regular no-follow file containing one
 Argon2id PHC string. `tls_certificate_file` and `tls_private_key_file` are an
 all-or-nothing pair of absolute, owner-controlled regular no-follow files; the
@@ -299,7 +299,10 @@ including encryption with an empty passphrase. There is no passphrase input or
 environment source. The server snapshots and validates one matching TLS
 identity before it opens the
 application database and retains only immutable anonymous snapshot descriptors
-for the server's lifetime. `review-serve` has no plaintext or TLS-disable mode.
+for the server's lifetime in direct HTTPS mode. HTTP requires both TLS paths
+absent. HTTPS requires either both paths or at least one exact trusted proxy
+IP with both paths absent (a plaintext backend). The scheme is authoritative;
+there is no transport override or verification bypass.
 Session lifetime is 300–2,592,000 seconds (five minutes to 30 days). It defaults
 to 30 days and is a fixed absolute owner-session limit: authenticated activity
 does not extend it. The global
@@ -361,3 +364,33 @@ part of the report contract rather than operator policy and runs alongside
 bounded ISBN-family lanes. Proposal creation uses
 only the selected target connection/library/mount and never reads provider
 authority; its fixed evaluation policy is not configurable.
+
+
+## Local transport
+
+An Audiobookshelf `endpoint` explicitly selects `http://` or `https://`, including
+service names and LAN addresses. HTTPS always verifies the certificate and
+hostname. Credentials stay confined to the configured origin and supported
+routes; redirects and ambient proxies remain disabled. Provider and reviewer
+egress retain their separate HTTPS requirements.
+
+Browser mode is selected by the canonical origin and TLS identity:
+
+| Origin | TLS paths | Listener |
+| --- | --- | --- |
+| HTTP | Both absent | HTTP |
+| HTTPS | Both present | Direct TLS |
+| HTTPS | Both absent, exact trusted proxy IPs present | HTTP behind the configured TLS edge |
+
+Proxy mode requires exactly one `X-Forwarded-Host` and one `X-Forwarded-Proto`
+header from the actual trusted peer. The pair must equal the canonical origin.
+Duplicate Host or forwarding fields, partial pairs, chains, `Forwarded`, and
+untrusted forwarding fail closed. Uvicorn does not interpret proxy headers.
+Sessions remain HttpOnly and SameSite Strict. Secure cookies and HSTS follow
+the canonical browser scheme, including setup and failure responses.
+
+`config-v9` and `review-bootstrap-v2` require explicit document replacement:
+clean rebuild required for these configuration documents. This transport change
+does not change database or `owner-settings-v3` schemas, adopt old documents,
+or rewrite fingerprints. See [deployment](../operations/deployment.md) for
+network exposure and browser trust.

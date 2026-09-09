@@ -146,6 +146,8 @@ def test_real_app_gates_aliases_and_synthetic_cursors() -> None:
         inner = create_transport_test_app(
             repository,
             ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
                 canonical_origin=_ORIGIN,
                 owner_password_hash_file=str(password_hash),
             ),

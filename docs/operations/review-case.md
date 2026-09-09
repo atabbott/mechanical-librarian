@@ -66,7 +66,7 @@ row into an Attention failure.
 ## Authenticated exact-current inspection
 
 With an exact-current application database and explicit `review` configuration,
-the supported serving boundary terminates TLS directly in `review-serve`:
+the supported serving boundary uses the configured browser transport:
 
 ```sh
 mechanical-librarian review-serve --config config.json \
@@ -74,8 +74,8 @@ mechanical-librarian review-serve --config config.json \
   --artifacts artifacts --host 127.0.0.1 --port 8443
 ```
 
-The configured `canonical_origin` must name that exact external HTTPS origin,
-including a non-default port. Configure both `tls_certificate_file` and
+The configured `canonical_origin` must name that exact external browser origin,
+including a non-default port. For direct HTTPS configure both `tls_certificate_file` and
 `tls_private_key_file` as absolute paths to one matching identity, and make
 the certificate owner-controlled and the private key owner-only regular files
 (`chmod 644` and `chmod 600`, respectively). Missing, linked, writable-by-other,
@@ -83,7 +83,8 @@ unreadable, encrypted, malformed, or mismatched inputs fail noninteractively
 before the database or network listener opens. Private-key passphrases are not
 a supported configuration or environment input; empty-passphrase encryption
 is still encrypted and is rejected by the PEM-envelope boundary. There is no
-supported HTTP fallback. Forwarded proxy identity is not accepted by Uvicorn;
+automatic transport fallback. Explicit HTTP and HTTPS proxy modes omit both TLS paths; see
+[deployment](deployment.md) for the three closed modes. Forwarded proxy identity is not accepted by Uvicorn;
 application proxy trust remains an explicit,
 bounded allow-list and should normally stay empty for direct TLS.
 The direct edge permits at most 100 live HTTP connections, closes incomplete
@@ -108,8 +109,8 @@ This synthetic command is not production certificate management. Operators
 remain responsible for obtaining, rotating, and securely mounting a certificate
 whose names cover the canonical origin; the application neither issues nor
 renews certificates. The container's own `HEALTHCHECK` works this way, trusting
-the mounted certificate as its anchor; any further health probe must trust that
-certificate too rather than downgrading the endpoint.
+the mounted certificate as its anchor for direct HTTPS. HTTP and proxy backends
+use credential-free loopback HTTP readiness.
 
 `/health/live` and `/health/ready` are the only anonymous operational data.
 Both are exempt from origin checking, neither takes a credential, and between
@@ -118,8 +119,8 @@ library; [observability and support](observability.md) defines what each one
 means. The login surface verifies the owner-only Argon2id hash file, applies a
 durable bounded throttle, and creates an opaque server-side session whose token
 is stored only as a digest.
-All review responses are private/no-store and enforce the canonical HTTPS Host
-and Origin, restrictive CSP, secure HttpOnly SameSite cookies, CSRF on logout
+All review responses are private/no-store and enforce the canonical Host
+and Origin, restrictive CSP, HttpOnly SameSite cookies (Secure for browser HTTPS), CSRF on logout
 and decisions, and explicit proxy trust. The `/api/v1` surface exposes
 exact-current case detail, bounded evidence, current-case admission and decision
 history, one individual field-decision operation, and authenticated OpenAPI.

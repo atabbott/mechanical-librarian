@@ -253,7 +253,10 @@ _T = TypeVar("_T")
 
 def _client(
     reviewer_access: ReviewerAccessOperations | None = None,
+    *,
+    mode: str = "direct",
 ) -> tuple[TestClient, _State, _Connection]:
+    origin = "http://setup.invalid" if mode == "http" else "https://setup.invalid"
     verifier = PasswordHasher().hash("correct horse battery staple")
     session_store = _Sessions()
     state = _State(session_store)
@@ -290,10 +293,17 @@ def _client(
                 state,
                 verifier,
                 connection,
-                "https://setup.invalid",
+                origin,
                 journey,
                 reviewer_access,
-            )
+                trusted_proxy_ips=("127.0.0.1",) if mode == "proxy" else (),
+                require_forwarding=mode == "proxy",
+            ),
+            base_url="http://setup.invalid" if mode == "proxy" else origin,
+            client=("127.0.0.1", 12345),
+            headers={"x-forwarded-host": "setup.invalid", "x-forwarded-proto": "https"}
+            if mode == "proxy"
+            else {},
         ),
         state,
         connection,
@@ -409,11 +419,20 @@ def test_wrong_setup_password_is_rate_limited() -> None:
     _claim(client)
     for _ in range(5):
         assert (
-            client.post("/api/setup/session", json={"password": "wrong"}).status_code
+            client.post(
+                "/api/setup/session",
+                json={"password": "wrong"},
+                headers={"origin": "https://setup.invalid"},
+            ).status_code
             == 401
         )
     assert (
-        client.post("/api/setup/session", json={"password": "wrong"}).status_code == 429
+        client.post(
+            "/api/setup/session",
+            json={"password": "wrong"},
+            headers={"origin": "https://setup.invalid"},
+        ).status_code
+        == 429
     )
 
 
@@ -434,6 +453,7 @@ def test_session_failure_after_owner_claim_is_retryable_unavailability() -> None
     retried = client.post(
         "/api/setup/session",
         json={"password": "correct horse battery staple"},
+        headers={"origin": "https://setup.invalid"},
     )
 
     assert retried.status_code == 200
@@ -479,11 +499,20 @@ def test_oversized_setup_login_does_not_consume_the_login_throttle() -> None:
 
     for _ in range(5):
         assert (
-            client.post("/api/setup/session", json={"password": "wrong"}).status_code
+            client.post(
+                "/api/setup/session",
+                json={"password": "wrong"},
+                headers={"origin": "https://setup.invalid"},
+            ).status_code
             == 401
         )
     assert (
-        client.post("/api/setup/session", json={"password": "wrong"}).status_code == 429
+        client.post(
+            "/api/setup/session",
+            json={"password": "wrong"},
+            headers={"origin": "https://setup.invalid"},
+        ).status_code
+        == 429
     )
 
 
@@ -532,6 +561,7 @@ def test_unexpected_setup_failure_returns_fixed_secure_response() -> None:
     client = TestClient(
         create_setup_app(sessions, _FailingState(), verifier),
         raise_server_exceptions=False,
+        base_url="https://testserver",
     )
 
     response = client.get(
@@ -564,6 +594,7 @@ def test_connect_requires_session_csrf_and_origin_and_never_returns_key() -> Non
         "key": "secret-value",
     }
 
+    client.cookies.clear()  # This assertion deliberately sends no owner session.
     assert client.post("/api/setup/connect", json=request).status_code == 401
     assert (
         client.post(
@@ -618,7 +649,8 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
             verifier,
             connection,
             "https://setup.invalid",
-        )
+        ),
+        base_url="https://setup.invalid",
     )
     login = _claim(first_client)
     cookie = _session_cookie(login)
@@ -641,7 +673,8 @@ def test_surviving_session_rotates_csrf_for_mutation_after_restart() -> None:
             verifier,
             connection,
             "https://setup.invalid",
-        )
+        ),
+        base_url="https://setup.invalid",
     )
     resumed_state = resumed_client.get("/api/setup/state", headers={"cookie": cookie})
     recovered_csrf = resumed_state.json()["csrf_token"]
@@ -985,3 +1018,90 @@ def test_setup_providers_step_offers_the_audiobook_providers_without_a_key() -> 
         "const settingsProviderKeyless=adapter=>"
         "settingsVocabulary.keyless_provider_adapters.includes(adapter);" in SETUP_JS
     )
+
+
+@pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
+def test_setup_transport_claim_cookie_deletion_and_security(mode: str) -> None:
+    client, _state, _connection = _client(mode=mode)
+    origin = "http://setup.invalid" if mode == "http" else "https://setup.invalid"
+    secure = mode != "http"
+    with client:
+        nonce = client.get("/api/setup/claim")
+        assert nonce.status_code == 200
+        nonce_cookie = nonce.headers["set-cookie"]
+        assert ("; Secure" in nonce_cookie) is secure
+        assert "HttpOnly" not in nonce_cookie
+        login = client.post(
+            "/api/setup/session",
+            json={
+                "password": "correct horse battery staple",
+                "confirmation": "correct horse battery staple",
+                "expected_revision": nonce.json()["revision"],
+            },
+            headers={
+                "origin": origin,
+                "cookie": nonce_cookie.split(";", 1)[0],
+                "x-setup-nonce": nonce.json()["nonce"],
+            },
+        )
+        assert login.status_code == 200
+        cookies = login.headers.get_list("set-cookie")
+        assert len(cookies) == 2
+        assert all(("; Secure" in cookie) is secure for cookie in cookies)
+        assert "Max-Age=0" in cookies[0] and "ml_setup_nonce=" in cookies[0]
+        assert "HttpOnly" in cookies[1] and "SameSite=strict" in cookies[1]
+        client.headers["cookie"] = _session_cookie(login)
+        assert client.get("/api/setup/state").status_code == 200
+        for path, expected in [("/health/ready", 200), ("/missing", 404)]:
+            response = client.get(path)
+            assert response.status_code == expected
+            assert ("strict-transport-security" in response.headers) is secure
+        overflow = client.post(
+            "/api/setup/session", content=iter([b"x" * (2 * 1024 * 6 + 129)])
+        )
+        assert overflow.status_code == 413
+        assert ("strict-transport-security" in overflow.headers) is secure
+        denied = client.get(
+            "/api/setup/state",
+            headers={"host": "evil.invalid", "x-forwarded-host": "evil.invalid"},
+        )
+        assert denied.status_code == 400
+        assert ("strict-transport-security" in denied.headers) is secure
+
+
+@pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
+def test_claimed_setup_login_still_requires_canonical_origin(mode: str) -> None:
+    client, _state, _connection = _client(mode=mode)
+    origin = "http://setup.invalid" if mode == "http" else "https://setup.invalid"
+    nonce = client.get("/api/setup/claim")
+    claimed = client.post(
+        "/api/setup/session",
+        json={
+            "password": "correct horse battery staple",
+            "confirmation": "correct horse battery staple",
+            "expected_revision": nonce.json()["revision"],
+        },
+        headers={
+            "origin": origin,
+            "cookie": nonce.headers["set-cookie"].split(";", 1)[0],
+            "x-setup-nonce": nonce.json()["nonce"],
+        },
+    )
+    assert claimed.status_code == 200
+    for headers in ({}, {"origin": "https://wrong.invalid"}):
+        denied = client.post(
+            "/api/setup/session",
+            json={"password": "correct horse battery staple"},
+            headers=headers,
+        )
+        assert denied.status_code == 403
+        assert "set-cookie" not in denied.headers
+    assert (
+        client.post(
+            "/api/setup/session",
+            json={"password": "correct horse battery staple"},
+            headers={"origin": origin},
+        ).status_code
+        == 200
+    )
+    client.close()

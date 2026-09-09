@@ -21,7 +21,7 @@ services:
     # docs/operations/deployment.md, not something the supported file does for
     # you.
     ports:
-      - "127.0.0.1:8443:8443"
+      - "127.0.0.1:8080:8443"
     healthcheck:
       test:
         ["CMD", "/opt/mechanical-librarian/bin/mechanical-librarian-container-health"]
@@ -59,6 +59,8 @@ services:
     pids_limit: 128
     volumes:
       - mechanical-librarian-data:/data
+      # Prepare this owner-only deployment document before the first start.
+      - ./review-bootstrap.json:/run/secrets/review-bootstrap.json:ro
     tmpfs:
       - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=0700,uid=65532,gid=65532
     # Uvicorn may use the configured 300s maximum to drain HTTP work before

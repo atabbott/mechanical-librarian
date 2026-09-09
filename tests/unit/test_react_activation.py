@@ -89,6 +89,8 @@ class _Case:
         self.asset_root = asset_root
         self.identity = _write_bundle(asset_root)
         configuration = ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password_hash),
             session_lifetime_seconds=600,

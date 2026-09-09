@@ -230,7 +230,7 @@ def test_installed_command_serves_only_the_canonical_https_boundary() -> None:
         config.write_text(
             json.dumps(
                 {
-                    "schema_version": "config-v8",
+                    "schema_version": "config-v9",
                     "provider_recovery_generation": 1,
                     "connections": [
                         {
@@ -331,15 +331,19 @@ def test_installed_command_serves_only_the_canonical_https_boundary() -> None:
                 process.communicate(timeout=5)
 
 
-def test_server_uses_validated_tls_before_opening_the_database() -> None:
+@pytest.mark.parametrize("mode", ["direct", "http", "proxy"])
+def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         certificate, private_key = synthetic_tls_identity(root)
         review = ReviewWebConfiguration(
-            canonical_origin="https://127.0.0.1:8443",
+            canonical_origin="http://127.0.0.1:8443"
+            if mode == "http"
+            else "https://127.0.0.1:8443",
+            trusted_proxy_ips=("127.0.0.1",) if mode == "proxy" else (),
             owner_password_hash_file=str(root / "owner.hash"),
-            tls_certificate_file=str(certificate),
-            tls_private_key_file=str(private_key),
+            tls_certificate_file=str(certificate) if mode == "direct" else None,
+            tls_private_key_file=str(private_key) if mode == "direct" else None,
         )
         repository = Mock()
         review_application = Mock()
@@ -348,6 +352,13 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
         artifacts = root / "artifacts"
 
         def qualified_run(app, **arguments):
+            if mode != "direct":
+                assert not any(key.startswith("ssl_") for key in arguments)
+                assert arguments["http"] is BoundedReviewH11Protocol
+                assert arguments["proxy_headers"] is False
+                assert arguments["limit_concurrency"] == MAX_REVIEW_CONNECTIONS
+                assert arguments["h11_max_incomplete_event_size"] == 16_384
+                return
             assert Path(arguments["ssl_certfile"]).exists()
             assert Path(arguments["ssl_keyfile"]).exists()
             assert (
@@ -382,6 +393,10 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
             assert all("GCM" in name or "CHACHA20" in name for name in tls12)
 
         with (
+            patch(
+                "mechanical_librarian.bootstrap.composition.open_review_tls_identity",
+                wraps=open_review_tls_identity,
+            ) as identity,
             patch(
                 "mechanical_librarian.bootstrap.composition.load_configuration_file",
                 return_value=SimpleNamespace(
@@ -433,6 +448,7 @@ def test_server_uses_validated_tls_before_opening_the_database() -> None:
                 "127.0.0.1",
                 8443,
             )
+        assert identity.call_count == (1 if mode == "direct" else 0)
         opened.assert_called_once_with(database, create=True, cross_thread=True)
         assert catalogue.is_file()
         assert artifacts.is_dir()
@@ -460,6 +476,8 @@ def test_missing_or_invalid_tls_fails_before_database_or_server() -> None:
         )
         configurations = (
             ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
                 canonical_origin="https://review.test",
                 owner_password_hash_file=str(root / "owner.hash"),
             ),

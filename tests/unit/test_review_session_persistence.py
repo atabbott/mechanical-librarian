@@ -499,6 +499,8 @@ def test_concurrent_http_decisions_preserve_both_immutable_revisions() -> None:
             create_transport_test_app(
                 repository,
                 ReviewWebConfiguration(
+                    tls_certificate_file="/synthetic/review.crt",
+                    tls_private_key_file="/synthetic/review.key",
                     canonical_origin="https://review.test",
                     owner_password_hash_file=str(hash_path),
                 ),
@@ -1031,6 +1033,8 @@ def test_real_repository_serves_login_from_fastapi_worker_thread() -> None:
             create_transport_test_app(
                 repository,
                 ReviewWebConfiguration(
+                    tls_certificate_file="/synthetic/review.crt",
+                    tls_private_key_file="/synthetic/review.key",
                     canonical_origin="https://review.test",
                     owner_password_hash_file=str(hash_path),
                 ),
@@ -1112,6 +1116,8 @@ def test_authenticated_preparation_status_survives_writer_journal_churn() -> Non
             create_transport_test_app(
                 repository,
                 ReviewWebConfiguration(
+                    tls_certificate_file="/synthetic/review.crt",
+                    tls_private_key_file="/synthetic/review.key",
                     canonical_origin="https://review.test",
                     owner_password_hash_file=str(hash_path),
                 ),
@@ -1211,6 +1217,8 @@ def test_login_ignores_application_database_writer_and_gate(tmp_path: Path) -> N
     app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(hash_path),
         ),

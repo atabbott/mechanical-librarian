@@ -9,7 +9,7 @@ import stat
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -3324,6 +3324,9 @@ def _compose_setup_runtime_generation(
         ReviewWebConfiguration(
             canonical_origin=bootstrap.canonical_origin,
             owner_password_hash_file="/data/.owner-verifier-store",
+            tls_certificate_file=bootstrap.tls_certificate_file,
+            tls_private_key_file=bootstrap.tls_private_key_file,
+            trusted_proxy_ips=tuple(sorted(bootstrap.trusted_proxy_ips)),
             cover_reviewer_profile_file=bootstrap.cover_reviewer_profile_file,
         ),
         activation._codex_auth,
@@ -3336,6 +3339,9 @@ def _compose_setup_runtime_generation(
         journey=journey,
         reviewer_access=reviewer_access,
         canonical_origin=bootstrap.canonical_origin,
+        trusted_proxy_ips=tuple(bootstrap.trusted_proxy_ips),
+        require_forwarding=bootstrap.canonical_origin.startswith("https://")
+        and bootstrap.tls_certificate_file is None,
         activate=activate_setup,
     )
     return (
@@ -3367,12 +3373,19 @@ def _reachable_setup_mount_names(
     return tuple(sorted(names))
 
 
+class _ReviewTLSOptions(TypedDict, total=False):
+    ssl_certfile: str | None
+    ssl_keyfile: str | None
+    ssl_keyfile_password: str
+    ssl_ciphers: str
+
+
 def _serve_runtime_dispatcher(
     dispatcher: MutableRuntimeDispatcher,
     host: str,
     port: int,
-    certificate_file: str,
-    private_key_file: str,
+    certificate_file: str | None,
+    private_key_file: str | None,
     *,
     after_start: Callable[[], None] | None = None,
 ) -> None:
@@ -3390,10 +3403,18 @@ def _serve_runtime_dispatcher(
         limit_concurrency=MAX_REVIEW_CONNECTIONS,
         backlog=MAX_REVIEW_CONNECTIONS,
         h11_max_incomplete_event_size=16_384,
-        ssl_certfile=certificate_file,
-        ssl_keyfile=private_key_file,
-        ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
-        ssl_ciphers=REVIEW_TLS_CIPHERS,
+        **(
+            _ReviewTLSOptions(
+                {
+                    "ssl_certfile": certificate_file,
+                    "ssl_keyfile": private_key_file,
+                    "ssl_keyfile_password": REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                    "ssl_ciphers": REVIEW_TLS_CIPHERS,
+                }
+            )
+            if certificate_file is not None
+            else {}
+        ),
     )
     server = uvicorn.Server(config)
     dispatcher.bind_outer_server(
@@ -3432,9 +3453,12 @@ def run_review_server(
         review = None
         tls_certificate_file = bootstrap.tls_certificate_file
         tls_private_key_file = bootstrap.tls_private_key_file
-    if tls_certificate_file is None or tls_private_key_file is None:
-        raise ConfigurationError("review TLS configuration is unavailable")
-    with open_review_tls_identity(tls_certificate_file, tls_private_key_file) as tls:
+    identity = (
+        open_review_tls_identity(tls_certificate_file, tls_private_key_file)
+        if tls_certificate_file is not None and tls_private_key_file is not None
+        else nullcontext(None)
+    )
+    with identity as tls:
         if authority == "store":
             assert bootstrap is not None
             control = open_repository(database_path, create=True, cross_thread=True)
@@ -3480,8 +3504,8 @@ def run_review_server(
                         dispatcher,
                         host,
                         port,
-                        tls.certificate_file,
-                        tls.private_key_file,
+                        None if tls is None else tls.certificate_file,
+                        None if tls is None else tls.private_key_file,
                         after_start=acknowledge,
                     )
                 except BaseException:
@@ -3687,10 +3711,18 @@ def run_review_server(
                 limit_concurrency=MAX_REVIEW_CONNECTIONS,
                 backlog=MAX_REVIEW_CONNECTIONS,
                 h11_max_incomplete_event_size=16_384,
-                ssl_certfile=tls.certificate_file,
-                ssl_keyfile=tls.private_key_file,
-                ssl_keyfile_password=REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
-                ssl_ciphers=REVIEW_TLS_CIPHERS,
+                **(
+                    _ReviewTLSOptions(
+                        {
+                            "ssl_certfile": tls.certificate_file,
+                            "ssl_keyfile": tls.private_key_file,
+                            "ssl_keyfile_password": REJECT_ENCRYPTED_PRIVATE_KEY_PASSWORD,
+                            "ssl_ciphers": REVIEW_TLS_CIPHERS,
+                        }
+                    )
+                    if tls is not None
+                    else {}
+                ),
             )
         except Exception:
             session_store.close()

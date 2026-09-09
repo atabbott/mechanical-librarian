@@ -18,7 +18,7 @@ workbench/mechanical_librarian_workbench/ # source-only typed contributor scenar
 Tests are grouped into unit, integration, and static architecture suites.
 Synthetic EPUBs are generated in memory; no media files or production payloads
 are committed. `scripts/generate_configuration_schema.py` is the sole product
-generator and must reproduce `docs/reference/config-v8.schema.json`.
+generator and must reproduce `docs/reference/config-v9.schema.json`.
 The top-level `workbench/` package is intentionally outside `src/`; packaging
 and container qualification prove that it cannot be imported from the installed
 artifact.

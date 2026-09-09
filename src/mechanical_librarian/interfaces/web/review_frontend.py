@@ -68,7 +68,7 @@ LOGIN_JS = r"""
     root.dataset.theme = theme;
     toggle.setAttribute('aria-pressed', String(theme === 'dark'));
     label.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
-    document.cookie = `ml_theme=${theme}; Path=/; SameSite=Strict; Secure`;
+    document.cookie = `ml_theme=${theme}; Path=/; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
     if (announce) status.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} mode enabled`;
   };
   const saved = document.cookie.split('; ').find((part) => part.startsWith('ml_theme='));

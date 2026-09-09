@@ -19,6 +19,7 @@ from pydantic import (
     StrictStr,
     ValidationError,
     WithJsonSchema,
+    model_validator,
 )
 
 from mechanical_librarian.application.configuration import (
@@ -295,6 +296,38 @@ class LimitsInput(_Closed):
 
 
 class ReviewInput(_Closed):
+    model_config = ConfigDict(
+        extra="forbid",
+        strict=True,
+        json_schema_extra={
+            "oneOf": [
+                {
+                    "properties": {
+                        "canonical_origin": {"pattern": "^http://"},
+                        "tls_certificate_file": {"type": "null"},
+                        "tls_private_key_file": {"type": "null"},
+                    },
+                },
+                {
+                    "properties": {
+                        "canonical_origin": {"pattern": "^https://"},
+                        "tls_certificate_file": {"type": "string"},
+                        "tls_private_key_file": {"type": "string"},
+                    },
+                    "required": ["tls_certificate_file", "tls_private_key_file"],
+                },
+                {
+                    "properties": {
+                        "canonical_origin": {"pattern": "^https://"},
+                        "tls_certificate_file": {"type": "null"},
+                        "tls_private_key_file": {"type": "null"},
+                        "trusted_proxy_ips": {"minItems": 1},
+                    },
+                    "required": ["trusted_proxy_ips"],
+                },
+            ],
+        },
+    )
     canonical_origin: Annotated[StrictStr, Field(min_length=8, max_length=512)]
     owner_password_hash_file: BoundedAbsolutePath
     tls_certificate_file: BoundedAbsolutePath | None = None
@@ -317,9 +350,19 @@ class ReviewInput(_Closed):
     cover_avoid_tie_in_branding: StrictBool = False
     cover_prefer_minimal_composition: StrictBool = False
 
+    @model_validator(mode="after")
+    def validate_transport(self) -> ReviewInput:
+        ReviewWebConfiguration(
+            **{
+                **self.model_dump(),
+                "trusted_proxy_ips": tuple(sorted(self.trusted_proxy_ips)),
+            }
+        )
+        return self
+
 
 class ConfigurationInput(_Closed):
-    schema_version: Literal["config-v8"]
+    schema_version: Literal["config-v9"]
     provider_recovery_generation: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[ConnectionInput], Field(min_length=1, max_length=32)]
     libraries: Annotated[list[LibraryInput], Field(min_length=1, max_length=128)]

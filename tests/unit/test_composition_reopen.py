@@ -76,6 +76,8 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     )
     review_application.admit.side_effect = lambda: admission_events.append("admit")
     review = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://library.invalid",
         owner_password_hash_file="/data/owner.hash",
     )
@@ -116,10 +118,10 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     ):
         runtime, _configuration = composition.compose_store_runtime_generation(
             ReviewBootstrap(
-                schema_version="review-bootstrap-v1",
+                schema_version="review-bootstrap-v2",
                 canonical_origin="https://library.invalid",
-                tls_certificate_file="certificate",
-                tls_private_key_file="private-key",
+                tls_certificate_file="/synthetic/certificate",
+                tls_private_key_file="/synthetic/private-key",
             ),
             Path("application.sqlite3"),
             Path("catalogue.sqlite3"),
@@ -199,10 +201,10 @@ def test_setup_runtime_reserves_codex_lease_until_admission() -> None:
     reviewer_access = Mock()
     setup_app = Mock()
     bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v1",
+        schema_version="review-bootstrap-v2",
         canonical_origin="https://library.invalid",
-        tls_certificate_file="certificate",
-        tls_private_key_file="private-key",
+        tls_certificate_file="/synthetic/certificate",
+        tls_private_key_file="/synthetic/private-key",
     )
     with (
         patch.object(
@@ -251,10 +253,10 @@ def test_store_runtime_activation_reuses_outer_control_authority_for_successors(
     )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(
-            schema_version="review-bootstrap-v1",
+            schema_version="review-bootstrap-v2",
             canonical_origin="https://library.invalid",
-            tls_certificate_file="certificate",
-            tls_private_key_file="private-key",
+            tls_certificate_file="/synthetic/certificate",
+            tls_private_key_file="/synthetic/private-key",
         ),
         Path("application.sqlite3"),
         Path("catalogue.sqlite3"),
@@ -294,10 +296,10 @@ def test_settings_activation_keeps_addition_intent_out_of_candidate_closure() ->
     )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(
-            schema_version="review-bootstrap-v1",
+            schema_version="review-bootstrap-v2",
             canonical_origin="https://library.invalid",
-            tls_certificate_file="certificate",
-            tls_private_key_file="private-key",
+            tls_certificate_file="/synthetic/certificate",
+            tls_private_key_file="/synthetic/private-key",
         ),
         Path("application.sqlite3"),
         Path("catalogue.sqlite3"),
@@ -368,10 +370,10 @@ def test_setup_and_settings_successors_open_through_live_outer_control(
     )
     activation = composition._StoreRuntimeActivation(
         ReviewBootstrap(
-            schema_version="review-bootstrap-v1",
+            schema_version="review-bootstrap-v2",
             canonical_origin="https://library.invalid",
-            tls_certificate_file="certificate",
-            tls_private_key_file="private-key",
+            tls_certificate_file="/synthetic/certificate",
+            tls_private_key_file="/synthetic/private-key",
         ),
         database,
         tmp_path / "catalogue.sqlite3",
@@ -522,9 +524,9 @@ def test_ordinary_server_releases_first_owner_state_for_interruption_and_resume(
     database = tmp_path / "application.sqlite3"
     repository = composition.open_repository(database)
     bootstrap = ReviewBootstrap(
-        schema_version="review-bootstrap-v1",
-        tls_certificate_file="certificate",
-        tls_private_key_file="private-key",
+        schema_version="review-bootstrap-v2",
+        tls_certificate_file="/synthetic/certificate",
+        tls_private_key_file="/synthetic/private-key",
         canonical_origin="https://setup.invalid",
     )
 
@@ -650,9 +652,9 @@ def test_setup_mount_reachability_is_exact_bounded_and_directory_only(
     regular.write_text("synthetic", encoding="utf-8")
     bootstrap = ReviewBootstrap.model_validate(
         {
-            "schema_version": "review-bootstrap-v1",
-            "tls_certificate_file": "certificate",
-            "tls_private_key_file": "key",
+            "schema_version": "review-bootstrap-v2",
+            "tls_certificate_file": "/synthetic/certificate",
+            "tls_private_key_file": "/synthetic/key",
             "canonical_origin": "https://review.invalid",
             "mounts": [
                 {

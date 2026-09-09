@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Connect to HTTP Audiobookshelf origins and use the owner workspace over local
+  HTTP, trusted direct HTTPS, or an exact HTTPS proxy. Fresh deployment defaults
+  to loopback HTTP. Replace configuration/bootstrap documents with config-v9
+  and review-bootstrap-v2; database schemas are unchanged (#844).
+
 - Inventaire cover evidence now survives preparation. Valid missing ISBNs permit
   bounded title-and-author fallback, and three-row searches retain useful work
   evidence without concealing ambiguity or incomplete author identities.

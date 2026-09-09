@@ -50,7 +50,7 @@ provider call.
 - The container runs under a dedicated Unix identity with no untrusted
   same-identity processes. Privileged and hostile same-identity filesystem
   mutation is outside the supported unprivileged exclusion boundary.
-- The configuration uses `config-v8` and names the requested connection and
+- The configuration uses `config-v9` and names the requested connection and
   library explicitly.
 - The target secret and each enabled referenced provider secret are owner-only
   regular files.
