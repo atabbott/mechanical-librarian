@@ -14,6 +14,8 @@ from tests.support.continuous_review_scale import (
 from tests.support.inventaire_preparation import InventairePreparationFixture
 
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
+from mechanical_librarian.domain.metadata_report import MetadataReport, TargetDestination
+from mechanical_librarian.domain.proposal_set import ProposalSet
 
 
 def test_installed_owner_decision_activity_smoke() -> None:
@@ -156,3 +158,12 @@ def test_inventaire_failure_then_authenticated_reprepare_starts_new_run(
                         document["covers"][0]["state"] == state.value
                         for document in documents
                     )
+                    if state is CoverSourceState.RETRIEVED:
+                        for (document,) in connection.execute("SELECT document FROM proposal_sets"):
+                            proposal = ProposalSet.from_json(document)
+                            report = MetadataReport.from_json(current_documents[proposal.report_id])
+                            source = report.cover_sources[0]
+                            alternative = next(result for result in proposal.results if result.destination is TargetDestination.COVER).alternatives[0]
+                            assert (source.source_id,) == alternative.evidence_references
+                            assert source.artifact is not None
+                            assert source.artifact.artifact_id == alternative.value.value

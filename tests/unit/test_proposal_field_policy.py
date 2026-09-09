@@ -1142,11 +1142,12 @@ def test_series_without_sequence_remains_eligible() -> None:
     assert ProposalOutcome.KEEP == result.outcome
 
 
-def test_cover_requires_one_complete_safe_artifact() -> None:
+@pytest.mark.parametrize("kind", [CoverSourceKind.HARDCOVER, CoverSourceKind.INVENTAIRE])
+def test_cover_requires_one_complete_safe_artifact(kind: CoverSourceKind) -> None:
     artifact = CoverArtifact.create(b"cover", b"preview", "image/png", 10, 20)
     source = CoverSource(
-        cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:cover"),
-        CoverSourceKind.HARDCOVER,
+        cover_source_id(kind, "catalogue:cover"),
+        kind,
         CoverSourceState.RETRIEVED,
         artifact,
         provenance=CoverProvenance(
@@ -1158,9 +1159,12 @@ def test_cover_requires_one_complete_safe_artifact() -> None:
     proposal_set = evaluate_report(_report(covers=(source,)))
     result = _result(proposal_set, TargetDestination.COVER)
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
+    assert (source.source_id,) == result.alternatives[0].evidence_references
+    assert artifact.artifact_id == result.alternatives[0].value.value
+    assert proposal_set == ProposalSet.from_json(proposal_set.to_json())
     timeout = CoverSource(
-        cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:timeout"),
-        CoverSourceKind.HARDCOVER,
+        cover_source_id(kind, "catalogue:timeout"),
+        kind,
         CoverSourceState.TIMEOUT,
         timeout_scope="attempted",
         provenance=CoverProvenance(

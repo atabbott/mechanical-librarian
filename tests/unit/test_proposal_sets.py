@@ -25,6 +25,11 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import (
+    ProposalAlternative,
+    ProposalAssessment,
+    ProposalScope,
+    ProposalValue,
+    ProposalValueKind,
     ProposalOutcome,
     ProposalValueError,
     evaluate_report,
@@ -370,3 +375,15 @@ def test_nonvalue_title_states_create_without_current_title_failure(
     assert proposal_set.to_json() == serialized
     assert ProposalOutcome.INELIGIBLE == title.outcome
     assert title.selected_alternative_id is None
+
+
+@pytest.mark.parametrize("reference", ["unknown_" + "a" * 64, "inventaire_" + "a" * 63, "inventaire_" + "A" * 64, "inventaire_" + "g" * 64])
+def test_cover_alternative_rejects_invalid_evidence_reference(reference: str) -> None:
+    with pytest.raises(ProposalValueError, match="^proposal alternative is invalid$"):
+        ProposalAlternative.create(
+            ProposalValue(ProposalValueKind.COVER, "cover_" + "a" * 64),
+            ProposalAssessment.FILLS_EMPTY,
+            (reference,),
+            ("correlation_" + "b" * 64,),
+            ProposalScope.COVER,
+        )

@@ -364,6 +364,7 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
         bundle_id=None,
     )
     prior_digests = (
+        "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
         "f7a4493d94f0188e6974aad1b68f9238d9e7733aa1a2e064e5663e385af0fe6e",
         "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
         "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
@@ -383,6 +384,7 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
         )
 
         assert prior == AutomaticDecision.from_json(prior.to_json())
+        assert not qualification_manifest_is_current(prior.policy_category, prior.policy_option, prior.qualification_manifest_sha256)
         with pytest.raises(AutomaticDecisionError):
             AutomaticDecision.create(
                 **{
@@ -551,3 +553,11 @@ def test_safety_state_fails_closed_per_category_and_globally() -> None:
 
 def test_qualification_manifest_defers_imprint() -> None:
     assert "publisher_preference:imprint" not in QUALIFIED_POLICY_OPTIONS
+
+
+@pytest.mark.parametrize("option", ["replace_target:provider_consensus_noise", "replace_target:decoration_tidy"])
+def test_prior_f19a_v6_title_remains_readable_without_current_authority(option: str) -> None:
+    decision = AutomaticDecision.from_json(_f19a_title_decision_document("7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6", option))
+    assert not qualification_manifest_is_current(decision.policy_category, decision.policy_option, decision.qualification_manifest_sha256)
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(**decision._core(), occurred_at=2)
