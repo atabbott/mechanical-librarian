@@ -188,13 +188,22 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
 
 
 @pytest.mark.parametrize("missing_isbn", (False, True))
-def test_work_search_hydrates_discovery_identity_before_mapping(missing_isbn: bool) -> None:
+def test_work_search_hydrates_discovery_identity_before_mapping(
+    missing_isbn: bool,
+) -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.url.params.get_list("uris") == ["isbn:9780306406157"]:
-            return httpx.Response(200, json={"entities": {}, "redirects": {}, "notFound": ["isbn:9780306406157"]})
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {},
+                    "redirects": {},
+                    "notFound": ["isbn:9780306406157"],
+                },
+            )
         if str(request.url).startswith(INVENTAIRE_SEARCH_URL):
             return httpx.Response(
                 200,
@@ -252,10 +261,25 @@ def test_work_search_hydrates_discovery_identity_before_mapping(missing_isbn: bo
         authors=("Ada Example",),
     )
     provider = _provider(httpx.MockTransport(respond))
-    plan = MetadataDiscoveryPlan(lookup.local_claims, (
-        MetadataDiscoveryLane("lane_" + "1" * 64, ProviderQueryKind.WORK, (_isbn().reference,), title=lookup.title, authors=lookup.authors),
-        MetadataDiscoveryLane("lane_" + "2" * 64, ProviderQueryKind.ISBN, (_isbn().reference,), matched_family="9780306406157", canonical_isbns=("9780306406157",)),
-    ))
+    plan = MetadataDiscoveryPlan(
+        lookup.local_claims,
+        (
+            MetadataDiscoveryLane(
+                "lane_" + "1" * 64,
+                ProviderQueryKind.WORK,
+                (_isbn().reference,),
+                title=lookup.title,
+                authors=lookup.authors,
+            ),
+            MetadataDiscoveryLane(
+                "lane_" + "2" * 64,
+                ProviderQueryKind.ISBN,
+                (_isbn().reference,),
+                matched_family="9780306406157",
+                canonical_isbns=("9780306406157",),
+            ),
+        ),
+    )
     observation = provider.observe(plan if missing_isbn else lookup)
     if missing_isbn:
         assert {lane.kind: lane.status for lane in observation.lanes} == {

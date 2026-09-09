@@ -1380,7 +1380,10 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
     assert set(sources) == set(
         json.loads(CURRENT_MANIFEST.read_text())["frozen_contract"]["behavior_sources"]
     )
-    assert hashlib.sha256(ASSOCIATION_MANIFEST.read_bytes()).hexdigest() == "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74"
+    assert (
+        hashlib.sha256(ASSOCIATION_MANIFEST.read_bytes()).hexdigest()
+        == "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74"
+    )
     evidence = rich["evidence_method"]["title_component_associations"]
     assert title["association_requalification"] == evidence
     for name, digest in evidence["review_projection_followup"][
@@ -1413,12 +1416,22 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
 def test_inventaire_successor_binds_current_sources_and_preserves_authority() -> None:
     current = json.loads(LATEST_MANIFEST.read_text())
     prior = json.loads(ASSOCIATION_MANIFEST.read_text())
-    assert current["authority_rotation"]["prior_manifest_sha256"] == hashlib.sha256(ASSOCIATION_MANIFEST.read_bytes()).hexdigest()
-    assert current["proposal_policy_version"] == prior["proposal_policy_version"] == "fixed-conservative-v23"
+    assert (
+        current["authority_rotation"]["prior_manifest_sha256"]
+        == hashlib.sha256(ASSOCIATION_MANIFEST.read_bytes()).hexdigest()
+    )
+    assert (
+        current["proposal_policy_version"]
+        == prior["proposal_policy_version"]
+        == "fixed-conservative-v23"
+    )
     assert current["options"] == prior["options"]
     assert current["passing_automatic_options"] == prior["passing_automatic_options"]
     for name, digest in current["frozen_contract"]["behavior_sources"].items():
-        assert hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest() == digest
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+            == digest
+        )
     proof = current["evidence_method"]
     assert proof["non_series_complete_previews"] == 980
     assert proof["series_complete_previews"] == 108
