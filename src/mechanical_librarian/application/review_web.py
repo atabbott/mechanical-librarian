@@ -130,7 +130,9 @@ class ReviewLibrarySnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
-    rows: tuple[tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...]
+    rows: tuple[
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+    ]
     total: int
 
 
