@@ -11035,6 +11035,86 @@ def test_empty_library_addition_drain_preserves_database_bytes(
     assert application_path.read_bytes() == before
 
 
+def test_rediscovered_libraries_retain_combined_preparation_high_water(
+    application_path: Path,
+) -> None:
+    repository = open_repository(application_path)
+    entries = {}
+    reports = {}
+    for ordinal, library in enumerate(("fiction", "history")):
+        source = _audio_report(f"item-{ordinal}", str(ordinal + 1) * 64)
+        report = MetadataReport.create(
+            target=replace(source.target, library=library),
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+            audio=source.audio,
+        )
+        entries[library] = replace(
+            _audio_entry(f"item-{ordinal}", report.file.identity),
+            library=library,
+            library_id=f"lib-{ordinal + 1}",
+        )
+        reports[library] = report
+        repository.request_review_scan(
+            "primary", library, f"lib-{ordinal + 1}", _PRODUCER, 10 + ordinal
+        )
+    for at in range(20, 24):
+        action = repository.claim_review_pipeline_action(at)
+        assert action is not None
+        if action.stage == "discovery":
+            repository.complete_review_discovery(
+                action, 1, "a" * 64, (entries[action.library],), at
+            )
+        else:
+            repository.publish(
+                reports[action.library],
+                lambda: True,
+                None,
+                lambda value, published, action=action, at=at: (
+                    value.complete_review_extraction_publication(
+                        action, published.report_id, at, 0, "evidence_only"
+                    )
+                ),
+            )
+    assert repository.claim_review_pipeline_action(24) is None
+    for ordinal, library in enumerate(("fiction", "history")):
+        repository.request_review_scan(
+            "primary",
+            library,
+            f"lib-{ordinal + 1}",
+            _PRODUCER,
+            50 + ordinal,
+            trigger=PreparationTrigger.MANUAL_SCAN,
+        )
+    first = repository.claim_review_pipeline_action(60)
+    assert first is not None
+    repository.complete_review_discovery(
+        first, 2, "b" * 64, (entries[first.library],), 61
+    )
+    second = repository.claim_review_pipeline_action(62)
+    assert second is not None
+    # The first enrollment settles while the other discovery is still running.
+    assert repository.claim_review_pipeline_action(63) is None
+    repository.complete_review_discovery(
+        second, 2, "b" * 64, (entries[second.library],), 64
+    )
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert reopened._connection.execute(
+        "SELECT total,read,searches_finished,compared,checked,ready,failed,completion_count "
+        "FROM review_preparation_presentation WHERE row_id='run'"
+    ).fetchone() == (2, 2, 2, 2, 2, 2, 0, 2)
+    assert reopened._connection.execute(
+        "SELECT completion_sequence FROM review_preparation_presentation "
+        "WHERE row_kind='work' ORDER BY completion_sequence"
+    ).fetchall() == [(1,), (2,)]
+    assert reopened.claim_review_pipeline_action(65) is None
+    reopened.close()
+
+
 def test_unchanged_completed_discovery_is_valid_before_next_claim(
     application_path: Path,
 ) -> None:

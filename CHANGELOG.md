@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Preparation totals retain completed libraries while another library finishes,
+  keeping multi-library workspaces valid across restart (#844).
+
 - Rediscovering unchanged completed work keeps preparation valid for Activity
   and restart without repeating inspection (#844).
 
