@@ -22,9 +22,7 @@ from typing import Any, Callable
 import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
-    ProviderAttemptRecord,
     ProviderFailure,
-    ProviderIncompleteCauseRecord,
     ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_retry_after,
@@ -34,14 +32,20 @@ from mechanical_librarian.adapters.providers.sdk import (
     ProviderClocks,
     ProviderResponseFacts,
     provider_bounds,
+    provider_client_lifetime,
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
+    ProviderFailureSnapshot,
     ProviderLaneResult,
+    ProviderResult,
     provider_observation,
     qualify_provider_observation,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -133,18 +137,6 @@ class AudioSiloMetadataProvider:
         self._called = False
         self._schema_rejections = 0
 
-    @property
-    def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
-        return self._session.attempt_records
-
-    @property
-    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
-        return self._session.incomplete_causes
-
-    @property
-    def accessed_at(self) -> str | None:
-        return self._session.accessed_at
-
     # The two budgets below are the session's own state.  They stay readable
     # and settable under their adapter-local names so a caller can position an
     # observation at a bound without reaching past the adapter.
@@ -165,6 +157,36 @@ class AudioSiloMetadataProvider:
         self._session.remaining_response_bytes = value
 
     def observe(
+        self,
+        plan: MetadataDiscoveryPlan,
+        *,
+        deadline: float | None = None,
+    ) -> ProviderResult:
+        failure: BaseException | None = None
+        try:
+            observation = self._observe(plan, deadline=deadline)
+        except BaseException as error:
+            failure = error
+        try:
+            snapshot = ProviderFailureSnapshot(
+                (),
+                ProviderOperationalEvidence(
+                    self._session.accessed_at,
+                    self._session.attempt_records,
+                    self._session.incomplete_causes,
+                ),
+            )
+        except BaseException:
+            if failure is not None:
+                raise failure from None
+            raise
+        if failure is not None:
+            snapshot.raise_from(failure)
+        return ProviderResult(
+            observation, snapshot.cover_descriptors, snapshot.evidence
+        )
+
+    def _observe(
         self,
         plan: MetadataDiscoveryPlan,
         *,
@@ -206,7 +228,7 @@ class AudioSiloMetadataProvider:
             ledger.register_detail(_lane_asin(lane))
         self._session.ledger = ledger
         results: list[ProviderLaneResult] = []
-        try:
+        with provider_client_lifetime(self._client):
             for lane in lanes:
                 lookup = _lane_lookup(lane, plan.local_claims)
                 physical = self._resolve(ledger, lane, lookup, deadline=deadline)
@@ -219,8 +241,6 @@ class AudioSiloMetadataProvider:
                         observation.accessed_at,
                     )
                 )
-        finally:
-            self._client.close()
         return provider_observation(
             self._name,
             tuple(results),

@@ -19,6 +19,8 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
+    ProviderObservationFailure,
+    ProviderResult,
     TargetSnapshot,
     metadata_discovery_plan,
 )
@@ -91,9 +93,13 @@ def test_identifier_candidate_without_creator_preserves_hardcover_discovery() ->
             ),
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(_identifier_first_plan())
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
     assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
@@ -113,9 +119,13 @@ def test_identifier_no_match_falls_back_to_hardcover_discovery() -> None:
             json=hardcover_envelope([], []),
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(_identifier_first_plan())
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
     assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
@@ -138,9 +148,13 @@ def test_malformed_identifier_falls_back_to_hardcover_discovery() -> None:
             200, headers={"content-type": "application/json"}, json=value
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(_identifier_first_plan())
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert ["MetadataEvidenceByIsbn", "MetadataEvidenceByWork"] == operations
     assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
@@ -182,7 +196,8 @@ def test_one_request_retains_all_candidates_in_identity_order() -> None:
         65_536,
         wall_clock=lambda: 1_700_000_000.125,
     )
-    observation = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
+    provider_result = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
+    observation = (provider_result).observation
     assert observation.status == ProviderStatus.CANDIDATES
     assert "2023-11-14T22:13:20.125000Z" == observation.accessed_at
     assert [item.identity for item in observation.candidates] == [
@@ -194,14 +209,14 @@ def test_one_request_retains_all_candidates_in_identity_order() -> None:
     assert claims[ClaimKind.TITLE].links[0].outcome == Comparison.DISAGREEMENT
     assert observation.input_references == (isbn_claim().reference,)
     assert len(requests) == 1
-    assert 4 == len(provider.cover_descriptors)
-    assert all(descriptor.url is None for descriptor in provider.cover_descriptors)
+    assert 4 == len(provider_result.cover_descriptors)
+    assert all(
+        descriptor.url is None for descriptor in provider_result.cover_descriptors
+    )
     assert str(requests[0].url) == HARDCOVER_URL
     assert "limit:6" in json.loads(requests[0].content)["query"]
-    assert (
-        provider.observe(isbn_lookup((isbn_claim(), title_claim()))).status
-        == ProviderStatus.UNAVAILABLE
-    )
+    provider_result = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
+    assert (provider_result).observation.status == ProviderStatus.UNAVAILABLE
     assert len(requests) == 1
 
 
@@ -222,12 +237,13 @@ def test_malformed_optional_cover_descriptor_does_not_discard_metadata() -> None
         ),
         65_536,
     )
-    observation = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
+    provider_result = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
+    observation = (provider_result).observation
     assert ProviderStatus.CANDIDATES == observation.status
-    assert 2 == len(provider.cover_descriptors)
+    assert 2 == len(provider_result.cover_descriptors)
     edition = next(
         value
-        for value in provider.cover_descriptors
+        for value in provider_result.cover_descriptors
         if value.provenance is not None
         and value.provenance.designation.value == "exact_edition"
     )
@@ -259,19 +275,23 @@ def test_agreement_references_only_matching_title_and_isbn_claims() -> None:
         [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}],
         [{"id": 1, "title": "Current title"}],
     )
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(), other_isbn, title_claim(), other_title)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(), other_isbn, title_claim(), other_title)))
+        .observation
+    )
     claims = {claim.kind: claim for claim in observation.candidates[0].claims}
     assert {
         link.local_reference: link.outcome for link in claims[ClaimKind.TITLE].links
@@ -318,9 +338,13 @@ def test_multiple_inputs_are_selected_deterministically_and_statuses_do_not_retr
             json=hardcover_envelope([], []),
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue", httpx.Client(transport=httpx.MockTransport(success)), 65_536
-    ).observe(isbn_lookup((print_only, second, isbn_claim())))
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue", httpx.Client(transport=httpx.MockTransport(success)), 65_536
+        )
+        .observe(isbn_lookup((print_only, second, isbn_claim())))
+        .observation
+    )
     assert observation.status == ProviderStatus.NO_MATCH
     assert observed_bodies[0]["variables"] == {"isbns": ["0306406152", "9780306406157"]}
     assert observation.input_references == tuple(
@@ -373,11 +397,15 @@ def test_hardcover_executes_every_family_and_work_lane_in_one_aggregate() -> Non
             json=hardcover_envelope([], []),
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(plan)
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(plan)
+        .observation
+    )
     assert [
         "MetadataEvidenceByIsbn",
         "MetadataEvidenceByIsbn",
@@ -424,11 +452,13 @@ def test_hardcover_discovery_lane_keeps_query_and_response_rejections_distinct(
         65_536,
     )
 
-    observation = provider.observe(plan)
+    provider_result = provider.observe(plan)
+    observation = (provider_result).observation
 
     assert (status,) == tuple(lane.status for lane in observation.lanes)
+    assert provider_result.evidence.attempt_records is not None
     assert (attempt_category,) == tuple(
-        record.category for record in provider.attempt_records
+        record.category for record in provider_result.evidence.attempt_records
     )
     assert (diagnostic_category,) == tuple(
         diagnostic.category.value for diagnostic in observation.lanes[0].diagnostics
@@ -468,7 +498,7 @@ def test_hardcover_binds_rejection_diagnostics_to_each_discovery_lane() -> None:
         65_536,
     )
 
-    observation = provider.observe(plan)
+    observation = (provider.observe(plan)).observation
 
     assert {
         (lane.status.value, tuple(value.category.value for value in lane.diagnostics))
@@ -513,11 +543,15 @@ def test_hardcover_oversized_lane_stops_remaining_requests_at_exact_bound(
             content=payload + (b" " if oversized else b""),
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        len(payload),
-    ).observe(plan)
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            len(payload),
+        )
+        .observe(plan)
+        .observation
+    )
     assert (1 if oversized else 2) == len(requests)
     assert (
         {ProviderStatus.OVERSIZED, ProviderStatus.INCOMPLETE}
@@ -558,19 +592,23 @@ def test_hardcover_dispatch_count_skip_keeps_its_lookup_diagnostic(
         TargetSnapshot("ebook", None, ()), (isbn_claim(), second)
     )
     monkeypatch.setattr(hardcover_metadata, "_MAX_ATTEMPTS_PER_OBSERVATION", 1)
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=hardcover_envelope([], []),
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=hardcover_envelope([], []),
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(plan)
+            ),
+            65_536,
+        )
+        .observe(plan)
+        .observation
+    )
 
     assert [ProviderStatus.NO_MATCH, ProviderStatus.INCOMPLETE] == [
         lane.status for lane in observation.lanes
@@ -611,15 +649,19 @@ def test_hardcover_deadline_skip_keeps_its_request_diagnostic() -> None:
             json=hardcover_envelope([], []),
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=hardcover_metadata.HardcoverPacer(
-            clock=lambda: pacer_now[0], sleep=lambda _: None
-        ),
-        clock=lambda: 0.0,
-    ).observe(plan, deadline=1.0)
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=hardcover_metadata.HardcoverPacer(
+                clock=lambda: pacer_now[0], sleep=lambda _: None
+            ),
+            clock=lambda: 0.0,
+        )
+        .observe(plan, deadline=1.0)
+        .observation
+    )
 
     assert [ProviderStatus.NO_MATCH, ProviderStatus.INCOMPLETE] == [
         lane.status for lane in observation.lanes
@@ -712,14 +754,17 @@ def test_hardcover_conflicting_cover_lane_retains_candidates_without_descriptors
         65_536,
     )
 
-    observation = provider.observe(plan)
+    provider_result = provider.observe(plan)
+    observation = (provider_result).observation
 
     assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
-    assert [record.category for record in provider.attempt_records] == [
+    assert provider_result.evidence.attempt_records is not None
+    assert [record.category for record in provider_result.evidence.attempt_records] == [
         "none",
         "none",
     ]
-    assert [record.outcome for record in provider.attempt_records] == [
+    assert provider_result.evidence.attempt_records is not None
+    assert [record.outcome for record in provider_result.evidence.attempt_records] == [
         "response_received",
         "response_received",
     ]
@@ -728,7 +773,7 @@ def test_hardcover_conflicting_cover_lane_retains_candidates_without_descriptors
     assert {
         cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:edition:1"),
         cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:work:10:default"),
-    } == {descriptor.source_id for descriptor in provider.cover_descriptors}
+    } == {descriptor.source_id for descriptor in provider_result.cover_descriptors}
 
 
 def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> None:
@@ -805,7 +850,8 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
         ),
         65_536,
     )
-    observation = provider.observe(plan)
+    provider_result = provider.observe(plan)
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert 1 == len(observation.candidates)
@@ -870,11 +916,11 @@ def test_hardcover_converges_differing_isbn_applicability_and_shared_cover() -> 
         for claim in observation.candidates[0].claims
         if claim.kind in {ClaimKind.ASIN, ClaimKind.SUBTITLE}
     }
-    assert 2 == len(provider.cover_descriptors)
-    assert 2 == len({value.source_id for value in provider.cover_descriptors})
+    assert 2 == len(provider_result.cover_descriptors)
+    assert 2 == len({value.source_id for value in provider_result.cover_descriptors})
     edition_cover = next(
         value
-        for value in provider.cover_descriptors
+        for value in provider_result.cover_descriptors
         if value.provenance is not None
         and value.provenance.edition_identity is not None
     )
@@ -910,11 +956,12 @@ def test_hardcover_transport_status_is_terminal_and_not_retried(
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert provider.observe(isbn_lookup((isbn_claim(),))).status == expected
     assert (
-        provider.observe(isbn_lookup((isbn_claim(),))).status
-        == ProviderStatus.UNAVAILABLE
-    )
+        provider.observe(isbn_lookup((isbn_claim(),)))
+    ).observation.status == expected
+    assert (
+        provider.observe(isbn_lookup((isbn_claim(),)))
+    ).observation.status == ProviderStatus.UNAVAILABLE
     assert calls == ([1, 1, 1] if status_code == 503 else [1])
 
 
@@ -950,8 +997,10 @@ def test_zero_one_and_multiple_candidates_are_neutral(
             )
         )
     )
-    observation = HardcoverMetadataProvider("catalogue", client, 65_536).observe(
-        isbn_lookup((isbn_claim(),))
+    observation = (
+        HardcoverMetadataProvider("catalogue", client, 65_536)
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
     )
     assert observation.status == expected
     assert len(observation.candidates) == len(rows)
@@ -1078,8 +1127,10 @@ def test_sparse_candidate_is_valid_but_result_cap_overflow_is_malformed() -> Non
             )
         )
     )
-    observation = HardcoverMetadataProvider("catalogue", sparse, 65_536).observe(
-        isbn_lookup((isbn_claim(),))
+    observation = (
+        HardcoverMetadataProvider("catalogue", sparse, 65_536)
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
     )
     assert observation.status == ProviderStatus.CANDIDATES
     assert observation.candidates[0].claims
@@ -1099,8 +1150,10 @@ def test_sparse_candidate_is_valid_but_result_cap_overflow_is_malformed() -> Non
             )
         )
     )
-    observation = HardcoverMetadataProvider("catalogue", overflow, 65_536).observe(
-        isbn_lookup((isbn_claim(),))
+    observation = (
+        HardcoverMetadataProvider("catalogue", overflow, 65_536)
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
     )
     assert observation.status == ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
     assert observation.candidates == ()
@@ -1116,7 +1169,7 @@ def test_same_candidate_from_two_provider_connections_has_globally_unique_refs()
 
     def observation(
         name: str,
-    ) -> tuple[HardcoverMetadataProvider, ProviderObservation]:
+    ) -> tuple[ProviderResult, ProviderObservation]:
         client = httpx.Client(
             transport=httpx.MockTransport(
                 lambda request: httpx.Response(
@@ -1128,10 +1181,10 @@ def test_same_candidate_from_two_provider_connections_has_globally_unique_refs()
         )
         provider = HardcoverMetadataProvider(name, client, 65_536)
         result = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
-        return provider, result
+        return result, result.observation
 
-    first_provider, first = observation("catalogue")
-    second_provider, second = observation("secondary")
+    first_result, first = observation("catalogue")
+    second_result, second = observation("secondary")
     first_references = {
         claim.reference for candidate in first.candidates for claim in candidate.claims
     }
@@ -1140,8 +1193,8 @@ def test_same_candidate_from_two_provider_connections_has_globally_unique_refs()
     }
     assert first_references
     assert first_references.isdisjoint(second_references)
-    assert {value.source_id for value in first_provider.cover_descriptors}.isdisjoint(
-        {value.source_id for value in second_provider.cover_descriptors}
+    assert {value.source_id for value in first_result.cover_descriptors}.isdisjoint(
+        {value.source_id for value in second_result.cover_descriptors}
     )
     report = MetadataReport.create(
         target=TargetFacts(
@@ -1187,8 +1240,86 @@ def test_credential_and_private_path_provider_titles_are_malformed_without_leaka
             )
         )
     )
-    observation = HardcoverMetadataProvider("catalogue", client, 65_536).observe(
-        isbn_lookup((isbn_claim(),))
+    observation = (
+        HardcoverMetadataProvider("catalogue", client, 65_536)
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
     )
     assert observation.status == ProviderStatus.MALFORMED
     assert hostile not in repr(observation)
+
+
+@pytest.mark.parametrize("after_descriptor", (False, True))
+def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
+    monkeypatch, after_descriptor
+):
+    second = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780140328721",
+        canonical="9780140328721",
+        excerpt="eBook ISBN 9780140328721",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Current title", ()), (isbn_claim(), second)
+    )
+    cause = RuntimeError("second lane")
+    seen = []
+    calls = 0
+
+    def dispatch(request):
+        nonlocal calls
+        calls += 1
+        if calls == 2 and not after_descriptor:
+            raise cause
+        family = next(
+            value
+            for value in json.loads(request.content)["variables"]["isbns"]
+            if len(value) == 13
+        )
+        return httpx.Response(
+            200,
+            json=hardcover_envelope(
+                [
+                    {
+                        "id": calls,
+                        "book_id": calls,
+                        "isbn_13": family,
+                        "image": {"url": f"https://example.invalid/{calls}.jpg"},
+                    }
+                ],
+                [{"id": calls, "title": "Current title"}],
+            ),
+        )
+
+    provider = HardcoverMetadataProvider(
+        "catalogue",
+        httpx.Client(transport=httpx.MockTransport(dispatch)),
+        65536,
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1700000000.0,
+    )
+    qualify = hardcover_metadata.qualify_provider_observation
+
+    def qualification(observation, lookup):
+        # This adapter-local field is the pre-1005 dispatch-boundary projection.
+        seen.append(provider._cover_descriptors)
+        if len(seen) == 2:
+            raise cause
+        return qualify(observation, lookup)
+
+    monkeypatch.setattr(
+        hardcover_metadata, "qualify_provider_observation", qualification
+    )
+    with pytest.raises(ProviderObservationFailure) as caught:
+        provider.observe(plan)
+    assert calls == 2
+    assert seen[0]
+    expected = seen[1] if after_descriptor else ()
+    assert caught.value.snapshot.cover_descriptors == expected
+    if after_descriptor:
+        assert expected and expected != seen[0]
+    assert caught.value.__cause__ is cause
+    assert caught.value.snapshot.evidence.accessed_at == "2023-11-14T22:13:20.000000Z"

@@ -12,7 +12,6 @@ import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.providers import hardcover_metadata
-from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
 from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     ReportLimits,
@@ -22,7 +21,12 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     ProviderBinding,
+    ProviderFailureSnapshot,
     ProviderLaneResult,
+    ProviderObservationCancelled,
+    ProviderObservationFailure,
+    ProviderObservationInterrupted,
+    ProviderResult,
     ReportRepository,
     TargetFile,
     TargetSnapshot,
@@ -30,6 +34,10 @@ from mechanical_librarian.application.metadata_report import (
     audiobook_discovery_plan,
     metadata_discovery_plan,
     provider_observation,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderAttemptRecord,
+    ProviderOperationalEvidence,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
     provider_recovery_jobs,
@@ -163,7 +171,10 @@ class _Provider:
     def observe(self, plan, *, deadline=None):
         self.plans.append(plan)
         self.deadlines.append(deadline)
-        return self.observation
+        return ProviderResult(
+            self.observation,
+            evidence=ProviderOperationalEvidence(attempt_records=self.attempt_records),
+        )
 
 
 @dataclass
@@ -445,12 +456,18 @@ def test_mixed_identifier_recovery_keeps_work_for_retry_successor(
     }
 
 
+@pytest.mark.parametrize("declared", (False, True))
 def test_observe_wrapped_credential_error_remains_authentication_for_recovery(
     retry: _Retry,
+    declared: bool,
 ) -> None:
     class CredentialProvider:
         def observe(self, _plan, *, deadline=None):
             del deadline
+            if declared:
+                raise ProviderObservationFailure(
+                    ProviderFailureSnapshot()
+                ) from CredentialError("credential")
             raise CredentialError("credential")
 
     configured = ConfiguredProviderRetry(
@@ -461,7 +478,11 @@ def test_observe_wrapped_credential_error_remains_authentication_for_recovery(
     service = retry.service(configured)
     with pytest.raises(ProviderRetrySuccessorError) as raised:
         service._observe(configured, retry.plan, (retry.failed,), deadline=1.0)
-    assert isinstance(raised.value.__cause__, CredentialError)
+    cause = raised.value.__cause__
+    if declared:
+        assert isinstance(cause, ProviderObservationFailure)
+        cause = cause.__cause__
+    assert isinstance(cause, CredentialError)
     assert ("authentication", None) == _classify_provider_recovery_failure(raised.value)
 
 
@@ -1945,3 +1966,65 @@ def test_an_unrebuildable_asin_feed_fails_closed_before_any_dispatch() -> None:
         )
 
     assert [] == provider.plans
+
+
+@pytest.mark.parametrize(
+    "carrier",
+    (
+        ProviderObservationFailure,
+        ProviderObservationCancelled,
+        ProviderObservationInterrupted,
+    ),
+)
+def test_declared_partial_failure_publishes_no_retry_successor(retry, carrier):
+    partial = ProviderFailureSnapshot(
+        evidence=ProviderOperationalEvidence(
+            "2023-11-14T22:13:20.000000Z",
+            (
+                ProviderAttemptRecord(
+                    "catalogue", 1, "http_429", 37.0, 0.1, "exhausted"
+                ),
+            ),
+            (),
+        )
+    )
+    cause = RuntimeError("original provider cause")
+    failure = carrier(partial)
+
+    class Provider:
+        def observe(self, _plan, *, deadline=None):
+            raise failure from cause
+
+    service = retry.service(
+        ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, Provider, "open_library"),
+            "open_library",
+            2,
+        )
+    )
+    values = dict(retry.repository.values)
+    package = retry.repository.package
+    expected = (
+        ProviderRetrySuccessorError
+        if carrier is ProviderObservationFailure
+        else carrier
+    )
+    with pytest.raises(expected) as caught:
+        service.run(
+            retry.report.report_id,
+            (retry.failed.identity,),
+            provider_name="catalogue",
+            adapter="open_library",
+            generation=2,
+        )
+    dispatch_failure = (
+        caught.value.__cause__
+        if carrier is ProviderObservationFailure
+        else caught.value
+    )
+    assert dispatch_failure is failure
+    assert dispatch_failure.__cause__ is cause
+    assert dispatch_failure.snapshot is partial
+    assert retry.repository.values == values
+    assert retry.repository.package == package
+    assert retry.repository.current_id == retry.report.report_id

@@ -153,7 +153,8 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         return httpx.Response(200, json={"entities": entities, "redirects": redirects})
 
     provider = _provider(httpx.MockTransport(respond))
-    observation = provider.observe(_lookup())
+    provider_result = provider.observe(_lookup())
+    observation = (provider_result).observation
 
     assert observation.status is ProviderStatus.CANDIDATES
     candidate = observation.candidates[0]
@@ -169,7 +170,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
     assert observation.request_accounting.logical_requests == 3
     assert observation.request_accounting.initial_dispatches == 3
     assert observation.request_accounting.retry_dispatches == 0
-    descriptor = provider.cover_descriptors[0]
+    descriptor = provider_result.cover_descriptors[0]
     assert descriptor.kind is CoverSourceKind.INVENTAIRE
     assert descriptor.provenance is not None
     assert descriptor.provenance.designation is CoverDesignation.EXACT_EDITION
@@ -280,7 +281,8 @@ def test_work_search_hydrates_discovery_identity_before_mapping(
             ),
         ),
     )
-    observation = provider.observe(plan if missing_isbn else lookup)
+    provider_result = provider.observe(plan if missing_isbn else lookup)
+    observation = (provider_result).observation
     if missing_isbn:
         assert {lane.kind: lane.status for lane in observation.lanes} == {
             ProviderQueryKind.ISBN: ProviderStatus.NO_MATCH,
@@ -299,7 +301,7 @@ def test_work_search_hydrates_discovery_identity_before_mapping(
     assert observation.candidates[0].claims[0].kind is ClaimKind.TITLE
     assert len(requests) == 3 + int(missing_isbn)
     # A work entity image remains work-scoped; no edition identity is invented.
-    descriptor = provider.cover_descriptors[0]
+    descriptor = provider_result.cover_descriptors[0]
     assert descriptor.provenance is not None
     assert descriptor.provenance.designation is CoverDesignation.WORK
     assert descriptor.provenance.edition_identity is None
@@ -359,13 +361,17 @@ def test_latin_fold_reaches_inventaire_only_on_final_bounded_search() -> None:
             },
         )
 
-    observation = _provider(httpx.MockTransport(respond)).observe(
-        MetadataLookup(
-            ProviderQueryKind.WORK,
-            (),
-            title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
-            authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+    observation = (
+        _provider(httpx.MockTransport(respond))
+        .observe(
+            MetadataLookup(
+                ProviderQueryKind.WORK,
+                (),
+                title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+                authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+            )
         )
+        .observation
     )
 
     searches = [request for request in requests if request.url.path == "/api/search"]
@@ -393,13 +399,17 @@ def test_malformed_optional_search_rows_are_diagnosed_and_ignored() -> None:
             json={"results": [{"type": "editions", "uri": "wd:Q1"}]},
         )
 
-    observation = _provider(httpx.MockTransport(respond)).observe(
-        MetadataLookup(
-            ProviderQueryKind.WORK,
-            (_isbn(),),
-            title="Example Book",
-            authors=("Ada Example",),
+    observation = (
+        _provider(httpx.MockTransport(respond))
+        .observe(
+            MetadataLookup(
+                ProviderQueryKind.WORK,
+                (_isbn(),),
+                title="Example Book",
+                authors=("Ada Example",),
+            )
         )
+        .observation
     )
 
     assert observation.status is ProviderStatus.NO_MATCH
@@ -434,7 +444,7 @@ def test_malformed_isbn_redirects_are_rejected(redirects: dict[str, str]) -> Non
             },
         )
 
-    observation = _provider(httpx.MockTransport(respond)).observe(_lookup())
+    observation = _provider(httpx.MockTransport(respond)).observe(_lookup()).observation
 
     assert observation.status is ProviderStatus.MALFORMED
 
@@ -475,7 +485,7 @@ def test_hostile_cover_path_rejects_the_candidate_projection() -> None:
             },
         )
 
-    observation = _provider(httpx.MockTransport(respond)).observe(_lookup())
+    observation = _provider(httpx.MockTransport(respond)).observe(_lookup()).observation
 
     assert observation.status is ProviderStatus.MALFORMED
 
@@ -554,7 +564,7 @@ def test_optional_label_failures_preserve_other_candidate_evidence(
         assert request.url.params.get_list("attributes") == ["labels"]
         return httpx.Response(200, json={"entities": label_entities, "redirects": {}})
 
-    observation = _provider(httpx.MockTransport(respond)).observe(_lookup())
+    observation = _provider(httpx.MockTransport(respond)).observe(_lookup()).observation
 
     assert observation.status is ProviderStatus.CANDIDATES
     claims = observation.candidates[0].claims
@@ -633,7 +643,8 @@ def test_optional_label_transport_failures_preserve_edition_evidence(
         raise httpx.ReadTimeout("synthetic timeout", request=request)
 
     provider = _provider(httpx.MockTransport(respond))
-    observation = provider.observe(_lookup())
+    provider_result = provider.observe(_lookup())
+    observation = (provider_result).observation
 
     assert observation.status is ProviderStatus.CANDIDATES
     claims = observation.candidates[0].claims
@@ -648,19 +659,23 @@ def test_optional_label_transport_failures_preserve_edition_evidence(
     assert not any(
         claim.kind in {ClaimKind.PUBLISHER, ClaimKind.LANGUAGE} for claim in claims
     )
-    assert provider.cover_descriptors[0].provenance is not None
+    assert provider_result.cover_descriptors[0].provenance is not None
     assert (
-        provider.cover_descriptors[0].provenance.designation
+        provider_result.cover_descriptors[0].provenance.designation
         is CoverDesignation.EXACT_EDITION
     )
     assert len(requests) == 2 + label_attempts
     assert observation.request_accounting.logical_requests == 3
     assert observation.request_accounting.initial_dispatches == 3
     assert observation.request_accounting.retry_dispatches == label_attempts - 1
-    assert len(provider.attempt_records) == 2 + label_attempts
-    assert provider.attempt_records[-1].category == category
-    assert provider.attempt_records[-1].outcome == outcome
-    assert provider.incomplete_causes == ()
+    assert provider_result.evidence.attempt_records is not None
+    assert len(provider_result.evidence.attempt_records) == 2 + label_attempts
+    assert provider_result.evidence.attempt_records is not None
+    assert provider_result.evidence.attempt_records[-1].category == category
+    assert provider_result.evidence.attempt_records is not None
+    assert provider_result.evidence.attempt_records[-1].outcome == outcome
+    assert provider_result.evidence.incomplete_causes is not None
+    assert provider_result.evidence.incomplete_causes == ()
     assert observation.diagnostics == ()
 
 
@@ -737,10 +752,11 @@ def test_optional_label_predispatch_refusal_preserves_edition_evidence(
         return optional_label_entities(uris, deadline=deadline, detail=detail)
 
     monkeypatch.setattr(provider, "_optional_label_entities", refuse_optional_labels)
-    observation = provider.observe(
+    provider_result = provider.observe(
         _lookup(),
         deadline=11.0 if guard == "deadline" else None,
     )
+    observation = (provider_result).observation
 
     assert observation.status is ProviderStatus.CANDIDATES
     claims = observation.candidates[0].claims
@@ -755,19 +771,23 @@ def test_optional_label_predispatch_refusal_preserves_edition_evidence(
     assert not any(
         claim.kind in {ClaimKind.PUBLISHER, ClaimKind.LANGUAGE} for claim in claims
     )
-    assert provider.cover_descriptors[0].provenance is not None
+    assert provider_result.cover_descriptors[0].provenance is not None
     assert (
-        provider.cover_descriptors[0].provenance.designation
+        provider_result.cover_descriptors[0].provenance.designation
         is CoverDesignation.EXACT_EDITION
     )
-    assert [record.cause.value for record in provider.incomplete_causes] == [cause]
+    assert provider_result.evidence.incomplete_causes is not None
+    assert [
+        record.cause.value for record in provider_result.evidence.incomplete_causes
+    ] == [cause]
     accounting = observation.request_accounting
     assert accounting.logical_requests == 3
     assert accounting.initial_dispatches == 2
     assert accounting.retry_dispatches == 0
     assert accounting.replays == 0
     assert accounting.undispatched_incomplete == 1
-    assert len(provider.attempt_records) == 2
+    assert provider_result.evidence.attempt_records is not None
+    assert len(provider_result.evidence.attempt_records) == 2
     assert len(requests) == 2
     assert observation.diagnostics == ()
 
@@ -813,7 +833,8 @@ def test_optional_label_absence_preserves_work_search_evidence() -> None:
         authors=("Ada Example",),
     )
     provider = _provider(httpx.MockTransport(respond))
-    observation = provider.observe(lookup)
+    provider_result = provider.observe(lookup)
+    observation = (provider_result).observation
 
     assert observation.status is ProviderStatus.CANDIDATES
     candidate = observation.candidates[0]
@@ -831,15 +852,21 @@ def test_optional_label_absence_preserves_work_search_evidence() -> None:
         qualify_provider_observation(observation, lookup).status
         is ProviderStatus.NO_MATCH
     )
-    assert provider.cover_descriptors[0].provenance is not None
-    assert provider.cover_descriptors[0].provenance.designation is CoverDesignation.WORK
+    assert provider_result.cover_descriptors[0].provenance is not None
+    assert (
+        provider_result.cover_descriptors[0].provenance.designation
+        is CoverDesignation.WORK
+    )
     assert len(requests) == 3
     assert observation.request_accounting.logical_requests == 3
     assert observation.request_accounting.initial_dispatches == 3
     assert observation.request_accounting.retry_dispatches == 0
-    assert len(provider.attempt_records) == 3
-    assert provider.attempt_records[-1].category == "http_404"
-    assert provider.attempt_records[-1].outcome == "terminal"
+    assert provider_result.evidence.attempt_records is not None
+    assert len(provider_result.evidence.attempt_records) == 3
+    assert provider_result.evidence.attempt_records is not None
+    assert provider_result.evidence.attempt_records[-1].category == "http_404"
+    assert provider_result.evidence.attempt_records is not None
+    assert provider_result.evidence.attempt_records[-1].outcome == "terminal"
     assert observation.diagnostics == ()
 
 
@@ -905,7 +932,8 @@ def test_mixed_label_keys_omit_only_the_dependent_claim(
 
     monkeypatch.setattr(provider, "_request", request)
 
-    observation = provider.observe(_lookup())
+    provider_result = provider.observe(_lookup())
+    observation = (provider_result).observation
 
     assert observation.status is ProviderStatus.CANDIDATES
     claims = observation.candidates[0].claims
@@ -918,7 +946,7 @@ def test_mixed_label_keys_omit_only_the_dependent_claim(
         for claim in claims
     )
     assert not any(claim.kind is ClaimKind.PUBLISHER for claim in claims)
-    assert provider.cover_descriptors
+    assert provider_result.cover_descriptors
     assert observation.diagnostics[0].count == 2
 
 
@@ -935,7 +963,7 @@ def test_rate_limit_without_recovery_window_is_terminal() -> None:
         ).copy_add_param("attributes", "image").copy_add_param("lang", "en")
         return httpx.Response(429, json={"status": 429})
 
-    observation = _provider(httpx.MockTransport(respond)).observe(_lookup())
+    observation = _provider(httpx.MockTransport(respond)).observe(_lookup()).observation
 
     assert observation.status is ProviderStatus.RATE_LIMITED
     assert calls == 1
@@ -959,7 +987,7 @@ def test_redirect_and_absence_are_terminal_typed_states(
             json={"status": status_code},
         )
 
-    observation = _provider(httpx.MockTransport(respond)).observe(_lookup())
+    observation = _provider(httpx.MockTransport(respond)).observe(_lookup()).observation
 
     assert observation.status is expected
     assert len(requests) == 1
@@ -969,8 +997,10 @@ def test_oversized_response_is_rejected_before_mapping() -> None:
     def respond(_: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"padding": "x" * 512})
 
-    observation = _provider(httpx.MockTransport(respond), maximum_bytes=128).observe(
-        _lookup()
+    observation = (
+        _provider(httpx.MockTransport(respond), maximum_bytes=128)
+        .observe(_lookup())
+        .observation
     )
 
     assert observation.status is ProviderStatus.OVERSIZED
@@ -1001,7 +1031,7 @@ def test_transient_request_stops_after_three_attempts() -> None:
             return httpx.Response(503, json={"status": 503})
         return httpx.Response(404, json={"status": 404})
 
-    observation = _provider(httpx.MockTransport(respond)).observe(_lookup())
+    observation = _provider(httpx.MockTransport(respond)).observe(_lookup()).observation
 
     assert observation.status is ProviderStatus.NO_MATCH
     assert calls == 3
@@ -1054,7 +1084,7 @@ def test_identifier_candidate_without_work_identity_preserves_work_search() -> N
             ),
         ),
     )
-    observation = _provider(httpx.MockTransport(respond)).observe(plan)
+    observation = _provider(httpx.MockTransport(respond)).observe(plan).observation
 
     assert observation.status is ProviderStatus.CANDIDATES
     assert [request.url.path for request in requests] == [
@@ -1066,18 +1096,22 @@ def test_identifier_candidate_without_work_identity_preserves_work_search() -> N
 
 
 def test_exact_missing_isbn_is_no_match() -> None:
-    observation = _provider(
-        httpx.MockTransport(
-            lambda _: httpx.Response(
-                200,
-                json={
-                    "entities": {},
-                    "redirects": {},
-                    "notFound": ["isbn:9780306406157"],
-                },
+    observation = (
+        _provider(
+            httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    json={
+                        "entities": {},
+                        "redirects": {},
+                        "notFound": ["isbn:9780306406157"],
+                    },
+                )
             )
         )
-    ).observe(_lookup())
+        .observe(_lookup())
+        .observation
+    )
     assert observation.status is ProviderStatus.NO_MATCH
     assert observation.candidates == ()
     assert observation.input_references == (_isbn().reference,)
@@ -1098,14 +1132,18 @@ def test_exact_missing_isbn_is_no_match() -> None:
 def test_missing_isbn_envelope_requires_exact_negative_membership(
     missing: object,
 ) -> None:
-    observation = _provider(
-        httpx.MockTransport(
-            lambda _: httpx.Response(
-                200,
-                json={"entities": {}, "redirects": {}, "notFound": missing},
+    observation = (
+        _provider(
+            httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    json={"entities": {}, "redirects": {}, "notFound": missing},
+                )
             )
         )
-    ).observe(_lookup())
+        .observe(_lookup())
+        .observation
+    )
     assert observation.status is ProviderStatus.MALFORMED
     assert observation.candidates == ()
 
@@ -1120,18 +1158,22 @@ def test_missing_isbn_envelope_requires_exact_negative_membership(
 def test_negative_isbn_contradictions_fail_before_absence(
     entities: dict[str, object], redirects: dict[str, str]
 ) -> None:
-    observation = _provider(
-        httpx.MockTransport(
-            lambda _: httpx.Response(
-                200,
-                json={
-                    "entities": entities,
-                    "redirects": redirects,
-                    "notFound": ["isbn:9780306406157"],
-                },
+    observation = (
+        _provider(
+            httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    json={
+                        "entities": entities,
+                        "redirects": redirects,
+                        "notFound": ["isbn:9780306406157"],
+                    },
+                )
             )
         )
-    ).observe(_lookup())
+        .observe(_lookup())
+        .observation
+    )
     assert observation.status is ProviderStatus.MALFORMED
 
 
@@ -1205,7 +1247,8 @@ def test_three_search_rows_prune_only_explicit_wrong_work(
         ProviderQueryKind.WORK, (), title="Example Book", authors=("Ada Example",)
     )
     provider = _provider(httpx.MockTransport(respond))
-    observation = provider.observe(lookup)
+    provider_result = provider.observe(lookup)
+    observation = (provider_result).observation
     assert observation.status is expected
     assert len(observation.candidates) == count
     searches = [request for request in requests if request.url.path == "/api/search"]
@@ -1217,7 +1260,7 @@ def test_three_search_rows_prune_only_explicit_wrong_work(
     if matching == 1 and not unresolved:
         assert {
             descriptor.provenance.work_identity
-            for descriptor in provider.cover_descriptors
+            for descriptor in provider_result.cover_descriptors
             if descriptor.provenance is not None
         } == {"inventaire-work-wd-Q0"}
         assert qualified.dispatch_lineage == observation.dispatch_lineage
@@ -1266,7 +1309,7 @@ def test_incomplete_or_different_p50_authors_cannot_become_single_author(
     lookup = MetadataLookup(
         ProviderQueryKind.WORK, (), title="Example Book", authors=("Ada Example",)
     )
-    observation = _provider(httpx.MockTransport(respond)).observe(lookup)
+    observation = _provider(httpx.MockTransport(respond)).observe(lookup).observation
     assert (
         qualify_provider_observation(observation, lookup).status
         is ProviderStatus.NO_MATCH

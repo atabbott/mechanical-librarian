@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
-from typing import Protocol, cast
+from typing import Never, Protocol, cast
 
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
@@ -19,8 +20,12 @@ from mechanical_librarian.application.failure_diagnostics import (
     FailureDiagnostic,
     merge_provider_diagnostics,
     provider_attempt_diagnostics,
+    provider_result_diagnostics,
 )
 from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.provider_evidence import (
+    ProviderOperationalEvidence,
+)
 from mechanical_librarian.domain.audio_inspection import (
     AudioSidecarDigest,
     AudioTrackDigest,
@@ -1014,6 +1019,47 @@ class ProviderCoverDescriptor:
     terminal_state: CoverSourceState | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ProviderResult:
+    observation: ProviderObservation
+    cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+    evidence: ProviderOperationalEvidence = ProviderOperationalEvidence()
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderFailureSnapshot:
+    cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+    evidence: ProviderOperationalEvidence = ProviderOperationalEvidence()
+
+    def raise_from(self, cause: BaseException) -> Never:
+        """Retain partial facts without changing cancellation catch semantics."""
+        if isinstance(cause, asyncio.CancelledError):
+            raise ProviderObservationCancelled(self) from cause
+        if isinstance(cause, KeyboardInterrupt):
+            raise ProviderObservationInterrupted(self) from cause
+        if isinstance(cause, Exception):
+            raise ProviderObservationFailure(self) from cause
+        raise cause
+
+
+class ProviderObservationFailure(Exception):
+    def __init__(self, snapshot: ProviderFailureSnapshot) -> None:
+        super().__init__("provider observation failed")
+        self.snapshot = snapshot
+
+
+class ProviderObservationCancelled(asyncio.CancelledError):
+    def __init__(self, snapshot: ProviderFailureSnapshot) -> None:
+        super().__init__("provider observation cancelled")
+        self.snapshot = snapshot
+
+
+class ProviderObservationInterrupted(KeyboardInterrupt):
+    def __init__(self, snapshot: ProviderFailureSnapshot) -> None:
+        super().__init__("provider observation interrupted")
+        self.snapshot = snapshot
+
+
 def merge_provider_cover_descriptor(
     previous: ProviderCoverDescriptor,
     current: ProviderCoverDescriptor,
@@ -1144,12 +1190,17 @@ class AudioInspector(Protocol):
 
 
 class MetadataProvider(Protocol):
+    """Return complete evidence or raise a declared partial-snapshot failure.
+
+    Cancellation and interruption carriers retain their BaseException semantics.
+    """
+
     def observe(
         self,
         plan: MetadataDiscoveryPlan,
         *,
         deadline: float | None = None,
-    ) -> ProviderObservation: ...
+    ) -> ProviderResult: ...
 
 
 class CoverObserver(Protocol):
@@ -1230,16 +1281,19 @@ def observe_provider(
     plan: MetadataDiscoveryPlan,
     *,
     deadline: float | None = None,
-) -> ProviderObservation:
-    """Apply the product's provider failure and diagnostic normalization once."""
+) -> ProviderResult:
+    """Normalize the complete result while retaining initial-report failure policy."""
     try:
-        observation = provider.observe(plan, deadline=deadline)
-    except Exception:
-        # A remote adapter fault is one unavailable lane, not a failed report;
-        # no single provider may suppress the remaining provider evidence.
-        accessed_at: str | None
+        result = provider.observe(plan, deadline=deadline)
+    except Exception as error:
+        # Unexpected dispatch faults remain unavailable lanes in an initial report.
+        snapshot = (
+            error.snapshot
+            if isinstance(error, ProviderObservationFailure)
+            else ProviderFailureSnapshot()
+        )
         try:
-            reading = getattr(provider, "accessed_at", None)
+            reading = snapshot.evidence.accessed_at
             accessed_at = (
                 None if reading is None else validate_provider_access_time(reading)
             )
@@ -1249,46 +1303,25 @@ def observe_provider(
             provider_name,
             tuple(
                 ProviderLaneResult(
-                    lane,
-                    ProviderStatus.UNAVAILABLE,
-                    accessed_at=accessed_at,
+                    lane, ProviderStatus.UNAVAILABLE, accessed_at=accessed_at
                 )
                 for lane in plan.lanes
             ),
             authority=authority,
         )
+        result = ProviderResult(
+            observation, snapshot.cover_descriptors, snapshot.evidence
+        )
+    observation = result.observation
     if observation.provider != provider_name:
         raise MetadataReportError("provider result is invalid")
-    # Adapter diagnostic properties are optional and may themselves fail. None
-    # records that the evidence was unobtainable; an empty tuple means none.
-    try:
-        attempt_records = getattr(provider, "attempt_records", ())
-    except Exception:
-        attempt_records = None
-    try:
-        incomplete_causes = getattr(provider, "incomplete_causes", ())
-    except Exception:
-        incomplete_causes = None
-    return ProviderObservation(
-        observation.provider,
-        observation.status,
-        observation.input_references,
-        observation.candidates,
-        observation.query_kind,
-        authority,
-        observation.lanes,
-        observation.convergence,
-        observation.accessed_at,
-        merge_provider_diagnostics(
-            observation.diagnostics,
-            provider_attempt_diagnostics(
-                attempt_records,
-                status=observation.status.value,
-                incomplete_causes=incomplete_causes,
-            ),
+    return replace(
+        result,
+        observation=replace(
+            observation,
+            authority=authority,
+            diagnostics=provider_result_diagnostics(observation, result.evidence),
         ),
-        observation.request_accounting,
-        observation.edition_enrichment_overflow,
     )
 
 
@@ -2088,7 +2121,7 @@ class GenerateMetadataReport:
                 raise failure from error
             try:
                 with self._timing.measure("provider_search", "provider"):
-                    observation = observe_provider(
+                    result = observe_provider(
                         binding.name,
                         binding.authority,
                         provider,
@@ -2098,8 +2131,8 @@ class GenerateMetadataReport:
             except Exception as error:
                 _release_repository(repository, error)
                 raise
-            observations.append(observation)
-            candidate_descriptors = getattr(provider, "cover_descriptors", ())
+            observations.append(result.observation)
+            candidate_descriptors = result.cover_descriptors
             if type(candidate_descriptors) is not tuple or any(
                 type(value) is not ProviderCoverDescriptor
                 or value.provider != binding.name
@@ -2448,6 +2481,11 @@ __all__ = [
     "MetadataReportError",
     "ProviderBinding",
     "ProviderCoverDescriptor",
+    "ProviderResult",
+    "ProviderFailureSnapshot",
+    "ProviderObservationFailure",
+    "ProviderObservationCancelled",
+    "ProviderObservationInterrupted",
     "ProviderLaneResult",
     "ReportRepository",
     "ReportNotFoundError",

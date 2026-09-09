@@ -22,7 +22,6 @@ from mechanical_librarian.adapters.providers.inventaire_metadata import (
     InventaireMetadataProvider,
     InventairePacer,
 )
-from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -34,10 +33,15 @@ from mechanical_librarian.application.configuration import (
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ProviderLaneResult,
+    ProviderResult,
     TargetFile,
     TargetSnapshot,
     metadata_discovery_plan,
     provider_observation,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderAttemptRecord,
+    ProviderOperationalEvidence,
 )
 from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
 from mechanical_librarian.application.review_pipeline import ReviewPipelineError
@@ -132,7 +136,10 @@ class _GoogleProvider:
             )
             for lane in plan.lanes
         )
-        return provider_observation(self.name, lanes, authority="google_books")
+        return ProviderResult(
+            provider_observation(self.name, lanes, authority="google_books"),
+            evidence=ProviderOperationalEvidence(attempt_records=self.attempt_records),
+        )
 
 
 def _recovery_configuration() -> ApplicationConfiguration:

@@ -8,10 +8,8 @@ import socket
 import ssl
 import threading
 import time
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import format_datetime
-from enum import Enum
 from typing import Callable, TypeVar
 
 import httpcore
@@ -80,21 +78,6 @@ class ProviderRequestPacer:
                 return False
             self._last_start = now
             return True
-
-
-class ProviderIncompleteCause(str, Enum):
-    """Closed, process-local reasons that prevent a provider dispatch."""
-
-    DEADLINE = "deadline"
-    AGGREGATE_BYTES = "aggregate_bytes"
-    DISPATCH_COUNT = "dispatch_count"
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderIncompleteCauseRecord:
-    """Aggregate-safe evidence for one undispatched provider request."""
-
-    cause: ProviderIncompleteCause
 
 
 class _DiscoveryRequestLedger:
@@ -276,18 +259,6 @@ class _DiscoveryRequestLedger:
         )
 
 
-@dataclass(frozen=True, slots=True)
-class ProviderAttemptRecord:
-    """Aggregate-safe, process-local evidence for one provider dispatch."""
-
-    provider: str
-    ordinal: int
-    category: str
-    delay_seconds: float | None
-    elapsed_seconds: float
-    outcome: str
-
-
 class ProviderFailure(Exception):
     """One provider dispatch's terminal outcome, carried out of its retry loop.
 
@@ -408,10 +379,7 @@ def _is_safe_cause(cause: BaseException) -> bool:
 
 __all__ = [
     "_DiscoveryRequestLedger",
-    "ProviderAttemptRecord",
     "ProviderFailure",
-    "ProviderIncompleteCause",
-    "ProviderIncompleteCauseRecord",
     "bounded_attempt_elapsed",
     "bounded_retry_after",
     "transient_transport_failure",

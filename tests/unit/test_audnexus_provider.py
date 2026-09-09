@@ -100,7 +100,7 @@ def _evidence(candidate: Any, kind: ProviderEvidenceKind) -> tuple[Any, ...]:
 
 def test_a_book_lookup_maps_the_captured_record_onto_report_claims() -> None:
     seen, handle = _recorder()
-    observation = _provider(handle).observe(asin_plan())
+    observation = _provider(handle).observe(asin_plan()).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert ProviderQueryKind.ASIN is observation.query_kind
@@ -135,7 +135,7 @@ def test_a_book_lookup_maps_the_captured_record_onto_report_claims() -> None:
 
 def test_the_chapter_document_becomes_one_bounded_whole_second_vector() -> None:
     _seen, handle = _recorder()
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     structure = _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)[0]
     document = payload("audnexus_chapters")
 
@@ -152,7 +152,7 @@ def test_the_chapter_document_becomes_one_bounded_whole_second_vector() -> None:
 
 def test_a_stated_runtime_agrees_with_the_container_inside_the_band() -> None:
     _seen, handle = _recorder()
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     duration = _claims(candidate, ClaimKind.DURATION)[0]
     local = next(claim for claim in local_claims() if claim.kind is ClaimKind.DURATION)
     link = next(
@@ -166,8 +166,10 @@ def test_a_stated_runtime_agrees_with_the_container_inside_the_band() -> None:
 
 def test_a_region_unavailable_error_advances_the_walk_rather_than_ending_it() -> None:
     seen, handle = _recorder(by_region={"de": _json(payload("audnexus_book"))})
-    observation = _provider(handle, marketplaces=("us", "uk", "de")).observe(
-        asin_plan()
+    observation = (
+        _provider(handle, marketplaces=("us", "uk", "de"))
+        .observe(asin_plan())
+        .observation
     )
 
     assert ProviderStatus.CANDIDATES is observation.status
@@ -184,7 +186,9 @@ def test_a_region_unavailable_error_advances_the_walk_rather_than_ending_it() ->
 
 def test_an_asin_unavailable_in_every_region_is_a_no_match() -> None:
     seen, handle = _recorder(by_region={})
-    observation = _provider(handle, marketplaces=("us", "uk")).observe(asin_plan())
+    observation = (
+        _provider(handle, marketplaces=("us", "uk")).observe(asin_plan()).observation
+    )
 
     assert ProviderStatus.NO_MATCH is observation.status
     assert 2 == len(seen)
@@ -194,7 +198,7 @@ def test_a_missing_chapter_document_removes_evidence_rather_than_the_candidate()
     None
 ):
     _seen, handle = _recorder(chapters=_json({"message": "no"}, 404))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
 
     assert () == _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)
     assert (_ASIN,) == tuple(
@@ -211,7 +215,7 @@ def test_a_chapter_vector_above_its_cap_is_truncated_and_says_so() -> None:
         for index in range(MAX_PROVIDER_CHAPTER_DURATIONS + 1)
     ]
     _seen, handle = _recorder(chapters=_json(document))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     structure = _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)[0].chapters
 
     assert structure.durations_truncated
@@ -228,14 +232,14 @@ def test_a_malformed_chapter_document_is_no_structure_at_all(
     chapters: dict[str, object],
 ) -> None:
     _seen, handle = _recorder(chapters=_json(chapters))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
 
     assert () == _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)
 
 
 def test_a_work_lane_states_insufficient_input_and_sends_nothing() -> None:
     seen, handle = _recorder()
-    observation = _provider(handle).observe(work_plan())
+    observation = _provider(handle).observe(work_plan()).observation
 
     assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
     assert [] == seen
@@ -255,7 +259,9 @@ def test_a_service_failure_ends_the_lane_rather_than_reading_as_absence(
     status_code: int, expected: ProviderStatus
 ) -> None:
     seen, handle = _recorder(book=_json({"message": "no"}, status_code))
-    observation = _provider(handle, marketplaces=("us", "uk")).observe(asin_plan())
+    observation = (
+        _provider(handle, marketplaces=("us", "uk")).observe(asin_plan()).observation
+    )
 
     assert expected is observation.status
     assert 1 == len(seen)
@@ -273,7 +279,7 @@ def test_a_throttled_request_honours_retry_after_and_retries() -> None:
             return _json(payload("audnexus_chapters"))
         return _json(payload("audnexus_book"))
 
-    observation = _provider(handle, delays=delays).observe(asin_plan())
+    observation = _provider(handle, delays=delays).observe(asin_plan()).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert [9.0] == delays
@@ -292,7 +298,10 @@ def test_a_book_without_a_canonical_identity_fails_closed(asin: object) -> None:
         document["asin"] = asin
     _seen, handle = _recorder(book=_json(document))
 
-    assert ProviderStatus.MALFORMED is _provider(handle).observe(asin_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
 
 
 def test_an_html_two_hundred_is_malformed_rather_than_parsed() -> None:
@@ -304,7 +313,10 @@ def test_an_html_two_hundred_is_malformed_rather_than_parsed() -> None:
         )
     )
 
-    assert ProviderStatus.MALFORMED is _provider(handle).observe(asin_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
 
 
 def test_the_origin_and_pacer_are_fixed() -> None:
@@ -320,8 +332,12 @@ def test_one_adapter_serves_one_observation() -> None:
     _seen, handle = _recorder()
     provider = _provider(handle)
 
-    assert ProviderStatus.CANDIDATES is provider.observe(asin_plan()).status
-    assert ProviderStatus.UNAVAILABLE is provider.observe(asin_plan()).status
+    assert (
+        ProviderStatus.CANDIDATES is (provider.observe(asin_plan())).observation.status
+    )
+    assert (
+        ProviderStatus.UNAVAILABLE is (provider.observe(asin_plan())).observation.status
+    )
 
 
 def test_an_html_summary_is_read_only_when_no_plain_description_is_stated() -> None:
@@ -330,7 +346,7 @@ def test_an_html_summary_is_read_only_when_no_plain_description_is_stated() -> N
     del document["description"]
     stated = document["summary"]
     _seen, handle = _recorder(book=_json(document))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     description = _claims(candidate, ClaimKind.DESCRIPTION)[0]
 
     assert "<" in stated

@@ -16,16 +16,14 @@ from urllib.parse import urlsplit
 import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
-    ProviderAttemptRecord,
     ProviderFailure,
-    ProviderIncompleteCause,
-    ProviderIncompleteCauseRecord,
     ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
 )
+from mechanical_librarian.adapters.providers.sdk import provider_client_lifetime
 from mechanical_librarian.application.failure_diagnostics import (
     provider_attempt_diagnostics,
 )
@@ -33,13 +31,21 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
+    ProviderFailureSnapshot,
     ProviderLaneResult,
+    ProviderResult,
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderAttemptRecord,
+    ProviderIncompleteCause,
+    ProviderIncompleteCauseRecord,
+    ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverContext,
@@ -189,21 +195,39 @@ class HardcoverMetadataProvider:
         self._schema_rejections = 0
         self._optional_rejections = _OptionalRejections()
         self._ledger = _DiscoveryRequestLedger("hardcover", HARDCOVER_SCHEMA_COMMIT)
-        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
-
-    @property
-    def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
-        return tuple(self._attempt_records)
-
-    @property
-    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
-        return tuple(self._incomplete_causes)
-
-    @property
-    def accessed_at(self) -> str | None:
-        return self._accessed_at
+        self._cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
     def observe(
+        self,
+        plan: MetadataDiscoveryPlan | MetadataLookup,
+        *,
+        deadline: float | None = None,
+    ) -> ProviderResult:
+        failure: BaseException | None = None
+        try:
+            observation = self._observe(plan, deadline=deadline)
+        except BaseException as error:
+            failure = error
+        try:
+            snapshot = ProviderFailureSnapshot(
+                self._cover_descriptors,
+                ProviderOperationalEvidence(
+                    self._accessed_at,
+                    tuple(self._attempt_records),
+                    tuple(self._incomplete_causes),
+                ),
+            )
+        except BaseException:
+            if failure is not None:
+                raise failure from None
+            raise
+        if failure is not None:
+            snapshot.raise_from(failure)
+        return ProviderResult(
+            observation, snapshot.cover_descriptors, snapshot.evidence
+        )
+
+    def _observe(
         self,
         plan: MetadataDiscoveryPlan | MetadataLookup,
         *,
@@ -235,7 +259,7 @@ class HardcoverMetadataProvider:
                 projection=projection,
             )
             self._ledger = ledger
-            try:
+            with provider_client_lifetime(self._client):
                 value, _ = ledger.resolve(
                     kind=plan.kind.value,
                     matched_family=plan.matched_family,
@@ -245,8 +269,6 @@ class HardcoverMetadataProvider:
                     execute=lambda: self._observe_lookup(plan, deadline=deadline),
                 )
                 return replace(value, request_accounting=ledger.accounting())
-            finally:
-                self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:
             raise ValueError("provider lookup is invalid")
         if plan.overflow:
@@ -266,7 +288,7 @@ class HardcoverMetadataProvider:
             )
         self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
-        try:
+        with provider_client_lifetime(self._client):
             for lane in provider_discovery_lane_order(plan):
                 if identifier_suppresses_discovery(plan, results, lane):
                     ledger.suppress(
@@ -277,7 +299,7 @@ class HardcoverMetadataProvider:
                         projection=_WORK_QUERY,
                     )
                     continue
-                self.cover_descriptors = ()
+                self._cover_descriptors = ()
                 lookup = MetadataLookup(
                     lane.kind,
                     plan.local_claims,
@@ -322,16 +344,14 @@ class HardcoverMetadataProvider:
                 merged = merge_provider_cover_descriptors(
                     descriptors,
                     (
-                        self.cover_descriptors
+                        self._cover_descriptors
                         if observation.status is ProviderStatus.CANDIDATES
                         else ()
                     ),
                 )
                 if merged is not None:
                     descriptors = merged
-        finally:
-            self._client.close()
-        self.cover_descriptors = descriptors
+        self._cover_descriptors = descriptors
         return provider_observation(
             self._name,
             tuple(results),
@@ -545,7 +565,7 @@ class HardcoverMetadataProvider:
             self._mark_response_attempt("response_malformed")
             return result(ProviderStatus.MALFORMED)
         try:
-            self.cover_descriptors = _parse_cover_descriptors(
+            self._cover_descriptors = _parse_cover_descriptors(
                 payload,
                 self._name,
                 lookup.kind,
@@ -557,7 +577,7 @@ class HardcoverMetadataProvider:
             RecursionError,
             json.JSONDecodeError,
         ):
-            self.cover_descriptors = ()
+            self._cover_descriptors = ()
         observation = result(
             ProviderStatus.CANDIDATES if candidates else ProviderStatus.NO_MATCH,
             candidates,

@@ -89,7 +89,7 @@ def _evidence(candidate: Any, kind: ProviderEvidenceKind) -> tuple[Any, ...]:
 
 def test_a_work_search_states_a_title_and_an_author() -> None:
     seen, handle = _recorder()
-    observation = _provider(handle).observe(work_plan())
+    observation = _provider(handle).observe(work_plan()).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert ProviderQueryKind.WORK is observation.query_kind
@@ -120,11 +120,15 @@ def test_latin_fold_reaches_itunes_only_on_the_final_bounded_search() -> None:
         seen.append(request.url)
         return _store({"resultCount": 0, "results": []} if len(seen) < 3 else page)
 
-    observation = _provider(handle).observe(
-        work_plan(
-            title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
-            authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+    observation = (
+        _provider(handle)
+        .observe(
+            work_plan(
+                title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+                authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+            )
         )
+        .observation
     )
 
     assert [
@@ -153,7 +157,7 @@ def test_the_collection_identifier_is_the_candidate_identity() -> None:
     the identity it survives under is the store's own collection identifier.
     """
     _seen, handle = _recorder()
-    observation = _provider(handle).observe(work_plan())
+    observation = _provider(handle).observe(work_plan()).observation
     results = payload("itunes_search")["results"]
     exact = next(
         result
@@ -177,7 +181,7 @@ def test_an_itunes_candidate_can_never_carry_a_duration_or_a_narrator() -> None:
     from being promoted on its own.
     """
     _seen, handle = _recorder()
-    observation = _provider(handle).observe(work_plan())
+    observation = _provider(handle).observe(work_plan()).observation
 
     assert observation.candidates
     for candidate in observation.candidates:
@@ -192,7 +196,7 @@ def test_the_stores_html_description_becomes_visible_plain_text() -> None:
     _seen, handle = _recorder()
     candidate = next(
         candidate
-        for candidate in _provider(handle).observe(work_plan()).candidates
+        for candidate in _provider(handle).observe(work_plan()).observation.candidates
         if any(
             claim.kind is ClaimKind.TITLE and claim.value == "Project Hail Mary"
             for claim in candidate.claims
@@ -237,7 +241,7 @@ def test_the_stores_html_description_becomes_visible_plain_text() -> None:
 def test_a_plan_with_no_work_lane_is_insufficient_input() -> None:
     """The store searches and resolves nothing, exactly as Audnexus states."""
     seen, handle = _recorder()
-    observation = _provider(handle).observe(asin_plan())
+    observation = _provider(handle).observe(asin_plan()).observation
 
     assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
     assert [] == seen
@@ -245,7 +249,10 @@ def test_a_plan_with_no_work_lane_is_insufficient_input() -> None:
 
 def test_the_javascript_media_type_is_admitted_and_nothing_adjacent_is() -> None:
     _seen, handle = _recorder()
-    assert ProviderStatus.CANDIDATES is _provider(handle).observe(work_plan()).status
+    assert (
+        ProviderStatus.CANDIDATES
+        is _provider(handle).observe(work_plan()).observation.status
+    )
 
     _seen, html = _recorder(
         httpx.Response(
@@ -254,7 +261,10 @@ def test_the_javascript_media_type_is_admitted_and_nothing_adjacent_is() -> None
             content=b'{"resultCount": 0, "results": []}',
         )
     )
-    assert ProviderStatus.MALFORMED is _provider(html).observe(work_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(html).observe(work_plan()).observation.status
+    )
 
 
 @pytest.mark.parametrize(
@@ -271,7 +281,7 @@ def test_the_stores_status_vocabulary_reaches_one_terminal_outcome(
     status_code: int, expected: ProviderStatus
 ) -> None:
     _seen, handle = _recorder(_store({"errorMessage": "no"}, status_code))
-    assert expected is _provider(handle).observe(work_plan()).status
+    assert expected is _provider(handle).observe(work_plan()).observation.status
 
 
 def test_a_throttled_search_retries_on_the_stated_delay() -> None:
@@ -280,8 +290,10 @@ def test_a_throttled_search_retries_on_the_stated_delay() -> None:
         _store({"errorMessage": "slow down"}, 429, **{"retry-after": "4"}),
         _store(payload("itunes_search")),
     ]
-    observation = _provider(lambda _: answers.pop(0), delays=delays).observe(
-        work_plan()
+    observation = (
+        _provider(lambda _: answers.pop(0), delays=delays)
+        .observe(work_plan())
+        .observation
     )
 
     assert ProviderStatus.CANDIDATES is observation.status
@@ -298,7 +310,7 @@ def test_too_many_results_exceed_the_candidate_limit() -> None:
 
     assert (
         ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-        is _provider(handle).observe(work_plan()).status
+        is _provider(handle).observe(work_plan()).observation.status
     )
 
 
@@ -312,7 +324,7 @@ def test_an_overshot_store_page_exceeds_the_candidate_limit() -> None:
 
     assert (
         ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-        is _provider(handle).observe(work_plan()).status
+        is _provider(handle).observe(work_plan()).observation.status
     )
 
 
@@ -321,19 +333,25 @@ def test_a_result_without_a_collection_identifier_is_malformed() -> None:
     del document["results"][0]["collectionId"]
     _seen, handle = _recorder(_store(document))
 
-    assert ProviderStatus.MALFORMED is _provider(handle).observe(work_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(work_plan()).observation.status
+    )
 
 
 def test_an_empty_result_set_is_a_no_match() -> None:
     _seen, handle = _recorder(_store({"resultCount": 0, "results": []}))
-    assert ProviderStatus.NO_MATCH is _provider(handle).observe(work_plan()).status
+    assert (
+        ProviderStatus.NO_MATCH
+        is _provider(handle).observe(work_plan()).observation.status
+    )
 
 
 def test_an_unstated_member_is_counted_as_a_schema_rejection() -> None:
     document = copy.deepcopy(payload("itunes_search"))
     document["results"][0]["unexpectedMember"] = "value"
     _seen, handle = _recorder(_store(document))
-    observation = _provider(handle).observe(work_plan())
+    observation = _provider(handle).observe(work_plan()).observation
 
     assert 1 == sum(value.count for value in observation.diagnostics)
 
@@ -342,8 +360,12 @@ def test_one_adapter_observes_once() -> None:
     _seen, handle = _recorder()
     provider = _provider(handle)
 
-    assert ProviderStatus.CANDIDATES is provider.observe(work_plan()).status
-    assert ProviderStatus.UNAVAILABLE is provider.observe(work_plan()).status
+    assert (
+        ProviderStatus.CANDIDATES is (provider.observe(work_plan())).observation.status
+    )
+    assert (
+        ProviderStatus.UNAVAILABLE is (provider.observe(work_plan())).observation.status
+    )
 
 
 def test_every_request_reaches_the_one_admitted_origin() -> None:
@@ -359,16 +381,17 @@ def test_a_search_states_one_related_edition_cover_for_each_retained_result() ->
     _seen, handle = _recorder()
     provider = _provider(handle)
 
-    observation = provider.observe(work_plan())
+    provider_result = provider.observe(work_plan())
+    observation = (provider_result).observation
 
     identities = {candidate.identity for candidate in observation.candidates}
     assert identities
     assert identities == {
         descriptor.provenance.edition_identity
-        for descriptor in provider.cover_descriptors
+        for descriptor in provider_result.cover_descriptors
         if descriptor.provenance is not None
     }
-    for descriptor in provider.cover_descriptors:
+    for descriptor in provider_result.cover_descriptors:
         assert CoverSourceKind.ITUNES_SEARCH is descriptor.kind
         assert descriptor.url is not None
         assert "is1-ssl.mzstatic.com" == httpx.URL(descriptor.url).host
@@ -398,11 +421,12 @@ def test_an_artwork_url_outside_the_closed_host_set_is_refused_with_a_typed_stat
     _seen, handle = _recorder(_store(document))
     provider = _provider(handle)
 
-    observation = provider.observe(work_plan())
+    provider_result = provider.observe(work_plan())
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
-    assert provider.cover_descriptors
-    for descriptor in provider.cover_descriptors:
+    assert provider_result.cover_descriptors
+    for descriptor in provider_result.cover_descriptors:
         assert descriptor.url is None
         assert CoverSourceState.UNSAFE_REMOTE is descriptor.terminal_state
 
@@ -414,10 +438,10 @@ def test_a_result_that_states_no_artwork_states_an_absent_cover_source() -> None
     _seen, handle = _recorder(_store(document))
     provider = _provider(handle)
 
-    provider.observe(work_plan())
+    provider_result = provider.observe(work_plan())
 
-    assert provider.cover_descriptors
-    for descriptor in provider.cover_descriptors:
+    assert provider_result.cover_descriptors
+    for descriptor in provider_result.cover_descriptors:
         assert descriptor.url is None
         assert descriptor.terminal_state is None
 
@@ -429,10 +453,10 @@ def test_an_unreadable_artwork_declaration_is_typed_not_dropped() -> None:
     _seen, handle = _recorder(_store(document))
     provider = _provider(handle)
 
-    provider.observe(work_plan())
+    provider_result = provider.observe(work_plan())
 
-    assert provider.cover_descriptors
-    for descriptor in provider.cover_descriptors:
+    assert provider_result.cover_descriptors
+    for descriptor in provider_result.cover_descriptors:
         assert descriptor.url is None
         assert CoverSourceState.INVALID_DECLARATION is descriptor.terminal_state
 
@@ -441,17 +465,17 @@ def test_an_asin_only_plan_states_no_cover_at_all() -> None:
     _seen, handle = _recorder()
     provider = _provider(handle)
 
-    provider.observe(asin_plan())
+    provider_result = provider.observe(asin_plan())
 
-    assert () == provider.cover_descriptors
+    assert () == provider_result.cover_descriptors
 
 
 def _descriptor_urls(document: object) -> tuple[str | None, ...]:
     _seen, handle = _recorder(_store(document))
     provider = _provider(handle)
-    provider.observe(work_plan())
-    assert provider.cover_descriptors
-    return tuple(value.url for value in provider.cover_descriptors)
+    provider_result = provider.observe(work_plan())
+    assert provider_result.cover_descriptors
+    return tuple(value.url for value in provider_result.cover_descriptors)
 
 
 def test_the_stated_thumbnail_segment_is_constructed_into_a_legible_rendition() -> None:

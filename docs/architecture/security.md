@@ -1312,3 +1312,11 @@ boundary:
 - Secret scanning beyond GitHub's own defaults, software bill of materials
   publication, and container image scanning. None of the three is performed
   here.
+
+The application-owned provider return and failure snapshots add no egress or
+effect authority. Operational records remain process-local and pass through the
+existing bounded diagnostic normalization; raw chained exceptions are never
+persisted or exposed. Descriptor locators and pacing callbacks remain confined
+to acquisition. Cancellation-compatible carriers preserve shutdown semantics
+and the original cause even when client cleanup fails. No provider credentials
+or arbitrary response payload fields enter this contract.

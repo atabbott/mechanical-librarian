@@ -47,8 +47,9 @@ CURRENT_MANIFEST = MANIFEST.with_name(
 ASSOCIATION_MANIFEST = MANIFEST.with_name(
     "f20-rich-metadata-qualification-candidate-v18.json"
 )
+V19_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v19.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v19.json"
+    "f20-rich-metadata-qualification-candidate-v20.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
@@ -1416,7 +1417,7 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
 
 
 def test_inventaire_successor_binds_current_sources_and_preserves_authority() -> None:
-    current = json.loads(LATEST_MANIFEST.read_text())
+    current = json.loads(V19_MANIFEST.read_text())
     prior = json.loads(ASSOCIATION_MANIFEST.read_text())
     assert (
         current["authority_rotation"]["prior_manifest_sha256"]
@@ -1429,11 +1430,10 @@ def test_inventaire_successor_binds_current_sources_and_preserves_authority() ->
     )
     assert current["options"] == prior["options"]
     assert current["passing_automatic_options"] == prior["passing_automatic_options"]
-    for name, digest in current["frozen_contract"]["behavior_sources"].items():
-        assert (
-            hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
-            == digest
-        )
+    assert (
+        hashlib.sha256(V19_MANIFEST.read_bytes()).hexdigest()
+        == "47b142cfea8c5d73ed267cb71f85a0edf3ab4b646ad29bba457a1f03b7aa37f2"
+    )
     proof = current["evidence_method"]
     assert proof["non_series_complete_previews"] == 980
     assert proof["series_complete_previews"] == 108
@@ -1479,3 +1479,57 @@ def test_inventaire_f19a_successor_preserves_historical_measurements_and_options
             hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
             == digest
         )
+
+
+def test_provider_contract_rotation_binds_complete_sources_without_rescoring():
+    current = json.loads(LATEST_MANIFEST.read_text())
+    prior = json.loads(V19_MANIFEST.read_text())
+    assert current["schema"] == "f20-rich-metadata-qualification-candidate-v20"
+    assert (
+        current["authority_rotation"]["prior_manifest_sha256"]
+        == hashlib.sha256(V19_MANIFEST.read_bytes()).hexdigest()
+    )
+    for field in (
+        "options",
+        "passing_automatic_options",
+        "proposal_policy_version",
+        "automatic_authority",
+        "evidence_method",
+    ):
+        assert current[field] == prior[field]
+    assert len(current["passing_automatic_options"]) == 13
+    closure = current["provider_contract_source_closure"]
+    assert closure["fresh_scoring_run"] is False
+    assert closure["fresh_holdout_claim"] is False
+    assert set(closure["behavior_sources"]) == {
+        "src/mechanical_librarian/" + path
+        for path in (
+            "adapters/providers/google_books_metadata.py",
+            "adapters/providers/hardcover_metadata.py",
+            "adapters/providers/open_library_metadata.py",
+            "adapters/providers/inventaire_metadata.py",
+            "adapters/providers/audible_catalog_metadata.py",
+            "adapters/providers/itunes_search_metadata.py",
+            "adapters/providers/audnexus_metadata.py",
+            "adapters/providers/audiosilo_metadata.py",
+            "adapters/providers/sdk.py",
+            "adapters/providers/retry_safety.py",
+            "application/provider_evidence.py",
+            "application/metadata_report.py",
+            "application/failure_diagnostics.py",
+            "application/provider_retry_successor.py",
+            "application/provider_recovery_evidence.py",
+        )
+    }
+    assert set(current["frozen_contract"]["behavior_sources"]) == set(
+        prior["frozen_contract"]["behavior_sources"]
+    )
+    for sources in (
+        closure["behavior_sources"],
+        current["frozen_contract"]["behavior_sources"],
+    ):
+        for name, digest in sources.items():
+            assert (
+                hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+                == digest
+            )

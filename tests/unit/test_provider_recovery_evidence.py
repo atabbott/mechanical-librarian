@@ -31,7 +31,9 @@ from mechanical_librarian.application.metadata_report import (
     CredentialError,
     CurrentnessError,
     MetadataReportError,
+    ProviderFailureSnapshot,
     ProviderLaneResult,
+    ProviderObservationFailure,
     TargetNotFoundError,
     TargetSnapshot,
     metadata_discovery_plan,
@@ -802,3 +804,32 @@ def test_inventaire_nontransient_lanes_never_enroll_recovery(
         )
         == ()
     )
+
+
+@pytest.mark.parametrize(
+    "shape,expected",
+    (
+        ("credential", "authentication"),
+        ("absent", "terminal"),
+        ("ordinary", "terminal"),
+        ("intervening", "terminal"),
+        ("raw_carrier", "transient"),
+    ),
+)
+def test_declared_failure_unwraps_only_one_credential_cause(shape, expected):
+    carrier = ProviderObservationFailure(ProviderFailureSnapshot())
+    if shape != "absent":
+        carrier.__cause__ = (
+            RuntimeError("ordinary")
+            if shape == "ordinary"
+            else CredentialError("credential")
+        )
+    cause: Exception = carrier
+    if shape == "intervening":
+        cause = RuntimeError("intervening")
+        cause.__cause__ = carrier
+    error = ProviderRetrySuccessorError("provider retry dispatch failed")
+    error.__cause__ = cause
+    assert classify_provider_recovery_failure(
+        carrier if shape == "raw_carrier" else error
+    ) == (expected, None)

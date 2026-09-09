@@ -342,3 +342,12 @@ F19a's historical measurements remain unchanged, with no fresh scoring or
 holdout claim. Synthetic proposal roundtrip and persisted case admission cover
 the repaired consumer. Prior v6/v18 decisions remain readable but cannot regain
 current effect authority. Policy v23, qualified options and schemas are unchanged.
+
+The [v20 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v20.json)
+rotates source bindings for the application-owned provider result contract
+(#1005). Its explicit closure covers all eight adapters, the SDK and retry
+primitives, evidence types, initial normalization, retry consumption and recovery
+failure classification. It
+retains v19's measurements, evaluators, policy v23 and all 13 passing options;
+this is neither rescoring nor a fresh holdout claim. V19 remains byte-frozen and
+readable as history, but grants no current effect authority. F19a v7 is unchanged.

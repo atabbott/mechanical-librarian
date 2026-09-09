@@ -17,6 +17,7 @@ from mechanical_librarian.adapters.providers.hardcover_metadata import (
 )
 from mechanical_librarian.application.metadata_report import (
     ProviderLaneResult,
+    ProviderResult,
     TargetSnapshot,
     metadata_discovery_plan,
     provider_observation,
@@ -359,8 +360,8 @@ def test_response_cap_and_candidate_probe_are_terminal() -> None:
         1,
     )
     assert (
-        capped.observe(isbn_lookup((isbn_claim(),))).status == ProviderStatus.OVERSIZED
-    )
+        capped.observe(isbn_lookup((isbn_claim(),)))
+    ).observation.status == ProviderStatus.OVERSIZED
     rows = [
         {"id": index, "book_id": index, "isbn_10": None, "isbn_13": None}
         for index in range(1, 7)
@@ -381,9 +382,8 @@ def test_response_cap_and_candidate_probe_are_terminal() -> None:
         65_536,
     )
     assert (
-        overflow.observe(isbn_lookup((isbn_claim(),))).status
-        == ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
-    )
+        overflow.observe(isbn_lookup((isbn_claim(),)))
+    ).observation.status == ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
     for size, expected in (
         (262_144, ProviderStatus.MALFORMED),
         (262_145, ProviderStatus.OVERSIZED),
@@ -401,7 +401,9 @@ def test_response_cap_and_candidate_probe_are_terminal() -> None:
             ),
             262_144,
         )
-        assert provider.observe(isbn_lookup((isbn_claim(),))).status == expected
+        assert (
+            provider.observe(isbn_lookup((isbn_claim(),)))
+        ).observation.status == expected
 
 
 def test_edition_overflow_retains_only_work_scoped_witness() -> None:
@@ -451,10 +453,11 @@ def test_edition_overflow_retains_only_work_scoped_witness() -> None:
         65_536,
     )
 
-    observation = provider.observe(work_lookup())
+    provider_result = provider.observe(work_lookup())
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATE_LIMIT_EXCEEDED == observation.status
-    assert () == provider.cover_descriptors
+    assert () == provider_result.cover_descriptors
     assert () == observation.diagnostics
     assert () == observation.candidates
     witness = observation.edition_enrichment_overflow
@@ -1042,7 +1045,7 @@ def test_nested_overflow_probe_objects_are_structurally_validated(
         ),
         65_536,
     )
-    observation = provider.observe(isbn_lookup((isbn_claim(),)))
+    observation = (provider.observe(isbn_lookup((isbn_claim(),)))).observation
     assert observation.status == ProviderStatus.CANDIDATES
 
 
@@ -1409,7 +1412,7 @@ def test_hardcover_actual_parser_diagnostics_count_source_rejections_once() -> N
             ),
             65_536,
         )
-        return provider.observe(isbn_lookup((isbn_claim(),)))
+        return (provider.observe(isbn_lookup((isbn_claim(),)))).observation
 
     clean = observe(base_rows, base_books)
     assert ProviderStatus.CANDIDATES == clean.status
@@ -1699,7 +1702,7 @@ def test_hardcover_invalid_cover_links_and_author_names_are_field_local() -> Non
     def observe(
         rows: list[dict[str, object]],
         books: list[dict[str, object]],
-    ) -> tuple[ProviderObservation, HardcoverMetadataProvider]:
+    ) -> tuple[ProviderObservation, ProviderResult]:
         payload = hardcover_envelope(rows, books)
         provider = HardcoverMetadataProvider(
             "catalogue",
@@ -1714,7 +1717,8 @@ def test_hardcover_invalid_cover_links_and_author_names_are_field_local() -> Non
             ),
             65_536,
         )
-        return provider.observe(isbn_lookup((isbn_claim(),))), provider
+        result = provider.observe(isbn_lookup((isbn_claim(),)))
+        return result.observation, result
 
     for name, rows, books, designation in (
         (

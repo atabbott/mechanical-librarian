@@ -172,16 +172,20 @@ def observe_contributions(
             }
         ],
     )
-    return HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    return (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(lookup or isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(lookup or isbn_lookup((isbn_claim(),)))
+        .observation
+    )

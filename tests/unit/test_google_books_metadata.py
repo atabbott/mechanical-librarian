@@ -19,6 +19,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
+    ProviderObservationInterrupted,
     qualify_provider_observation,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -162,9 +163,13 @@ def test_identifier_candidate_suppresses_google_books_discovery() -> None:
             json={"totalItems": 1, "items": [_volume()]},
         )
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(_identifier_first_plan())
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert ["isbn:9780306406157"] == queries
     assert [ProviderQueryKind.ISBN] == [lane.kind for lane in observation.lanes]
@@ -187,9 +192,13 @@ def test_contradictory_isbn_candidate_preserves_google_books_work_fallback() -> 
             json={"totalItems": 1, "items": [volume]},
         )
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(_identifier_first_plan())
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert 2 == len(queries)
     assert [ProviderQueryKind.WORK, ProviderQueryKind.ISBN] == [
@@ -209,9 +218,13 @@ def test_identifier_no_match_falls_back_to_google_books_discovery() -> None:
             json={"totalItems": 0},
         )
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(_identifier_first_plan())
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert "isbn:9780306406157" == queries[0]
     assert 2 == len(queries)
@@ -238,9 +251,13 @@ def test_malformed_identifier_falls_back_to_google_books_discovery() -> None:
             json={"totalItems": 0},
         )
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(_identifier_first_plan())
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert "isbn:9780306406157" == queries[0]
     assert 2 == len(queries)
@@ -257,13 +274,17 @@ def test_terminal_identifier_failure_stays_typed_and_falls_back_to_discovery() -
         queries.append(request.url.params["q"])
         return httpx.Response(503, headers={"content-type": "application/json"})
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        sleep=lambda _: None,
-        jitter=lambda: 0.0,
-    ).observe(_identifier_first_plan())
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert "isbn:9780306406157" == queries[0]
     assert 12 == len(queries)
@@ -293,9 +314,13 @@ def test_print_isbn_keeps_google_books_discovery_in_plan_order() -> None:
             json={"totalItems": 0},
         )
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(_identifier_first_plan(claim))
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(_identifier_first_plan(claim))
+        .observation
+    )
 
     assert not queries[0].startswith("isbn:")
     assert {ProviderQueryKind.ISBN, ProviderQueryKind.WORK} == {
@@ -331,19 +356,23 @@ def test_html_description_is_rendered_and_bound_to_versioned_evidence() -> None:
         title="Example Book",
         authors=("Ada Example",),
     )
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json={"totalItems": 1, "items": [volume]},
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(work_lookup)
+            ),
+            65_536,
+        )
+        .observe(work_lookup)
+        .observation
+    )
     candidate = observation.candidates[0]
     assert "One & two • Three • 2 < 3" == next(
         c.value for c in candidate.claims if c.kind is ClaimKind.DESCRIPTION
@@ -385,19 +414,23 @@ def test_html_description_abstains_on_hostile_ambiguous_or_oversized_input() -> 
         info = volume["volumeInfo"]
         assert type(info) is dict
         info["description"] = description
-        observation = GoogleBooksMetadataProvider(
-            "google_books",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _, value=volume: httpx.Response(
-                        200,
-                        headers={"content-type": "application/json"},
-                        json={"totalItems": 1, "items": [value]},
+        observation = (
+            GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _, value=volume: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json={"totalItems": 1, "items": [value]},
+                        )
                     )
-                )
-            ),
-            65_536,
-        ).observe(_lookup())
+                ),
+                65_536,
+            )
+            .observe(_lookup())
+            .observation
+        )
         claim = next(
             value
             for value in observation.candidates[0].claims
@@ -415,19 +448,23 @@ def test_optional_occurrences_keep_source_order_duplicates_and_replay() -> None:
     info = volume["volumeInfo"]
     assert type(info) is dict
     info["authors"] = ["Zulu", 7, "Alpha", "Zulu"]
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json={"totalItems": 1, "items": [volume]},
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(_lookup())
+            ),
+            65_536,
+        )
+        .observe(_lookup())
+        .observation
+    )
     candidate = observation.candidates[0]
     authors = [
         claim.value
@@ -464,12 +501,16 @@ def test_access_time_is_captured_only_at_first_actual_dispatch() -> None:
             json={"totalItems": 0, "items": []},
         )
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        wall_clock=lambda: 1_700_000_000.125,
-    ).observe(_lookup())
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            wall_clock=lambda: 1_700_000_000.125,
+        )
+        .observe(_lookup())
+        .observation
+    )
     assert ProviderStatus.NO_MATCH == observation.status
     assert "2023-11-14T22:13:20.125000Z" == observation.accessed_at
     assert 1 == len(requests)
@@ -477,43 +518,59 @@ def test_access_time_is_captured_only_at_first_actual_dispatch() -> None:
     def unexpected_clock() -> float:
         pytest.fail("pre-dispatch outcome read the wall clock")
 
-    no_input = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        wall_clock=unexpected_clock,
-    ).observe(MetadataLookup(ProviderQueryKind.NONE, ()))
+    no_input = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            wall_clock=unexpected_clock,
+        )
+        .observe(MetadataLookup(ProviderQueryKind.NONE, ()))
+        .observation
+    )
     assert ProviderStatus.INSUFFICIENT_INPUT == no_input.status
     assert no_input.accessed_at is None
     assert 1 == len(requests)
 
-    overflow = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        wall_clock=unexpected_clock,
-    ).observe(MetadataDiscoveryPlan((), (), True))
+    overflow = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            wall_clock=unexpected_clock,
+        )
+        .observe(MetadataDiscoveryPlan((), (), True))
+        .observation
+    )
     assert ProviderStatus.QUERY_LIMIT_EXCEEDED == overflow.status
     assert overflow.accessed_at is None
     assert 1 == len(requests)
 
-    expired = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        clock=lambda: 1.0,
-        wall_clock=unexpected_clock,
-    ).observe(_lookup(), deadline=0.0)
+    expired = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            clock=lambda: 1.0,
+            wall_clock=unexpected_clock,
+        )
+        .observe(_lookup(), deadline=0.0)
+        .observation
+    )
     assert ProviderStatus.INCOMPLETE == expired.status
     assert expired.accessed_at is None
     assert 1 == len(requests)
 
-    invalid_clock = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        wall_clock=lambda: float("nan"),
-    ).observe(_lookup())
+    invalid_clock = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            wall_clock=lambda: float("nan"),
+        )
+        .observe(_lookup())
+        .observation
+    )
     assert ProviderStatus.UNAVAILABLE == invalid_clock.status
     assert invalid_clock.accessed_at is None
     assert 1 == len(requests)
@@ -543,7 +600,7 @@ def test_retry_after_deadline_and_cancellation_are_fail_closed() -> None:
         sleep=delays.append,
         jitter=lambda: 0.5,
     )
-    assert ProviderStatus.CANDIDATES == provider.observe(_lookup()).status
+    assert ProviderStatus.CANDIDATES == (provider.observe(_lookup())).observation.status
     assert [3.0] == delays
 
     dispatches = 0
@@ -567,13 +624,13 @@ def test_retry_after_deadline_and_cancellation_are_fail_closed() -> None:
         clock=lambda: 0.0,
         sleep=lambda _: pytest.fail("deadline must refuse sleep"),
     )
-    assert (
-        ProviderStatus.UNAVAILABLE
-        == deadline_provider.observe(_lookup(), deadline=3.0).status
-    )
+    deadline_provider_result = deadline_provider.observe(_lookup(), deadline=3.0)
+    assert ProviderStatus.UNAVAILABLE == (deadline_provider_result).observation.status
     assert 1 == dispatches
-    assert "exhausted" == deadline_provider.attempt_records[-1].outcome
-    assert 3.0 == deadline_provider.attempt_records[-1].delay_seconds
+    assert deadline_provider_result.evidence.attempt_records is not None
+    assert "exhausted" == deadline_provider_result.evidence.attempt_records[-1].outcome
+    assert deadline_provider_result.evidence.attempt_records is not None
+    assert 3.0 == deadline_provider_result.evidence.attempt_records[-1].delay_seconds
 
     cancelled = GoogleBooksMetadataProvider(
         "google_books",
@@ -584,10 +641,13 @@ def test_retry_after_deadline_and_cancellation_are_fail_closed() -> None:
         ),
         65_536,
     )
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(ProviderObservationInterrupted) as cancelled_failure:
         cancelled.observe(_lookup())
-    assert 1 == len(cancelled.attempt_records)
-    assert "cancelled" == cancelled.attempt_records[0].outcome
+    cancelled_result = cancelled_failure.value.snapshot
+    assert cancelled_result.evidence.attempt_records is not None
+    assert 1 == len(cancelled_result.evidence.attempt_records)
+    assert cancelled_result.evidence.attempt_records is not None
+    assert "cancelled" == cancelled_result.evidence.attempt_records[0].outcome
 
     sleep_cancelled = GoogleBooksMetadataProvider(
         "google_books",
@@ -604,10 +664,13 @@ def test_retry_after_deadline_and_cancellation_are_fail_closed() -> None:
         sleep=lambda _: (_ for _ in ()).throw(KeyboardInterrupt()),
         jitter=lambda: 0.0,
     )
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(ProviderObservationInterrupted) as sleep_failure:
         sleep_cancelled.observe(_lookup())
-    assert 1 == len(sleep_cancelled.attempt_records)
-    assert "cancelled" == sleep_cancelled.attempt_records[0].outcome
+    sleep_cancelled_result = sleep_failure.value.snapshot
+    assert sleep_cancelled_result.evidence.attempt_records is not None
+    assert 1 == len(sleep_cancelled_result.evidence.attempt_records)
+    assert sleep_cancelled_result.evidence.attempt_records is not None
+    assert "cancelled" == sleep_cancelled_result.evidence.attempt_records[0].outcome
 
 
 def test_narrow_transport_failure_retries_but_unknown_does_not() -> None:
@@ -624,13 +687,17 @@ def test_narrow_transport_failure_retries_but_unknown_does_not() -> None:
             json={"totalItems": 1, "items": [_volume()]},
         )
 
-    recovered = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(transient)),
-        65_536,
-        sleep=lambda _: None,
-        jitter=lambda: 0.0,
-    ).observe(_lookup())
+    recovered = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(transient)),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        .observe(_lookup())
+        .observation
+    )
     assert ProviderStatus.CANDIDATES == recovered.status
     assert 2 == responses
 
@@ -641,12 +708,16 @@ def test_narrow_transport_failure_retries_but_unknown_does_not() -> None:
         responses += 1
         raise httpx.ConnectError("connection reset by peer")
 
-    failed = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(unknown)),
-        65_536,
-        sleep=lambda _: pytest.fail("unknown failure must not retry"),
-    ).observe(_lookup())
+    failed = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(unknown)),
+            65_536,
+            sleep=lambda _: pytest.fail("unknown failure must not retry"),
+        )
+        .observe(_lookup())
+        .observation
+    )
     assert ProviderStatus.UNAVAILABLE == failed.status
     assert 1 == responses
 
@@ -670,9 +741,10 @@ def test_observation_and_interrupted_body_budgets_are_aggregate() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    provider.observe(_discovery_plan())
+    provider_result = provider.observe(_discovery_plan())
     assert 54 == dispatches
-    assert 54 == len(provider.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
+    assert 54 == len(provider_result.evidence.attempt_records)
 
     interrupted_dispatches = 0
 
@@ -692,9 +764,10 @@ def test_observation_and_interrupted_body_budgets_are_aggregate() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    interrupted_provider.observe(_discovery_plan())
+    interrupted_provider_result = interrupted_provider.observe(_discovery_plan())
     assert 9 == interrupted_dispatches
-    assert 9 == len(interrupted_provider.attempt_records)
+    assert interrupted_provider_result.evidence.attempt_records is not None
+    assert 9 == len(interrupted_provider_result.evidence.attempt_records)
 
 
 def test_encoded_error_bodies_are_raw_charged_or_fail_preloaded() -> None:
@@ -716,7 +789,9 @@ def test_encoded_error_bodies_are_raw_charged_or_fail_preloaded() -> None:
             1_024,
             sleep=lambda _: pytest.fail("non-identity encoding must not retry"),
         )
-        assert ProviderStatus.MALFORMED == provider.observe(_lookup()).status
+        assert (
+            ProviderStatus.MALFORMED == (provider.observe(_lookup())).observation.status
+        )
         assert 1 == calls
         assert 1_024 * 9 - len(raw_body) == provider._remaining_response_bytes
 
@@ -733,7 +808,9 @@ def test_encoded_error_bodies_are_raw_charged_or_fail_preloaded() -> None:
                 "preloaded non-identity response must not retry"
             ),
         )
-        assert ProviderStatus.MALFORMED == provider.observe(_lookup()).status
+        assert (
+            ProviderStatus.MALFORMED == (provider.observe(_lookup())).observation.status
+        )
         assert 1_024 * 9 == provider._remaining_response_bytes
 
 
@@ -765,16 +842,20 @@ def test_retries_503_with_fresh_backoff_and_records_each_dispatch() -> None:
         jitter=lambda: next(jitters),
     )
 
-    observation = provider.observe(_lookup())
+    provider_result = provider.observe(_lookup())
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert [1.25, 2.75] == delays
-    assert 3 == len(provider.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
+    assert 3 == len(provider_result.evidence.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
     assert ["retry", "retry", "response_received"] == [
-        record.outcome for record in provider.attempt_records
+        record.outcome for record in provider_result.evidence.attempt_records
     ]
+    assert provider_result.evidence.attempt_records is not None
     assert ["http_503", "http_503", "none"] == [
-        record.category for record in provider.attempt_records
+        record.category for record in provider_result.evidence.attempt_records
     ]
 
 
@@ -810,10 +891,13 @@ def test_recovers_at_every_permitted_503_retry_ordinal(
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.CANDIDATES == provider.observe(_lookup()).status
-    assert prior_failures + 1 == len(provider.attempt_records)
+    provider_result = provider.observe(_lookup())
+    assert ProviderStatus.CANDIDATES == (provider_result).observation.status
+    assert provider_result.evidence.attempt_records is not None
+    assert prior_failures + 1 == len(provider_result.evidence.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
     assert ["retry"] * prior_failures + ["response_received"] == [
-        record.outcome for record in provider.attempt_records
+        record.outcome for record in provider_result.evidence.attempt_records
     ]
 
 
@@ -837,12 +921,15 @@ def test_503_retry_authority_is_capped_at_six_dispatches() -> None:
         jitter=lambda: 0.0,
     )
 
-    observation = provider.observe(_lookup())
+    provider_result = provider.observe(_lookup())
+    observation = (provider_result).observation
 
     assert ProviderStatus.UNAVAILABLE == observation.status
     assert 6 == requests
-    assert 6 == len(provider.attempt_records)
-    assert "exhausted" == provider.attempt_records[-1].outcome
+    assert provider_result.evidence.attempt_records is not None
+    assert 6 == len(provider_result.evidence.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
+    assert "exhausted" == provider_result.evidence.attempt_records[-1].outcome
 
 
 def test_keyless_and_keyed_requests_are_fixed_and_credentials_never_persist() -> None:
@@ -857,12 +944,16 @@ def test_keyless_and_keyed_requests_are_fixed_and_credentials_never_persist() ->
                 json={"totalItems": 1, "items": [_volume()]},
             )
 
-        observation = GoogleBooksMetadataProvider(
-            "google_books",
-            httpx.Client(transport=httpx.MockTransport(handler)),
-            65_536,
-            api_key=api_key,
-        ).observe(_lookup())
+        observation = (
+            GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(transport=httpx.MockTransport(handler)),
+                65_536,
+                api_key=api_key,
+            )
+            .observe(_lookup())
+            .observation
+        )
         assert ProviderStatus.CANDIDATES == observation.status
         assert "google_books" == observation.authority
         assert 1 == len(requests)
@@ -923,11 +1014,15 @@ def test_work_query_requires_exact_complete_title_and_author_order() -> None:
         "Example Book",
         ("Ada Example",),
     )
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(lookup)
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(lookup)
+        .observation
+    )
     observation = qualify_provider_observation(observation, lookup)
     assert ProviderStatus.CANDIDATES == observation.status
     assert (
@@ -964,11 +1059,15 @@ def test_decoration_only_work_query_is_insufficient_without_request(title: str) 
         requests.append(request)
         return httpx.Response(500)
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(lookup)
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(lookup)
+        .observation
+    )
 
     assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
     assert [] == requests
@@ -985,19 +1084,23 @@ def test_filename_author_prefix_shapes_google_books_query_but_never_admits() -> 
         "Ada_Example_-_Example Book",
         ("Ada Example",),
     )
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json={"totalItems": 1, "items": [_volume()]},
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [_volume()]},
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(lookup)
+            ),
+            65_536,
+        )
+        .observe(lookup)
+        .observation
+    )
     qualified = qualify_provider_observation(observation, lookup)
 
     assert ProviderStatus.CANDIDATES is observation.status
@@ -1038,7 +1141,7 @@ def test_work_query_ladder_stops_on_first_candidates_and_accounts_retry() -> Non
         65_536,
     )
 
-    observation = provider.observe(lookup)
+    observation = (provider.observe(lookup)).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert 2 == len(requests)
@@ -1070,17 +1173,21 @@ def test_latin_fold_reaches_google_books_only_on_the_final_bounded_dispatch() ->
             ),
         )
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(
-        MetadataLookup(
-            ProviderQueryKind.WORK,
-            (),
-            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
-            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
         )
+        .observe(
+            MetadataLookup(
+                ProviderQueryKind.WORK,
+                (),
+                "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+                ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+            )
+        )
+        .observation
     )
 
     assert [
@@ -1122,7 +1229,9 @@ def test_widened_search_cannot_bypass_work_identity_qualification() -> None:
         65_536,
     )
 
-    qualified = qualify_provider_observation(provider.observe(lookup), lookup)
+    qualified = qualify_provider_observation(
+        (provider.observe(lookup)).observation, lookup
+    )
 
     assert ProviderStatus.NO_MATCH is qualified.status
     assert not qualified.candidates
@@ -1150,11 +1259,15 @@ def test_candidate_limit_gets_exactly_one_narrowing_retry() -> None:
         "Example Book",
         ("Ada Example", "Bea Example"),
     )
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(lookup)
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(lookup)
+        .observation
+    )
 
     assert ProviderStatus.NO_MATCH is observation.status
     assert 2 == len(requests)
@@ -1187,7 +1300,9 @@ def test_successful_lane_variant_survives_canonical_report_replay() -> None:
         ),
         65_536,
     )
-    observation = provider.observe(MetadataDiscoveryPlan((claim,), (lane,)))
+    observation = (
+        provider.observe(MetadataDiscoveryPlan((claim,), (lane,)))
+    ).observation
     report = MetadataReport.create(
         target=TargetFacts(
             "primary",
@@ -1220,19 +1335,23 @@ def test_successful_lane_variant_survives_canonical_report_replay() -> None:
 def test_exact_isbn_lane_promotes_standard_publication_date() -> None:
     volume = _volume()
     volume["volumeInfo"]["publishedDate"] = "2026-04-03"
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json={"totalItems": 1, "items": [volume]},
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(_lookup())
+            ),
+            65_536,
+        )
+        .observe(_lookup())
+        .observation
+    )
     publication = next(
         claim
         for claim in observation.candidates[0].claims
@@ -1253,22 +1372,26 @@ def test_work_query_does_not_choose_between_unlinked_matching_volumes() -> None:
         "Example Book",
         ("Ada Example",),
     )
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json={
-                        "totalItems": 2,
-                        "items": [_volume("volume_1"), _volume("volume_2")],
-                    },
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={
+                            "totalItems": 2,
+                            "items": [_volume("volume_1"), _volume("volume_2")],
+                        },
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(lookup)
+            ),
+            65_536,
+        )
+        .observe(lookup)
+        .observation
+    )
     qualified = qualify_provider_observation(observation, lookup)
     assert ProviderStatus.NO_MATCH == qualified.status
     assert () == qualified.candidates
@@ -1293,19 +1416,23 @@ def test_no_match_malformed_and_candidate_bound_are_distinct() -> None:
         ),
     )
     for payload, expected in cases:
-        observation = GoogleBooksMetadataProvider(
-            "google_books",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _: httpx.Response(
-                        200,
-                        headers={"content-type": "application/json"},
-                        json=payload,  # noqa: B023 - closure is created and consumed within this iteration
+        observation = (
+            GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=payload,  # noqa: B023 - closure is created and consumed within this iteration
+                        )
                     )
-                )
-            ),
-            65_536,
-        ).observe(_lookup())
+                ),
+                65_536,
+            )
+            .observe(_lookup())
+            .observation
+        )
         assert expected == observation.status
         assert () == observation.candidates
 
@@ -1339,21 +1466,25 @@ def test_declared_quota_and_http_errors_are_typed() -> None:
         ),
     )
     for status_code, payload, expected in cases:
-        observation = GoogleBooksMetadataProvider(
-            "google_books",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _: httpx.Response(
-                        status_code,  # noqa: B023 - closure is created and consumed within this iteration
-                        headers={"content-type": "application/json"},
-                        json=payload,  # noqa: B023 - closure is created and consumed within this iteration
+        observation = (
+            GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _: httpx.Response(
+                            status_code,  # noqa: B023 - closure is created and consumed within this iteration
+                            headers={"content-type": "application/json"},
+                            json=payload,  # noqa: B023 - closure is created and consumed within this iteration
+                        )
                     )
-                )
-            ),
-            65_536,
-            sleep=lambda _: None,
-            jitter=lambda: 0.0,
-        ).observe(_lookup())
+                ),
+                65_536,
+                sleep=lambda _: None,
+                jitter=lambda: 0.0,
+            )
+            .observe(_lookup())
+            .observation
+        )
         assert expected == observation.status
 
 
@@ -1398,9 +1529,10 @@ def test_google_rate_limit_grammar_is_closed_and_records_exact_evidence(
         wall_clock=lambda: 1_787_875_200.0,
         sleep=lambda _: pytest.fail("classified throttling must leave the lane"),
     )
-    observation = provider.observe(_lookup(), deadline=50.0)
+    provider_result = provider.observe(_lookup(), deadline=50.0)
+    observation = (provider_result).observation
     assert ProviderStatus.RATE_LIMITED == observation.status
-    record = provider.attempt_records[-1]
+    record = provider_result.evidence.attempt_records[-1]
     assert category == record.category
     if category == "quota_exhausted":
         assert record.delay_seconds is not None
@@ -1426,9 +1558,11 @@ def test_google_authentication_status_outranks_untrusted_quota_reason() -> None:
         wall_clock=lambda: 1_787_875_200.0,
         sleep=lambda _: pytest.fail("authentication must remain terminal"),
     )
-    observation = provider.observe(_lookup(), deadline=50.0)
+    provider_result = provider.observe(_lookup(), deadline=50.0)
+    observation = (provider_result).observation
     assert ProviderStatus.AUTHENTICATION == observation.status
-    assert "http_401" == provider.attempt_records[-1].category
+    assert provider_result.evidence.attempt_records is not None
+    assert "http_401" == provider_result.evidence.attempt_records[-1].category
 
 
 def test_invalid_scalar_claims_are_field_local_and_keep_valid_evidence() -> None:
@@ -1438,19 +1572,23 @@ def test_invalid_scalar_claims_are_field_local_and_keep_valid_evidence() -> None
     info["subtitle"] = 7
     info["description"] = "x" * (MAX_DESCRIPTION_CHARACTERS + 1)
 
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json={"totalItems": 1, "items": [volume]},
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(_lookup())
+            ),
+            65_536,
+        )
+        .observe(_lookup())
+        .observation
+    )
 
     assert ProviderStatus.CANDIDATES == observation.status
     candidate = observation.candidates[0]
@@ -1493,19 +1631,23 @@ def test_malformed_identifier_entries_fail_but_unsupported_types_are_ignored() -
         info = volume["volumeInfo"]
         assert isinstance(info, dict)
         info["industryIdentifiers"] = [identifier]
-        observation = GoogleBooksMetadataProvider(
-            "google_books",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda _: httpx.Response(
-                        200,
-                        headers={"content-type": "application/json"},
-                        json={"totalItems": 1, "items": [volume]},  # noqa: B023 - closure is created and consumed within this iteration
+        observation = (
+            GoogleBooksMetadataProvider(
+                "google_books",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda _: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json={"totalItems": 1, "items": [volume]},  # noqa: B023 - closure is created and consumed within this iteration
+                        )
                     )
-                )
-            ),
-            65_536,
-        ).observe(_lookup())
+                ),
+                65_536,
+            )
+            .observe(_lookup())
+            .observation
+        )
         assert ProviderStatus.MALFORMED == observation.status
         assert () == observation.candidates
 
@@ -1515,66 +1657,82 @@ def test_malformed_identifier_entries_fail_but_unsupported_types_are_ignored() -
     identifiers = info["industryIdentifiers"]
     assert isinstance(identifiers, list)
     identifiers.append({"type": "OTHER", "identifier": "synthetic-id"})
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json={"totalItems": 1, "items": [volume]},
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [volume]},
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(_lookup())
+            ),
+            65_536,
+        )
+        .observe(_lookup())
+        .observation
+    )
     assert ProviderStatus.CANDIDATES == observation.status
 
 
 def test_oversized_timeout_and_expired_deadline_fail_closed() -> None:
-    oversized = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={
-                        "content-type": "application/json",
-                        "content-length": "2000",
-                    },
-                    content=b"{}",
+    oversized = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={
+                            "content-type": "application/json",
+                            "content-length": "2000",
+                        },
+                        content=b"{}",
+                    )
                 )
-            )
-        ),
-        1024,
-    ).observe(_lookup())
+            ),
+            1024,
+        )
+        .observe(_lookup())
+        .observation
+    )
     assert ProviderStatus.OVERSIZED == oversized.status
 
     def timeout(_: httpx.Request) -> httpx.Response:
         raise httpx.ReadTimeout("synthetic timeout")
 
-    unavailable = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=httpx.MockTransport(timeout)),
-        65_536,
-        sleep=lambda _: None,
-        jitter=lambda: 0.0,
-    ).observe(_lookup())
+    unavailable = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=httpx.MockTransport(timeout)),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        .observe(_lookup())
+        .observation
+    )
     assert ProviderStatus.UNAVAILABLE == unavailable.status
 
     requests: list[httpx.Request] = []
-    expired = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: (
-                    requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
-                    or httpx.Response(200, json={})
+    expired = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: (
+                        requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+                        or httpx.Response(200, json={})
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(_lookup(), deadline=0.0)
+            ),
+            65_536,
+        )
+        .observe(_lookup(), deadline=0.0)
+        .observation
+    )
     assert ProviderStatus.INCOMPLETE == expired.status
     assert [] == requests
 
@@ -1591,19 +1749,23 @@ def test_oversized_timeout_and_expired_deadline_fail_closed() -> None:
 def test_malformed_and_duplicate_json_never_escape_as_raw_artifacts(
     payload: bytes,
 ) -> None:
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    content=payload,  # noqa: B023 - closure is created and consumed within this iteration
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        content=payload,  # noqa: B023 - closure is created and consumed within this iteration
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(_lookup())
+            ),
+            65_536,
+        )
+        .observe(_lookup())
+        .observation
+    )
     assert ProviderStatus.MALFORMED == observation.status
     assert "secret-value" not in repr(observation)
 
@@ -1622,41 +1784,53 @@ def test_undispatched_causes_are_once_per_physical_lookup_and_closed() -> None:
 
     aggregate_bytes = provider()
     aggregate_bytes._remaining_response_bytes = 0
-    observation = aggregate_bytes.observe(_lookup())
+    aggregate_bytes_result = aggregate_bytes.observe(_lookup())
+    observation = (aggregate_bytes_result).observation
     assert ProviderStatus.INCOMPLETE == observation.status
+    assert aggregate_bytes_result.evidence.incomplete_causes is not None
     assert ["aggregate_bytes"] == [
-        record.cause.value for record in aggregate_bytes.incomplete_causes
+        record.cause.value
+        for record in aggregate_bytes_result.evidence.incomplete_causes
     ]
 
     dispatch_count = provider()
     dispatch_count._attempt_count = 999
-    dispatch_count.observe(_lookup())
+    dispatch_count_result = dispatch_count.observe(_lookup())
+    assert dispatch_count_result.evidence.incomplete_causes is not None
     assert ["dispatch_count"] == [
-        record.cause.value for record in dispatch_count.incomplete_causes
+        record.cause.value
+        for record in dispatch_count_result.evidence.incomplete_causes
     ]
 
     deadline = provider()
-    deadline.observe(_lookup(), deadline=0.0)
-    assert ["deadline"] == [record.cause.value for record in deadline.incomplete_causes]
-    serialized = repr(deadline.incomplete_causes)
+    deadline_result = deadline.observe(_lookup(), deadline=0.0)
+    assert deadline_result.evidence.incomplete_causes is not None
+    assert ["deadline"] == [
+        record.cause.value for record in deadline_result.evidence.incomplete_causes
+    ]
+    serialized = repr(deadline_result.evidence.incomplete_causes)
     for forbidden in ("credential", "private", "secret", "query", "path"):
         assert forbidden not in serialized
 
 
 def test_report_proposal_admission_and_review_packet_replay_google_evidence() -> None:
-    observation = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json={"totalItems": 1, "items": [_volume()]},
+    observation = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json={"totalItems": 1, "items": [_volume()]},
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(_lookup())
+            ),
+            65_536,
+        )
+        .observe(_lookup())
+        .observation
+    )
     report = MetadataReport.create(
         target=TargetFacts(
             "primary",

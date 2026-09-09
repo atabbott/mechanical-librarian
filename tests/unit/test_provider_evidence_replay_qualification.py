@@ -93,32 +93,40 @@ def test_recorded_identifier_hit_replays_without_discovery_spend() -> None:
         ],
     }
     exchanges: list[dict[str, object]] = []
-    recorded = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(
-            transport=replay.RecordingTransport(
-                exchanges,
-                "google_books",
-                httpx.MockTransport(
-                    lambda request: httpx.Response(
-                        200,
-                        headers={"content-type": "application/json"},
-                        json=payload,
-                        request=request,
-                    )
-                ),
-            )
-        ),
-        65_536,
-        wall_clock=lambda: 1_700_000_000.0,
-    ).observe(plan)
+    recorded = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(
+                transport=replay.RecordingTransport(
+                    exchanges,
+                    "google_books",
+                    httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            json=payload,
+                            request=request,
+                        )
+                    ),
+                )
+            ),
+            65_536,
+            wall_clock=lambda: 1_700_000_000.0,
+        )
+        .observe(plan)
+        .observation
+    )
     transport = replay.ReplayTransport(exchanges, "google_books")
-    replayed = GoogleBooksMetadataProvider(
-        "google_books",
-        httpx.Client(transport=transport),
-        65_536,
-        wall_clock=lambda: 1_700_000_000.0,
-    ).observe(plan)
+    replayed = (
+        GoogleBooksMetadataProvider(
+            "google_books",
+            httpx.Client(transport=transport),
+            65_536,
+            wall_clock=lambda: 1_700_000_000.0,
+        )
+        .observe(plan)
+        .observation
+    )
 
     assert recorded.to_data() == replayed.to_data()
     assert [ProviderQueryKind.ISBN] == [lane.kind for lane in replayed.lanes]
@@ -212,7 +220,7 @@ def _bundle() -> dict[str, object]:
         provider.adapter,
         instance,
         plan,
-    )
+    ).observation
     report = MetadataReport.create(
         target=seed.target,
         file=seed.file,

@@ -125,7 +125,11 @@ def _isbn_series_report(
         )
 
     with httpx.Client(transport=httpx.MockTransport(handler)) as client:
-        observation = HardcoverMetadataProvider(provider, client, 65_536).observe(plan)
+        observation = (
+            HardcoverMetadataProvider(provider, client, 65_536)
+            .observe(plan)
+            .observation
+        )
     assert operations == ["MetadataEvidenceByIsbn"]
     assert observation.status is ProviderStatus.CANDIDATES
     assert len(observation.candidates) == 1

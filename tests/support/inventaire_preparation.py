@@ -130,7 +130,9 @@ class InventairePreparationFixture:
             65_536,
             pacer=InventairePacer(0.001, sleep=lambda _: None),
         )
-        observation = qualify_provider_observation(provider.observe(lookup), lookup)
+        observation = qualify_provider_observation(
+            (provider.observe(lookup)).observation, lookup
+        )
         assert observation.status is ProviderStatus.CANDIDATES
         target = replace(
             seed.target,

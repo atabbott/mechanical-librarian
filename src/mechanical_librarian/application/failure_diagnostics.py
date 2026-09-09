@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections import Counter
 
+from mechanical_librarian.application.provider_evidence import (
+    ProviderOperationalEvidence,
+)
 from mechanical_librarian.domain.failure_diagnostics import (
     MAX_DIAGNOSTIC_COUNT,
     FailureCategory,
@@ -12,6 +15,7 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
+from mechanical_librarian.domain.metadata_report import ProviderObservation
 
 
 def provider_attempt_diagnostics(
@@ -265,3 +269,17 @@ __all__ = [
     "merge_provider_diagnostics",
     "provider_attempt_diagnostics",
 ]
+
+
+def provider_result_diagnostics(
+    observation: ProviderObservation, evidence: ProviderOperationalEvidence
+) -> tuple[FailureDiagnostic, ...]:
+    """Merge adapter diagnostics and operational evidence exactly once."""
+    return merge_provider_diagnostics(
+        observation.diagnostics,
+        provider_attempt_diagnostics(
+            evidence.attempt_records,
+            status=observation.status.value,
+            incomplete_causes=evidence.incomplete_causes,
+        ),
+    )

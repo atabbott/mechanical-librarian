@@ -16,27 +16,33 @@ from typing import Any, cast
 import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
-    ProviderAttemptRecord,
     ProviderFailure,
-    ProviderIncompleteCause,
-    ProviderIncompleteCauseRecord,
     ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
 )
+from mechanical_librarian.adapters.providers.sdk import provider_client_lifetime
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
+    ProviderFailureSnapshot,
     ProviderLaneResult,
+    ProviderResult,
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderAttemptRecord,
+    ProviderIncompleteCause,
+    ProviderIncompleteCauseRecord,
+    ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverContext,
@@ -214,25 +220,40 @@ class OpenLibraryMetadataProvider:
         self._schema_rejections = 0
         self._diagnosed_detail_identities: set[str] = set()
         self._ledger = _DiscoveryRequestLedger("open_library", "search-v1")
-        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
-        self.cover_pacer = self._pacer
-        self.cover_kind = CoverSourceKind.OPEN_LIBRARY
-        self.cover_allow_redirects = False
-        self.cover_user_agent = client.headers["User-Agent"]
-
-    @property
-    def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
-        return tuple(self._attempt_records)
-
-    @property
-    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
-        return tuple(self._incomplete_causes)
-
-    @property
-    def accessed_at(self) -> str | None:
-        return self._accessed_at
+        self._cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        self._cover_user_agent = client.headers["User-Agent"]
 
     def observe(
+        self,
+        plan: MetadataDiscoveryPlan | MetadataLookup,
+        *,
+        deadline: float | None = None,
+    ) -> ProviderResult:
+        failure: BaseException | None = None
+        try:
+            observation = self._observe(plan, deadline=deadline)
+        except BaseException as error:
+            failure = error
+        try:
+            snapshot = ProviderFailureSnapshot(
+                self._cover_descriptors,
+                ProviderOperationalEvidence(
+                    self._accessed_at,
+                    tuple(self._attempt_records),
+                    tuple(self._incomplete_causes),
+                ),
+            )
+        except BaseException:
+            if failure is not None:
+                raise failure from None
+            raise
+        if failure is not None:
+            snapshot.raise_from(failure)
+        return ProviderResult(
+            observation, snapshot.cover_descriptors, snapshot.evidence
+        )
+
+    def _observe(
         self,
         plan: MetadataDiscoveryPlan | MetadataLookup,
         *,
@@ -265,7 +286,7 @@ class OpenLibraryMetadataProvider:
                 projection=projection,
             )
             self._ledger = ledger
-            try:
+            with provider_client_lifetime(self._client):
                 value, _ = ledger.resolve(
                     kind=plan.kind.value,
                     matched_family=plan.matched_family,
@@ -275,8 +296,6 @@ class OpenLibraryMetadataProvider:
                     execute=lambda: self._observe_lookup(plan, deadline=deadline),
                 )
                 return replace(value, request_accounting=ledger.accounting())
-            finally:
-                self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:
             raise ValueError("provider lookup is invalid")
         if plan.overflow:
@@ -298,7 +317,7 @@ class OpenLibraryMetadataProvider:
             )
         self._ledger = ledger
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
-        try:
+        with provider_client_lifetime(self._client):
             for lane in provider_discovery_lane_order(plan):
                 if identifier_suppresses_discovery(plan, results, lane):
                     ledger.suppress(
@@ -309,7 +328,7 @@ class OpenLibraryMetadataProvider:
                         projection=_WORK_SEARCH_PROJECTION,
                     )
                     continue
-                self.cover_descriptors = ()
+                self._cover_descriptors = ()
                 lookup = MetadataLookup(
                     lane.kind,
                     plan.local_claims,
@@ -343,7 +362,7 @@ class OpenLibraryMetadataProvider:
                 merged = merge_provider_cover_descriptors(
                     descriptors,
                     (
-                        self.cover_descriptors
+                        self._cover_descriptors
                         if observation.status is ProviderStatus.CANDIDATES
                         else ()
                     ),
@@ -356,9 +375,7 @@ class OpenLibraryMetadataProvider:
                     )
                 else:
                     descriptors = merged
-        finally:
-            self._client.close()
-        self.cover_descriptors = descriptors
+        self._cover_descriptors = descriptors
         return provider_observation(
             self._name,
             _canonical_discovery_results(self._name, tuple(results)),
@@ -642,12 +659,12 @@ class OpenLibraryMetadataProvider:
                             work_documents[work_key],
                         )
                     )
-                self.cover_descriptors = _cover_descriptors(
+                self._cover_descriptors = _cover_descriptors(
                     self._name,
                     lookup.kind,
                     cover_candidates,
                     self._pacer.wait,
-                    self.cover_user_agent,
+                    self._cover_user_agent,
                 )
         except ProviderFailure as error:
             self._ledger.finalize_pending_details()

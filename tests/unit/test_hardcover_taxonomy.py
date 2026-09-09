@@ -81,7 +81,9 @@ def test_work_query_ladder_and_narrowing_use_closed_graphql_grammars() -> None:
         httpx.Client(transport=httpx.MockTransport(handler)),
         65_536,
     )
-    observation = provider.observe(work_lookup("Current title: Subtitle (Book 2)"))
+    observation = (
+        provider.observe(work_lookup("Current title: Subtitle (Book 2)"))
+    ).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert [
@@ -123,15 +125,19 @@ def test_latin_fold_reaches_hardcover_only_on_the_final_bounded_dispatch() -> No
             json=hardcover_envelope([], []) if len(requests) < 3 else matching,
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(
-        work_lookup(
-            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
-            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
         )
+        .observe(
+            work_lookup(
+                "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+                ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+            )
+        )
+        .observation
     )
 
     assert [
@@ -167,11 +173,15 @@ def test_decoration_only_work_query_is_insufficient_without_request(title: str) 
         requests.append(request)
         return httpx.Response(500)
 
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(work_lookup(title))
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(work_lookup(title))
+        .observation
+    )
 
     assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
     assert [] == requests
@@ -199,19 +209,23 @@ def test_filename_author_prefix_shapes_hardcover_query_but_never_admits() -> Non
             }
         ],
     )
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda _: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(lookup)
+            ),
+            65_536,
+        )
+        .observe(lookup)
+        .observation
+    )
     qualified = qualify_provider_observation(observation, lookup)
 
     assert ProviderStatus.CANDIDATES is observation.status
@@ -254,11 +268,15 @@ def test_hardcover_candidate_limit_retries_with_primary_author_equality() -> Non
             json=overflow if len(requests) == 1 else hardcover_envelope([], []),
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(work_lookup(authors=("Ada Example", "Bea Example")))
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(work_lookup(authors=("Ada Example", "Bea Example")))
+        .observation
+    )
 
     assert ProviderStatus.NO_MATCH is observation.status
     assert 2 == len(requests)
@@ -339,7 +357,8 @@ def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
         65_536,
     )
     lookup = work_lookup()
-    observation = qualify_provider_observation(provider.observe(lookup), lookup)
+    provider_result = provider.observe(lookup)
+    observation = qualify_provider_observation((provider_result).observation, lookup)
     assert ProviderQueryKind.WORK == observation.query_kind
     assert "MetadataEvidenceByWork" == captured[0]["operationName"]
     assert {"authors": ["Ada Example"], "title": "Current title"} == captured[0][
@@ -414,7 +433,7 @@ def test_work_lookup_retains_typed_taxonomy_and_first_publication() -> None:
     assert () == retained.links
     default_cover = next(
         value
-        for value in provider.cover_descriptors
+        for value in provider_result.cover_descriptors
         if value.provenance is not None
         and value.provenance.designation.value == "default"
     )
@@ -476,19 +495,23 @@ def test_equal_taxonomy_values_keep_type_and_source_order_through_replay() -> No
             }
         ],
     )
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
     taxonomy = sorted(
         (
             value
@@ -541,19 +564,23 @@ def _observe_book(book: dict[str, object]) -> ProviderObservation:
         ],
         [book],
     )
-    return HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    return (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(work_lookup())
+            ),
+            65_536,
+        )
+        .observe(work_lookup())
+        .observation
+    )
 
 
 _TITLED_WORK: dict[str, object] = {
@@ -659,7 +686,9 @@ def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing() -> None
         )
     )
     provider = HardcoverMetadataProvider("catalogue", client, 65_536)
-    assert provider.observe(isbn_lookup(())).status == ProviderStatus.INSUFFICIENT_INPUT
+    assert (
+        provider.observe(isbn_lookup(()))
+    ).observation.status == ProviderStatus.INSUFFICIENT_INPUT
     assert calls == []
 
     malformed = httpx.Client(
@@ -689,8 +718,10 @@ def test_no_usable_input_has_no_egress_and_malformed_is_all_or_nothing() -> None
             )
         )
     )
-    observation = HardcoverMetadataProvider("catalogue", malformed, 65_536).observe(
-        isbn_lookup((isbn_claim(),))
+    observation = (
+        HardcoverMetadataProvider("catalogue", malformed, 65_536)
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
     )
     assert observation.status == ProviderStatus.MALFORMED
     assert observation.candidates == ()
@@ -727,7 +758,7 @@ def test_separate_root_join_rejects_missing_duplicate_and_unreferenced_work(
     assert (
         HardcoverMetadataProvider("catalogue", client, 65_536)
         .observe(isbn_lookup((isbn_claim(),)))
-        .status
+        .observation.status
         == ProviderStatus.MALFORMED
     )
 
@@ -786,19 +817,23 @@ def test_separate_taxonomy_root_join_rejects_missing_duplicate_and_extra_tags(
     )[0]
     payload = json.loads(json.dumps(base))
     payload["data"]["tags"] = tags(tag)
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
     assert ProviderStatus.CANDIDATES == observation.status
     assert 1 == len(observation.candidates)
 
@@ -880,19 +915,23 @@ def test_duplicate_taxonomy_ids_are_permanently_poisoned(
     rows = duplicates(tags[0])
     payload = json.loads(json.dumps(base))
     payload["data"]["tags"] = [*rows, tags[1]]
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
     taxonomy = tuple(
         claim
         for claim in observation.candidates[0].claims
@@ -923,19 +962,23 @@ def test_taxonomy_absence_is_synthesized_only_without_terminal_claims(
         [{"id": 1, "book_id": 1, "isbn_10": None, "isbn_13": "9780306406157"}],
         [{"id": 1, "title": "Current title", "taggings": taggings}],
     )
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
     states = {
         claim.state
         for claim in observation.candidates[0].claims
@@ -975,19 +1018,23 @@ def test_series_and_taxonomy_terminal_states_are_independent() -> None:
         ],
         [book],
     )
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
 
     assert ProviderStatus.CANDIDATES == observation.status
     states = {
@@ -1070,19 +1117,23 @@ def test_malformed_taxonomy_rows_are_local_to_referencing_works() -> None:
         ],
     )
     payload["data"]["tags"][0]["tag_category"] = {"id": 3}
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
 
     candidates = {
         candidate.work_identity: candidate for candidate in observation.candidates
@@ -1123,19 +1174,23 @@ def test_unreferenced_malformed_taxonomy_rows_are_diagnostic_only() -> None:
         },
         {"tag": "Unidentifiable", "tag_category": {"id": 3}},
     ]
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
 
     assert 2 == observation.diagnostics[0].count
     assert {FieldState.ABSENT} == {
@@ -1181,19 +1236,23 @@ def test_unavailable_or_oversized_taxonomy_root_is_global(
         [{"id": 1, "title": "Current title", "taggings": []}],
     )
     payload["data"]["tags"] = tags
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=payload,
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=payload,
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
     assert {expected} == {
         claim.state
         for claim in observation.candidates[0].claims

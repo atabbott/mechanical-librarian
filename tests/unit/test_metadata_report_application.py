@@ -45,7 +45,11 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     MetadataReportError,
     ProviderBinding,
+    ProviderCoverDescriptor,
+    ProviderFailureSnapshot,
     ProviderLaneResult,
+    ProviderObservationFailure,
+    ProviderResult,
     ReportRepository,
     TargetCover,
     TargetFile,
@@ -56,6 +60,9 @@ from mechanical_librarian.application.metadata_report import (
     require_report_current,
 )
 from mechanical_librarian.application.operations import StageTimer, StageTiming
+from mechanical_librarian.application.provider_evidence import (
+    ProviderOperationalEvidence,
+)
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
     AudioChapterComposition,
@@ -117,7 +124,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     work_query_ladder,
 )
-from tests.support.hardcover_evidence import hardcover_envelope
+from tests.support.hardcover_evidence import hardcover_envelope, isbn_claim
 from tests.support.metadata_report_doubles import (
     FakeAudioInspector,
     FakeInspector,
@@ -527,7 +534,7 @@ def test_repository_closes_when_inspection_or_provider_validation_fails() -> Non
 
     class MismatchedProvider:
         def observe(self, claims, *, deadline=None):
-            return ProviderObservation("other", ProviderStatus.NO_MATCH)
+            return ProviderResult(ProviderObservation("other", ProviderStatus.NO_MATCH))
 
     service = GenerateMetadataReport(
         target=FakeTarget([TargetSnapshot("ebook", "Title", (selected,))]),
@@ -558,7 +565,9 @@ def test_actual_extraction_and_provider_boundaries_have_separate_timings() -> No
 
     class Provider:
         def observe(self, plan, *, deadline=None):
-            return ProviderObservation("catalogue", ProviderStatus.NO_MATCH)
+            return ProviderResult(
+                ProviderObservation("catalogue", ProviderStatus.NO_MATCH)
+            )
 
     selected = TargetFile("a" * 64, "book.epub", "epub")
     snapshot = TargetSnapshot("ebook", "Title", (selected,))
@@ -721,17 +730,7 @@ def test_repository_release_failure_cannot_displace_the_failure_it_reports() -> 
 def test_failing_access_time_still_yields_the_promised_unavailable_lane(
     reading,
 ) -> None:
-    """A broken diagnostic cannot cost the lane the handler promises.
-
-    The provider handler converts any `observe` failure into one unavailable
-    lane so a single adapter cannot deny the owner the whole report. It read
-    the optional access time with `getattr(provider, "accessed_at", None)`,
-    whose default absorbs only `AttributeError`, so a property raising
-    anything else propagated out of the handler and aborted the report --
-    the opposite of the invariant the handler was annotated with. An answer
-    that is not an access time reaches the domain rule and fails the same
-    way, so both the read and the check are guarded now (#698).
-    """
+    """Unavailable or malformed snapshot access time cannot suppress the lane."""
     selected = TargetFile("a" * 64, "book.epub", "epub")
     snapshot = TargetSnapshot("ebook", "Current title", (selected,))
     claim = LocalClaim.create(
@@ -746,14 +745,13 @@ def test_failing_access_time_still_yields_the_promised_unavailable_lane(
 
     def run_with(reading: object) -> tuple[MetadataReport, FakeReportRepository]:
         class Provider:
-            @property
-            def accessed_at(self):
-                if isinstance(reading, BaseException):
-                    raise reading
-                return reading
-
             def observe(self, _plan, *, deadline):
-                raise RuntimeError("adapter transport failed")
+                evidence = ProviderOperationalEvidence(
+                    accessed_at=None if isinstance(reading, BaseException) else reading
+                )
+                raise ProviderObservationFailure(
+                    ProviderFailureSnapshot(evidence=evidence)
+                ) from RuntimeError("adapter transport failed")
 
         repository = FakeReportRepository()
         service = GenerateMetadataReport(
@@ -813,16 +811,18 @@ def test_application_replays_after_file_reorder_and_constructs_provider_once() -
 
     class Provider:
         def observe(self, claims, *, deadline=None):
-            return ProviderObservation(
-                "catalogue",
-                ProviderStatus.NO_MATCH,
-                tuple(
-                    sorted(
-                        value.reference
-                        for value in claims
-                        if value.kind is ClaimKind.ISBN
-                    )
-                ),
+            return ProviderResult(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.NO_MATCH,
+                    tuple(
+                        sorted(
+                            value.reference
+                            for value in claims
+                            if value.kind is ClaimKind.ISBN
+                        )
+                    ),
+                )
             )
 
     service = GenerateMetadataReport(
@@ -866,7 +866,9 @@ def test_application_shares_aggregate_deadline_with_metadata_and_cover_providers
     class Provider:
         def observe(self, _plan, *, deadline):
             observed.append(("metadata", deadline))
-            return ProviderObservation("catalogue", ProviderStatus.NO_MATCH)
+            return ProviderResult(
+                ProviderObservation("catalogue", ProviderStatus.NO_MATCH)
+            )
 
     class CoverObserver:
         def observe(
@@ -925,7 +927,13 @@ def test_incomplete_cause_property_is_mapped_without_private_material() -> None:
             return (type("Cause", (), {"cause": "aggregate_bytes"})(),)
 
         def observe(self, _plan, *, deadline):
-            return ProviderObservation("catalogue", ProviderStatus.INCOMPLETE)
+            return ProviderResult(
+                ProviderObservation("catalogue", ProviderStatus.INCOMPLETE),
+                evidence=ProviderOperationalEvidence(
+                    attempt_records=self.attempt_records,
+                    incomplete_causes=self.incomplete_causes,
+                ),
+            )
 
     service = GenerateMetadataReport(
         target=target,
@@ -990,16 +998,23 @@ def test_provider_parser_attempt_and_incomplete_diagnostics_merge_once_on_reopen
         incomplete_causes = (type("Cause", (), {"cause": "aggregate_bytes"})(),)
 
         def observe(self, _plan, *, deadline):
-            return ProviderObservation(
-                "catalogue",
-                ProviderStatus.INCOMPLETE,
-                diagnostics=(
-                    FailureDiagnostic(
-                        FailureCategory.SCHEMA_CONSTRUCTION,
-                        FailureComponent.PROVIDER,
-                        FailureStage.SCHEMA,
-                        count=1,
+            return ProviderResult(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.INCOMPLETE,
+                    diagnostics=(
+                        FailureDiagnostic(
+                            FailureCategory.SCHEMA_CONSTRUCTION,
+                            FailureComponent.PROVIDER,
+                            FailureStage.SCHEMA,
+                            count=1,
+                        ),
                     ),
+                ),
+                cover_descriptors=self.cover_descriptors,
+                evidence=ProviderOperationalEvidence(
+                    attempt_records=self.attempt_records,
+                    incomplete_causes=self.incomplete_causes,
                 ),
             )
 
@@ -1348,13 +1363,15 @@ def _audiobook_service(
         def observe(self, plan, *, deadline=None):
             recorded.append("provider")
             recorded_plans.append(plan)
-            return ProviderObservation(
-                "catalogue",
-                ProviderStatus.NO_MATCH,
-                query_kind=(
-                    plan.lanes[0].kind if plan.lanes else ProviderQueryKind.NONE
-                ),
-                authority="audible_catalog",
+            return ProviderResult(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.NO_MATCH,
+                    query_kind=(
+                        plan.lanes[0].kind if plan.lanes else ProviderQueryKind.NONE
+                    ),
+                    authority="audible_catalog",
+                )
             )
 
     return GenerateMetadataReport(
@@ -1532,16 +1549,18 @@ class _WorkAnsweringProvider:
 
     def observe(
         self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
-    ) -> ProviderObservation:
+    ) -> ProviderResult:
         self._plans.append(plan)
         lanes = tuple(
             lane for lane in plan.lanes if lane.kind is ProviderQueryKind.WORK
         )
         if not lanes:
-            return ProviderObservation(
-                self._name,
-                ProviderStatus.INSUFFICIENT_INPUT,
-                authority="audible_catalog",
+            return ProviderResult(
+                ProviderObservation(
+                    self._name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    authority="audible_catalog",
+                )
             )
         lane = lanes[0]
         title = cast("str", lane.title)
@@ -1561,18 +1580,20 @@ class _WorkAnsweringProvider:
                 ProviderQueryKind.WORK, plan.local_claims, title, lane.authors
             ),
         )
-        return provider_observation(
-            self._name,
-            (
-                ProviderLaneResult(
-                    lane,
-                    qualified.status,
-                    qualified.candidates,
-                    dispatch_lineage=qualified.dispatch_lineage,
-                    transformation_lineage=qualified.transformation_lineage,
+        return ProviderResult(
+            provider_observation(
+                self._name,
+                (
+                    ProviderLaneResult(
+                        lane,
+                        qualified.status,
+                        qualified.candidates,
+                        dispatch_lineage=qualified.dispatch_lineage,
+                        transformation_lineage=qualified.transformation_lineage,
+                    ),
                 ),
-            ),
-            authority="audible_catalog",
+                authority="audible_catalog",
+            )
         )
 
 
@@ -1585,19 +1606,25 @@ class _AsinAnsweringProvider:
 
     def observe(
         self, plan: MetadataDiscoveryPlan, *, deadline: float | None = None
-    ) -> ProviderObservation:
+    ) -> ProviderResult:
         self._plans.append(plan)
         lanes = tuple(
             lane for lane in plan.lanes if lane.kind is ProviderQueryKind.ASIN
         )
         if not lanes:
-            return ProviderObservation(
-                self._name, ProviderStatus.INSUFFICIENT_INPUT, authority="audnexus"
+            return ProviderResult(
+                ProviderObservation(
+                    self._name, ProviderStatus.INSUFFICIENT_INPUT, authority="audnexus"
+                )
             )
-        return provider_observation(
-            self._name,
-            tuple(ProviderLaneResult(lane, ProviderStatus.NO_MATCH) for lane in lanes),
-            authority="audnexus",
+        return ProviderResult(
+            provider_observation(
+                self._name,
+                tuple(
+                    ProviderLaneResult(lane, ProviderStatus.NO_MATCH) for lane in lanes
+                ),
+                authority="audnexus",
+            )
         )
 
 
@@ -2269,3 +2296,53 @@ def test_the_audio_ceiling_binds_the_audio_path_and_not_the_epub_one() -> None:
 
     assert audio_inspector.ceilings == [4_096]
     assert inspector.ceilings == [1_024]
+
+
+def test_initial_failure_passes_exact_partial_descriptors_to_cover_observer():
+    selected = TargetFile("a" * 64, "book.epub", "epub")
+    target = TargetSnapshot("ebook", "Current title", (selected,))
+    descriptors = (
+        ProviderCoverDescriptor(
+            "catalogue", CoverSourceKind.OPEN_LIBRARY, "partial", None
+        ),
+    )
+    partial = ProviderFailureSnapshot(
+        descriptors, ProviderOperationalEvidence("2023-11-14T22:13:20.000000Z", (), ())
+    )
+    seen = []
+
+    class Provider:
+        def observe(self, _plan, *, deadline=None):
+            raise ProviderObservationFailure(partial) from RuntimeError(
+                "second lane failed"
+            )
+
+    class Observer:
+        def observe(
+            self, _target, providers, _local, candidate_descriptors, aggregate_deadline
+        ):
+            seen.append((providers, candidate_descriptors))
+            return ()
+
+    repository = FakeReportRepository()
+    service = GenerateMetadataReport(
+        target=FakeTarget([target, target]),
+        inspector=FakeInspector(InspectionResult("c" * 64, (isbn_claim(),))),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=(ProviderBinding("catalogue", True, Provider),),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks", "primary", "library-id", "ebook", "books", ("catalogue",)
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+        cover_observer=Observer(),
+    )
+    report = MetadataReport.from_json(service.run("item-1", 0))
+    assert report.providers[0].status is ProviderStatus.UNAVAILABLE
+    assert seen[0][0] == report.providers
+    assert seen[0][1] == descriptors
+    assert seen[0][1][0] is descriptors[0]
+    assert repository.closed
