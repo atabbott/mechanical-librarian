@@ -57,9 +57,11 @@
         "scripts/persistence_census.py": "d2dd7a7948afa9d884de98b40d9230abefc7d7cfbf94c7873dfea75edcd224d6",
         "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "e2987dd68d87fcf9f97101211708c8c0776472c28a4867b848d4459723b8afa0",
         "src/mechanical_librarian/adapters/persistence/review_sql.py": "33a4a92ae07a57c77767e9b9aa000a2b7dd720bd56ea1eff7304f64dadcb95e2",
-        "src/mechanical_librarian/application/cover_consideration.py": "9058f770fd9a58d0e5d2a90b3642bbe2bc086a7d555005345d5dab1e4f02be93",
+        "src/mechanical_librarian/application/cover_consideration.py": "ba61f65b901201f3c5ae00b9d1acc04393b8bbd730fe2bbe91261295fb4ce243",
         "src/mechanical_librarian/application/cover_identity.py": "ca8b8eca6ba96d6dad83ec9c9b705ae6d5f01223bd52afa657667bdcb5b74311",
+        "src/mechanical_librarian/application/cover_packet_semantics.py": "7ba106d2daaa3ca28b85745b6ce851d91f796f4805efd2df264cdaffc056602e",
         "src/mechanical_librarian/application/cover_packets.py": "cca8df2b52cb4abccee54843b81f9e9e2ad69f0be493e236c624e2f9f543c176",
+        "src/mechanical_librarian/application/cover_policy.py": "9c202bdfca130cd99fd0b7b833f8e82ac83c224976ba47847cb913fc0259023b",
         "src/mechanical_librarian/bootstrap/composition.py": "3e4aad71bb005089d2d43230004e3e2ec794cf8535798688c97d9578d49d3d42"
       },
       "f20_option_outcomes_changed": false,

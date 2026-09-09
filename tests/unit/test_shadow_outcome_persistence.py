@@ -53,6 +53,9 @@ from mechanical_librarian.application.continuous_field_effects import (
 from mechanical_librarian.application.cover_consideration import (
     cover_consideration_currentness,
 )
+from mechanical_librarian.application.cover_packet_semantics import (
+    canonical_packet_json,
+)
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
@@ -4228,7 +4231,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             open_repository(database)
 
 
-@pytest.mark.parametrize("authority_change", ("policy", "replay"))
+@pytest.mark.parametrize("authority_change", ("policy", "replay", "malformed"))
 def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
     authority_change: str,
 ) -> None:
@@ -4374,11 +4377,12 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 "actual_target_unverified"
             ]
 
+            provider_fetching_calls: list[MetadataReport] = []
             if authority_change == "policy":
                 cover_considerations.update_policy(
                     CoverPolicy(avoid_promotional_text=True)
                 )
-            else:
+            elif authority_change == "replay":
                 profile_reader = patch.object(
                     composition,
                     "read_contained_reviewer_profile",
@@ -4401,6 +4405,65 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                     root / "artifacts",
                     replay_configuration.review,
                     reviewer_access,
+                )
+            else:
+                current_row = repository._connection.execute(
+                    "SELECT consideration.consideration_id,consideration.document "
+                    "FROM current_cover_considerations current "
+                    "JOIN cover_considerations consideration "
+                    "ON consideration.consideration_id=current.consideration_id "
+                    "WHERE current.review_case_id=?",
+                    (current_work["review_case_id"],),
+                ).fetchone()
+                assert current_row is not None
+                persisted = json.loads(current_row[1])
+                persisted["candidates"] = [{}]
+                persisted["supersedes_id"] = current_row[0]
+                identity = dict(persisted)
+                identity.pop("consideration_id")
+                identity.pop("created_at")
+                persisted["consideration_id"] = (
+                    "cover_consideration_"
+                    + hashlib.sha256(
+                        canonical_packet_json(identity).encode()
+                    ).hexdigest()
+                )
+                malformed_document = canonical_packet_json(persisted)
+                repository._connection.execute(
+                    "INSERT INTO cover_considerations("
+                    "consideration_id,review_case_id,report_id,replay_digest,"
+                    "document_digest,supersedes_id,occurred_at,document"
+                    ") VALUES(?,?,?,?,?,?,?,?)",
+                    (
+                        persisted["consideration_id"],
+                        current_work["review_case_id"],
+                        persisted["report_id"],
+                        persisted["replay_digest"],
+                        hashlib.sha256(malformed_document.encode()).hexdigest(),
+                        current_row[0],
+                        20,
+                        malformed_document,
+                    ),
+                )
+                repository._connection.execute(
+                    "UPDATE current_cover_considerations SET consideration_id=? "
+                    "WHERE review_case_id=?",
+                    (
+                        persisted["consideration_id"],
+                        current_work["review_case_id"],
+                    ),
+                )
+                repository._connection.commit()
+
+                def provider_fetching(value: MetadataReport) -> bool:
+                    provider_fetching_calls.append(value)
+                    return False
+
+                cover_considerations._provider_fetching = provider_fetching
+                repository.bind_cover_consideration_currentness(
+                    lambda document, replay_reference: cover_consideration_currentness(
+                        document, replay_reference, provider_fetching
+                    )
                 )
 
             if authority_change == "replay":
@@ -4522,6 +4585,9 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 reason="field_unavailable",
                 observed_at=21,
             )
+            if authority_change == "malformed":
+                assert provider_fetching_calls == []
+                return
 
             current_case = ReviewCase.create_from_data(
                 json.loads(repository.get_review_case(current_work["review_case_id"]))[

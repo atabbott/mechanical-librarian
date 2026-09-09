@@ -15,6 +15,7 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 )
 from mechanical_librarian.application.cover_identity import (
     CLASSIFIER_REFERENCE,
+    _work_target_reference,
     classify_cover_identity,
 )
 from mechanical_librarian.application.cover_identity import (
@@ -31,6 +32,7 @@ from mechanical_librarian.application.cover_observation import (
 )
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
+    read_cover_packet_document,
 )
 from mechanical_librarian.application.cover_packets import (
     PRODUCER_REVISION as PACKET_PRODUCER_REVISION,
@@ -46,8 +48,11 @@ from mechanical_librarian.application.cover_packets import (
 from mechanical_librarian.application.cover_policy import (
     POLICY_SCHEMA_VERSION,
     CoverPolicy,
+    _identity_rows,
     _load_object,
+    _observation_document_rows,
     adjudicate_cover_policy,
+    read_cover_policy_report,
 )
 from mechanical_librarian.application.cover_policy import (
     SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
@@ -125,6 +130,32 @@ def cover_consideration_replay_digest(
             }
         ).encode()
     ).hexdigest()
+
+
+def _cover_incumbent(
+    report: MetadataReport,
+    candidates: list[dict[str, object]],
+) -> tuple[dict[str, object], str | None]:
+    incumbent = next((item for item in candidates if item["incumbent"]), None)
+    target_cover = next(
+        field
+        for field in report.target.fields
+        if field.destination is TargetDestination.COVER
+    )
+    incumbent_state = (
+        "available"
+        if incumbent is not None
+        else "unavailable"
+        if target_cover.state is TargetFieldState.VALUE
+        else "absent"
+    )
+    return (
+        {
+            "reference": None if incumbent is None else incumbent["reference"],
+            "state": incumbent_state,
+        },
+        None if incumbent is None else cast("str", incumbent["original_sha256"]),
+    )
 
 
 def _validated_cover_consideration(
@@ -254,14 +285,91 @@ def _validated_cover_consideration(
     )
     if policy.document != policy_document or policy.reference != policy_reference:
         raise ValueError("cover consideration policy is invalid")
-    if policy_report_document is not None:
-        policy_report = _load_object(policy_report_document, "cover policy report")
+    packet_document = cast("str | None", value.get("packet_document"))
+    identity_document = cast("str | None", value.get("identity_document"))
+    observation_document = cast("str | None", value.get("observation_document"))
+    try:
+        if packet_document is None:
+            if (
+                identity_document is not None
+                or observation_document is not None
+                or policy_report_document is not None
+            ):
+                raise ValueError
+            expected_candidates: list[dict[str, object]] = []
+        else:
+            if identity_document is None or policy_report_document is None:
+                raise ValueError
+            packet = read_cover_packet_document(packet_document)
+            packet_candidates = cast("list[dict[str, object]]", packet["candidates"])
+            references = tuple(
+                cast("str", candidate["reference"]) for candidate in packet_candidates
+            )
+            identity_report = _identity_rows(
+                identity_document,
+                packet["packet_reference"],
+                packet_candidates,
+                references,
+            )
+            if identity_report[
+                "report_reference"
+            ] != report.report_id or identity_report[
+                "work_target_reference"
+            ] != _work_target_reference(report):
+                raise ValueError
+            observation_taxonomy_reference = TAXONOMY_REFERENCE
+            if observation_document is not None:
+                (
+                    _observation_report,
+                    _instruction_digest,
+                    _schema_digest,
+                    observation_taxonomy_reference,
+                ) = _observation_document_rows(
+                    observation_document,
+                    packet["packet_reference"],
+                    packet_candidates,
+                    references,
+                )
+            read_cover_policy_report(
+                policy_report_document,
+                packet_reference=cast("str", packet["packet_reference"]),
+                classifier_reference=cast(
+                    "str", identity_report["classifier_reference"]
+                ),
+                policy=policy,
+                identity_document=identity_document,
+                observation_document=observation_document,
+                observation_taxonomy_reference=observation_taxonomy_reference,
+                candidate_references=references,
+            )
+            expected_candidates = CoverConsiderationService._candidates(
+                report,
+                packet_document,
+                identity_document,
+                observation_document,
+                policy_report_document,
+            )
+        expected_omissions = CoverConsiderationService._omissions(
+            report, packet_document
+        )
+        expected_incumbent, expected_incumbent_digest = _cover_incumbent(
+            report, expected_candidates
+        )
         if (
-            policy_report.get("schema_version") != POLICY_REPORT_SCHEMA_VERSION
-            or policy_report.get("policy_reference") != policy_reference
-            or type(policy_report.get("owner_ready")) is not bool
+            value["candidates"] != expected_candidates
+            or value["omissions"] != expected_omissions
+            or value["incumbent"] != expected_incumbent
+            or value["incumbent_digest"] != expected_incumbent_digest
         ):
-            raise ValueError("cover consideration policy report is invalid")
+            raise ValueError
+    except (
+        CoverConsiderationError,
+        KeyError,
+        StopIteration,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise ValueError("cover consideration evidence is invalid") from error
     return value, report
 
 
@@ -962,30 +1070,13 @@ class CoverConsiderationService:
             packet_document = None
             candidates = []
 
-        incumbent = next((item for item in candidates if item["incumbent"]), None)
-        target_cover = next(
-            field
-            for field in report.target.fields
-            if field.destination is TargetDestination.COVER
-        )
-        incumbent_state = (
-            "available"
-            if incumbent is not None
-            else "unavailable"
-            if target_cover.state is TargetFieldState.VALUE
-            else "absent"
-        )
+        incumbent, incumbent_digest = _cover_incumbent(report, candidates)
         body: dict[str, object] = {
             "candidates": candidates,
             "created_at": self._clock(),
             "identity_document": identity_document,
-            "incumbent_digest": (
-                None if incumbent is None else incumbent["original_sha256"]
-            ),
-            "incumbent": {
-                "reference": None if incumbent is None else incumbent["reference"],
-                "state": incumbent_state,
-            },
+            "incumbent_digest": incumbent_digest,
+            "incumbent": incumbent,
             "observation_document": observation_document,
             "omissions": self._omissions(report, packet_document),
             "packet_document": packet_document,
@@ -1022,8 +1113,8 @@ class CoverConsiderationService:
         )
         return canonical_packet_json({"consideration_id": consideration_id, **body})
 
+    @staticmethod
     def _candidates(
-        self,
         report: MetadataReport,
         packet_document: str,
         identity_document: str,

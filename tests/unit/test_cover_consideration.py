@@ -9,6 +9,7 @@ import pytest
 
 from mechanical_librarian.application import cover_observation
 from mechanical_librarian.application.cover_consideration import (
+    CoverConsideration,
     CoverConsiderationError,
     CoverConsiderationService,
     ReviewRunner,
@@ -448,6 +449,12 @@ def test_prior_packet_producer_consideration_is_historical_and_superseded_once(
     case.store.current[case_id] = canonical_packet_json(persisted)
     prior_consideration_id = persisted["consideration_id"]
 
+    comparison, currentness = case.service.project_for_review(
+        case.store.current[case_id], case_id, case.report.to_json()
+    )
+    assert currentness == "refresh_required"
+    assert comparison is not None
+    assert comparison["current"] is False
     assert (
         case.service.project_historical(case.store.current[case_id])["current"] is False
     )
@@ -572,6 +579,118 @@ def test_shared_consideration_currentness_rejects_malformed_authenticated_shapes
         == "inactive"
     )
     assert calls == []
+
+
+@pytest.mark.parametrize("saved_replay", ("current", "prior"))
+@pytest.mark.parametrize(
+    "malformation",
+    (
+        "partial_candidate",
+        "partial_policy_report",
+        "identity_candidate_reference",
+        "identity_report_digest",
+    ),
+)
+def test_nested_consideration_evidence_fails_closed_before_provider_recovery(
+    case: _Case,
+    saved_replay: str,
+    malformation: str,
+) -> None:
+    case_id = "review_case_" + "u" * 64
+    case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    persisted = json.loads(case.store.current[case_id])
+    if malformation == "partial_candidate":
+        persisted["candidates"] = [{}]
+    elif malformation == "partial_policy_report":
+        policy = json.loads(persisted["policy_report_document"])
+        persisted["policy_report_document"] = canonical_packet_json(
+            {
+                name: policy[name]
+                for name in ("owner_ready", "policy_reference", "schema_version")
+            }
+        )
+    elif malformation == "identity_candidate_reference":
+        identity_document = json.loads(persisted["identity_document"])
+        identity_document["candidates"][0]["candidate_reference"] = (
+            "cover_ref_" + "0" * 64
+        )
+        persisted["identity_document"] = canonical_packet_json(identity_document)
+        policy = json.loads(persisted["policy_report_document"])
+        policy["identity_report_sha256"] = hashlib.sha256(
+            persisted["identity_document"].encode()
+        ).hexdigest()
+        persisted["policy_report_document"] = canonical_packet_json(policy)
+    else:
+        policy = json.loads(persisted["policy_report_document"])
+        policy["identity_report_sha256"] = "0" * 64
+        persisted["policy_report_document"] = canonical_packet_json(policy)
+    if saved_replay == "prior":
+        prior_replay = "cover_replay_" + "0" * 64
+        persisted["replay_reference"] = prior_replay
+        persisted["replay_digest"] = cover_consideration_replay_digest(
+            case_id,
+            persisted["report_id"],
+            provider_fetching=persisted["provider_fetching"],
+            replay_reference=prior_replay,
+        )
+    identity = dict(persisted)
+    identity.pop("consideration_id")
+    identity.pop("created_at")
+    persisted["consideration_id"] = (
+        "cover_consideration_"
+        + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
+    )
+    calls: list[MetadataReport] = []
+
+    def provider_fetching(report: MetadataReport) -> bool:
+        calls.append(report)
+        return False
+
+    assert (
+        cover_consideration_currentness(
+            canonical_packet_json(persisted),
+            case.service.replay_reference,
+            provider_fetching,
+        )
+        == "inactive"
+    )
+    assert calls == []
+
+
+def test_malformed_nested_consideration_has_no_projection_or_choice_authority(
+    case: _Case,
+) -> None:
+    case_id = "review_case_" + "v" * 64
+    current = case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    persisted = json.loads(case.store.current[case_id])
+    reference = persisted["candidates"][0]["reference"]
+    persisted["candidates"] = [{}]
+    identity = dict(persisted)
+    identity.pop("consideration_id")
+    identity.pop("created_at")
+    persisted["consideration_id"] = (
+        "cover_consideration_"
+        + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
+    )
+    document = canonical_packet_json(persisted)
+    case.store.current[case_id] = document
+
+    assert case.service.current(case_id) is None
+    assert case.service.project_for_review(
+        document, case_id, case.report.to_json()
+    ) == (None, "inactive")
+    with pytest.raises(CoverConsiderationError, match="^persistence$"):
+        _ = CoverConsideration(document).data
+    with pytest.raises(CoverConsiderationError, match="^stale$"):
+        case.service.validate_decision(
+            case_id,
+            persisted["consideration_id"],
+            "keep_current",
+            None,
+        )
+    with pytest.raises(CoverConsiderationError, match="^stale$"):
+        case.service.image(case_id, persisted["consideration_id"], reference)
+    assert current["consideration_id"] != persisted["consideration_id"]
 
 
 def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(

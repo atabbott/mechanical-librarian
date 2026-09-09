@@ -319,6 +319,34 @@ def _observation_rows(
     references: tuple[str, ...],
     profile_payload: bytes | None,
 ) -> dict[str, object]:
+    value, expected_instruction, expected_schema, taxonomy_reference = (
+        _observation_document_rows(
+            document,
+            packet_reference,
+            candidates,
+            references,
+        )
+    )
+    if type(profile_payload) is not bytes:
+        raise ValueError("cover observation profile is invalid")
+    expected_observer = _observer_reference(
+        profile_payload,
+        expected_instruction,
+        expected_schema,
+        taxonomy_reference,
+    )
+    if value["observer_reference"] != expected_observer:
+        raise ValueError("cover observation report is invalid")
+    return value
+
+
+def _observation_document_rows(
+    document: str,
+    packet_reference: object,
+    candidates: list[dict[str, object]],
+    references: tuple[str, ...],
+) -> tuple[dict[str, object], str, str, str]:
+    """Validate retained observation semantics without claiming profile identity."""
     value = _load_object(document, "cover observation")
     schema_version = value.get("schema_version")
     if type(schema_version) is not str:
@@ -346,14 +374,6 @@ def _observation_rows(
     taxonomy_values = {name: frozenset(dict(values)) for name, values in taxonomy}
     if expected_instruction is None:
         raise ValueError("cover observation report is invalid")
-    if type(profile_payload) is not bytes:
-        raise ValueError("cover observation profile is invalid")
-    expected_observer = _observer_reference(
-        profile_payload,
-        expected_instruction,
-        expected_schema,
-        taxonomy_reference,
-    )
     valid_shape = (
         schema_version == LEGACY_SCHEMA_VERSION
         and set(value)
@@ -391,7 +411,8 @@ def _observation_rows(
         }
         or value["cover_packet_reference"] != packet_reference
         or value["taxonomy_reference"] != taxonomy_reference
-        or value["observer_reference"] != expected_observer
+        or _required_reference(value["observer_reference"])
+        != value["observer_reference"]
         or value["instruction_sha256"] != expected_instruction
         or value["output_schema_sha256"] != expected_schema
         or type(value["observations"]) is not list
@@ -424,7 +445,7 @@ def _observation_rows(
         sorted(references)
     ):
         raise ValueError("cover observation report is invalid")
-    return value
+    return value, expected_instruction, expected_schema, taxonomy_reference
 
 
 def _attempt_evidence(value: object) -> bool:
@@ -492,6 +513,99 @@ def _report(
         "status": status,
     }
     return CoverPolicyReport(canonical_packet_json(body))
+
+
+def read_cover_policy_report(
+    document: str,
+    *,
+    packet_reference: str,
+    classifier_reference: str,
+    policy: CoverPolicy,
+    identity_document: str,
+    observation_document: str | None,
+    observation_taxonomy_reference: str,
+    candidate_references: tuple[str, ...],
+) -> dict[str, object]:
+    """Validate one canonical policy report against its retained inputs."""
+    value = _load_object(document, "cover policy report")
+    fields = {
+        "acceptable_candidate_references",
+        "actual_target_state",
+        "cover_packet_reference",
+        "identity_classifier_reference",
+        "identity_report_sha256",
+        "observation_report_sha256",
+        "observation_taxonomy_reference",
+        "owner_ready",
+        "policy_reference",
+        "reasons",
+        "recommended_candidate_reference",
+        "schema_version",
+        "status",
+    }
+    acceptable_value = value.get("acceptable_candidate_references")
+    reasons_value = value.get("reasons")
+    recommendation = value.get("recommended_candidate_reference")
+    if (
+        set(value) != fields
+        or value.get("schema_version") != SCHEMA_VERSION
+        or type(acceptable_value) is not list
+        or any(type(item) is not str for item in acceptable_value)
+        or len(set(acceptable_value)) != len(acceptable_value)
+        or any(item not in candidate_references for item in acceptable_value)
+        or type(value.get("actual_target_state")) is not str
+        or value.get("actual_target_state")
+        not in {item.value for item in CoverActualTargetState}
+        or value.get("cover_packet_reference") != packet_reference
+        or value.get("identity_classifier_reference") != classifier_reference
+        or value.get("identity_report_sha256")
+        != hashlib.sha256(identity_document.encode("utf-8")).hexdigest()
+        or value.get("observation_report_sha256")
+        != (
+            None
+            if observation_document is None
+            else hashlib.sha256(observation_document.encode("utf-8")).hexdigest()
+        )
+        or value.get("observation_taxonomy_reference") != observation_taxonomy_reference
+        or type(value.get("owner_ready")) is not bool
+        or value.get("policy_reference") != policy.reference
+        or type(reasons_value) is not list
+        or len(reasons_value) != 1
+        or any(
+            type(item) is not str
+            or item
+            not in {
+                "actual_target_unverified",
+                "confirmed_incumbent_not_improved",
+                "deterministic_confirmed_order",
+                "no_confirmed_candidates",
+                "provider_fetching",
+            }
+            for item in reasons_value
+        )
+        or (recommendation is not None and type(recommendation) is not str)
+    ):
+        raise ValueError("cover policy report is invalid")
+    acceptable = tuple(cast("list[str]", acceptable_value))
+    reasons = tuple(cast("list[str]", reasons_value))
+    if (
+        _report(
+            packet_reference,
+            classifier_reference,
+            policy,
+            identity_document,
+            observation_document,
+            observation_taxonomy_reference,
+            acceptable,
+            recommendation,
+            cast("bool", value["owner_ready"]),
+            cast("str", value["actual_target_state"]),
+            reasons,
+        ).document
+        != document
+    ):
+        raise ValueError("cover policy report is invalid")
+    return value
 
 
 def _required_reference(value: object) -> str:
