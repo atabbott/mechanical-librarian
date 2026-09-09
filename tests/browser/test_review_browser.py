@@ -4598,6 +4598,54 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
             ):
                 page = context.new_page()
                 _login(page, origin)
+                from urllib.parse import parse_qs, urlsplit
+
+                # Select from a genuinely fetched later Attention page. The work
+                # is absent from both initial identity sources, so reload cannot
+                # pass by retaining the original infinite-query cache.
+                library_titles = page.locator(".library-works .library-work-title")
+                expect(library_titles.first).to_be_visible()
+                first_library_titles = library_titles.all_text_contents()
+                assert first_library_titles
+                page.get_by_role("button", name="Attention queue", exact=False).click()
+                queue = page.get_by_label("Attention queue", exact=True)
+                queued = queue.locator(".attention-queue-item")
+                expect(queued.first).to_be_visible()
+                initial_count = queued.count()
+                initial_titles = queued.locator(
+                    ".attention-queue-copy > strong"
+                ).all_text_contents()
+                page.get_by_role(
+                    "button", name="Load more attention", exact=True
+                ).click()
+                later = queued.nth(initial_count)
+                expect(later).to_be_visible()
+                later_title = later.locator(
+                    ".attention-queue-copy > strong"
+                ).inner_text()
+                assert later_title not in initial_titles
+                assert later_title not in first_library_titles
+                later.press("Enter")
+                expect(
+                    page.get_by_role("heading", name=later_title, exact=True)
+                ).to_be_visible()
+                produced = parse_qs(urlsplit(page.url).query)
+                assert produced["attentionCursor"]
+                selected_field = produced["field"]
+                page.get_by_role("link", name="Evidence", exact=True).click()
+                page.get_by_role("link", name="History", exact=True).click()
+                page.reload()
+                page.get_by_role("link", name="Back to work", exact=True).click()
+                expect(
+                    page.get_by_role("heading", name=later_title, exact=True)
+                ).to_be_visible()
+                expect(
+                    page.get_by_role("button", name="Choose current value", exact=False)
+                ).to_be_visible()
+                returned = parse_qs(urlsplit(page.url).query)
+                assert returned["attentionCursor"] == produced["attentionCursor"]
+                assert returned["field"] == selected_field
+                page.goto(f"{origin}/library?lens=all")
                 page.get_by_role("searchbox").fill("Current title")
                 expect(
                     page.get_by_role("heading", name="Provider evidence limited")

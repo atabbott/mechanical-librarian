@@ -113,7 +113,7 @@ describe('Library route', () => {
     expect(router.state.location.search).toMatchObject({ preparation: runId })
 
     await act(async () => {
-      await queryClient.refetchQueries({ queryKey: ['review-preparation'], exact: true })
+      await queryClient.refetchQueries({ queryKey: ['review-preparation'] })
     })
     await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all' }))
     expect(http.getPreparation).toHaveBeenCalledTimes(2)
@@ -208,7 +208,7 @@ describe('Library route', () => {
         }),
     )
     act(() => {
-      void queryClient.refetchQueries({ queryKey: ['review-preparation'], exact: true })
+      void queryClient.refetchQueries({ queryKey: ['review-preparation'] })
     })
     await waitFor(() => expect(releaseOlderFetch).toBeTypeOf('function'))
     act(() => updates.setState('degraded'))
@@ -4603,6 +4603,252 @@ describe('Library route', () => {
     )
   })
 
+  it.each([undefined, 'starting-page'])(
+    'carries the actual later Attention page through a fresh diagnostic return from %s',
+    async (start) => {
+      const user = userEvent.setup()
+      const title = detail.fields[0]
+      if (!title) throw new Error('title fixture required')
+      const item = {
+        id: 'case-1',
+        destination: 'title',
+        title: 'A Book',
+        authors: [],
+        library: 'Books',
+        mediaKind: 'ebook',
+        notices: [],
+        provenance: [],
+        workAttentionCount: 1,
+      }
+      const target = {
+        ...item,
+        id: 'case-2',
+        destination: 'authors',
+        title: 'Later attention target',
+      }
+      const http = createHttp()
+      http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) =>
+        cursor === 'later-page'
+          ? { total: 2, items: [target] }
+          : { total: 2, items: [item], nextCursor: 'later-page' },
+      )
+      http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) =>
+        id === 'case-2'
+          ? {
+              ...detail,
+              id,
+              title: target.title,
+              fields: [
+                {
+                  ...title,
+                  destination: 'authors',
+                  currentValue: 'Later author',
+                  currentRaw: 'Later author',
+                },
+              ],
+            }
+          : detail,
+      )
+      expect(
+        (await http.getLibrary({ lens: 'all' })).works.some(
+          (work) => work.reviewCaseId === target.id,
+        ),
+      ).toBe(false)
+      expect(
+        (await http.getAttention(start ? { cursor: start } : {})).items.some(
+          (row) => row.id === target.id,
+        ),
+      ).toBe(false)
+      const initial = `/library?lens=all&q=needle&cursor=library-page${start ? '&attentionCursor=starting-page' : ''}`
+      const first = renderRoute(initial, http)
+      await user.click(await screen.findByRole('button', { name: /^Attention/u }))
+      await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
+      await user.click(await screen.findByRole('button', { name: /Later attention target/u }))
+      await waitFor(() =>
+        expect(first.router.state.location.search).toMatchObject({
+          attentionCursor: 'later-page',
+          preview: 'case-2',
+          field: 'authors',
+          q: 'needle',
+          cursor: 'library-page',
+          lens: 'all',
+        }),
+      )
+      expect(await screen.findByRole('heading', { name: target.title })).toBeVisible()
+      await user.click(screen.getByRole('link', { name: 'Evidence' }))
+      await user.click(await screen.findByRole('link', { name: 'History' }))
+      const emitted = first.router.state.location.href
+      cleanup()
+      const fresh = renderRoute(emitted, http)
+      expect(fresh.queryClient).not.toBe(first.queryClient)
+      await user.click(await screen.findByRole('link', { name: 'Back to work' }))
+      expect(await screen.findByRole('heading', { name: target.title })).toBeVisible()
+      expect(
+        await screen.findByRole('button', { name: 'Choose current value: Later author' }),
+      ).toBeVisible()
+      expect(fresh.router.state.location.search).toMatchObject({
+        attentionCursor: 'later-page',
+        field: 'authors',
+        preview: 'case-2',
+        q: 'needle',
+        cursor: 'library-page',
+      })
+      cleanup()
+      renderRoute('/library?lens=all&preview=case-2&field=authors', http)
+      expect(
+        await screen.findByText('This work is not available in the current Library result.'),
+      ).toBeVisible()
+      expect(
+        screen.queryByRole('button', { name: 'Choose current value: Later author' }),
+      ).toBeNull()
+    },
+  )
+
+  it.each([undefined, 'starting-page'])(
+    'retains field-specific Attention page provenance from %s and preserves ordinary field changes',
+    async (start) => {
+      const user = userEvent.setup()
+      const title = detail.fields[0]
+      if (!title) throw new Error('title fixture required')
+      const item = {
+        id: 'case-2',
+        destination: 'title',
+        title: 'Split field work',
+        authors: [],
+        library: 'Books',
+        mediaKind: 'ebook',
+        notices: [],
+        provenance: [],
+        workAttentionCount: 2,
+      }
+      const http = createHttp()
+      http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) =>
+        cursor === 'later-page'
+          ? { total: 2, items: [{ ...item, destination: 'authors' }] }
+          : { total: 2, items: [item], nextCursor: 'later-page' },
+      )
+      http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({
+        ...detail,
+        id,
+        fields: [title, { ...title, destination: 'authors' }],
+      }))
+      const { router } = renderRoute(
+        `/library?lens=all&attention=open${start ? '&attentionCursor=starting-page' : ''}`,
+        http,
+      )
+      await user.click(await screen.findByRole('button', { name: /Split field work.*Title/u }))
+      await waitFor(() => expect(router.state.location.search.attentionCursor).toBe(start))
+      expect(router.state.location.search.attention).toBeUndefined()
+      await act(async () => router.history.back())
+      expect(await screen.findByLabelText('Attention queue')).toBeVisible()
+      await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
+      await user.click(await screen.findByRole('button', { name: /Split field work.*Authors/u }))
+      await waitFor(() =>
+        expect(router.state.location.search).toMatchObject({
+          attentionCursor: 'later-page',
+          field: 'authors',
+        }),
+      )
+      await user.click(await screen.findByRole('button', { name: /^Title/u }))
+      await waitFor(() =>
+        expect(router.state.location.search).toMatchObject({
+          attentionCursor: 'later-page',
+          field: 'title',
+        }),
+      )
+    },
+  )
+
+  it.each(['ready', 'absent', 'retry', 'persistent'] as const)(
+    'settles the newly anchored Attention identity truthfully: %s',
+    async (outcome) => {
+      const user = userEvent.setup()
+      const title = detail.fields[0]
+      if (!title) throw new Error('title fixture required')
+      const firstItem = {
+        id: 'case-1',
+        destination: 'title',
+        title: 'A Book',
+        authors: [],
+        library: 'Books',
+        mediaKind: 'ebook',
+        notices: [],
+        provenance: [],
+        workAttentionCount: 1,
+      }
+      const target = { ...firstItem, id: 'case-2', title: 'Anchored target' }
+      type Page = Awaited<ReturnType<ReviewHttp['getAttention']>>
+      let settle: ((value: Page) => void) | undefined
+      let fail: ((error: Error) => void) | undefined
+      let laterReads = 0
+      const http = createHttp()
+      http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ cursor }) => {
+        if (cursor !== 'later-page')
+          return { total: 2, items: [firstItem], nextCursor: 'later-page' }
+        laterReads += 1
+        if (laterReads === 1) return { total: 2, items: [target] }
+        return new Promise<Page>((resolve, reject) => {
+          settle = resolve
+          fail = reject
+        })
+      })
+      http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) =>
+        id === 'case-2'
+          ? {
+              ...detail,
+              id,
+              title: target.title,
+              fields: [{ ...title, currentValue: 'Anchored choice' }],
+            }
+          : detail,
+      )
+      renderRoute('/library?lens=all&attention=open', http)
+      await waitFor(() => expect(screen.getByLabelText('Attention queue')).toHaveFocus())
+      await user.click(await screen.findByRole('button', { name: 'Load more attention' }))
+      const row = await screen.findByRole('button', { name: /Anchored target/u })
+      row.focus()
+      await user.keyboard('{Enter}')
+      const loading = await screen.findByText('Loading selected work…')
+      const workspace = loading.closest('section')
+      await waitFor(() => expect(workspace).toHaveFocus())
+      expect(
+        screen.queryByText('This work is not available in the current Library result.'),
+      ).toBeNull()
+      expect(
+        screen.queryByRole('button', { name: 'Choose current value: Anchored choice' }),
+      ).toBeNull()
+      const search = screen.getByRole('searchbox')
+      if (outcome === 'persistent') search.focus()
+      if (outcome === 'retry') {
+        await act(async () => fail?.(new Error('anchored identity unavailable')))
+        const retry = await screen.findByRole('button', { name: 'Try again' })
+        retry.focus()
+        await user.click(retry)
+        await waitFor(() => expect(laterReads).toBe(3))
+        await act(async () => fail?.(new Error('still unavailable')))
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toHaveFocus())
+        await user.keyboard('{Enter}')
+        await waitFor(() => expect(laterReads).toBe(4))
+      }
+      await act(async () => settle?.({ total: 2, items: outcome === 'absent' ? [] : [target] }))
+      if (outcome === 'absent') {
+        expect(
+          await screen.findByText('This work is not available in the current Library result.'),
+        ).toBeVisible()
+        expect(
+          screen.queryByRole('button', { name: 'Choose current value: Anchored choice' }),
+        ).toBeNull()
+      } else {
+        const heading = await screen.findByRole('heading', { name: target.title })
+        expect(
+          await screen.findByRole('button', { name: 'Choose current value: Anchored choice' }),
+        ).toBeVisible()
+        if (outcome === 'persistent') expect(search).toHaveFocus()
+        else await waitFor(() => expect(heading.closest('[data-route-focus]')).toHaveFocus())
+      }
+    },
+  )
+
   it('recovers and paginates the contextual attention queue', async () => {
     const user = userEvent.setup()
     let calls = 0
@@ -6185,7 +6431,7 @@ describe('Library route', () => {
     expect(within(rail).getByRole('button', { name: 'Show 2 empty fields' })).toBeVisible()
     authoritative = true
     await act(async () => {
-      await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'], exact: true })
+      await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'] })
     })
     await waitFor(() => expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible())
     expect(within(rail).getByRole('button', { name: /^Subtitle/u })).toBeVisible()
@@ -6395,7 +6641,16 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       getAttention,
-      getCaseDetail: vi.fn(async () => current),
+      getCaseDetail: vi.fn(async (id: string) =>
+        id === 'case-2'
+          ? {
+              ...detail,
+              id,
+              title: 'Later page work',
+              fields: [{ ...titleField, destination: 'authors', currentValue: 'Later author' }],
+            }
+          : current,
+      ),
       recordDecision: vi.fn(async () => {
         current = settled
         return {
@@ -6414,12 +6669,30 @@ describe('Library route', () => {
         }
       }),
     }
-    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    const first = renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
     expect(await screen.findByText('Review complete')).toBeVisible()
     expect(await screen.findByRole('button', { name: 'Review next work →' })).toBeVisible()
     expect(getAttention).toHaveBeenCalledWith({ cursor: 'later' }, expect.any(AbortSignal))
+    await user.click(screen.getByRole('button', { name: 'Review next work →' }))
+    await waitFor(() =>
+      expect(first.router.state.location.search).toMatchObject({
+        preview: 'case-2',
+        field: 'authors',
+        attentionCursor: 'later',
+      }),
+    )
+    await user.click(await screen.findByRole('link', { name: 'Evidence' }))
+    const emitted = first.router.state.location.href
+    cleanup()
+    const fresh = renderRoute(emitted, http)
+    expect(fresh.queryClient).not.toBe(first.queryClient)
+    await user.click(await screen.findByRole('link', { name: 'Back to work' }))
+    expect(await screen.findByRole('heading', { name: 'Later page work' })).toBeVisible()
+    expect(
+      await screen.findByRole('button', { name: 'Choose current value: Later author' }),
+    ).toBeVisible()
   })
 
   it('clears the cursor but keeps the open work when the Library search query changes', async () => {

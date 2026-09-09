@@ -1909,7 +1909,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     retry: false,
   })
   const attentionItems = useMemo(
-    () => attention.data?.pages.flatMap((page) => page.items) ?? [],
+    () =>
+      attention.data?.pages.flatMap((page, pageIndex) => {
+        const cursor = attention.data.pageParams[pageIndex]
+        return page.items.map((item) => ({
+          ...item,
+          attentionCursor: typeof cursor === 'string' ? cursor : undefined,
+        }))
+      }) ?? [],
     [attention.data],
   )
   const selectedIdentity = useMemo(
@@ -2260,17 +2267,22 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
     return () => cancelAnimationFrame(frame)
   }, [preparationSelected, presentation?.run_id])
+  const identityPending = !displayedIdentity && attention.isPending
+  const identityError = !displayedIdentity && attention.isError
+  const selectedReadPending = detail.isPending || identityPending
+  const selectedReadError = detail.isError || identityError
   const selectedDetailReady =
     !preparationSelected &&
     Boolean(search.preview) &&
     search.attention !== 'open' &&
-    !detail.isPending &&
-    !detail.isError
+    Boolean(displayedIdentity) &&
+    !selectedReadPending &&
+    !selectedReadError
   useEffect(() => {
     selectedDetailRetry.current = null
   }, [search.preview])
   useEffect(() => {
-    const selectedDetailSettled = selectedDetailReady || detail.isError
+    const selectedDetailSettled = selectedDetailReady || selectedReadError
     if (!selectedDetailSettled) return
     const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
     const active = document.activeElement
@@ -2279,12 +2291,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     if (workspace && active === workspace && selectedDetailReady)
       workspace.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
     else if (restoreAfterRetry) {
-      if (detail.isError) selectedDetailRetryButton.current?.focus({ preventScroll: true })
+      if (selectedReadError) selectedDetailRetryButton.current?.focus({ preventScroll: true })
       else
         workspace?.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
     }
     selectedDetailRetry.current = null
-  }, [detail.isError, search.preview, selectedDetailReady])
+  }, [selectedReadError, search.preview, selectedDetailReady])
   useEffect(() => {
     currentSearch.current = search
   }, [search])
@@ -2387,7 +2399,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     return () => media.removeEventListener('change', selectWideDefault)
   }, [data.works, navigate])
 
-  const selectCase = (reviewCaseId: string, field?: string) => {
+  const selectCase = (
+    reviewCaseId: string,
+    field?: string,
+    attentionOrigin?: { cursor: string | undefined },
+  ) => {
     workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
@@ -2401,6 +2417,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         const next = { ...current, preview: reviewCaseId }
         delete next.work
         delete next.preparation
+        if (attentionOrigin) {
+          if (attentionOrigin.cursor) next.attentionCursor = attentionOrigin.cursor
+          else delete next.attentionCursor
+        }
         if (field) next.field = field
         else delete next.field
         return next
@@ -2541,7 +2561,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       },
     })
   }
-  const selectFromQueue = (reviewCaseId: string, field: string) => {
+  const selectFromQueue = (
+    reviewCaseId: string,
+    field: string,
+    attentionCursor: string | undefined,
+  ) => {
     workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
@@ -2551,6 +2575,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     void navigate({
       search: (current) => {
         const next = { ...current, preview: reviewCaseId, field }
+        if (attentionCursor) next.attentionCursor = attentionCursor
+        else delete next.attentionCursor
         delete next.work
         delete next.attention
         delete next.preparation
@@ -2877,7 +2903,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           {...(!selectedWork &&
           search.preview &&
           search.attention !== 'open' &&
-          (!displayedIdentity || detail.isPending || detail.isError)
+          (!displayedIdentity || selectedReadPending || selectedReadError)
             ? { 'data-route-focus': 'true' }
             : {})}
         >
@@ -2905,17 +2931,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 Its current values and field position stay here while you move through attention.
               </p>
             </div>
-          ) : !displayedIdentity ? (
-            <div className="library-selection">
-              <h2>Selected work</h2>
-              <p>Readable work identity is not available on this Library page.</p>
-              <p role="status">This work is not available in the current Library result.</p>
-            </div>
-          ) : detail.isPending ? (
+          ) : selectedReadPending ? (
             <p role="status">Loading selected work…</p>
           ) : detail.isError && staleCoverNotice ? (
             staleCoverNotice
-          ) : detail.isError ? (
+          ) : selectedReadError ? (
             <p role="alert">
               {controller.messageFor(search.field ?? selected?.destination ?? '') ??
                 'Selected work could not be loaded.'}{' '}
@@ -2923,12 +2943,19 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 ref={selectedDetailRetryButton}
                 onClick={() => {
                   selectedDetailRetry.current = search.preview ?? null
-                  void detail.refetch()
+                  if (identityError) void attention.refetch()
+                  else void detail.refetch()
                 }}
               >
                 Try again
               </button>{' '}
             </p>
+          ) : !displayedIdentity ? (
+            <div className="library-selection">
+              <h2>Selected work</h2>
+              <p>Readable work identity is not available on this Library page.</p>
+              <p role="status">This work is not available in the current Library result.</p>
+            </div>
           ) : !detail.data.current ? (
             <div className="library-selection">
               <p>Case superseded</p>
@@ -3121,7 +3148,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         onClick={() => {
                           setComplete(null)
                           setCompletionInspection(null)
-                          selectCase(nextWork.id, nextWork.destination)
+                          selectCase(nextWork.id, nextWork.destination, {
+                            cursor: nextWork.attentionCursor,
+                          })
                         }}
                       >
                         Review next work →
@@ -3542,7 +3571,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     aria-current={
                       item.id === search.preview && item.destination === selected?.destination
                     }
-                    onClick={() => selectFromQueue(item.id, item.destination)}
+                    onClick={() => selectFromQueue(item.id, item.destination, item.attentionCursor)}
                   >
                     <span className="attention-position">{String(index + 1)}</span>
                     <span className="attention-queue-copy">
