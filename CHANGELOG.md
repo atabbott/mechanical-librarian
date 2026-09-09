@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Restarting an idle workspace preserves its application database bytes by
+  avoiding an empty preparation cleanup write (#844).
+
 - Connect to HTTP Audiobookshelf origins and use the owner workspace over local
   HTTP, trusted direct HTTPS, or an exact HTTPS proxy. Fresh deployment defaults
   to loopback HTTP. Replace configuration/bootstrap documents with config-v9

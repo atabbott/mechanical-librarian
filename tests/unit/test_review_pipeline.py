@@ -3104,6 +3104,9 @@ def test_resume_retires_unconfigured_deferred_target_without_pinning_run(
     assert not supervisor._schedule_paused
     assert supervisor._wake.is_set()
     assert current is None
+    assert owner._connection.execute(
+        "SELECT COUNT(*) FROM review_preparation_presentation"
+    ).fetchone() == (0,)
     assert owner.deferred_library_additions() == ()
     assert owner.review_pipeline_progress("primary", "history") is None
     assert owner.claim_review_pipeline_action(103) is None
@@ -11015,3 +11018,15 @@ def test_an_audiobook_records_its_recovery_evidence_at_extraction() -> None:
             "retry_after": None,
         }
     ] == observations
+
+
+def test_empty_library_addition_drain_preserves_database_bytes(
+    application_path: Path,
+) -> None:
+    owner = open_repository(application_path)
+    owner.close()
+    before = application_path.read_bytes()
+    reopened = open_repository(application_path, create=False)
+    reopened.drain_library_additions((("primary", "fiction", "lib-1", _PRODUCER),), 100)
+    reopened.close()
+    assert application_path.read_bytes() == before

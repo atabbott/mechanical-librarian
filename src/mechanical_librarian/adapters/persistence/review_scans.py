@@ -642,7 +642,13 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             ).fetchone()[0]
             == 0
         ):
-            self._connection.execute("DELETE FROM review_preparation_presentation")
+            if (
+                self._connection.execute(
+                    "SELECT 1 FROM review_preparation_presentation LIMIT 1"
+                ).fetchone()
+                is not None
+            ):
+                self._connection.execute("DELETE FROM review_preparation_presentation")
         else:
             for ordinal, (row_id, row_kind, scan_id, cycle_id) in enumerate(
                 authorities
