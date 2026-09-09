@@ -154,6 +154,34 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
             assert steps <= support._READ_VM_STEP_BUDGET, name
             assert elapsed < support._READ_WALL_BUDGET_SECONDS, name
 
+            statements: list[str] = []
+            connection.set_trace_callback(statements.append)
+            try:
+                call()
+            finally:
+                connection.set_trace_callback(None)
+            materialized = next(
+                statement
+                for statement in statements
+                if statement.lstrip()
+                .upper()
+                .startswith("WITH CANDIDATES AS MATERIALIZED")
+            )
+            materialized_plan = support._plan(connection, materialized, ())
+            assert any(
+                "SEARCH current_cover_authority USING INDEX" in step
+                for step in materialized_plan
+            ), name
+            assert any(
+                "SEARCH authority_consideration USING INDEX" in step
+                for step in materialized_plan
+            ), name
+            assert not any(
+                "SCAN current_cover_authority" in step
+                or "SCAN authority_consideration" in step
+                for step in materialized_plan
+            ), name
+
         plan_calls = calls + (
             (
                 "selected work and history",
@@ -259,7 +287,9 @@ def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
                 statement = next(
                     value
                     for value in statements
-                    if value.lstrip().upper().startswith("WITH PAGE AS MATERIALIZED")
+                    if value.lstrip()
+                    .upper()
+                    .startswith("WITH CANDIDATES AS MATERIALIZED")
                 )
                 sorter, documents = statement.split(") SELECT rc.document", 1)
                 assert "rc.document" not in sorter

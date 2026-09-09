@@ -156,6 +156,7 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
+    cover_consideration_currentness,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
@@ -4037,6 +4038,16 @@ def _compose_cover_considerations(
     def bind_policy(policy_reference: str, replay_reference: str) -> None:
         repository.bind_current_cover_authority(policy_reference, replay_reference)
 
+    provider_fetching = (
+        (lambda _report: False)
+        if provider_recovery is None
+        else lambda report: provider_recovery.cover_fetching(
+            target_connection=report.target.connection,
+            library=report.target.library,
+            item=report.target.item,
+            source_report_id=report.report_id,
+        )
+    )
     service = CoverConsiderationService(
         repository,
         read_preview=lambda artifact_id, variant: artifact_store().read_preview_digest(
@@ -4049,16 +4060,14 @@ def _compose_cover_considerations(
         reviewer_identity=reviewer_access.current_cover_observation_identity,
         reviewer_revision_current=reviewer_access.revision_is_current,
         bind_policy=bind_policy,
-        provider_fetching=(
-            None
-            if provider_recovery is None
-            else lambda report: provider_recovery.cover_fetching(
-                target_connection=report.target.connection,
-                library=report.target.library,
-                item=report.target.item,
-                source_report_id=report.report_id,
-            )
-        ),
+        provider_fetching=provider_fetching,
+    )
+    repository.bind_cover_consideration_currentness(
+        lambda document, replay_reference: cover_consideration_currentness(
+            document,
+            replay_reference,
+            provider_fetching,
+        )
     )
     service.update_policy(policy)
     return service

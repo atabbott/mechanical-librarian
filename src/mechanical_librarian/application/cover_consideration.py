@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from mechanical_librarian.application.contained_reviewer_contract import (
     is_cover_profile_contract_reason,
 )
 from mechanical_librarian.application.cover_identity import (
     CLASSIFIER_REFERENCE,
+    _work_target_reference,
     classify_cover_identity,
 )
 from mechanical_librarian.application.cover_identity import (
@@ -30,6 +32,10 @@ from mechanical_librarian.application.cover_observation import (
 )
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
+    read_cover_packet_document,
+)
+from mechanical_librarian.application.cover_packets import (
+    PRODUCER_REVISION as PACKET_PRODUCER_REVISION,
 )
 from mechanical_librarian.application.cover_packets import (
     SCHEMA_VERSION as PACKET_SCHEMA_VERSION,
@@ -42,7 +48,11 @@ from mechanical_librarian.application.cover_packets import (
 from mechanical_librarian.application.cover_policy import (
     POLICY_SCHEMA_VERSION,
     CoverPolicy,
+    _identity_rows,
+    _load_object,
+    _observation_document_rows,
     adjudicate_cover_policy,
+    read_cover_policy_report,
 )
 from mechanical_librarian.application.cover_policy import (
     SCHEMA_VERSION as POLICY_REPORT_SCHEMA_VERSION,
@@ -68,6 +78,358 @@ from mechanical_librarian.domain.metadata_report import (
 
 SCHEMA_VERSION = "cover-consideration-v4"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
+CoverConsiderationCurrentness = Literal["current", "refresh_required", "inactive"]
+_CONSIDERATION_FIELDS = frozenset(
+    {
+        "candidates",
+        "consideration_id",
+        "created_at",
+        "identity_document",
+        "incumbent",
+        "incumbent_digest",
+        "observation_document",
+        "omissions",
+        "packet_document",
+        "policy_document",
+        "policy_reference",
+        "policy_report_document",
+        "proposal_id",
+        "provider_fetching",
+        "replay_digest",
+        "replay_reference",
+        "report_document",
+        "report_id",
+        "review_case_id",
+        "reviewer_access_revision",
+        "reviewer_engine",
+        "reviewer_failure",
+        "reviewer_model",
+        "reviewer_status",
+        "schema_version",
+        "supersedes_id",
+        "target_fingerprint",
+    }
+)
+
+
+def cover_consideration_replay_digest(
+    review_case_id: str,
+    report_id: str,
+    *,
+    provider_fetching: bool,
+    replay_reference: str,
+) -> str:
+    """Bind one consideration replay to its captured producer authority."""
+    return hashlib.sha256(
+        canonical_packet_json(
+            {
+                "replay_reference": replay_reference,
+                "report": report_id,
+                "review_case_id": review_case_id,
+                "provider_fetching": provider_fetching,
+            }
+        ).encode()
+    ).hexdigest()
+
+
+def _cover_incumbent(
+    report: MetadataReport,
+    candidates: list[dict[str, object]],
+) -> tuple[dict[str, object], str | None]:
+    incumbent = next((item for item in candidates if item["incumbent"]), None)
+    target_cover = next(
+        field
+        for field in report.target.fields
+        if field.destination is TargetDestination.COVER
+    )
+    incumbent_state = (
+        "available"
+        if incumbent is not None
+        else "unavailable"
+        if target_cover.state is TargetFieldState.VALUE
+        else "absent"
+    )
+    return (
+        {
+            "reference": None if incumbent is None else incumbent["reference"],
+            "state": incumbent_state,
+        },
+        None if incumbent is None else cast("str", incumbent["original_sha256"]),
+    )
+
+
+def _validated_cover_consideration(
+    document: str,
+) -> tuple[dict[str, object], MetadataReport]:
+    """Read one canonical v4 consideration and its bound report."""
+    value = _load_object(document, "cover consideration")
+    consideration_id = value.get("consideration_id")
+    created_at = value.get("created_at")
+    review_case_id = value.get("review_case_id")
+    report_id = value.get("report_id")
+    report_document = value.get("report_document")
+    policy_document = value.get("policy_document")
+    policy_reference = value.get("policy_reference")
+    policy_report_document = value.get("policy_report_document")
+    incumbent = value.get("incumbent")
+    if (
+        set(value) != _CONSIDERATION_FIELDS
+        or value.get("schema_version") != SCHEMA_VERSION
+        or type(consideration_id) is not str
+        or re.fullmatch(r"cover_consideration_[0-9a-f]{64}", consideration_id) is None
+        or type(created_at) is not int
+        or created_at < 0
+        or type(review_case_id) is not str
+        or type(report_id) is not str
+        or type(report_document) is not str
+        or type(policy_document) is not str
+        or type(policy_reference) is not str
+        or type(value.get("candidates")) is not list
+        or any(
+            type(candidate) is not dict
+            for candidate in cast("list[object]", value.get("candidates"))
+        )
+        or type(value.get("omissions")) is not list
+        or any(
+            type(omission) is not dict
+            for omission in cast("list[object]", value.get("omissions"))
+        )
+        or type(value.get("proposal_id")) is not str
+        or type(value.get("provider_fetching")) is not bool
+        or type(value.get("reviewer_status")) is not str
+        or value.get("reviewer_status") not in {"completed", "failed", "unavailable"}
+        or type(value.get("target_fingerprint")) is not str
+        or any(
+            item is not None and type(item) is not str
+            for item in (
+                value.get("identity_document"),
+                value.get("observation_document"),
+                value.get("packet_document"),
+                value.get("reviewer_engine"),
+                value.get("reviewer_model"),
+            )
+        )
+        or (
+            value.get("reviewer_failure") is not None
+            and type(value.get("reviewer_failure")) is not dict
+        )
+        or (
+            value.get("reviewer_access_revision") is not None
+            and type(value.get("reviewer_access_revision")) is not int
+        )
+        or (
+            value.get("supersedes_id") is not None
+            and (
+                type(value.get("supersedes_id")) is not str
+                or re.fullmatch(
+                    r"cover_consideration_[0-9a-f]{64}",
+                    cast(str, value.get("supersedes_id")),
+                )
+                is None
+            )
+        )
+        or type(incumbent) is not dict
+        or set(incumbent) != {"reference", "state"}
+        or incumbent.get("state") not in {"absent", "available", "unavailable"}
+        or (
+            incumbent.get("reference") is not None
+            and type(incumbent.get("reference")) is not str
+        )
+        or (
+            value.get("incumbent_digest") is not None
+            and (
+                type(value.get("incumbent_digest")) is not str
+                or re.fullmatch(
+                    r"[0-9a-f]{64}", cast(str, value.get("incumbent_digest"))
+                )
+                is None
+            )
+        )
+        or (
+            policy_report_document is not None
+            and type(policy_report_document) is not str
+        )
+    ):
+        raise ValueError("cover consideration document is invalid")
+    identity = dict(value)
+    identity.pop("consideration_id")
+    identity.pop("created_at")
+    if (
+        consideration_id
+        != "cover_consideration_"
+        + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
+    ):
+        raise ValueError("cover consideration identity is invalid")
+    report = MetadataReport.from_json(report_document)
+    if report.report_id != report_id or report.target.fingerprint != value.get(
+        "target_fingerprint"
+    ):
+        raise ValueError("cover consideration report is invalid")
+    policy_value = _load_object(policy_document, "cover policy")
+    avoid_promotional_text = policy_value.get("avoid_promotional_text")
+    avoid_tie_in_branding = policy_value.get("avoid_tie_in_branding")
+    prefer_minimal_composition = policy_value.get("prefer_minimal_composition")
+    if any(
+        type(option) is not bool
+        for option in (
+            avoid_promotional_text,
+            avoid_tie_in_branding,
+            prefer_minimal_composition,
+        )
+    ):
+        raise ValueError("cover consideration policy is invalid")
+    policy = CoverPolicy(
+        avoid_promotional_text=cast(bool, avoid_promotional_text),
+        avoid_tie_in_branding=cast(bool, avoid_tie_in_branding),
+        prefer_minimal_composition=cast(bool, prefer_minimal_composition),
+    )
+    if policy.document != policy_document or policy.reference != policy_reference:
+        raise ValueError("cover consideration policy is invalid")
+    packet_document = cast("str | None", value.get("packet_document"))
+    identity_document = cast("str | None", value.get("identity_document"))
+    observation_document = cast("str | None", value.get("observation_document"))
+    try:
+        if packet_document is None:
+            if (
+                identity_document is not None
+                or observation_document is not None
+                or policy_report_document is not None
+            ):
+                raise ValueError
+            expected_candidates: list[dict[str, object]] = []
+        else:
+            if identity_document is None or policy_report_document is None:
+                raise ValueError
+            packet = read_cover_packet_document(packet_document)
+            packet_candidates = cast("list[dict[str, object]]", packet["candidates"])
+            references = tuple(
+                cast("str", candidate["reference"]) for candidate in packet_candidates
+            )
+            identity_report = _identity_rows(
+                identity_document,
+                packet["packet_reference"],
+                packet_candidates,
+                references,
+            )
+            if identity_report[
+                "report_reference"
+            ] != report.report_id or identity_report[
+                "work_target_reference"
+            ] != _work_target_reference(report):
+                raise ValueError
+            observation_taxonomy_reference = TAXONOMY_REFERENCE
+            if observation_document is not None:
+                (
+                    _observation_report,
+                    _instruction_digest,
+                    _schema_digest,
+                    observation_taxonomy_reference,
+                ) = _observation_document_rows(
+                    observation_document,
+                    packet["packet_reference"],
+                    packet_candidates,
+                    references,
+                )
+            read_cover_policy_report(
+                policy_report_document,
+                packet_reference=cast("str", packet["packet_reference"]),
+                classifier_reference=cast(
+                    "str", identity_report["classifier_reference"]
+                ),
+                policy=policy,
+                identity_document=identity_document,
+                observation_document=observation_document,
+                observation_taxonomy_reference=observation_taxonomy_reference,
+                candidate_references=references,
+            )
+            expected_candidates = CoverConsiderationService._candidates(
+                report,
+                packet_document,
+                identity_document,
+                observation_document,
+                policy_report_document,
+            )
+        expected_omissions = CoverConsiderationService._omissions(
+            report, packet_document
+        )
+        expected_incumbent, expected_incumbent_digest = _cover_incumbent(
+            report, expected_candidates
+        )
+        if (
+            value["candidates"] != expected_candidates
+            or value["omissions"] != expected_omissions
+            or value["incumbent"] != expected_incumbent
+            or value["incumbent_digest"] != expected_incumbent_digest
+        ):
+            raise ValueError
+    except (
+        CoverConsiderationError,
+        KeyError,
+        StopIteration,
+        TypeError,
+        ValueError,
+    ) as error:
+        raise ValueError("cover consideration evidence is invalid") from error
+    return value, report
+
+
+def cover_consideration_currentness(
+    document: str,
+    replay_reference: str,
+    provider_fetching: Callable[[MetadataReport], bool],
+) -> CoverConsiderationCurrentness:
+    """Classify one persisted consideration against captured live authority."""
+    if (
+        type(document) is not str
+        or type(replay_reference) is not str
+        or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None
+    ):
+        return "inactive"
+    try:
+        value, report = _validated_cover_consideration(document)
+        review_case_id = value.get("review_case_id")
+        report_id = value.get("report_id")
+        fetching = value.get("provider_fetching")
+        saved_replay_reference = value.get("replay_reference")
+        if (
+            type(review_case_id) is not str
+            or type(report_id) is not str
+            or type(fetching) is not bool
+            or type(saved_replay_reference) is not str
+            or re.fullmatch(r"cover_replay_[0-9a-f]{64}", saved_replay_reference)
+            is None
+            or value.get("replay_digest")
+            != cover_consideration_replay_digest(
+                review_case_id,
+                report_id,
+                provider_fetching=fetching,
+                replay_reference=saved_replay_reference,
+            )
+        ):
+            return "inactive"
+    except (KeyError, TypeError, ValueError):
+        return "inactive"
+    try:
+        current_fetching = provider_fetching(report)
+    except Exception:
+        return "inactive"
+    if type(current_fetching) is not bool or fetching != current_fetching:
+        return "inactive"
+    return (
+        "current" if saved_replay_reference == replay_reference else "refresh_required"
+    )
+
+
+def cover_consideration_is_current(
+    document: str,
+    replay_reference: str,
+    provider_fetching: Callable[[MetadataReport], bool],
+) -> bool:
+    """Check one persisted consideration against captured live authority."""
+    return (
+        cover_consideration_currentness(document, replay_reference, provider_fetching)
+        == "current"
+    )
 
 
 class CoverConsiderationError(RuntimeError):
@@ -153,10 +515,10 @@ class CoverConsideration:
 
     @property
     def data(self) -> dict[str, object]:
-        value = json.loads(self.document)
-        if type(value) is not dict:
-            raise CoverConsiderationError("persistence")
-        return value
+        try:
+            return _validated_cover_consideration(self.document)[0]
+        except (KeyError, TypeError, ValueError) as error:
+            raise CoverConsiderationError("persistence") from error
 
     @property
     def consideration_id(self) -> str:
@@ -248,6 +610,7 @@ class CoverConsiderationService:
                 ).hexdigest(),
                 "observation_schema": OBSERVATION_SCHEMA_VERSION,
                 "observer_output_schema": OUTPUT_SCHEMA_VERSION,
+                "packet_producer_revision": PACKET_PRODUCER_REVISION,
                 "packet_schema": PACKET_SCHEMA_VERSION,
                 "policy_report_schema": POLICY_REPORT_SCHEMA_VERSION,
                 "policy_schema": POLICY_SCHEMA_VERSION,
@@ -279,16 +642,12 @@ class CoverConsiderationService:
         provider_fetching: bool,
         replay_reference: str | None = None,
     ) -> str:
-        return hashlib.sha256(
-            canonical_packet_json(
-                {
-                    "replay_reference": replay_reference or self.replay_reference,
-                    "report": report_id,
-                    "review_case_id": review_case_id,
-                    "provider_fetching": provider_fetching,
-                }
-            ).encode()
-        ).hexdigest()
+        return cover_consideration_replay_digest(
+            review_case_id,
+            report_id,
+            provider_fetching=provider_fetching,
+            replay_reference=replay_reference or self.replay_reference,
+        )
 
     def existing(
         self, review_case_id: str, report_document: str
@@ -711,30 +1070,13 @@ class CoverConsiderationService:
             packet_document = None
             candidates = []
 
-        incumbent = next((item for item in candidates if item["incumbent"]), None)
-        target_cover = next(
-            field
-            for field in report.target.fields
-            if field.destination is TargetDestination.COVER
-        )
-        incumbent_state = (
-            "available"
-            if incumbent is not None
-            else "unavailable"
-            if target_cover.state is TargetFieldState.VALUE
-            else "absent"
-        )
+        incumbent, incumbent_digest = _cover_incumbent(report, candidates)
         body: dict[str, object] = {
             "candidates": candidates,
             "created_at": self._clock(),
             "identity_document": identity_document,
-            "incumbent_digest": (
-                None if incumbent is None else incumbent["original_sha256"]
-            ),
-            "incumbent": {
-                "reference": None if incumbent is None else incumbent["reference"],
-                "state": incumbent_state,
-            },
+            "incumbent_digest": incumbent_digest,
+            "incumbent": incumbent,
             "observation_document": observation_document,
             "omissions": self._omissions(report, packet_document),
             "packet_document": packet_document,
@@ -771,8 +1113,8 @@ class CoverConsiderationService:
         )
         return canonical_packet_json({"consideration_id": consideration_id, **body})
 
+    @staticmethod
     def _candidates(
-        self,
         report: MetadataReport,
         packet_document: str,
         identity_document: str,
@@ -926,22 +1268,25 @@ class CoverConsiderationService:
         ]
 
     def _project(self, document: str, *, current: bool) -> dict[str, object]:
-        value = json.loads(document)
-        policy = (
-            None
-            if value["policy_report_document"] is None
-            else json.loads(value["policy_report_document"])
-        )
-        candidates = [dict(item) for item in value["candidates"]]
+        value, _report = _validated_cover_consideration(document)
+        policy_document = cast("str | None", value["policy_report_document"])
+        policy = None if policy_document is None else json.loads(policy_document)
+        candidates = [
+            dict(cast("dict[str, object]", item))
+            for item in cast("list[object]", value["candidates"])
+        ]
+        incumbent = cast("dict[str, object]", value["incumbent"])
+        omissions = cast("list[object]", value["omissions"])
+        saved_policy_document = cast("str", value["policy_document"])
         return {
             "candidates": candidates,
             "choice_contexts": _cover_choice_contexts(value, candidates, policy),
             "consideration_id": value["consideration_id"],
             "current": current,
-            "incumbent": dict(value["incumbent"]),
-            "omissions": list(value["omissions"]),
+            "incumbent": dict(incumbent),
+            "omissions": list(omissions),
             "policy": policy,
-            "policy_preferences": json.loads(value["policy_document"]),
+            "policy_preferences": json.loads(saved_policy_document),
             "policy_reference": value["policy_reference"],
             "provider_fetching": value["provider_fetching"],
             "ready": policy is not None and policy["owner_ready"] is True,
@@ -996,31 +1341,48 @@ class CoverConsiderationService:
         """Project a consideration captured inside its caller's read snapshot."""
         if document is None:
             return None
-        value = json.loads(document)
         return (
-            None
-            if not self._document_current(value)
-            else self._project(document, current=True)
+            self._project(document, current=True)
+            if cover_consideration_currentness(
+                document, self.replay_reference, self._provider_fetching
+            )
+            == "current"
+            else None
         )
 
+    def project_for_review(
+        self,
+        document: str | None,
+        review_case_id: str,
+        report_document: str,
+    ) -> tuple[dict[str, object] | None, CoverConsiderationCurrentness]:
+        """Project current choices and identify one safe comparison refresh."""
+        if document is None:
+            return None, "inactive"
+        currentness = cover_consideration_currentness(
+            document,
+            self.replay_reference,
+            self._provider_fetching,
+        )
+        if currentness == "inactive":
+            return None, currentness
+        value, saved_report = _validated_cover_consideration(document)
+        if (
+            value.get("review_case_id") != review_case_id
+            or saved_report.to_json() != report_document
+            or value.get("policy_reference") != self._policy.reference
+        ):
+            return None, "inactive"
+        projection = self._project(document, current=currentness == "current")
+        if currentness == "refresh_required" and projection["ready"] is not True:
+            return None, "inactive"
+        return projection, currentness
+
     def _document_current(self, value: dict[str, object]) -> bool:
-        review_case_id = value.get("review_case_id")
-        report_id = value.get("report_id")
-        return (
-            type(review_case_id) is str
-            and type(report_id) is str
-            and value.get("replay_reference") == self.replay_reference
-            and type(value.get("provider_fetching")) is bool
-            and value.get("replay_digest")
-            == self._replay_digest(
-                review_case_id,
-                report_id,
-                provider_fetching=bool(value["provider_fetching"]),
-            )
-            and value["provider_fetching"]
-            == self._provider_fetching(
-                MetadataReport.from_json(str(value.get("report_document")))
-            )
+        return cover_consideration_is_current(
+            canonical_packet_json(value),
+            self.replay_reference,
+            self._provider_fetching,
         )
 
     def project_historical(self, document: str) -> dict[str, object]:

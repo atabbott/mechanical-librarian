@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Cover comparisons keep the exact Audiobookshelf incumbent artifact and
+  dimensions when another source has the same preview bytes. Library attention
+  now follows live provider recovery, and a successful replacement after a
+  stale comparison clears that comparison's recovery notice. (#999)
+
 - Equivalent local description evidence no longer replaces an eligible
   provider's exact text or makes a qualified automatic fill disappear. Source
   provenance and owner choices remain visible, and existing installs require a

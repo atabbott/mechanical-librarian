@@ -474,6 +474,25 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise ValueError("cover replay reference is invalid")
         self._current_cover_authority = (policy_reference, replay_reference)
 
+    def bind_cover_consideration_currentness(
+        self, predicate: Callable[[str, str], str]
+    ) -> None:
+        """Bind the repository-local live-cover predicate used by review SQL."""
+
+        def current(document: object, replay_reference: object) -> int:
+            if type(document) is not str or type(replay_reference) is not str:
+                return 0
+            try:
+                return {
+                    "inactive": 0,
+                    "current": 1,
+                    "refresh_required": 2,
+                }.get(predicate(document, replay_reference), 0)
+            except Exception:
+                return 0
+
+        self._connection.create_function("ml_cover_consideration_current", 2, current)
+
     def field_effect_authority_source(
         self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
     ) -> dict[str, object]:
@@ -2262,6 +2281,11 @@ def open_repository(
             1,
             _review_casefold,
             deterministic=True,
+        )
+        connection.create_function(
+            "ml_cover_consideration_current",
+            2,
+            lambda _document, _replay_reference: 0,
         )
         if binding is not None:
             binding.require_current()

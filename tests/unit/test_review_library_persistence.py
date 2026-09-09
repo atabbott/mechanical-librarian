@@ -93,6 +93,28 @@ from tests.unit.test_bibliographic_bundles import (
 )
 
 
+def test_cover_currentness_sql_binding_fails_closed_for_unknown_and_failure(
+    tmp_path: Path,
+) -> None:
+    repository = open_repository(tmp_path / "application.sqlite3")
+
+    repository.bind_cover_consideration_currentness(
+        lambda _document, _replay: "unknown"
+    )
+    assert repository._connection.execute(
+        "SELECT ml_cover_consideration_current('document','replay')"
+    ).fetchone() == (0,)
+
+    def unavailable(_document: str, _replay: str) -> str:
+        raise RuntimeError("synthetic currentness failure")
+
+    repository.bind_cover_consideration_currentness(unavailable)
+    assert repository._connection.execute(
+        "SELECT ml_cover_consideration_current('document','replay')"
+    ).fetchone() == (0,)
+    repository.close()
+
+
 def _field_effect_application(
     repository: SQLiteMetadataReportRepository, directory: Path
 ) -> tuple[

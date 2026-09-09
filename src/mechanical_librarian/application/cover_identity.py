@@ -320,15 +320,26 @@ def _report_bound_candidate_sources(
     expected_reference = (
         incumbent_references[-1] if incumbent_references else references[0]
     )
-    best = max(
-        sources,
-        key=lambda source: (
-            cast("CoverArtifact", source.artifact).width
-            * cast("CoverArtifact", source.artifact).height,
-            cast("CoverArtifact", source.artifact).width,
-            cast("CoverArtifact", source.artifact).height,
+    best = next(
+        (
+            source
+            for source, reference in zip(sources, references, strict=True)
+            if reference == expected_reference
         ),
+        None,
     )
+    if best is None:
+        raise ValueError("identity candidate report binding is invalid")
+    if not incumbent_references:
+        best = max(
+            sources,
+            key=lambda source: (
+                cast("CoverArtifact", source.artifact).width
+                * cast("CoverArtifact", source.artifact).height,
+                cast("CoverArtifact", source.artifact).width,
+                cast("CoverArtifact", source.artifact).height,
+            ),
+        )
     expected_provenance = normalize_provenance(
         [
             {

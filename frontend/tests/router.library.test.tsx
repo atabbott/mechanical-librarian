@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { reconciliationKey } from '../src/reviewDecisionController'
 import { sourceStatusLabel } from '../src/routes/LibraryPage'
 import { advancePresentationSettled } from '../src/reviewAdvancePresentation'
 import type {
@@ -3186,6 +3187,51 @@ describe('Library route', () => {
     expect(screen.getByText('Choices').nextElementSibling).toHaveTextContent('2')
   })
 
+  it('offers only preparation for an authenticated historical cover comparison', async () => {
+    const base = detail.fields[0]
+    if (!base) throw new Error('cover fixture requires a field')
+    const historical: CaseDetailView['fields'][number] = {
+      ...base,
+      destination: 'cover',
+      decisionActions: [],
+      editable: true,
+      needsAttention: true,
+      coverConsideration: {
+        id: `cover_consideration_${'h'.repeat(64)}`,
+        current: false,
+        choiceContexts: [],
+        candidates: [],
+        incumbent: { reference: null, state: 'absent' },
+        omissions: [],
+        policy: null,
+        policyPreferences: {
+          avoidPromotionalText: false,
+          avoidTieInBranding: false,
+          preferMinimalComposition: false,
+        },
+        policyReference: `cover_policy_${'h'.repeat(64)}`,
+        providerFetching: false,
+        ready: true,
+        reviewerAccessRevision: null,
+        reviewerEngine: null,
+        reviewerModel: null,
+        reviewerStatus: 'completed',
+        reviewerUnavailableReason: null,
+        targetFingerprint: 'fingerprint-1',
+      },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [historical] })),
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+
+    expect(await screen.findByRole('button', { name: 'Prepare cover comparison' })).toBeEnabled()
+    expect(screen.queryByRole('button', { name: 'Keep current cover' })).toBeNull()
+    expect(screen.queryByLabelText('Choose a cover')).toBeNull()
+    expect(http.recordDecision).not.toHaveBeenCalled()
+  })
+
   it('keeps retained per-choice provenance in Library without loading diagnostic evidence', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
@@ -3999,10 +4045,15 @@ describe('Library route', () => {
   })
 
   it.each([
-    ['a replacement consideration on the same case', null],
-    ['a successor case', 'case-2'],
-  ])('retains a stale cover choice and explicitly opens %s', async (_label, successorId) => {
+    ['a direct replacement choice on the same case', null, false],
+    ['a direct replacement choice beside another unresolved field', null, true],
+    ['a direct replacement whose recorded case refresh fails', null, false],
+    ['an explicit replacement recovery on the same case', null, false],
+    ['an explicit successor-case recovery', 'case-2', false],
+  ])('retains a stale cover choice and recovers through %s', async (label, successorId, other) => {
     const user = userEvent.setup()
+    const directChoice = label.startsWith('a direct')
+    const failRecordedRefresh = label.includes('recorded case refresh fails')
     const base = detail.fields[0]
     if (!base) throw new Error('cover stale fixture requires a field')
     const candidate = (suffix: string, incumbent: boolean) => ({
@@ -4068,21 +4119,33 @@ describe('Library route', () => {
             targetFingerprint: `fingerprint-${id}`,
           },
         },
+        ...(other ? [base] : []),
       ],
     })
     const initial = coverDetail('case-1', '2')
     const current = coverDetail(successorId ?? 'case-1', '3')
     let stale = false
     let failCurrentLookup = true
-    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => {
-      stale = true
-      throw new ApiError(409, 'stale')
+    let successfulDecisions = 0
+    let recordedRefreshAvailable = false
+    const defaultHttp = createHttp()
+    const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (...args) => {
+      if (!stale) {
+        stale = true
+        throw new ApiError(409, 'stale')
+      }
+      const acknowledgement = await defaultHttp.recordDecision(...args)
+      successfulDecisions += 1
+      return acknowledgement
     })
     const http: ReviewHttp = {
       ...createHttp(),
       recordDecision,
       getCaseDetail: vi.fn(async (id) => {
         if (!stale) return initial
+        if (failRecordedRefresh && successfulDecisions === 1 && !recordedRefreshAvailable) {
+          throw new Error('recorded current case refresh unavailable')
+        }
         if (id === current.id) return current
         return { ...initial, current: false }
       }),
@@ -4094,7 +4157,7 @@ describe('Library route', () => {
         return successorId
       }),
     }
-    renderRoute('/library?lens=all&preview=case-1&field=cover', http)
+    const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
     await user.click(await screen.findByRole('button', { name: /Alternative 1 cover/u }))
     expect(
@@ -4113,6 +4176,57 @@ describe('Library route', () => {
       ),
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Review current comparison' })).toBeEnabled()
+
+    if (directChoice) {
+      const currentAlternative = screen.getByRole('button', {
+        name: /Alternative 1 cover/u,
+      })
+      expect(within(currentAlternative).getByRole('img')).toHaveAttribute(
+        'src',
+        expect.stringContaining(`cover_transport_ref_${'3'.repeat(64)}`),
+      )
+      await user.click(currentAlternative)
+      await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
+      expect(
+        screen.queryByText(
+          'This cover comparison changed before your choice was recorded. No cover was changed.',
+        ),
+      ).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Review current comparison' })).toBeNull()
+      if (failRecordedRefresh) {
+        expect(
+          await screen.findByText(
+            'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
+          ),
+        ).toBeVisible()
+        expect(screen.queryByRole('button', { name: /Alternative 1 cover/u })).toBeNull()
+        const reconciliation = queryClient.getQueryData<{
+          destination: string
+          message: string
+          detailUpdatedAt: number
+        }>(reconciliationKey('case-1'))
+        expect(reconciliation?.destination).toBe('cover')
+        expect(reconciliation?.message).toBe(
+          'Decision recorded, but the current case could not be refreshed. Reload before reviewing another value.',
+        )
+        expect(typeof reconciliation?.detailUpdatedAt).toBe('number')
+        expect(recordDecision).toHaveBeenCalledTimes(2)
+        expect(successfulDecisions).toBe(1)
+        recordedRefreshAvailable = true
+        await user.click(screen.getByRole('button', { name: 'Try again' }))
+        expect(await screen.findByRole('button', { name: /Alternative 1 cover/u })).toBeVisible()
+        await waitFor(() =>
+          expect(queryClient.getQueryData(reconciliationKey('case-1'))).toBeNull(),
+        )
+        return
+      }
+      if (other) {
+        expect(await screen.findByRole('button', { name: /Title.*Needs review/u })).toBeVisible()
+      } else {
+        expect(await screen.findByText('Review complete')).toBeVisible()
+      }
+      return
+    }
 
     await user.click(screen.getByRole('button', { name: 'Review current comparison' }))
     const currentAlternative = await screen.findByRole('button', {

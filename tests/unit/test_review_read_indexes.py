@@ -87,6 +87,9 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
         1,
         lambda value: value.casefold() if type(value) is str else value,
     )
+    connection.create_function(
+        "ml_cover_consideration_current", 2, lambda _document, _replay: 0
+    )
     _create_schema(connection)
     reports = []
     proposals = []

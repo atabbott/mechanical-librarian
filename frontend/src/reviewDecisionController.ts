@@ -8,7 +8,9 @@ import { beginDecisionEcho, endDecisionEcho, settleDecisionEcho } from './decisi
 import { detailQuery, useReviewContext } from './router'
 
 export const actionable = (field: CaseDetailView['fields'][number]) =>
-  field.needsAttention && field.decisionActions.length > 0
+  field.needsAttention &&
+  (field.decisionActions.length > 0 ||
+    (field.destination === 'cover' && field.editable && field.coverConsideration?.current !== true))
 export const choiceAvailable = (field: CaseDetailView['fields'][number]) =>
   field.editable && field.decisionActions.length > 0
 export const reconciliationKey = (id: string) => ['decision-reconciliation', id] as const
@@ -68,6 +70,7 @@ export const useReviewDecisionController = ({
   active,
   onAdvance,
   onComplete,
+  onRecorded,
   onStale,
 }: {
   reviewCaseId: string
@@ -75,6 +78,7 @@ export const useReviewDecisionController = ({
   active: (destination: string) => boolean
   onAdvance: (field: string) => Promise<void> | void
   onComplete?: (fields: CaseDetailView['fields']) => Promise<void> | void
+  onRecorded?: (caseId: string, destination: string) => Promise<void> | void
   onStale: () => Promise<void> | void
 }) => {
   const { http, queryClient } = useReviewContext()
@@ -208,6 +212,7 @@ export const useReviewDecisionController = ({
       // (#635, #641).
       endDecisionEcho(queryClient, reviewCaseId, acknowledgement.invalidation_sequences)
       converge()
+      await onRecorded?.(reviewCaseId, command.destination)
       const refreshed = await refreshCase()
       if (!refreshed) {
         halt()

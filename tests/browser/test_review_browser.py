@@ -266,6 +266,7 @@ def _server(
     cover: bool = False,
     sole_cover_timeout: bool = False,
     stale_cover_successor: bool = False,
+    stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
@@ -511,7 +512,7 @@ def _server(
         reviewer_access=reviewer_access,
     )
     stale_cover_published = False
-    if stale_cover_successor:
+    if stale_cover_successor or stale_cover_same_case:
         if cover_considerations is None:
             raise RuntimeError("stale cover fixture requires cover considerations")
 
@@ -524,6 +525,24 @@ def _server(
                 and not stale_cover_published
             ):
                 stale_cover_published = True
+                if stale_cover_same_case:
+                    cover_considerations.update_policy(
+                        CoverPolicy(prefer_minimal_composition=True)
+                    )
+                    current_case = ReviewCase.create_from_data(
+                        json.loads(repository.get_review_case(case_id))["case"]
+                    )
+                    cover_proposal = next(
+                        value
+                        for value in current_case.proposals
+                        if value["destination"] == "cover"
+                    )
+                    cover_considerations.ensure(
+                        case_id,
+                        report.to_json(),
+                        cover_proposal,
+                    )
+                    return await call_next(request)
                 successor_report = MetadataReport.create(
                     target=report.target,
                     file=FileFacts(0, "c" * 64, "d" * 64, report.file.format),
@@ -1921,6 +1940,84 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                     "Enter"
                 )
                 page.get_by_role("heading", name="Review complete").wait_for()
+                assert decision_statuses == [409, 200]
+                assert errors and all("409" in error for error in errors), errors
+            browser.close()
+
+
+def test_current_same_case_cover_choice_clears_stale_feedback_after_recording() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        decision_statuses: list[int] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 844},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            page.on(
+                "response",
+                lambda response: (
+                    decision_statuses.append(response.status)
+                    if response.url.endswith("/decisions")
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    stale_cover_same_case=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                comparison = page.get_by_role("region", name="Choose a cover")
+                comparison.wait_for()
+                comparison.locator(".library-cover-card").filter(
+                    has_text="Alternative 1 cover"
+                ).click()
+
+                stale = page.get_by_text(
+                    "This cover comparison changed before your choice was recorded. "
+                    "No cover was changed."
+                )
+                expect(stale).to_be_visible()
+                assert case_id in page.url
+                assert decision_statuses == [409]
+
+                current_choice = page.locator(".library-cover-card").filter(
+                    has_text="Alternative 1 cover"
+                )
+                current_choice.focus()
+                page.keyboard.press("Enter")
+                page.get_by_role("heading", name="Review complete").wait_for()
+                expect(stale).to_have_count(0)
+                expect(
+                    page.get_by_role("button", name="Review current comparison")
+                ).to_have_count(0)
                 assert decision_statuses == [409, 200]
                 assert errors and all("409" in error for error in errors), errors
             browser.close()

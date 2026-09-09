@@ -1207,17 +1207,12 @@ function LibraryCoverChoicesContent({
   const consideration = field.coverConsideration
   const keeps = field.decisionActions.includes('keep_current')
   const accepts = field.decisionActions.includes('accept')
-  if (!consideration)
+  if (consideration?.current !== true)
     return (
       <section aria-label="Prepare cover comparison">
         <p role="status">
           No current cover comparison is available. The existing cover remains unchanged.
         </p>
-        {keeps ? (
-          <button type="button" disabled={disabled} onClick={() => choose('keep_current')}>
-            Keep current cover
-          </button>
-        ) : null}
         <button
           type="button"
           disabled={disabled || cover.prepare.isPending}
@@ -2150,6 +2145,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         })
       }
     },
+    onRecorded: (caseId, destination) => {
+      if (destination !== 'cover') return
+      setStaleCoverReview((current) => (current?.caseId === caseId ? null : current))
+    },
     onStale: async () => {
       if (selected?.destination === 'cover') {
         setStaleCoverReview({ caseId: selectedReviewCaseId, failed: false, loading: false })
@@ -2551,8 +2550,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     selected.editable &&
     selected.decisionActions.length > 0
   const selectedChoiceMode = selectedActionable || selectedRevisitable
+  const selectedCoverPreparation =
+    selected?.destination === 'cover' &&
+    selected.coverConsideration?.current !== true &&
+    selected.needsAttention
   const selectedCoverInspection =
-    selected?.destination === 'cover' && selected.coverConsideration !== null
+    selected?.destination === 'cover' &&
+    (selected.coverConsideration !== null || selectedCoverPreparation)
   const selectedProgress = selected ? controller.phase(selected.destination) : null
   // Attention membership comes from the authoritative exact case. A pending
   // or failed local command has not yet changed it.
@@ -2852,7 +2856,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             staleCoverNotice
           ) : detail.isError ? (
             <p role="alert">
-              Selected work could not be loaded.{' '}
+              {controller.messageFor(search.field ?? selected?.destination ?? '') ??
+                'Selected work could not be loaded.'}{' '}
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
@@ -3127,7 +3132,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         reviewCaseId={selectedReviewCaseId}
                         mediaKind={detail.data.target.mediaKind}
                         field={selected}
-                        disabled={!selectedChoiceMode}
+                        disabled={!selectedChoiceMode && !selectedCoverPreparation}
                         expandedEvidence={expandedChoices}
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}

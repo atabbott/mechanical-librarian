@@ -106,6 +106,7 @@ from mechanical_librarian.application.cover_packets import (  # noqa: E402
 )
 from mechanical_librarian.application.cover_policy import (  # noqa: E402
     CoverPolicy,
+    _observation_rows,
     adjudicate_cover_policy,
 )
 from mechanical_librarian.bootstrap import (  # noqa: E402
@@ -1197,6 +1198,92 @@ def test_duplicate_group_aggregates_best_original_dimensions_canonically() -> No
         document["candidates"][1]["width"],
         document["candidates"][1]["height"],
     ) == (1500, 3000)
+
+
+def test_incumbent_duplicate_keeps_abs_artifact_in_either_source_order() -> None:
+    duplicate_payload = _preview(33)
+    alternative_payload = _preview(34)
+
+    def source(
+        token: str,
+        kind: CoverSourceKind,
+        payload: bytes,
+        width: int,
+        height: int,
+    ) -> CoverSource:
+        artifact = CoverArtifact.create(
+            ("original-" + token).encode(), payload, "image/png", width, height
+        )
+        return CoverSource(
+            cover_source_id(kind, token),
+            kind,
+            CoverSourceState.RETRIEVED,
+            artifact,
+            provenance=(
+                None
+                if kind is CoverSourceKind.ABS
+                else CoverProvenance(
+                    kind.value,
+                    CoverDesignation.WORK,
+                    "work-" + token,
+                )
+            ),
+        )
+
+    incumbent = source("incumbent", CoverSourceKind.ABS, duplicate_payload, 300, 450)
+    duplicate = source(
+        "duplicate", CoverSourceKind.OPEN_LIBRARY, duplicate_payload, 2000, 3000
+    )
+    alternative = source(
+        "alternative", CoverSourceKind.HARDCOVER, alternative_payload, 1000, 1500
+    )
+    assert incumbent.artifact is not None
+    by_artifact = {
+        candidate.artifact.artifact_id: payload
+        for candidate, payload in (
+            (incumbent, duplicate_payload),
+            (duplicate, duplicate_payload),
+            (alternative, alternative_payload),
+        )
+        if candidate.artifact is not None
+    }
+
+    documents = []
+    for sources in (
+        (incumbent, duplicate, alternative),
+        (duplicate, incumbent, alternative),
+    ):
+        packet = prepare_cover_packet(
+            _report(sources).to_json(),
+            lambda artifact, _variant: by_artifact[artifact],
+        )
+        _admit_produced(packet)
+        documents.append(json.loads(packet.document))
+
+    assert documents == [documents[0]] * 2
+    candidates = documents[0]["candidates"]
+    incumbent_candidate = next(value for value in candidates if value["incumbent"])
+    alternative_candidate = next(
+        value for value in candidates if not value["incumbent"]
+    )
+    assert (
+        incumbent_candidate["reference"],
+        incumbent_candidate["preview_sha256"],
+        incumbent_candidate["width"],
+        incumbent_candidate["height"],
+    ) == (
+        packet_builder.cover_source_reference(
+            _report((incumbent, duplicate, alternative)).report_id,
+            incumbent.source_id,
+        ),
+        incumbent.artifact.preview_digest,
+        300,
+        450,
+    )
+    assert (alternative_candidate["width"], alternative_candidate["height"]) == (
+        1000,
+        1500,
+    )
 
 
 def test_digest_group_counts_every_source_kind_for_diversity() -> None:
@@ -3243,6 +3330,82 @@ def test_observation_versions_and_attempt_evidence_fail_closed() -> None:
                     {"dispatched": True},
                 ]
             )
+        )
+
+
+def test_observation_error_precedence_is_stable_across_document_schema_and_profile() -> (
+    None
+):
+    _, packet, _, _, observation, references, _ = _policy_documents()
+    packet_value = json.loads(packet.document)
+    candidates = packet_value["candidates"]
+
+    def read(document: str, profile: object) -> dict[str, object]:
+        return _observation_rows(
+            document,
+            packet_value["packet_reference"],
+            candidates,
+            references,
+            cast("Any", profile),
+        )
+
+    def rejects(document: str, profile: object, message: str) -> None:
+        with pytest.raises(ValueError, match=f"^{re.escape(message)}$"):
+            read(document, profile)
+
+    current = canonical_json(observation)
+    invalid_documents = (
+        "{",
+        "[]",
+        current.replace(
+            '{"attempt_evidence":', '{"attempt_evidence":[],"attempt_evidence":', 1
+        ),
+        json.dumps(observation),
+    )
+    for document in invalid_documents:
+        for profile in (None, object(), b'{"profile":"synthetic"}'):
+            rejects(document, profile, "cover observation document is invalid")
+
+    for schema_value in (None, 1, "cover-observation-report-v999"):
+        invalid_schema = dict(observation)
+        if schema_value is None:
+            invalid_schema.pop("schema_version")
+        else:
+            invalid_schema["schema_version"] = schema_value
+        for profile in (None, object(), b'{"profile":"synthetic"}'):
+            rejects(
+                canonical_json(invalid_schema),
+                profile,
+                "cover observation report is invalid",
+            )
+
+    matching_profile = b'{"profile":"synthetic"}'
+    for schema_version in (
+        "cover-observation-report-v1",
+        PREVIOUS_SCHEMA_VERSION,
+        OBSERVATION_SCHEMA_VERSION,
+    ):
+        recognized = json.loads(canonical_json(observation))
+        if schema_version != OBSERVATION_SCHEMA_VERSION:
+            _use_legacy_observation(recognized, schema_version)
+        malformed = dict(recognized)
+        malformed.pop("observations")
+        for document in (canonical_json(malformed), canonical_json(recognized)):
+            for profile in (None, object()):
+                rejects(document, profile, "cover observation profile is invalid")
+        rejects(
+            canonical_json(malformed),
+            matching_profile,
+            "cover observation report is invalid",
+        )
+        assert (
+            read(canonical_json(recognized), matching_profile)["schema_version"]
+            == schema_version
+        )
+        rejects(
+            canonical_json(recognized),
+            b'{"profile":"different"}',
+            "cover observation report is invalid",
         )
 
 

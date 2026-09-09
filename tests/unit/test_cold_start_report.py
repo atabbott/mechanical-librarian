@@ -35,6 +35,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
+    cover_consideration_currentness,
 )
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.metadata_report import (
@@ -150,14 +151,21 @@ def _publish_current_cover_consideration(
         for source in report.cover_sources
         if source.artifact is not None
     }
-    consideration = CoverConsiderationService(
+    service = CoverConsiderationService(
         repository,
         read_preview=lambda artifact, _variant: artifacts.read_preview_digest(
             preview_digests[artifact]
         ),
         read_preview_digest=artifacts.read_preview_digest,
         clock=lambda: 1,
-    ).ensure(review_case_id, report.to_json(), cover_result)
+    )
+    repository.bind_cover_consideration_currentness(
+        lambda document, replay_reference: cover_consideration_currentness(
+            document, replay_reference, lambda _report: False
+        )
+    )
+    service.update_policy(service._policy)
+    consideration = service.ensure(review_case_id, report.to_json(), cover_result)
     assert consideration["consideration_id"]
     return review_case_id
 
