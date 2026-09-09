@@ -11,6 +11,7 @@ import pytest
 
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
+    F19A_QUALIFIED_POLICY_OPTIONS,
     QUALIFIED_POLICY_OPTIONS,
 )
 from mechanical_librarian.domain.contributor_display_qualification import (
@@ -49,7 +50,8 @@ ASSOCIATION_MANIFEST = MANIFEST.with_name(
 LATEST_MANIFEST = MANIFEST.with_name(
     "f20-rich-metadata-qualification-candidate-v19.json"
 )
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
+ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1357,10 +1359,10 @@ def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> Non
 
 def test_association_successors_bind_current_sources_and_retained_scoring():
     rich = json.loads(ASSOCIATION_MANIFEST.read_text())
-    title = json.loads(LATEST_F19A_MANIFEST.read_text())
+    title = json.loads(ASSOCIATION_F19A_MANIFEST.read_text())
     assert (
-        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
-        == F19A_QUALIFICATION_MANIFEST_SHA256
+        hashlib.sha256(ASSOCIATION_F19A_MANIFEST.read_bytes()).hexdigest()
+        == "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6"
     )
     assert (
         title["prior_manifest_sha256"]
@@ -1440,3 +1442,20 @@ def test_inventaire_successor_binds_current_sources_and_preserves_authority() ->
     assert proof["retained_source_contract"]["full_preparation_recovery_claim"] is False
     for name in ("non-series.json", "series.json"):
         assert proof["continuity"][name]["complete_semantic_results_equal"] is True
+
+
+def test_inventaire_f19a_successor_preserves_historical_measurements_and_options() -> None:
+    current = json.loads(LATEST_F19A_MANIFEST.read_text())
+    prior = json.loads(ASSOCIATION_F19A_MANIFEST.read_text())
+    assert hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest() == F19A_QUALIFICATION_MANIFEST_SHA256
+    assert current["prior_manifest_sha256"] == hashlib.sha256(ASSOCIATION_F19A_MANIFEST.read_bytes()).hexdigest()
+    assert {k: v for k, v in current.items() if k not in {"prior_manifest_sha256", "inventaire_source_closure", "historical_evidence"}} == {k: v for k, v in prior.items() if k != "prior_manifest_sha256"}
+    closure = current["inventaire_source_closure"]
+    assert closure["qualified_policy_options"] == sorted(F19A_QUALIFIED_POLICY_OPTIONS)
+    assert len(closure["qualified_policy_options"]) == 11
+    assert closure["all_evaluator_bodies_unchanged"] is True
+    assert closure["fresh_holdout_claim"] is False
+    assert closure["fresh_scoring_run"] is False
+    assert current["historical_evidence"]["measurements_reexecuted"] is False
+    for name, digest in closure["behavior_sources"].items():
+        assert hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest() == digest

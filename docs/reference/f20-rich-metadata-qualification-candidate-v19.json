@@ -1,8 +1,8 @@
 {
   "authority_rotation": {
-    "measured_candidate_head": "9a89321f12dbe99ad7088ada69dffb4d1d6fc0d4",
+    "measured_candidate_head": "f93886dba16e7c74738452e4682a112cd41b1362",
     "prior_manifest_sha256": "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
-    "scope": "Inventaire source-contract and bounded author-aware observation correction; unchanged decision-only policy and option dispositions."
+    "scope": "Inventaire source and proposal reference admission, exact negative ISBN parsing and bounded author-aware WORK observation; unchanged decision-only policy and option dispositions."
   },
   "automatic_authority": "decision_only",
   "evidence_method": {
@@ -10,13 +10,13 @@
     "continuity": {
       "non-series.json": {
         "baseline_sha256": "53d9950159aa88c7847cb471102a29b23e731834616bcd56aaa85451e8a13817",
-        "candidate_sha256": "5144637c17b411841ac024fa9a1c460a91b0375af84c93c1af0da0c780b9ede6",
+        "candidate_sha256": "1d52115821a3024dac1025b0133103806aef850b75c59bae600f9a6120879681",
         "complete_semantic_results_equal": true
       },
       "sealed_series_bindings_equal": true,
       "series.json": {
         "baseline_sha256": "e79a09805d2fc6bd20a36983503c06c5f6ce804399aa39b2327dc6316e95252b",
-        "candidate_sha256": "f2d6fba6bb18ffc753f731ba8e76f7aa75cd2c643ba5f7c5913da0ecc17a3778",
+        "candidate_sha256": "56875316e839ff0fdc45cbf72ed5232819bbefdbfcab700f0f6c5cdfbf42c9e5",
         "complete_semantic_results_equal": true
       }
     },
@@ -47,6 +47,36 @@
       "validated_negative_shapes": 2
     },
     "retained_source_contract_receipt_sha256": "5a10db6e61b7a98eff1dea56198e692ad1231a9438552da29daaea101a449450",
+    "retrieved_proposal": {
+      "all_evaluator_bodies_unchanged": true,
+      "behavior_sources": {
+        "src/mechanical_librarian/domain/proposal_set.py": "87a662f5894c52e02cd26365b8458804e3dcca29f4add8aebc4d4c5e7f91ae26"
+      },
+      "fresh_holdout_claim": false,
+      "fresh_scoring_run": false,
+      "issue": 1006,
+      "measured_candidate_head": "f93886dba16e7c74738452e4682a112cd41b1362",
+      "proof": {
+        "focused_result": "136 passed",
+        "installed_acceptance_required": true,
+        "persistence": "tests/unit/test_review_case_persistence.py::test_retrieved_inventaire_proposal_reopens_admits_and_browses",
+        "proposal": "tests/unit/test_proposal_field_policy.py::test_cover_requires_one_complete_safe_artifact"
+      },
+      "qualified_policy_options": [
+        "contributor_names:canonical",
+        "contributor_names:preserve",
+        "date_precision:full_date",
+        "date_precision:year",
+        "language_rendering:display_name",
+        "language_rendering:preserve",
+        "publisher_preference:publisher",
+        "title:replace_target:decoration_tidy",
+        "title:replace_target:provider_consensus_noise",
+        "title_layout:preserve",
+        "title_layout:title_and_subtitle"
+      ],
+      "scope": "Only the evidence-reference prefix literal admits canonical Inventaire cover sources; evaluator bodies, policy, options and document bounds are unchanged."
+    },
     "series_complete_previews": 108,
     "synthetic_proof": {
       "acquisition": "tests/unit/test_cover_observer.py",
@@ -79,7 +109,7 @@
       "src/mechanical_librarian/application/field_effects.py": "491bbd4b2508c116f70007e94c2affd911380088591100755caae30b3bc21070",
       "src/mechanical_librarian/application/metadata_policy.py": "7003d6f98a8b733aeef600e8eb1fdd033b541280f80463c814bde52fb4748047",
       "src/mechanical_librarian/domain/audio_inspection.py": "10eb3766b9b609053f85ed354fedc3fcbd3a32d2ec1b055ce2ee82cc51f9f28f",
-      "src/mechanical_librarian/domain/automatic_decision.py": "5f538053bbd6b982eab738da7bca74042c346c3c88f795ccb421a861b789d0b9",
+      "src/mechanical_librarian/domain/automatic_decision.py": "b35a7ba581f38f943b19b854936ba863bad80f9514d7b6cb10a9850f25774e8b",
       "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
       "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
       "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
@@ -92,7 +122,7 @@
       "src/mechanical_librarian/domain/identifiers.py": "ab8862f3259921b9cd5e00bf2bf636c846b810db79c58c293c8cf12bd1c54f6a",
       "src/mechanical_librarian/domain/metadata_policy.py": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0",
       "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
-      "src/mechanical_librarian/domain/proposal_set.py": "a90c3aa5050a45c8a8f6146d10006c354e01257236cdedb9cbfcead944193932",
+      "src/mechanical_librarian/domain/proposal_set.py": "87a662f5894c52e02cd26365b8458804e3dcca29f4add8aebc4d4c5e7f91ae26",
       "src/mechanical_librarian/domain/review_case.py": "9382023a5363fd0200007e7362a5bdcff362bf7a53973c27833b3efdffbca92a",
       "src/mechanical_librarian/domain/reviewer_decision_summary.py": "dabf218ef80bbd59076e7e235dc506819950016dca25f581fd3020edade70555",
       "src/mechanical_librarian/domain/rich_metadata_preview.py": "40696bad9423d43a27676b020140a6cb868c960a8b1ee88f1c9e6e114474eea2",
