@@ -1384,6 +1384,13 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
         )
     evidence = rich["evidence_method"]["title_component_associations"]
     assert title["association_requalification"] == evidence
+    for name, digest in evidence["review_projection_followup"][
+        "behavior_sources"
+    ].items():
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+            == digest
+        )
     assert evidence["fresh_holdout_claim"] is False
     assert evidence["title"]["metrics"]["zero_tolerance_failures"] == 0
     assert evidence["title"]["metrics"]["automatic_predictions"] == 17

@@ -729,14 +729,14 @@
       "qualification_method": "owner_approved_exposed_regression",
       "review_projection_followup": {
         "behavior_sources": {
-          "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "70714ae7b4a8be6bae3c35e655a7e88a4e9ddae2a03d88c153ca61d5a08b570b",
+          "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "b13eb350de28386822639babdca72e1ad045d01a68e59e2823e3a6205071952b",
           "src/mechanical_librarian/adapters/persistence/review_cases.py": "7b4a1a19dfd3e7cfc861351d3143d2de5fc631d3dc17ac88b336b59520bdbb79",
           "src/mechanical_librarian/adapters/persistence/review_projections.py": "0a933523ec488f1ef1ea9339759f332d3b818e81ed861c940ad4cbfe0237d290",
           "src/mechanical_librarian/adapters/persistence/review_sql.py": "132f65b99969b5ea8370a9d252936a3fbd5a4475330bfd355869fc6daf085c58",
-          "src/mechanical_librarian/application/review_web.py": "6bf87b19816f058d125350c098ffaabef2212425da41056370948a8ac0a9c961"
+          "src/mechanical_librarian/application/review_web.py": "ad29ef8c58c5598659916f596946f2a33aedf2b4a8c77e588a7fd5c42aca91b4"
         },
         "retained_measurements_unchanged": true,
-        "scope": "Read the original case-bound Ask destinations for title, subtitle and series consistently across detail, Library and Attention. No change to proposal election, candidate eligibility, option outcomes, decision policy or scorer inputs."
+        "scope": "Read the original case-bound Ask destinations for title, subtitle and series consistently across detail, Library and Attention. No change to proposal election, candidate eligibility, option outcomes, decision policy or scorer inputs. Subsequent annotation wrapping is formatting-only: the Python AST is unchanged, so retained measurements carry without rescoring."
       },
       "series_metrics": {
         "exposed_confirmation": {
@@ -1204,13 +1204,13 @@
       "src/mechanical_librarian/adapters/persistence/documents.py": "eeb855cafe56a39b6adc318eff41c42225553bf5d544d91b8ab9405486410baa",
       "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "8986b39c743225b9b98ef39b28ee62fc856ded4c97380e8c1b05c3d04e9d4cf8",
       "src/mechanical_librarian/adapters/persistence/field_effect_validation.py": "196479934ea0cdcc155645c50e36f0fdbf28170b1062bca1fb8db1f650f39617",
-      "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "70714ae7b4a8be6bae3c35e655a7e88a4e9ddae2a03d88c153ca61d5a08b570b",
+      "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "b13eb350de28386822639babdca72e1ad045d01a68e59e2823e3a6205071952b",
       "src/mechanical_librarian/adapters/persistence/transactions.py": "d925b8d8829c4b06d9b8ebd22eb85bdf4dfefd2de918997253312554c09f2ab9",
       "src/mechanical_librarian/application/continuous_field_effects.py": "05aed3f2b762edece5a4245447a458e0c808ca07e47409dd0ab1f0b28b98b037",
       "src/mechanical_librarian/application/field_effects.py": "491bbd4b2508c116f70007e94c2affd911380088591100755caae30b3bc21070",
       "src/mechanical_librarian/application/metadata_policy.py": "7003d6f98a8b733aeef600e8eb1fdd033b541280f80463c814bde52fb4748047",
       "src/mechanical_librarian/domain/audio_inspection.py": "10eb3766b9b609053f85ed354fedc3fcbd3a32d2ec1b055ce2ee82cc51f9f28f",
-      "src/mechanical_librarian/domain/automatic_decision.py": "b75bb9a9475dcf324dcbf76253e637f788a3715e77fb1c6ea3622e245b7e1741",
+      "src/mechanical_librarian/domain/automatic_decision.py": "0eee2dd280feeba75a42007aa19255ffde24b6e90bd36a2a1dadfc970433e934",
       "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
       "src/mechanical_librarian/domain/cover_evidence.py": "7d69278f0c3170a6dfc3a6aa620beb3ff1c2f807b903081b4569457832daeef9",
       "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
