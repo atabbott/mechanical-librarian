@@ -637,12 +637,27 @@ def _qualify_first_run(
         )
         if status != 200 or not isinstance(mounts, dict) or mounts.get("revision") != 6:
             raise QualificationError("first_run_mount_failed")
+        status, reviewer = request_json(
+            opener,
+            port,
+            "/api/setup/reviewer",
+            method="POST",
+            payload={"expected_revision": 6, "outcome": "skipped"},
+            headers=mutation_headers,
+        )
+        if (
+            status != 200
+            or not isinstance(reviewer, dict)
+            or reviewer.get("revision") != 7
+            or reviewer.get("next_step") != "kick_off"
+        ):
+            raise QualificationError("first_run_reviewer_failed")
         status, _ = request_json(
             opener,
             port,
             "/api/setup/kick-off",
             method="POST",
-            payload={"expected_revision": 6},
+            payload={"expected_revision": 7},
             headers=mutation_headers,
         )
         if status != 202:
