@@ -4487,6 +4487,29 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                 proposed = page.get_by_role(
                     "button", name="Choose proposed value", exact=False
                 ).first
+                evidence = page.get_by_role(
+                    "button", name=f"Evidence for Alternative 1: {expected}", exact=True
+                )
+                for width, height in ((1280, 800), (390, 844)):
+                    page.set_viewport_size({"width": width, "height": height})
+                    for theme in ("dark", "light"):
+                        page.get_by_role("button", name=f"Use {theme} mode").click()
+                        evidence.click()
+                        expect(evidence).to_have_attribute("aria-expanded", "true")
+                        panel_id = evidence.get_attribute("aria-controls")
+                        assert panel_id is not None
+                        panel = page.locator("[id='" + panel_id + "']")
+                        expect(panel).to_be_visible()
+                        toggle_box = evidence.bounding_box()
+                        panel_box = panel.bounding_box()
+                        assert toggle_box is not None and panel_box is not None
+                        assert panel_box["y"] + panel_box["height"] <= toggle_box["y"]
+                        expect(proposed).to_have_attribute("aria-pressed", "false")
+                        evidence.focus()
+                        page.keyboard.press("Enter")
+                        expect(evidence).to_have_attribute("aria-expanded", "false")
+                        expect(panel).to_have_count(0)
+                        expect(proposed).to_have_attribute("aria-pressed", "false")
                 with page.expect_response(
                     lambda response: response.url.endswith("/decisions")
                 ) as accepted:

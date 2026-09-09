@@ -719,6 +719,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .metadata-choice.is-current { border-right-color:var(--line); }
 .metadata-choice .choice-select { min-height:152px; padding:20px 24px 52px; }
 .metadata-choice .choice-evidence-toggle { position:absolute; right:14px; bottom:12px; min-height:40px; padding:0 10px; border:1px solid var(--line-strong); border-radius:6px; background:var(--surface); color:var(--accent-strong); font-size:.7rem; font-weight:700; }
+.metadata-choice.is-evidence-open { padding-bottom:68px; }
 .metadata-choice:hover, .metadata-choice:has(:focus-visible) { background:var(--accent-soft); }
 .metadata-choice:hover .choice-select, .metadata-choice:has(:focus-visible) .choice-select { background:transparent; }
 .choice-recommendation { color:var(--soft); font-size:.7rem; }
