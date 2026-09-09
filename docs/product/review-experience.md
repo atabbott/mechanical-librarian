@@ -129,6 +129,13 @@ candidate, report, target, consideration, or reference identifiers. They have
 no legacy redirect or compatibility behavior. Durable cross-work diagnostics
 and history remain in Activity.
 
+Evidence and History preserve the originating Library lens, bounded search,
+Library page cursor, Attention cursor and selected field through tab switches,
+refresh and Back to work. Return links use the case identity in the diagnostic
+path, including while diagnostics load or cannot be read. Unknown or malformed
+query values never become return settings; returning does not independently
+fetch an off-page work to disguise lost Library context.
+
 A `ReviewGroup` is a display/query projection for confirmed instances of the
 same work, such as an Audiobookshelf ebook and audiobook or a future target in
 another adapter. It may contain identity labels, link method, link confidence,

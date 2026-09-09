@@ -367,3 +367,9 @@ Prior F20 v20 and F19a v7 decisions remain readable as history but grant no curr
 effect authority. Existing currentness checks reject them before scheduling or
 capability access. New decisions use the successor identities; historical
 manifests and decisions are never rewritten.
+
+The #891 successor inherits the guarded audiobook source envelope from merged
+v20 (`12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5`).
+Both that digest and the earlier published v20 digest remain readable history
+only. Its existing frontend byte binding includes the bounded diagnostic return
+context; no router or view file is added to automatic qualification bindings.

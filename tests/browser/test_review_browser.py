@@ -532,9 +532,22 @@ def _server(
             ),
         )
         repository.publish(extra, lambda: True)
-        extra_proposal = evaluate_report(extra)
+        if provider_recovery:
+            cohort_policy = repository.current_resolved_metadata_policy(
+                extra.target.library
+            )
+            assert cohort_policy is not None
+            extra_proposal = evaluate_report(
+                extra, cohort_policy.resolved_id, dict(cohort_policy.destinations)
+            )
+        else:
+            extra_proposal = evaluate_report(extra)
         repository.publish_proposal(extra_proposal)
-        repository.admit_review_case(extra_proposal)
+        extra_case = json.loads(repository.admit_review_case(extra_proposal))[
+            "review_case_id"
+        ]
+        if provider_recovery:
+            repository.persist_shadow_outcome(extra_case, 3)
     if audiobook:
         _publish_audiobook(repository)
     if audiobook_case:
@@ -4579,12 +4592,13 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                     key=key,
                     port=port,
                     provider_recovery=True,
+                    cohort=30,
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
                 page = context.new_page()
                 _login(page, origin)
-                page.goto(f"{origin}/library?lens=all&preview={case_id}")
+                page.get_by_role("searchbox").fill("Current title")
                 expect(
                     page.get_by_role("heading", name="Provider evidence limited")
                 ).to_be_visible()
@@ -4607,6 +4621,41 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= innerWidth"
                     )
+                from urllib.parse import parse_qs, urlsplit
+
+                for departure in ("Evidence", "History"):
+                    page.get_by_role("link", name=departure, exact=True).click()
+                    expect(
+                        page.get_by_role("heading", name=departure, exact=True)
+                    ).to_be_visible()
+                    other = "History" if departure == "Evidence" else "Evidence"
+                    page.get_by_role("link", name=other, exact=True).click()
+                    page.get_by_role("link", name="Back to work", exact=True).click()
+                    expect(
+                        page.get_by_role("heading", name="Current title", exact=True)
+                    ).to_be_visible()
+                    expect(page.get_by_text(reason)).to_be_visible()
+                    assert parse_qs(urlsplit(page.url).query)["q"] == ["Current title"]
+                    assert parse_qs(urlsplit(page.url).query)["field"] == ["series"]
+
+                page.set_viewport_size({"width": 1280, "height": 844})
+                page.get_by_role("button", name="Clear", exact=True).click()
+                expect(row).to_have_count(0)
+                page.get_by_role("button", name="Next →", exact=True).click()
+                row.click()
+                page.get_by_role("button", name=re.compile("^Series ")).click()
+                expect(page.get_by_text(reason)).to_be_visible()
+                cursor = parse_qs(urlsplit(page.url).query)["cursor"]
+                page.get_by_role("link", name="Evidence", exact=True).click()
+                page.get_by_role("link", name="History", exact=True).click()
+                page.get_by_role("link", name="Back to work", exact=True).click()
+                expect(
+                    page.get_by_role("heading", name="Current title", exact=True)
+                ).to_be_visible()
+                expect(page.get_by_text(reason)).to_be_visible()
+                assert parse_qs(urlsplit(page.url).query)["cursor"] == cursor
+                page.reload()
+                expect(page.get_by_text(reason)).to_be_visible()
                 page.goto(f"{origin}/review/{case_id}?subview=evidence")
                 expect(page.get_by_text(reason)).to_be_visible()
                 expect(

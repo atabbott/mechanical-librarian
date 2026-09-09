@@ -1027,11 +1027,11 @@ describe('Library route', () => {
     expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
     expect(screen.getByRole('link', { name: 'Evidence' })).toHaveAttribute(
       'href',
-      '/review/case-1?lens=all&subview=evidence&field=title',
+      '/review/case-1?field=title&lens=all&subview=evidence&q=title',
     )
     expect(screen.getByRole('link', { name: 'History' })).toHaveAttribute(
       'href',
-      '/review/case-1?lens=all&subview=history&field=title',
+      '/review/case-1?field=title&lens=all&subview=history&q=title',
     )
   })
 
@@ -6959,3 +6959,48 @@ it('keeps clear and empty lenses free of provider headers and bounds many lane h
   expect(row).toHaveAccessibleDescription('No match × 40')
   expect(screen.queryByRole('heading', { name: /Provider evidence/ })).toBeNull()
 })
+
+it.each(['Evidence', 'History'] as const)(
+  'returns from %s to the exact search page and selected field',
+  async (departure) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) => ({
+      ...library,
+      lens: search.lens,
+      page: 2,
+      works:
+        search.q === 'needle' && search.cursor === 'page-two' && search.lens === 'needs_attention'
+          ? library.works
+          : [],
+    }))
+    expect((await http.getLibrary({ lens: 'needs_attention' })).works).toEqual([])
+    const { router } = renderRoute(
+      '/library?lens=needs_attention&q=needle&cursor=page-two&preview=case-1&field=title',
+      http,
+    )
+    await screen.findByRole('heading', { name: 'Which title should this work use?' })
+    await user.click(screen.getByRole('link', { name: departure }))
+    await screen.findByRole('heading', { name: departure })
+    await user.click(
+      screen.getByRole('link', {
+        name: departure === 'Evidence' ? 'History' : 'Evidence',
+      }),
+    )
+    await user.click(screen.getByRole('link', { name: 'Back to work' }))
+    expect(
+      await screen.findByRole('heading', { name: 'Which title should this work use?' }),
+    ).toBeVisible()
+    expect(router.state.location.search).toMatchObject({
+      lens: 'needs_attention',
+      q: 'needle',
+      cursor: 'page-two',
+      preview: 'case-1',
+      field: 'title',
+    })
+    expect(screen.getByRole('button', { name: /A Book.*1 field needs attention/ })).toHaveAttribute(
+      'aria-current',
+      'true',
+    )
+  },
+)

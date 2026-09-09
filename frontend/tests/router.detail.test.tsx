@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
+import { normalizeDetailSearch } from '../src/router'
 import type { AttentionView, CaseDetailView, ReviewHttp } from '../src/api/http'
 import { createHttp, detail, renderRoute } from './fixtures'
 
@@ -788,4 +789,136 @@ it('keeps automatic withholding attached to its field on direct Evidence entry',
   expect(await screen.findByText(reason)).toBeVisible()
   expect(screen.getByRole('heading', { name: 'Title' })).toBeVisible()
   expect(screen.queryByRole('button', { name: /Choose/ })).toBeNull()
+})
+
+describe('bounded diagnostic return context', () => {
+  it.each([undefined, '', 1, [], ['x'], {}, 'x'.repeat(129)])(
+    'rejects invalid context %j',
+    (value) => {
+      expect(
+        normalizeDetailSearch({
+          q: value,
+          cursor: value,
+          attentionCursor: value,
+          preparation: value,
+          field: value,
+          attention: value,
+          lens: value,
+          subview: value,
+        }),
+      ).toEqual({ lens: 'all', subview: 'evidence' })
+    },
+  )
+  it('projects bounded raw context through tabs, history and Back', async () => {
+    const user = userEvent.setup()
+    const context = {
+      lens: 'needs_attention',
+      field: 'title',
+      q: 'x'.repeat(128),
+      cursor: 'library-page',
+      attentionCursor: 'attention-page',
+      preparation: 'run',
+      attention: 'open',
+    }
+    expect(normalizeDetailSearch({ ...context, subview: 'history' })).toEqual({
+      ...context,
+      subview: 'history',
+    })
+    const params = new URLSearchParams({
+      ...context,
+      subview: 'evidence',
+      preview: 'forged',
+      work: 'foreign',
+      limit: '500',
+      unknown: 'foreign',
+    })
+    const { router } = renderRoute(`/review/case-1?${params.toString()}`)
+    await screen.findByRole('heading', { name: 'Evidence' })
+    for (const tab of ['History', 'Evidence']) {
+      const link = screen.getByRole('link', { name: tab })
+      expect(
+        Object.fromEntries(
+          new URL(link.getAttribute('href') ?? '', 'https://example.invalid').searchParams,
+        ),
+      ).toEqual({ ...context, subview: tab.toLowerCase() })
+      await user.click(link)
+      await screen.findByRole('heading', { name: tab })
+    }
+    router.history.back()
+    await screen.findByRole('heading', { name: 'History' })
+    router.history.forward()
+    await screen.findByRole('heading', { name: 'Evidence' })
+    expect(
+      Object.fromEntries(
+        new URL(
+          screen.getByRole('link', { name: 'Back to work' }).getAttribute('href') ?? '',
+          'https://example.invalid',
+        ).searchParams,
+      ),
+    ).toEqual({ ...context, preview: 'case-1' })
+  })
+  it.each(['loading', 'unavailable', 'stale'] as const)(
+    'keeps bounded return context in %s',
+    async (state) => {
+      const http = createHttp()
+      http.getCaseDetail = vi.fn(() =>
+        state === 'loading'
+          ? new Promise<CaseDetailView>(() => undefined)
+          : Promise.reject(new ApiError(state === 'stale' ? 409 : 503, state)),
+      )
+      renderRoute(
+        '/review/case-1?lens=needs_attention&q=needle&cursor=page-two&attentionCursor=queue-two&attention=open&preparation=run&field=title&preview=forged&work=foreign&limit=100',
+        http,
+      )
+      await screen.findByRole('heading', {
+        name:
+          state === 'loading' ? 'Loading work diagnostics…' : 'Work diagnostics are unavailable.',
+      })
+      expect(
+        Object.fromEntries(
+          new URL(
+            screen.getByRole('link', { name: 'Back to work' }).getAttribute('href') ?? '',
+            'https://example.invalid',
+          ).searchParams,
+        ),
+      ).toEqual({
+        lens: 'needs_attention',
+        q: 'needle',
+        cursor: 'page-two',
+        attentionCursor: 'queue-two',
+        attention: 'open',
+        preparation: 'run',
+        field: 'title',
+        preview: 'case-1',
+      })
+    },
+  )
+  it('drops malformed raw context from actual rendered links', async () => {
+    const params = new URLSearchParams({
+      q: '["array"]',
+      cursor: '1',
+      attentionCursor: '{}',
+      preparation: 'x'.repeat(129),
+      attention: 'closed',
+      field: '',
+      preview: 'foreign',
+      work: 'foreign',
+      unknown: 'x',
+    })
+    renderRoute(`/review/case-1?${params.toString()}`)
+    await screen.findByRole('heading', { name: 'Evidence' })
+    for (const name of ['History', 'Back to work']) {
+      const query = Object.fromEntries(
+        new URL(
+          screen.getByRole('link', { name }).getAttribute('href') ?? '',
+          'https://example.invalid',
+        ).searchParams,
+      )
+      expect(query).toEqual(
+        name === 'History'
+          ? { lens: 'all', subview: 'history' }
+          : { lens: 'all', preview: 'case-1' },
+      )
+    }
+  })
 })

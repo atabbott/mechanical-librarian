@@ -25,6 +25,7 @@ import {
   PreparationNotice,
   usePreparation,
   useReviewContext,
+  normalizeDetailSearch,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
@@ -2980,22 +2981,22 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 <nav className="selected-work-diagnostics" aria-label="Read-only work diagnostics">
                   <Link
                     params={{ reviewCaseId: detail.data.id }}
-                    search={{
-                      lens: search.lens,
+                    search={normalizeDetailSearch({
+                      ...search,
                       subview: 'evidence',
-                      ...(selected ? { field: selected.destination } : {}),
-                    }}
+                      field: selected?.destination,
+                    })}
                     to="/review/$reviewCaseId"
                   >
                     Evidence
                   </Link>
                   <Link
                     params={{ reviewCaseId: detail.data.id }}
-                    search={{
-                      lens: search.lens,
+                    search={normalizeDetailSearch({
+                      ...search,
                       subview: 'history',
-                      ...(selected ? { field: selected.destination } : {}),
-                    }}
+                      field: selected?.destination,
+                    })}
                     to="/review/$reviewCaseId"
                   >
                     History

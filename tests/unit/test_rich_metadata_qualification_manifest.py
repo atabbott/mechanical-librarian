@@ -1532,7 +1532,7 @@ def test_provider_contract_rotation_binds_complete_sources_without_rescoring():
     )
     assert (
         hashlib.sha256(V20_MANIFEST.read_bytes()).hexdigest()
-        == "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd"
+        == "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5"
     )
     latest = json.loads(LATEST_MANIFEST.read_text())
     assert set(latest["frozen_contract"]["behavior_sources"]) == set(
@@ -1642,9 +1642,48 @@ def test_review_projection_successors_bind_current_sources_without_rescoring():
                 == digest
             )
 
+    authority = rich["authority_rotation"]["source_closure"]
+    prior_authority = prior_rich["authority_rotation"]["source_closure"]
+    assert set(authority["bound_source_classification"]) == set(broad)
+    assert authority["f20_option_outcomes_changed"] is False
+    assert authority["f20_scoring_inputs_changed"] is False
+    assert authority["bound_source_classification"] == {
+        **prior_authority["bound_source_classification"],
+        "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "read_only_review_projection",
+    }
+    current_bytes = authority["current_byte_bindings"]
+    assert (
+        set(current_bytes)
+        == set(prior_authority["current_byte_bindings"])
+        == {
+            "frontend/src/api/http.ts",
+            "src/mechanical_librarian/domain/human_decision.py",
+            "scripts/qualify_audiobookshelf_field_effect.py",
+        }
+    )
+    assert {
+        name
+        for name in current_bytes
+        if current_bytes[name] != prior_authority["current_byte_bindings"][name]
+    } == {"frontend/src/api/http.ts"}
+    for name, digest in current_bytes.items():
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+            == digest
+        )
+    history = rich["authority_rotation"]["historical_reader_delta"]
+    assert (
+        history["identity"] == "src/mechanical_librarian/domain/automatic_decision.py"
+    )
+    assert history["current_sha256"] == broad[history["identity"]]
+    assert (
+        history["measured_sha256"]
+        == prior_rich["frozen_contract"]["behavior_sources"][history["identity"]]
+    )
+
 
 def test_v20_binds_the_book_media_guarded_application_rotation() -> None:
-    manifest = json.loads(LATEST_MANIFEST.read_text())
+    manifest = json.loads(V20_MANIFEST.read_text())
     sources = manifest["frozen_contract"]["behavior_sources"]
     closure = manifest["authority_rotation"]["source_closure"]
 
@@ -1658,11 +1697,11 @@ def test_v20_binds_the_book_media_guarded_application_rotation() -> None:
         "historical_reader_only",
     }
     assert "All 36 F20 behavior-source hashes were checked." in closure["proof"]
-    for source, digest in closure["current_byte_bindings"].items():
-        assert (
-            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
-            == digest
-        )
+    assert set(closure["current_byte_bindings"]) == {
+        "frontend/src/api/http.ts",
+        "src/mechanical_librarian/domain/human_decision.py",
+        "scripts/qualify_audiobookshelf_field_effect.py",
+    }
     history = manifest["authority_rotation"]["historical_reader_delta"]
     assert history["current_sha256"] == sources[history["identity"]]
     assert (

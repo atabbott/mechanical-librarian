@@ -175,6 +175,11 @@ export interface AttentionSearch {
   cursor?: string
 }
 export interface DetailSearch {
+  q?: string
+  cursor?: string
+  attentionCursor?: string
+  attention?: 'open'
+  preparation?: string
   field?: string
   lens: LibraryLens
   subview: DetailSubview
