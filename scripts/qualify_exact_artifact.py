@@ -611,6 +611,8 @@ with tempfile.TemporaryDirectory() as directory:
     )
     configuration = ReviewWebConfiguration(
         canonical_origin="https://review.test",
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         owner_password_hash_file=str(root / "unused-owner.argon2"),
         session_lifetime_seconds=600,
     )

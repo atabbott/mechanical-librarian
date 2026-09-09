@@ -1356,6 +1356,8 @@ def _installed_continuous_qualification(
         ],
         "review": {
             "canonical_origin": "https://review.test",
+            "tls_certificate_file": "/synthetic/review.crt",
+            "tls_private_key_file": "/synthetic/review.key",
             "owner_password_hash_file": str(owner_hash),
             "library_polling_interval_seconds": 60,
             "graceful_shutdown_seconds": 5,
