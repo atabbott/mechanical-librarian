@@ -1757,7 +1757,12 @@ def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure()
         rotation["additional_prior_manifest_sha256"]
         == hashlib.sha256(TRANSPORT_V21_MANIFEST.read_bytes()).hexdigest()
     )
-    for field in set(primary) - {"schema", "authority_rotation", "frozen_contract"}:
+    for field in set(primary) - {
+        "schema",
+        "authority_rotation",
+        "frozen_contract",
+        "provider_contract_source_closure",
+    }:
         assert current[field] == primary[field]
     for field in set(primary["frozen_contract"]) - {"behavior_sources"}:
         assert current["frozen_contract"][field] == primary["frozen_contract"][field]
@@ -1780,6 +1785,9 @@ def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure()
     expected["src/mechanical_librarian/domain/automatic_decision.py"] = (
         "historical_reader_only"
     )
+    expected["src/mechanical_librarian/domain/metadata_report.py"] = (
+        "provider_identity_diagnostic_stage_v39"
+    )
     closure = rotation["source_closure"]
     assert closure["bound_source_classification"] == expected
     for name, category in expected.items():
@@ -1790,6 +1798,18 @@ def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure()
     projection = current["review_projection_source_closure"]
     assert len(provider["behavior_sources"]) == 15
     assert len(projection["behavior_sources"]) == 6
+    primary_provider = primary["provider_contract_source_closure"]
+    assert set(provider) == set(primary_provider)
+    assert {
+        name
+        for name, digest in provider["behavior_sources"].items()
+        if digest != primary_provider["behavior_sources"][name]
+    } == {
+        "src/mechanical_librarian/adapters/providers/itunes_search_metadata.py",
+        "src/mechanical_librarian/application/failure_diagnostics.py",
+        "src/mechanical_librarian/application/metadata_report.py",
+    }
+    assert projection == primary["review_projection_source_closure"]
     for retained in (provider, projection):
         assert retained["fresh_scoring_run"] is False
         assert retained["fresh_holdout_claim"] is False

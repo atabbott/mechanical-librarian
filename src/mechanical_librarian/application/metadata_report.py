@@ -385,6 +385,7 @@ class ProviderLaneResult:
                 value.component is not FailureComponent.PROVIDER
                 or value.stage
                 not in {
+                    FailureStage.IDENTITY,
                     FailureStage.LOOKUP,
                     FailureStage.REQUEST,
                     FailureStage.RESPONSE,
@@ -797,6 +798,17 @@ def audiobook_asin_feed_plan(
     )
 
 
+# One provider naming the same edition twice with claims that disagree has
+# stated an ambiguous identity, not a malformed or over-bound response, so the
+# report says so in the category ADR-0017 already reserves for identity.
+_IDENTITY_CONFLICT_DIAGNOSTIC = FailureDiagnostic(
+    FailureCategory.IDENTITY,
+    FailureComponent.PROVIDER,
+    FailureStage.IDENTITY,
+    retryable=False,
+)
+
+
 def provider_observation(
     provider: str,
     results: tuple[ProviderLaneResult, ...],
@@ -856,14 +868,7 @@ def provider_observation(
                     diagnostics=(
                         merge_provider_diagnostics(
                             result.diagnostics,
-                            (
-                                FailureDiagnostic(
-                                    FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
-                                    FailureComponent.PROVIDER,
-                                    FailureStage.RESPONSE,
-                                    retryable=False,
-                                ),
-                            ),
+                            (_IDENTITY_CONFLICT_DIAGNOSTIC,),
                         )
                         if aggregate_failure is ProviderStatus.MALFORMED
                         else result.diagnostics
@@ -875,6 +880,10 @@ def provider_observation(
             for result in results
         )
         candidates_by_identity = {}
+        if conflict:
+            diagnostics = merge_provider_diagnostics(
+                diagnostics, (_IDENTITY_CONFLICT_DIAGNOSTIC,)
+            )
 
     lanes: list[ProviderLaneObservation] = []
     for result in results:

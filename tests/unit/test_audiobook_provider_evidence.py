@@ -1,4 +1,4 @@
-"""The `metadata-report-v38` audiobook provider grammar.
+"""The `metadata-report-v39` audiobook provider grammar.
 
 Marketplace provenance, the bounded chapter-structure value, the duration
 agreement band, and the lifted refusal that let an audio report carry a
@@ -298,7 +298,7 @@ def test_a_v33_audio_report_may_carry_a_provider_observation() -> None:
     dispatches none until the activation packet, which is a different fact.
     """
     report = _audio_report(())
-    assert "metadata-report-v38" == report.schema_version
+    assert "metadata-report-v39" == report.schema_version
     assert ProviderQueryKind.ASIN == report.providers[0].query_kind
     assert "audible_catalog" == report.providers[0].authority
     assert report == MetadataReport.from_json(report.to_json())
