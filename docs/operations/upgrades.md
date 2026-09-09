@@ -3,11 +3,11 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v3`, `owner-settings-v3`,
-`cover-consideration-v3`, `metadata-report-v37`, and the added application
+`cover-consideration-v4`, `metadata-report-v38`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, #956, #965, #896, or #888.
+#749, #956, #965, #896, #888, #1000, or #999.
 
 The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
@@ -33,11 +33,41 @@ exact-current. Rebuild an absent application database; no adoption is supplied.
 dispatch and field-application lineage, so a v36 report is not exact-current.
 Rebuild an absent application database; no adoption is supplied.
 
+#1000 advances the report discriminator from `metadata-report-v37` to
+`metadata-report-v38`: authority evaluation now derives whether each provider
+candidate proves the target work, explicitly contradicts it, or lacks enough
+identity evidence from the retained normalized claims. No classification state
+is serialized, and the v37 and v38 payload field shapes are unchanged; the old
+discriminator is not exact-current because that interpretation changed. Rebuild
+an absent application database; no adoption is supplied.
+
 #896 advances the exact proposal policy from `fixed-conservative-v18` to
 `fixed-conservative-v19` because decoration-equivalent titles collapse into one
 class and the tidy tranche adds a new persisted automatic-decision path.
 Existing pre-release proposal, review, decision, and downstream field-effect
 state is not rewritten or adopted; rebuild the application database.
+
+#1000 advances the exact proposal policy from `fixed-conservative-v19` to
+`fixed-conservative-v20` because explicitly contradictory work evidence is no
+longer allowed to vote for a publication date or an automatic genre. Historical
+decisions remain readable, but cannot authorize a current effect. Existing
+pre-release proposal, review, decision, and downstream field-effect state is not
+rewritten or adopted; rebuild the application database.
+
+#1001 advances the exact proposal policy from `fixed-conservative-v20` to
+`fixed-conservative-v21` because an equivalent local description can change a
+grouped alternative's exact value and content-derived identity. Historical
+decisions remain readable but cannot authorize a current effect. Existing
+pre-release proposal, review, decision, and downstream field-effect state is
+not rewritten or adopted; rebuild the application database.
+
+#999 advances `proposal-set-v6` to `proposal-set-v7`, the exact proposal policy
+to `fixed-conservative-v22`, `cover-consideration-v3` to
+`cover-consideration-v4`, and `cover-policy-report-v1` to
+`cover-policy-report-v2`. Owner readiness is independent from automatic
+recommendation, and automatic replacement binds the actual incumbent state and
+strict rank. Existing pre-release state is not adopted; rebuild the application
+database and artifact store.
 
 F35 advances the exact proposal policy from `fixed-conservative-v13` to
 `fixed-conservative-v14` because provider-consensus title election adds a new
@@ -76,7 +106,7 @@ exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its fresh output is always the exact current schema,
-`metadata-report-v37` with `fixed-conservative-v19`. It leaves the source
+`metadata-report-v38` with `fixed-conservative-v22`. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all

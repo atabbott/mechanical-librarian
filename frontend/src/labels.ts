@@ -54,6 +54,7 @@ const ownerFieldLabels: Record<string, string> = {
     'The colon segment reads as title text: no provider carries it, or no more providers state the plain title than carry the decorated form',
   provider_consensus_contributor_display:
     'Independent providers agree on the contributor display form',
+  target_work_contradicted: 'The retained provider evidence names a different work',
 }
 
 // Sentence case is the one convention for every server-named field, enum,

@@ -12,6 +12,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from contextlib import closing, contextmanager
+from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -45,6 +46,7 @@ from mechanical_librarian.application.configuration import ReviewWebConfiguratio
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
+from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessOperations,
@@ -56,6 +58,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioEmbeddedCover,
     AudioEvidenceSurface,
 )
+from mechanical_librarian.domain.cover_evidence import CoverSourceState
 from mechanical_librarian.domain.human_decision import RECORDED_ONLY_REASON
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -70,6 +73,7 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
@@ -260,6 +264,9 @@ def _server(
     key: Path,
     port: ReservedPort,
     cover: bool = False,
+    sole_cover_timeout: bool = False,
+    stale_cover_successor: bool = False,
+    stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
@@ -300,22 +307,38 @@ def _server(
             _cover_preview(index, width=width, height=height)
             for index, (width, height) in enumerate(cover_shapes, 1)
         )
-        sources = tuple(
-            _cover_source(index, payload, incumbent=index == 1, embedded=index == 2)
-            for index, payload in enumerate(payloads, 1)
+        sources = (
+            (
+                _cover_source(1, payloads[0], embedded=True),
+                replace(
+                    _cover_source(2, payloads[1]),
+                    state=CoverSourceState.TIMEOUT,
+                    artifact=None,
+                    timeout_scope="attempted",
+                ),
+            )
+            if sole_cover_timeout
+            else tuple(
+                _cover_source(index, payload, incumbent=index == 1, embedded=index == 2)
+                for index, payload in enumerate(payloads, 1)
+            )
         )
         base = _cover_report(sources)
         incumbent = sources[0].artifact
         assert incumbent is not None
-        fields = tuple(
-            TargetField(
-                field.destination,
-                TargetFieldState.VALUE,
-                incumbent.artifact_id,
+        fields = (
+            base.target.fields
+            if sole_cover_timeout
+            else tuple(
+                TargetField(
+                    field.destination,
+                    TargetFieldState.VALUE,
+                    incumbent.artifact_id,
+                )
+                if field.destination is TargetDestination.COVER
+                else field
+                for field in base.target.fields
             )
-            if field.destination is TargetDestination.COVER
-            else field
-            for field in base.target.fields
         )
         report = MetadataReport.create(
             target=TargetFacts(
@@ -343,8 +366,8 @@ def _server(
         for index, (source, payload) in enumerate(
             zip(sources, payloads, strict=True), 1
         ):
-            assert source.artifact is not None
-            artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
+            if source.artifact is not None:
+                artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
         cover_considerations = CoverConsiderationService(
             repository,
             read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
@@ -357,7 +380,9 @@ def _server(
             ),
             read_preview_digest=artifacts.read_preview_digest,
             clock=lambda: 1_000,
+            bind_policy=repository.bind_current_cover_authority,
         )
+        cover_considerations.update_policy(CoverPolicy())
     else:
         report = _report()
     repository.publish(report, lambda: True)
@@ -486,6 +511,67 @@ def _server(
         settings=settings,
         reviewer_access=reviewer_access,
     )
+    stale_cover_published = False
+    if stale_cover_successor or stale_cover_same_case:
+        if cover_considerations is None:
+            raise RuntimeError("stale cover fixture requires cover considerations")
+
+        @app.middleware("http")
+        async def publish_cover_successor_before_decision(request, call_next):
+            nonlocal stale_cover_published
+            if (
+                request.method == "POST"
+                and request.url.path.endswith("/decisions")
+                and not stale_cover_published
+            ):
+                stale_cover_published = True
+                if stale_cover_same_case:
+                    cover_considerations.update_policy(
+                        CoverPolicy(prefer_minimal_composition=True)
+                    )
+                    current_case = ReviewCase.create_from_data(
+                        json.loads(repository.get_review_case(case_id))["case"]
+                    )
+                    cover_proposal = next(
+                        value
+                        for value in current_case.proposals
+                        if value["destination"] == "cover"
+                    )
+                    cover_considerations.ensure(
+                        case_id,
+                        report.to_json(),
+                        cover_proposal,
+                    )
+                    return await call_next(request)
+                successor_report = MetadataReport.create(
+                    target=report.target,
+                    file=FileFacts(0, "c" * 64, "d" * 64, report.file.format),
+                    local_claims=report.local_claims,
+                    local_reasons=report.local_reasons,
+                    providers=report.providers,
+                    cover_sources=report.cover_sources,
+                )
+                repository.publish(successor_report, lambda: True)
+                successor_proposal = evaluate_report(successor_report)
+                repository.publish_proposal(successor_proposal)
+                successor_case_id = json.loads(
+                    repository.admit_review_case(successor_proposal)
+                )["review_case_id"]
+                successor_case = ReviewCase.create_from_data(
+                    json.loads(repository.get_review_case(successor_case_id))["case"]
+                )
+                cover_proposal = next(
+                    value
+                    for value in successor_case.proposals
+                    if value["destination"] == "cover"
+                )
+                cover_considerations.ensure(
+                    successor_case_id,
+                    successor_report.to_json(),
+                    cover_proposal,
+                )
+            return await call_next(request)
+
     # The composed application, for a cohort that has to announce something the
     # server would announce rather than assert on what it answered.
     if on_app is not None:
@@ -1692,6 +1778,251 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
             browser.close()
 
 
+def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 844},
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    sole_cover_timeout=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                response = page.request.get(
+                    f"{origin}/api/v1/library?lens=needs_attention&limit=25"
+                )
+                assert response.ok, response.text()
+                library = response.json()
+                assert [case_id] == [
+                    item["review_case_id"] for item in library["items"]
+                ]
+
+                page.goto(f"{origin}/library?preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                comparison = page.get_by_role("region", name="Choose a cover")
+                comparison.wait_for()
+                expect(page.get_by_alt_text("Alternative 1 cover")).to_be_visible()
+                comparison.get_by_text(
+                    "1 unavailable candidate", exact=False
+                ).wait_for()
+                assert page.locator(".library-cover-card").count() == 1
+                candidate = page.locator(".library-cover-card").filter(
+                    has_text="Alternative 1 cover"
+                )
+                expect(candidate).to_have_attribute("aria-pressed", "false")
+                with page.expect_response(
+                    lambda value: value.url.endswith("/decisions")
+                ) as decision_response:
+                    candidate.focus()
+                    page.keyboard.press("Enter")
+                assert decision_response.value.status == 200
+                page.get_by_role("heading", name="Review complete").wait_for()
+
+                page.goto(f"{origin}/review/{case_id}?field=cover&subview=history")
+                selected = page.get_by_role("heading", name="Cover selected").locator(
+                    ".."
+                )
+                selected.get_by_text("Owner outcome: accept", exact=False).wait_for()
+                assert page.evaluate(
+                    "() => document.documentElement.scrollWidth <= window.innerWidth"
+                )
+                assert errors == []
+            browser.close()
+
+
+def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison() -> (
+    None
+):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        decision_statuses: list[int] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 844},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            page.on(
+                "response",
+                lambda response: (
+                    decision_statuses.append(response.status)
+                    if response.url.endswith("/decisions")
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    stale_cover_successor=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                comparison = page.get_by_role("region", name="Choose a cover")
+                comparison.wait_for()
+                comparison.locator(".library-cover-card").filter(
+                    has_text="Alternative 1 cover"
+                ).click()
+
+                stale = page.get_by_text(
+                    "This cover comparison changed before your choice was recorded. "
+                    "No cover was changed."
+                )
+                expect(stale).to_be_visible()
+                assert case_id in page.url
+                assert decision_statuses == [409]
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_have_count(0)
+
+                page.get_by_role("button", name="Review current comparison").click()
+                expect(stale).to_have_count(0)
+                page.wait_for_function(
+                    "oldCase => new URL(location.href).searchParams.get('preview') !== oldCase",
+                    arg=case_id,
+                )
+                current_comparison = page.get_by_role("region", name="Choose a cover")
+                current_comparison.wait_for()
+                current_comparison.get_by_role(
+                    "button", name="Evidence for Alternative 1 cover"
+                ).click()
+                current_comparison.get_by_label("Alternative 1 cover evidence").press(
+                    "Enter"
+                )
+                page.get_by_role("heading", name="Review complete").wait_for()
+                assert decision_statuses == [409, 200]
+                assert errors and all("409" in error for error in errors), errors
+            browser.close()
+
+
+def test_current_same_case_cover_choice_clears_stale_feedback_after_recording() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        decision_statuses: list[int] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 390, "height": 844},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            page.on(
+                "response",
+                lambda response: (
+                    decision_statuses.append(response.status)
+                    if response.url.endswith("/decisions")
+                    else None
+                ),
+            )
+            with (
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    cover=True,
+                    stale_cover_same_case=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                comparison = page.get_by_role("region", name="Choose a cover")
+                comparison.wait_for()
+                comparison.locator(".library-cover-card").filter(
+                    has_text="Alternative 1 cover"
+                ).click()
+
+                stale = page.get_by_text(
+                    "This cover comparison changed before your choice was recorded. "
+                    "No cover was changed."
+                )
+                expect(stale).to_be_visible()
+                assert case_id in page.url
+                assert decision_statuses == [409]
+
+                current_choice = page.locator(".library-cover-card").filter(
+                    has_text="Alternative 1 cover"
+                )
+                current_choice.focus()
+                page.keyboard.press("Enter")
+                page.get_by_role("heading", name="Review complete").wait_for()
+                expect(stale).to_have_count(0)
+                expect(
+                    page.get_by_role("button", name="Review current comparison")
+                ).to_have_count(0)
+                assert decision_statuses == [409, 200]
+                assert errors and all("409" in error for error in errors), errors
+            browser.close()
+
+
 # Measure each rendered cover against its own frame's content box. A cover that
 # overruns its frame is clipped by `overflow:hidden` and is invisible to
 # `document.scrollWidth`, so the document-level check cannot see it at all --
@@ -1897,6 +2228,32 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     == "contain"
                 )
                 expect(page.locator(".cover-track-hint")).to_be_visible()
+
+                track.evaluate("node => { node.scrollLeft = 0 }")
+                last_choice = track.locator(".cover-choice").last
+                last_choice.get_by_role("button").first.focus()
+                forward_scroll = cast(
+                    "float", track.evaluate("node => node.scrollLeft")
+                )
+                assert forward_scroll > 0
+                assert last_choice.evaluate(
+                    "node => { const track = node.closest('.library-cover-pinned, "
+                    ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
+                    "const bounds = track.getBoundingClientRect(); return choice.left >= "
+                    "bounds.left - 1 && choice.right <= bounds.right + 1 }"
+                )
+                first_choice = track.locator(".cover-choice").first
+                first_choice.get_by_role("button").first.focus()
+                reverse_scroll = cast(
+                    "float", track.evaluate("node => node.scrollLeft")
+                )
+                assert reverse_scroll < forward_scroll
+                assert first_choice.evaluate(
+                    "node => { const track = node.closest('.library-cover-pinned, "
+                    ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
+                    "const bounds = track.getBoundingClientRect(); return choice.left >= "
+                    "bounds.left - 1 && choice.right <= bounds.right + 1 }"
+                )
 
                 assert errors == []
                 # A cover whose bytes never arrive keeps a bounded, labelled

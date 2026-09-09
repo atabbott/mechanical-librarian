@@ -106,16 +106,35 @@ Google visible-text remain `not_qualified`; ASIN remains
 every non-automatic rich option. This authority records immutable decisions
 only and does not bypass effect consent or any guarded-write control.
 
-Series Automatic accepts one complete provider membership without treating an
-unrelated provider failure or provider-wide unsupported series output as
-negative evidence. It abstains for a named incomplete or unpositioned
-membership, a genuine alternative, or a failed query kind that could have
-contributed to the elected membership. Closed leading-article and trailing
-`Series`/`Trilogy` display variants are equivalent only with the same exact
-sequence; no fuzzy matching, provider ranking, cross-provider membership
-synthesis, or per-work exception list is available. The F20 v11 evidence is
-development-exposed rather than a holdout; a separately frozen fresh mixed
-confirmation remains required before #895 activation.
+Qualified series fill (#895) fills empty Automatic targets only and
+preserves existing memberships. One provider can supply the required WORK
+backing; independent corroboration is not a quorum. Absent numbers remain
+absent. Malformed selected evidence and failures of contributing dispatches
+abstain; unrelated providers, candidates and query lanes cannot veto a choice.
+A unique existing source bundle may resolve compatible subset alternatives,
+including in Ask. It retains its exact order, values and provenance, never a
+cross-source union. Closed leading-article and trailing `Series`/`Trilogy`
+variants use the existing name grammar; known positions must agree exactly or
+as ordinary unsigned decimals. Ambiguous maxima, disjoint bundles and known
+position conflicts remain reviewable. No fuzzy matching, provider ranking or
+number inference is available.
+
+Selected series sources must also describe the target work. The
+[series-only ISBN identity rule](../architecture/decisions/0070-isbn-backed-series-identity.md)
+permits complete ordered author comparison, an exact retained edition title,
+or a one-step parenthesized series name explicitly attested by that same
+candidate. It does not admit unrelated works, general subtitle stripping or
+WORK-query transformations. All candidates in the successful target-backed
+ISBN lane must qualify; Ask and non-series applicability stay unchanged.
+
+The [F20 v17 candidate](../reference/f20-rich-metadata-qualification-candidate-v17.json)
+rotates current decision authority after binding the corrected cover packet
+producer and live attention currentness. Its complete 35-source audit preserves
+every qualified non-cover outcome, value, reason, source binding and correctness
+result. Earlier manifests, including byte-identical v16, remain immutable
+historical evidence; their decisions are readable but cannot authorize new writes. The
+[qualification record](rich-metadata-qualification.md) states the source-label
+corrections, reduced coverage, distinct-book denominators and limits of the evidence.
 
 ## Availability before curation
 

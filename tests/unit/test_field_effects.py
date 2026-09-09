@@ -101,6 +101,7 @@ from tests.unit.review_app_fixture import (
     TEST_REACT_BUILD_IDENTITY,
     create_transport_test_app,
 )
+from tests.unit.test_series_work_applicability import _isbn_series_report
 
 if TYPE_CHECKING:
     # Annotation-only: `TimingCollector` stands in for `TimingRepository`, whose
@@ -1886,7 +1887,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
             "report_id": case.report_id,
             "replay_digest": "8" * 64,
             "review_case_id": case.review_case_id,
-            "schema_version": "cover-consideration-v3",
+            "schema_version": "cover-consideration-v4",
             "supersedes_id": None,
         },
         separators=(",", ":"),
@@ -2559,14 +2560,38 @@ def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
     assert effects.service.apply(result.plan.plan_id).state == "verified"
 
 
-def test_legacy_tag_decision_stays_readable_without_effect_authority(
+@pytest.mark.parametrize(
+    "prior_digest",
+    (
+        "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
+        "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
+        "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
+        "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
+        "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
+    ),
+)
+@pytest.mark.parametrize(
+    "category, option",
+    (
+        ("tags", "fill_empty"),
+        ("series", "primary_narrative"),
+        ("series", "source_order"),
+        ("series", "all_qualified"),
+    ),
+)
+def test_legacy_rich_decision_stays_readable_without_effect_authority(
     effects: _EffectEnvironment,
+    prior_digest: str,
+    category: str,
+    option: str,
 ) -> None:
     current = next(
         decision
         for decision in _automatic_decisions(
             effects,
-            _target_work_report(
+            _isbn_series_report()
+            if category == "series"
+            else _target_work_report(
                 (
                     (
                         "catalogue",
@@ -2576,17 +2601,17 @@ def test_legacy_tag_decision_stays_readable_without_effect_authority(
                     ),
                 )
             ),
-            "tags",
-            "fill_empty",
+            category,
+            option,
             qualified=True,
         )
-        if decision.destination == "tags" and decision.outcome == "candidate"
+        if decision.destination == category and decision.outcome == "candidate"
     )
+    assert current.qualification_manifest_sha256 != prior_digest
+    assert authority_from_decision(current) is not None
     legacy_core = {
         **current._core(),
-        "qualification_manifest_sha256": (
-            "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9"
-        ),
+        "qualification_manifest_sha256": prior_digest,
     }
 
     def digest(value: object) -> str:

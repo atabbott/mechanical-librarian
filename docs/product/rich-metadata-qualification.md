@@ -5,6 +5,133 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Cover-choice source rotation (#999)
+
+The [v17 candidate](../reference/f20-rich-metadata-qualification-candidate-v17.json)
+binds the incumbent-artifact and live cover-currentness follow-up. All 35 F20
+behavior-source hashes were reviewed: the only changes in that closure are
+cover-attention repository wiring and read-only recognition of v16. Proposal,
+election, admission, option outcomes and non-cover scoring inputs are unchanged,
+so the retained non-cover receipts remain bound without a fresh holdout claim.
+V16 remains byte-identical and readable for historical decisions.
+
+The historical [v16 candidate](../reference/f20-rich-metadata-qualification-candidate-v16.json)
+rotates the exact authority after the proposal contract learned to retain a
+usable confirmed cover across an incomplete sibling source. That branch is
+cover-only. Both 49-report F20 modes, all 980 non-series previews, all 108
+series previews, and the exposed F37 confirmation and spent holdout replayed
+with complete non-cover equality and no lost correct or gained incorrect
+projection. V15 remains immutable historical evidence whose decisions are
+readable but cannot authorize new writes.
+The v16 source binding also records the later Activity-only projection
+correction that removes a duplicate owner-attributed row for an automatic cover
+selection. It changes no F20 scoring input or option outcome, so the retained
+receipts remain bound to their original measured behavior head.
+
+## Exact description sources (#1001)
+
+The [v15 candidate](../reference/f20-rich-metadata-qualification-candidate-v15.json)
+binds grouped description alternatives to the canonical exact representation
+from an eligible ordinary provider source. Equivalent local evidence remains
+inspectable, but cannot replace the applied bytes or borrow the provider's
+automatic authority. Preview independently rechecks exact value, ordinary
+plain-text provenance, transformation exclusion and target-work applicability.
+The existing competition quality floor and provider authority order are
+unchanged. V15 retains the exposed F37 description replays and the complete
+F20 non-description and series continuity evidence; it makes no fresh holdout
+claim.
+
+## Contradictory work evidence (#1000)
+
+The [v14 candidate](../reference/f20-rich-metadata-qualification-candidate-v14.json)
+binds the target-work contradiction guard for publication dates and automatic
+genres. Claims about another work remain inspectable, but they cannot become a
+field decision or persisted candidate outcome. Where identity proof is absent,
+the candidate stays unresolved rather than being promoted or discarded. The
+same successor preserves every previously qualified option through the existing
+non-series and exact-source continuity routes. The series route replays the
+original 24-work confirmation and 12-work final captures. Their canonical v37
+documents are relabelled to v38 with a recomputed content-derived report
+identity; every other field, sealed input binding, truth label, scorer and
+threshold remains unchanged.
+
+## Qualified series fill (#895)
+
+The historical [v13 candidate](../reference/f20-rich-metadata-qualification-candidate-v13.json)
+binds the applicability repair: it refuses unrelated ISBN work candidates while
+permitting the bounded
+[source-attested identity formatting rule](../architecture/decisions/0070-isbn-backed-series-identity.md).
+Owner-approved exposed regression retains the existing works, captures, truth,
+scorer and thresholds. Both batches were already exposed; this is not a fresh
+confirmation or another holdout pass.
+
+Each option now makes 9 correct complete projections from the 24-work batch
+(15 abstentions), and 4 from the 12-work batch (8 abstentions), with no wrong
+projections or negative/unknown-source fills. Supported coverage is 9/19 and
+4/7. Two previously correct fills remain reviewable because their identity
+formatting falls outside the permitted grammar. All surviving previews retain
+their exact values, order, identifiers and references; six option projections
+are removed across the three options, not six independent books.
+
+Membership and sequence retain precision 1.0 and at least three distinct scored
+books per option per batch. The 24-work batch has nine scored membership books
+and seven scored sequence books, plus one missing and one unknown position.
+The 12-work batch has four distinct scored books for each claim. Its full
+`all_qualified` output contains six membership occurrences, five known sequence
+occurrences and one unknown; repeated convention-qualified views do not increase
+independent support. Actual desired values are separately scored: four correct
+memberships and positions in that batch.
+
+The [v12 candidate](../reference/f20-rich-metadata-qualification-candidate-v12.json)
+qualified the three existing series options for empty Automatic targets. Its
+series rules preserve populated targets and
+permit an absent position without inventing a number. A unique existing source
+bundle may resolve compatible subset alternatives, retaining its exact values,
+order and evidence; no union is constructed. Known positions compare by exact
+text or ordinary unsigned decimal equality, never inferred numbering. This
+shared proposal correction also applies to those compatible Ask alternatives.
+Failure checks follow the selected provider candidates and their contributing
+dispatch provenance, not an unrelated provider with the same query kind.
+
+V12 remains the unchanged historical record below. The first 15-work
+confirmation produced no automatic series projections and
+remains failed, spent development evidence. The repaired, frozen candidate then
+passed a fresh 24-work confirmation and its once-only 12-work final capture.
+Each option made 10 correct complete membership projections in confirmation and
+5 in final, with no incorrect projections or negative-control false positives.
+Coverage of supported works was 10/19 and 5/7 respectively; recall is measured,
+not a pass gate. One confirmation and two final source-label corrections were
+adjudicated independently of predictions; their original evaluations and
+acceptance receipts remain bound. These offline correction replays changed no
+candidate, scorer, threshold or capture and are not extra independent batches.
+
+Membership and sequence are separate claims. Each requires precision 1.0 and
+three distinct scored works per option per batch; unknown positions are
+unscored, while known wrong positions block the affected option. Confirmation
+has eight distinct correct sequence cases, one absent number and one unknown
+number per option. Final has five distinct correct sequence cases per option.
+The full `all_qualified` final output has seven raw membership occurrences,
+including convention-qualified views of the same grouping, six correct sequence
+occurrences and one unknown; its support denominator is still five books.
+Actual target values are scored separately from full qualified memberships.
+
+The runtime binds the v15 digest, source dependencies, closed option
+matrix and tested zero-tolerance controls. Metrics alone do not authorize
+activation. Historical v11/v12/v13/v14 bytes and decisions remain readable, while fresh
+decisions and guarded effects require the exact current qualification. Retained
+historical non-series compiler evidence for v13 compared 980 serialized
+observations unchanged. V14 changes 18 genre previews in the two-scenario
+continuity replay, restoring the 15 correct same-mode option projections that
+the first #1000 candidate withheld; no other field changes. The rotation also
+changes authority-derived identities. The earlier
+50-case gold programme and operator evidence remain retained evidence, not 50
+new cases. The exact-clean-head retained series and non-series replays are bound
+in v14 and is retained unchanged by v15. Supported isolated field effects and installed acceptance remain
+required delivery checks; the manifest does not claim a future receipt or
+replace those checks.
+
+## Historical qualification record
+
 Qualification is field-option-local. Prior use of the same work for unrelated
 extraction, provider, cover, or metadata development does not disqualify it.
 A case is excluded only when its expected result was used to implement or tune
@@ -42,8 +169,8 @@ provider-document development cohorts each reached 100% precision on their
 positive scored denominators. The two mixed cohorts each include two allowed
 memberships with explicitly unknown position, which are unscored rather than
 treated as exact proof. This is development-exposed evidence, not a holdout;
-a separately frozen fresh mixed confirmation remains required before #895
-activation. The historical v5 record gave the two ISBN policies 22 correct
+that historical record required the separately frozen confirmation now recorded
+above. The historical v5 record gave the two ISBN policies 22 correct
 predictions from 41 eligible opportunities, each at 100% precision.
 The admitted proposal and decision retain every qualified membership; the
 existing Audiobookshelf effect planner projects only the preferred first
@@ -176,6 +303,6 @@ least as many as the authorities carrying the decorated form, counting the local
 title on the decorated side. Every other option replays unchanged, and the
 option keeps 1.0 precision with zero structural or unsupported outputs.
 
-The machine-readable candidate is
+The historical machine-readable candidate described in this section is
 [`f20-rich-metadata-qualification-candidate-v11.json`](../reference/f20-rich-metadata-qualification-candidate-v11.json).
 The v10 manifest remains a readable historical record.

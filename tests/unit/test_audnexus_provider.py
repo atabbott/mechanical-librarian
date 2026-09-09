@@ -22,12 +22,18 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    TargetDestination,
 )
+from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
 from tests.support.audiobook_providers import (
     asin_plan,
     local_claims,
     payload,
     work_plan,
+)
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    manual_audiobook_observation,
 )
 
 _ASIN = "B08G9PRS1K"
@@ -336,3 +342,19 @@ def test_an_html_summary_is_read_only_when_no_plain_description_is_stated() -> N
             candidate, ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
         )
     )
+    report = admitted_audiobook_report(
+        local_claims(),
+        additional_providers=(
+            manual_audiobook_observation("audnexus", "audnexus", candidate),
+        ),
+    )
+    result = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination is TargetDestination.DESCRIPTION
+    )
+    assert ProposalOutcome.PROPOSE_CHANGE is result.outcome
+    assert [description.value] == [value.value.value for value in result.alternatives]
+    assert [(description.reference,)] == [
+        value.evidence_references for value in result.alternatives
+    ]

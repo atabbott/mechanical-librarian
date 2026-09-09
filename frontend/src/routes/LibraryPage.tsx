@@ -343,7 +343,7 @@ const PreparationDetail = ({
 const bounded = (value: string, fallback: string) =>
   opaqueSource.test(value) ? fallback : value.length > 160 ? `${value.slice(0, 157)}…` : value
 const decisionValue = (field: ReviewField) => {
-  const selected = field.humanDecision?.selected_value ?? field.automaticDecision?.selected_value
+  const selected = (field.humanDecision ?? field.automaticDecision)?.selected_value
   return selected === null || selected === undefined
     ? field.currentValue
     : displayValue(selected.value)
@@ -714,6 +714,21 @@ function ChoiceEvidencePanel({
   )
 }
 
+const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
+  const choice = event.currentTarget
+  const track = choice.closest<HTMLElement>('.library-cover-layout, .library-cover-pinned')
+  if (!track) return
+  const trackBounds = track.getBoundingClientRect()
+  const choiceBounds = choice.getBoundingClientRect()
+  const delta =
+    choiceBounds.left < trackBounds.left
+      ? choiceBounds.left - trackBounds.left
+      : choiceBounds.right > trackBounds.right
+        ? choiceBounds.right - trackBounds.right
+        : 0
+  if (delta !== 0) track.scrollLeft += delta
+}
+
 const isLongDescription = (destination: string, value: string) =>
   destination === 'description' && value.length > 280
 
@@ -862,6 +877,7 @@ function ContextValue({
 function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) {
   const decision = field.automaticDecision
   if (
+    field.humanDecision !== null ||
     decision?.outcome !== 'candidate' ||
     !field.notices.includes('provider_consensus_contributor_display')
   ) {
@@ -901,6 +917,38 @@ function VerifiedManifestationIsbnAutomaticStatement({ field }: { field: ReviewF
     return null
   }
   return <p>Deterministic identity evidence bound this ISBN to this file&apos;s work.</p>
+}
+
+function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
+  const providers = field.automaticSelectionSources ?? []
+  if (
+    field.humanDecision !== null ||
+    field.destination !== 'series' ||
+    field.automaticDecision?.outcome !== 'candidate' ||
+    !providers.length ||
+    !(field.currentRaw == null || (Array.isArray(field.currentRaw) && !field.currentRaw.length))
+  ) {
+    return null
+  }
+  const memberships = field.automaticDecision.selected_value?.value
+  const hasNumber =
+    Array.isArray(memberships) &&
+    memberships.some(
+      (membership: unknown) =>
+        typeof membership === 'object' &&
+        membership !== null &&
+        'sequence' in membership &&
+        typeof membership.sequence === 'string',
+    )
+  return (
+    <p>
+      Selected from {providers.join(' and ')} to fill an empty Series field under a qualified
+      automatic policy.{' '}
+      {hasNumber
+        ? 'Numbering is supplied by the provider and is not independently verified for this book.'
+        : 'No series number was supplied.'}
+    </p>
+  )
 }
 
 function RecordedOutcome({
@@ -955,6 +1003,7 @@ function RecordedOutcome({
       </dl>
       <ProviderConsensusAutomaticStatement field={field} />
       <DescriptionAutomaticStatement field={field} />
+      <SeriesAutomaticStatement field={field} />
       <VerifiedManifestationIsbnAutomaticStatement field={field} />
       <button
         type="button"
@@ -1158,17 +1207,12 @@ function LibraryCoverChoicesContent({
   const consideration = field.coverConsideration
   const keeps = field.decisionActions.includes('keep_current')
   const accepts = field.decisionActions.includes('accept')
-  if (!consideration)
+  if (consideration?.current !== true)
     return (
       <section aria-label="Prepare cover comparison">
         <p role="status">
           No current cover comparison is available. The existing cover remains unchanged.
         </p>
-        {keeps ? (
-          <button type="button" disabled={disabled} onClick={() => choose('keep_current')}>
-            Keep current cover
-          </button>
-        ) : null}
         <button
           type="button"
           disabled={disabled || cover.prepare.isPending}
@@ -1198,6 +1242,11 @@ function LibraryCoverChoicesContent({
       : []
   const policyStatus =
     typeof consideration.policy?.status === 'string' ? consideration.policy.status : null
+  const recommendedReference =
+    policyStatus === 'recommended' &&
+    typeof consideration.policy?.recommended_candidate_reference === 'string'
+      ? consideration.policy.recommended_candidate_reference
+      : null
   const policyReasons = Array.isArray(consideration.policy?.reasons)
     ? consideration.policy.reasons
         .filter((reason): reason is string => typeof reason === 'string')
@@ -1221,8 +1270,9 @@ function LibraryCoverChoicesContent({
       ? null
       : { kind: 'cover', value: candidate.artifactId }
     const selected = choiceSelected(field, progress, outcome, value)
-    const actionableCandidate = candidate.incumbent || candidate.selectable
-    if ((candidate.incumbent && !keeps) || (!candidate.incumbent && !accepts)) return null
+    const eligibleCandidate = candidate.incumbent || candidate.selectable
+    const actionableCandidate = candidate.incumbent ? keeps : accepts && candidate.selectable
+    const recommended = candidate.reference === recommendedReference
     const context = candidate.incumbent
       ? currentContext
       : coverContexts.find((item) => item.alternativeId === candidate.reference)
@@ -1233,13 +1283,14 @@ function LibraryCoverChoicesContent({
     const open = expandedEvidence.has(evidenceKey)
     return (
       <article
-        className={`cover-choice${open ? ' is-evidence-open' : ''}${actionableCandidate ? '' : ' is-unconfirmed'}`}
+        className={`cover-choice${open ? ' is-evidence-open' : ''}${eligibleCandidate ? '' : ' is-unconfirmed'}`}
         key={candidate.reference}
+        onFocusCapture={revealFocusedCoverChoice}
       >
         <button
           type="button"
           aria-pressed={actionableCandidate ? selected : false}
-          className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
+          className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
           disabled={disabled || !actionableCandidate}
           onClick={() => {
             if (actionableCandidate) choose(outcome, value)
@@ -1261,7 +1312,7 @@ function LibraryCoverChoicesContent({
           <span>
             <small>
               {label}
-              {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
+              {recommended ? ' · Recommended' : ''}
             </small>
             <strong>
               {candidate.matchState === 'same_edition'
@@ -1275,10 +1326,10 @@ function LibraryCoverChoicesContent({
                 `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map(fieldLabel).join(', ')}`}
             </em>
             <span className="choice-recommendation">
-              {!actionableCandidate
+              {!eligibleCandidate
                 ? excludedReason(candidate)
-                : context?.recommendation === 'recommended'
-                  ? context.recommendationReason
+                : recommended
+                  ? (context?.recommendationReason ?? 'Deterministic recommendation retained')
                   : 'No recommendation retained'}
             </span>
             {selected && progress?.phase === 'recording' ? <b>Recording…</b> : null}
@@ -1306,7 +1357,9 @@ function LibraryCoverChoicesContent({
             context={context}
             evidenceId={evidenceId}
             label={label}
-            {...(disabled ? {} : { onChoose: () => choose(outcome, value) })}
+            {...(disabled || !actionableCandidate
+              ? {}
+              : { onChoose: () => choose(outcome, value) })}
           />
         ) : null}
       </article>
@@ -1328,18 +1381,24 @@ function LibraryCoverChoicesContent({
     >
       <header>
         <strong>
-          {consideration.ready
+          {recommendedReference !== null
             ? 'Recommended cover ready'
-            : consideration.providerFetching
-              ? 'Waiting for active cover searches'
-              : 'No confirmed cover recommendation'}
+            : consideration.ready
+              ? 'Cover choices ready'
+              : consideration.providerFetching
+                ? 'Waiting for active cover searches'
+                : 'No confirmed cover recommendation'}
         </strong>
         <small>
-          {coverContexts.some((context) => context.recommendation === 'recommended')
+          {recommendedReference !== null
             ? 'The technically best confirmed match is ready for your decision.'
-            : consideration.providerFetching
-              ? 'Confirmed matches remain visible; the shared decision gate opens when fetching pauses.'
-              : 'Only confirmed matches can be recommended.'}
+            : consideration.ready && policyReasons.includes('actual_target_unverified')
+              ? 'The current cover could not be verified, so automatic replacement is withheld.'
+              : consideration.ready && policyReasons.includes('confirmed_incumbent_not_improved')
+                ? 'No confirmed alternative improves the current cover, so automatic replacement is withheld.'
+                : consideration.providerFetching
+                  ? 'Confirmed matches remain visible; the shared decision gate opens when fetching pauses.'
+                  : 'Only confirmed matches can be recommended.'}
         </small>
       </header>
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
@@ -1387,60 +1446,68 @@ function LibraryCoverChoicesContent({
           </div>
         </div>
       ) : (
-        <div className="library-cover-layout">{candidates.map(card)}</div>
-      )}
-      {consideration.incumbent.state === 'unavailable' && !incumbent && keeps ? (
-        <article className="cover-choice">
-          <button
-            type="button"
-            aria-pressed={choiceSelected(field, progress, 'keep_current')}
-            className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
-            disabled={disabled}
-            onClick={() => choose('keep_current')}
-          >
-            <span className="library-cover-image" role="img" aria-label="Current cover unavailable">
-              Image unavailable
-            </span>
-            <span>
-              <small>Current cover</small>
-              <strong>Unavailable</strong>
-              <em>
-                {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
-              </em>
-              <span className="choice-recommendation">
-                {currentContext?.recommendation === 'recommended'
-                  ? currentContext.recommendationReason
-                  : 'No recommendation retained'}
-              </span>
-              {commandSelected(progress?.command ?? null, field.destination, 'keep_current') &&
-              progress?.phase === 'recording' ? (
-                <b>Recording…</b>
+        <div className="library-cover-layout">
+          {consideration.incumbent.state === 'unavailable' && !incumbent ? (
+            <article className="cover-choice" onFocusCapture={revealFocusedCoverChoice}>
+              <button
+                type="button"
+                aria-pressed={choiceSelected(field, progress, 'keep_current')}
+                className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
+                disabled={disabled || !keeps}
+                onClick={() => {
+                  if (keeps) choose('keep_current')
+                }}
+              >
+                <span
+                  className="library-cover-image"
+                  role="img"
+                  aria-label="Current cover unavailable"
+                >
+                  Image unavailable
+                </span>
+                <span>
+                  <small>Current cover</small>
+                  <strong>Unavailable</strong>
+                  <em>
+                    {currentContext?.rationale ?? 'Keep the current bound cover without a preview.'}
+                  </em>
+                  <span className="choice-recommendation">
+                    {currentContext?.recommendation === 'recommended'
+                      ? currentContext.recommendationReason
+                      : 'No recommendation retained'}
+                  </span>
+                  {commandSelected(progress?.command ?? null, field.destination, 'keep_current') &&
+                  progress?.phase === 'recording' ? (
+                    <b>Recording…</b>
+                  ) : null}
+                </span>
+              </button>
+              {currentContext &&
+              (currentContext.evidence.length || currentContext.limitations.length) ? (
+                <button
+                  type="button"
+                  className="choice-evidence-toggle"
+                  aria-controls="cover-evidence-current-unavailable"
+                  aria-expanded={expandedEvidence.has('cover:current-unavailable')}
+                  aria-label="Evidence for Current cover"
+                  onClick={() => revealEvidence('cover:current-unavailable')}
+                >
+                  {expandedEvidence.has('cover:current-unavailable') ? 'Hide evidence' : 'Evidence'}
+                </button>
               ) : null}
-            </span>
-          </button>
-          {currentContext &&
-          (currentContext.evidence.length || currentContext.limitations.length) ? (
-            <button
-              type="button"
-              className="choice-evidence-toggle"
-              aria-controls="cover-evidence-current-unavailable"
-              aria-expanded={expandedEvidence.has('cover:current-unavailable')}
-              aria-label="Evidence for Current cover"
-              onClick={() => revealEvidence('cover:current-unavailable')}
-            >
-              {expandedEvidence.has('cover:current-unavailable') ? 'Hide evidence' : 'Evidence'}
-            </button>
+              {expandedEvidence.has('cover:current-unavailable') ? (
+                <ChoiceEvidencePanel
+                  context={currentContext}
+                  evidenceId="cover-evidence-current-unavailable"
+                  label="Current cover"
+                  {...(disabled || !keeps ? {} : { onChoose: () => choose('keep_current') })}
+                />
+              ) : null}
+            </article>
           ) : null}
-          {expandedEvidence.has('cover:current-unavailable') ? (
-            <ChoiceEvidencePanel
-              context={currentContext}
-              evidenceId="cover-evidence-current-unavailable"
-              label="Current cover"
-              {...(disabled ? {} : { onChoose: () => choose('keep_current') })}
-            />
-          ) : null}
-        </article>
-      ) : null}
+          {candidates.map(card)}
+        </div>
+      )}
       {consideration.omissions.length ? (
         <details className="library-cover-excluded">
           <summary>
@@ -1669,6 +1736,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error'>>
   >({})
+  const [staleCoverReview, setStaleCoverReview] = useState<{
+    caseId: string
+    failed: boolean
+    loading: boolean
+  } | null>(null)
   const [openedWork, setOpenedWork] = useState<LibraryWorkView | null>(null)
   const [expandedChoiceState, setExpandedChoiceState] = useState<{
     work: string
@@ -2073,10 +2145,60 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         })
       }
     },
+    onRecorded: (caseId, destination) => {
+      if (destination !== 'cover') return
+      setStaleCoverReview((current) => (current?.caseId === caseId ? null : current))
+    },
     onStale: async () => {
+      if (selected?.destination === 'cover') {
+        setStaleCoverReview({ caseId: selectedReviewCaseId, failed: false, loading: false })
+        return
+      }
       await navigate({ search: { lens: 'needs_attention' } })
     },
   })
+  const reviewCurrentCoverComparison = async () => {
+    const stale = staleCoverReview
+    if (!stale || stale.loading) return
+    setStaleCoverReview({ ...stale, failed: false, loading: true })
+    try {
+      await controller.settle()
+      const successor = await http.getCaseSuccessor(stale.caseId)
+      const currentCaseId = successor ?? stale.caseId
+      const currentDetail = await http.getCaseDetail(currentCaseId)
+      const currentCover = currentDetail.fields.find(
+        (field) => field.destination === 'cover' && field.coverConsideration !== null,
+      )
+      if (!currentDetail.current || currentCover === undefined) throw new Error('stale cover')
+      if (successor !== null) setReconciledSuccessorIdentity(currentCaseId)
+      await navigate({
+        replace: true,
+        search: (current) =>
+          current.preview === stale.caseId
+            ? { ...current, preview: currentCaseId, field: 'cover' }
+            : current,
+      })
+      setStaleCoverReview(null)
+    } catch {
+      setStaleCoverReview({ ...stale, failed: true, loading: false })
+    }
+  }
+  const staleCoverNotice =
+    staleCoverReview?.caseId === selectedReviewCaseId ? (
+      <aside className="comparison-notice" role="alert">
+        <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
+        {staleCoverReview.failed ? (
+          <p>The current comparison could not be loaded. Your prior choice remains unrecorded.</p>
+        ) : null}
+        <button
+          type="button"
+          disabled={staleCoverReview.loading}
+          onClick={() => void reviewCurrentCoverComparison()}
+        >
+          {staleCoverReview.loading ? 'Loading current comparison…' : 'Review current comparison'}
+        </button>
+      </aside>
+    ) : null
   const selectedAutomaticKey = selected
     ? `${selectedReviewCaseId}:${selected.destination}:${selected.targetFingerprint}`
     : null
@@ -2428,6 +2550,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     selected.editable &&
     selected.decisionActions.length > 0
   const selectedChoiceMode = selectedActionable || selectedRevisitable
+  const selectedCoverPreparation =
+    selected?.destination === 'cover' &&
+    selected.coverConsideration?.current !== true &&
+    selected.needsAttention
+  const selectedCoverInspection =
+    selected?.destination === 'cover' &&
+    (selected.coverConsideration !== null || selectedCoverPreparation)
   const selectedProgress = selected ? controller.phase(selected.destination) : null
   // Attention membership comes from the authoritative exact case. A pending
   // or failed local command has not yet changed it.
@@ -2723,9 +2852,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             </div>
           ) : detail.isPending ? (
             <p role="status">Loading selected work…</p>
+          ) : detail.isError && staleCoverNotice ? (
+            staleCoverNotice
           ) : detail.isError ? (
             <p role="alert">
-              Selected work could not be loaded.{' '}
+              {controller.messageFor(search.field ?? selected?.destination ?? '') ??
+                'Selected work could not be loaded.'}{' '}
               <button
                 ref={selectedDetailRetryButton}
                 onClick={() => {
@@ -2740,9 +2872,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             <div className="library-selection">
               <p>Case superseded</p>
               <h2>{displayedIdentity.title}</h2>
-              <p role="alert">
-                This review case is no longer current. Reopen its current replacement from Library.
-              </p>
+              {staleCoverNotice ?? (
+                <p role="alert">
+                  This review case is no longer current. Reopen its current replacement from
+                  Library.
+                </p>
+              )}
             </div>
           ) : (
             <>
@@ -2876,6 +3011,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ) : null}
                 </nav>
               </section>
+              {staleCoverNotice}
               {complete?.id === selectedReviewCaseId && completionInspection === null ? (
                 <article
                   className="review-complete"
@@ -2990,13 +3126,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </dl>
                     ) : null}
                   </header>
-                  {selectedChoiceMode && !controller.reloadRequired ? (
+                  {(selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired ? (
                     selected.destination === 'cover' ? (
                       <LibraryCoverChoices
                         reviewCaseId={selectedReviewCaseId}
                         mediaKind={detail.data.target.mediaKind}
                         field={selected}
-                        disabled={false}
+                        disabled={!selectedChoiceMode && !selectedCoverPreparation}
                         expandedEvidence={expandedChoices}
                         progress={selectedProgress}
                         choose={(outcome, value) => choose(selected, outcome, value)}
@@ -3015,6 +3151,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           <>
                             <ProviderConsensusAutomaticStatement field={selected} />
                             <DescriptionAutomaticStatement field={selected} />
+                            <SeriesAutomaticStatement field={selected} />
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}

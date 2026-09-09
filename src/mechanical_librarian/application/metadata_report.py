@@ -70,6 +70,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetField,
     TargetFieldState,
+    WorkIdentityContradiction,
     audio_set_identity,
     canonical_asin,
     canonical_json,
@@ -78,7 +79,9 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     isbn_family,
     normalize_title,
+    provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
+    provider_candidate_work_identity_contradiction,
     provider_lane_candidate_reference,
     validate_provider_access_time,
 )
@@ -547,16 +550,37 @@ def identifier_suppresses_discovery(
     results: list[ProviderLaneResult],
     lane: MetadataDiscoveryLane,
 ) -> bool:
-    """Keep discovery unspent after one admitted identifier result."""
+    """Keep discovery unspent only after one applicable identifier result."""
     eligible = _eligible_isbn_lane(plan)
-    return (
-        lane.kind is ProviderQueryKind.WORK
-        and eligible is not None
+    work_contexts = tuple(
+        (planned.title, planned.authors)
+        for planned in plan.lanes
+        if planned.kind is ProviderQueryKind.WORK and planned.title is not None
+    )
+    applicable_identifier = (
+        eligible is not None
+        and len(work_contexts) == 1
         and any(
             result.lane.identity == eligible.identity
             and result.status is ProviderStatus.CANDIDATES
+            and bool(result.candidates)
+            and all(
+                provider_candidate_work_identity_contradiction(
+                    candidate, work_contexts[0][0], work_contexts[0][1]
+                )
+                is WorkIdentityContradiction.NOT_CONTRADICTED
+                for candidate in result.candidates
+            )
+            and provider_candidate_set_exact_work_identity_admission(
+                result.candidates, work_contexts[0][0], work_contexts[0][1]
+            ).admitted
             for result in results
         )
+    )
+    return (
+        lane.kind is ProviderQueryKind.WORK
+        and eligible is not None
+        and applicable_identifier
         and not any(
             result.lane.kind is ProviderQueryKind.ISBN
             and result.lane.identity != eligible.identity

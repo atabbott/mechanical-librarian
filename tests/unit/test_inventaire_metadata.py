@@ -181,7 +181,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v37"
+    assert report.schema_version == "metadata-report-v38"
     assert report == MetadataReport.from_json(report.to_json())
 
 
@@ -958,11 +958,13 @@ def test_transient_request_stops_after_three_attempts() -> None:
     assert observation.request_accounting.retry_dispatches == 2
 
 
-def test_identifier_candidate_suppresses_work_search() -> None:
+def test_identifier_candidate_without_work_identity_preserves_work_search() -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.url.path == "/api/search":
+            return httpx.Response(200, json={"results": []})
         return httpx.Response(
             200,
             json={
@@ -1003,6 +1005,9 @@ def test_identifier_candidate_suppresses_work_search() -> None:
     observation = _provider(httpx.MockTransport(respond)).observe(plan)
 
     assert observation.status is ProviderStatus.CANDIDATES
-    assert [request.url.path for request in requests] == ["/api/entities/by-uris"]
-    assert observation.request_accounting.logical_requests == 1
-    assert observation.request_accounting.initial_dispatches == 1
+    assert [request.url.path for request in requests] == [
+        "/api/entities/by-uris",
+        "/api/search",
+    ]
+    assert observation.request_accounting.logical_requests == 2
+    assert observation.request_accounting.initial_dispatches == 2

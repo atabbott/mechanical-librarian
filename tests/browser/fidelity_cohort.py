@@ -877,15 +877,19 @@ def _case(case_id: str) -> dict[str, object]:
                     "omissions": [],
                     "policy": {
                         "acceptable_candidate_references": ["cover-ref-choice"],
+                        "actual_target_state": (
+                            "known_empty" if case_id == "case-3" else "confirmed"
+                        ),
                         "cover_packet_reference": "cover-packet-synthetic",
                         "identity_classifier_reference": "cover-identity-synthetic",
                         "identity_report_sha256": "e" * 64,
                         "observation_report_sha256": None,
                         "observation_taxonomy_reference": "cover-taxonomy-synthetic",
+                        "owner_ready": True,
                         "policy_reference": "cover-policy-synthetic",
                         "reasons": ["policy_satisfied"],
                         "recommended_candidate_reference": "cover-ref-choice",
-                        "schema_version": "cover-policy-report-v1",
+                        "schema_version": "cover-policy-report-v2",
                         "status": "recommended",
                     },
                     "policy_preferences": {
@@ -904,7 +908,7 @@ def _case(case_id: str) -> dict[str, object]:
                     ),
                     "reviewer_status": reviewer_status,
                     "reviewer_unavailable_reason": None,
-                    "schema_version": "cover-consideration-v3",
+                    "schema_version": "cover-consideration-v4",
                     "supersedes_id": (
                         "cover-consideration-historical"
                         if reviewer_status == "failed"

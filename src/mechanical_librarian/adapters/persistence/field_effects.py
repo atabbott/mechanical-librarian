@@ -91,6 +91,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         retire_stale_cover_consideration: Callable[
             [FieldEffectOperation, str, int], None
         ],
+        current_cover_authority: Callable[[], tuple[str | None, str | None]],
     ) -> None:
         super().__init__(connection, binding)
         self._record_field_effect_event = record_field_effect_event
@@ -99,6 +100,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         )
         self.field_effect_authority_source = field_effect_authority_source
         self._retire_stale_cover_consideration = retire_stale_cover_consideration
+        self._current_cover_authority = current_cover_authority
 
     def record_current_field_effect_no_change(
         self,
@@ -1135,8 +1137,11 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
     ) -> tuple[str, ...]:
         """Read the authoritative Library/Attention filter under the write lock."""
         clause = "" if destination is None else " AND result.destination=?"
-        parameters: tuple[str, ...] = (
-            (connection,) if destination is None else (connection, destination)
+        cover_authority = self._current_cover_authority()
+        parameters: tuple[str | None, ...] = (
+            (connection, *cover_authority)
+            if destination is None
+            else (connection, destination, *cover_authority)
         )
         rows = self._connection.execute(
             "SELECT DISTINCT rc.review_case_id "

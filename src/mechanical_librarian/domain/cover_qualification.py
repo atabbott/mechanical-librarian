@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 
 from mechanical_librarian.domain.deterministic_cover_election import (
+    CoverActualTargetState,
     CoverElectionCandidate,
     elect_confirmed_covers,
 )
@@ -23,14 +24,16 @@ REQUIREMENTS = {
 MANIFEST = {
     "cohorts": list(COHORTS),
     "expectations": [
+        "explicit_actual_target_state",
+        "incumbent_excluded_from_replacement_order",
         "independent_identity",
         "independent_order",
+        "independent_owner_readiness",
         "independent_recommendation",
-        "independent_readiness",
     ],
     "minimum_packets": MINIMUM_PACKETS,
     "requirements": REQUIREMENTS,
-    "schema_version": "cover-election-qualification-v1",
+    "schema_version": "cover-election-qualification-v2",
 }
 MANIFEST_DOCUMENT = json.dumps(
     MANIFEST, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -51,6 +54,7 @@ class CoverQualificationCase:
     provider_fetching: bool
     expected_ready: bool
     duplicates_collapsed: bool
+    actual_target_state: CoverActualTargetState = CoverActualTargetState.KNOWN_EMPTY
 
 
 def qualify_cover_election(
@@ -73,12 +77,17 @@ def qualify_cover_election(
         if set(expected_identity) != {candidate.reference for candidate in case.candidates}:
             raise ValueError("cover qualification bindings are invalid")
         actual = elect_confirmed_covers(
-            case.candidates, provider_fetching=case.provider_fetching
+            case.candidates,
+            provider_fetching=case.provider_fetching,
+            actual_target_state=case.actual_target_state,
         )
+        incumbent_references = {
+            candidate.reference for candidate in case.candidates if candidate.incumbent
+        }
         expected_confirmed = {
             reference
             for reference, identity in case.expected_identity
-            if identity is not None
+            if identity is not None and reference not in incumbent_references
         }
         if (
             len(set(case.expected_order)) != len(case.expected_order)
@@ -87,7 +96,6 @@ def qualify_cover_election(
                 case.expected_recommendation is not None
                 and case.expected_recommendation not in case.expected_order
             )
-            or (case.expected_ready and case.expected_recommendation is None)
             or (not case.expected_ready and case.expected_recommendation is not None)
         ):
             raise ValueError("cover qualification expectation is invalid")

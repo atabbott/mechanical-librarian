@@ -29,6 +29,16 @@ An equal automatic candidate is a separate identifier-only terminal fact. Its
 atomic currentness comparison happens before, and does not read, authority,
 consent, capability, backup, target, or read-back controls.
 
+Automatic cover admission requires an exact-current case, report,
+consideration, selected artifact, policy, and owner-final state. A known-empty
+target may admit the best confirmed candidate. A populated target must carry a
+confirmed incumbent and admits only a candidate with a strictly better complete
+rank; missing or inconsistent incumbent evidence abstains. Active acquisition,
+unconfirmed identity, stale bindings, and any prior owner cover decision refuse
+admission. An admitted cover decision remains decision-only and must still pass
+consent, backup, capability, target-currentness, supported-API apply, read-back,
+and audit gates.
+
 The `RefreshCurrentCatalogue` application operation may make only bounded GET observations of configured ABS
 book libraries and publish a local current generation. Its bearer credential is
 attached only to the configured origin's library, library-items, and item-detail
@@ -322,11 +332,14 @@ target concurrency, backup, apply, and read-back gates remain unchanged.
 Previously persisted F20 decisions remain readable only when their historical
 digest and option identity match the exact earlier passing set; new decisions
 always bind the current candidate, and a historical digest grants no new option.
-For series, provider-wide unsupported output with no named membership is not
-negative evidence. Named incomplete or unpositioned memberships, unresolved
-alternatives, and failures from query kinds that could have contributed to the
-elected evidence abstain closed; the stable failure reason names that query
-kind. Election collapses only closed leading-article and trailing
+For series, populated Automatic targets are preserved. Provider-wide unsupported
+output with no named membership is not negative evidence. A selected WORK-backed
+membership may lack a number; null remains null. Selected malformed or incomplete
+evidence, incomparable or conflicting alternatives, and failures from dispatches
+that contributed to the elected evidence abstain closed. Unrelated providers,
+candidates or query lanes cannot veto selected evidence. A uniquely dominating
+complete source bundle retains its exact values, order and provenance; no union
+or inferred number is constructed. Election collapses only closed leading-article and trailing
 `Series`/`Trilogy` display variants, never fuzzy names or title-specific rules.
 
 Activation is a separate authenticated CSRF-protected owner mutation with the
@@ -696,7 +709,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v37`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v38`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a

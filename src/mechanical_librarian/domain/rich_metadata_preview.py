@@ -19,14 +19,17 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_TAGS, ClaimKind, ClaimScope, FieldState, IdentifierRelation,
     MetadataReport, ProviderCandidate, ProviderClaim, ProviderEvidenceKind,
     ProviderObservation, ProviderQueryKind, ProviderStatus,
-    TargetDestination, TargetField, TargetFieldState, isbn_family,
-    normalize_title,
+    TargetDestination, TargetField, TargetFieldState, WorkIdentityContradiction,
+    isbn_family, normalize_title, provider_candidate_work_identity_contradiction,
+    target_work_identity_context,
 )
 from mechanical_librarian.domain.proposal_set import (
     BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
     ProposalOutcome, ProposalResult, ProposalSet,
     ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
+    ordinary_provider_description_source_is_safe,
     provider_candidate_represents_target_work,
+    provider_candidate_represents_target_series_work,
     series_name_equivalence_key,
     segment_corroboration,
 )
@@ -108,6 +111,34 @@ def _automatic_work_evidence(
             and provider_candidate_represents_target_work(
                 report, retained.provider, retained.candidate
             )
+        )
+        if admitted:
+            alternatives.append(alternative)
+            references[alternative.alternative_id] = admitted
+    return _AutomaticWorkEvidence(tuple(alternatives), references)
+
+
+def _automatic_genre_evidence(
+    report: MetadataReport,
+    result: ProposalResult,
+    retained_claims: dict[str, _RetainedClaim],
+) -> _AutomaticWorkEvidence:
+    """Remove only genre evidence that explicitly contradicts the target work."""
+    context = target_work_identity_context(report.target)
+    alternatives: list[ProposalAlternative] = []
+    references: dict[str, tuple[str, ...]] = {}
+    for alternative in result.alternatives:
+        admitted = tuple(
+            reference
+            for reference in alternative.evidence_references
+            if (retained := retained_claims.get(reference)) is None
+            or type(retained.provider) is not ProviderObservation
+            or type(retained.candidate) is not ProviderCandidate
+            or context is None
+            or provider_candidate_work_identity_contradiction(
+                retained.candidate, *context
+            )
+            is not WorkIdentityContradiction.EXPLICIT
         )
         if admitted:
             alternatives.append(alternative)
@@ -215,13 +246,19 @@ def _project(
     if target.state is TargetFieldState.VALUE and (
         field in {"subtitle", "description_fill", "isbn_form", "asin"}
         or (field in {"genres", "tags"} and option == "fill_empty")
+        or (field == "series" and destination == "automatic")
     ):
         return _preserved(field, option, target, current)
-    automatic_work = (
-        _automatic_work_evidence(report, result, retained_claims)
-        if destination == "automatic" and field in {"description_fill", "tags"}
-        else None
-    )
+    automatic_work = None
+    if destination == "automatic":
+        if field == "genres":
+            automatic_work = _automatic_genre_evidence(
+                report, result, retained_claims
+            )
+        elif field in {"description_fill", "tags"}:
+            automatic_work = _automatic_work_evidence(
+                report, result, retained_claims
+            )
     if (
         automatic_work is not None
         and result.alternatives
@@ -232,7 +269,11 @@ def _project(
             option,
             target,
             current,
-            "target_work_applicability_unproved",
+            (
+                "target_work_contradicted"
+                if field == "genres"
+                else "target_work_applicability_unproved"
+            ),
         )
     if field == "subtitle" and option == "corroborated_split":
         return _subtitle_bundle(field, option, target, result, proposal, report)
@@ -471,44 +512,15 @@ def _automatic_series_abstention(
         ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
         ProviderStatus.QUERY_LIMIT_EXCEEDED,
     }
-    memberships = tuple(
-        membership
-        for provider in report.providers
-        for source in provider.candidates
-        for membership in _series_membership_positions(
-            tuple(
-                claim
-                for claim in source.claims
-                if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
-            )
-        )
-    )
-    if any(
-        claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
-        and claim.state in {FieldState.MALFORMED, FieldState.OVERSIZED}
-        for provider in report.providers
-        for source in provider.candidates
-        for claim in source.claims
-    ):
-        return "series_membership_incomplete"
-    membership_incomplete = any(
-        state is not FieldState.VALID for _, state in memberships
-    )
-    unresolved_conflict = (
-        candidate is None
-        and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
-        and not any(
-            state is not FieldState.VALID
-            and any(
-                other_name == name and other_state is FieldState.VALID
-                for other_name, other_state in memberships
-            )
-            for name, state in memberships
-        )
-    )
-    if membership_incomplete and not unresolved_conflict:
-        return "series_membership_incomplete"
     if candidate is None:
+        if result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE and any(
+            claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+            and claim.state in {FieldState.MALFORMED, FieldState.OVERSIZED}
+            for provider in report.providers
+            for source in provider.candidates
+            for claim in source.claims
+        ):
+            return "series_membership_incomplete"
         return (
             "series_conflicting_membership"
             if result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
@@ -527,8 +539,28 @@ def _automatic_series_abstention(
         (retained.provider.provider, retained.candidate.identity)
         for retained in relevant
     }
-    contributing_kinds = {
-        lane.kind
+    selected_sources = tuple(
+        source
+        for provider in report.providers
+        for source in provider.candidates
+        if (provider.provider, source.identity) in relevant_candidates
+    )
+    if any(
+        claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+        and claim.state in {FieldState.MALFORMED, FieldState.OVERSIZED}
+        for source in selected_sources
+        for claim in source.claims
+    ) or any(
+        state not in {FieldState.VALID, FieldState.ABSENT, None}
+        for source in selected_sources
+        for _, state in _series_membership_positions(tuple(
+            claim for claim in source.claims
+            if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+        ))
+    ):
+        return "series_membership_incomplete"
+    contributing_dispatches = {
+        (provider.provider, lane.kind, lane.input_references, lane.matched_family)
         for provider in report.providers
         for lane in provider.lanes
         if any(
@@ -536,25 +568,20 @@ def _automatic_series_abstention(
             for lane_candidate in lane.candidates
         )
     }
-    if not contributing_kinds:
-        contributing_kinds = {
-            retained.provider.query_kind
-            for retained in relevant
-            if retained.provider.query_kind
-            in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK, ProviderQueryKind.ASIN}
-        }
     failed_kinds = sorted(
         {
-            provider.query_kind
-            for provider in report.providers
-            if provider.status in failed_statuses
-            and provider.query_kind in contributing_kinds
+            retained.provider.query_kind
+            for retained in relevant
+            if not retained.provider.lanes
+            and retained.provider.status in failed_statuses
+            and retained.provider.query_kind in {ProviderQueryKind.ISBN, ProviderQueryKind.WORK, ProviderQueryKind.ASIN}
         }
         | {
             lane.kind
             for provider in report.providers
             for lane in provider.lanes
-            if lane.status in failed_statuses and lane.kind in contributing_kinds
+            if lane.status in failed_statuses
+            and (provider.provider, lane.kind, lane.input_references, lane.matched_family) in contributing_dispatches
         },
         key=lambda kind: kind.value,
     )
@@ -568,10 +595,13 @@ def _automatic_series_abstention(
         if type(claim := retained.claim) is ProviderClaim
     ):
         return "series_membership_incomplete"
-    if candidate.value.kind is ProposalValueKind.SERIES and any(
-        value.sequence is None for value in candidate.value.value
+    if any(
+        not provider_candidate_represents_target_series_work(report, provider, source)
+        for provider in report.providers
+        for source in provider.candidates
+        if (provider.provider, source.identity) in relevant_candidates
     ):
-        return "series_membership_incomplete"
+        return "target_work_applicability_unproved"
     return None
 
 
@@ -817,14 +847,10 @@ def _ordinary_description_reference(
     return bool(
         retained is not None
         and type(retained.claim) is ProviderClaim
-        and retained.claim.kind is ClaimKind.DESCRIPTION
-        and retained.claim.scope is ClaimScope.WORK
         and retained.claim.value == alternative.value.value
-        and retained.candidate is not None
-        and not any(
-            evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
-            and evidence.scope is ClaimScope.WORK
-            for evidence in retained.candidate.evidence
+        and type(retained.candidate) is ProviderCandidate
+        and ordinary_provider_description_source_is_safe(
+            retained.claim, retained.candidate
         )
     )
 
@@ -1041,7 +1067,7 @@ def project_f20_automatic_decision_value(
         raise RichMetadataPreviewError("rich automatic projection is invalid")
     if field == "series":
         values = candidate_value["value"]
-        if candidate_value["kind"] != "series" or type(values) is not list or not values:
+        if current_value is not None or candidate_value["kind"] != "series" or type(values) is not list or not values:
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         return {"kind": "series", "value": [values[0]]}
     if field == "isbn_form":

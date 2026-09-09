@@ -263,13 +263,16 @@ describe('ReviewApiClient', () => {
       ...overrides,
     })
     const policy = (overrides: Record<string, unknown> = {}) => ({
+      schema_version: 'cover-policy-report-v2',
       status: 'abstained',
+      actual_target_state: 'unknown',
+      owner_ready: true,
       recommended_candidate_reference: null,
       acceptable_candidate_references: ['candidate-1'],
       ...overrides,
     })
     const payload = (overrides: Record<string, unknown> = {}) => ({
-      schema_version: 'cover-consideration-v3',
+      schema_version: 'cover-consideration-v4',
       consideration_id: 'consideration',
       current: true,
       candidates: [candidate()],
@@ -283,8 +286,8 @@ describe('ReviewApiClient', () => {
         prefer_minimal_composition: false,
       },
       policy_reference: 'policy',
-      provider_fetching: true,
-      ready: false,
+      provider_fetching: false,
+      ready: true,
       reviewer_access_revision: 7,
       reviewer_engine: 'openrouter',
       reviewer_model: 'provider/model',
@@ -298,7 +301,12 @@ describe('ReviewApiClient', () => {
     expect(mapCoverConsideration(payload())?.choiceContexts).toHaveLength(2)
     expect(
       mapCoverConsideration(
-        payload({ candidates: [], choice_contexts: [context(null, 'current')], policy: null }),
+        payload({
+          candidates: [],
+          choice_contexts: [context(null, 'current')],
+          policy: null,
+          ready: false,
+        }),
       ),
     ).not.toBeNull()
     expect(
@@ -576,7 +584,7 @@ describe('ReviewApiClient', () => {
   })
   it('maps only the fixed unavailable reviewer-contract reasons', () => {
     const payload = (reviewer_unavailable_reason: unknown) => ({
-      schema_version: 'cover-consideration-v3',
+      schema_version: 'cover-consideration-v4',
       consideration_id: 'consideration',
       current: true,
       candidates: [],

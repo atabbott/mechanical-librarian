@@ -432,11 +432,8 @@ def _validate_png_structure(payload: bytes) -> tuple[int, int]:
     return width, height
 
 
-def bind_cover_packet(
-    packet_document: str,
-    image_payloads: tuple[tuple[str, str, bytes], ...],
-) -> AdmittedCoverPacket:
-    """Validate every v2 packet field, invariant, and exact ordered image."""
+def read_cover_packet_document(packet_document: str) -> dict[str, object]:
+    """Validate every document-only v2 packet field and invariant."""
     try:
         packet = json.loads(
             packet_document,
@@ -453,14 +450,63 @@ def bind_cover_packet(
             or not 1 <= len(packet["candidates"]) <= MAX_COVER_PREVIEWS
             or type(packet["omissions"]) is not list
             or _PACKET_REFERENCE.fullmatch(packet["packet_reference"]) is None
-            or type(image_payloads) is not tuple
-            or any(
-                type(value) is not tuple or len(value) != 3 for value in image_payloads
-            )
         ):
             raise ValueError
         candidates = packet["candidates"]
         candidate_facts = tuple(_validate_candidate(value) for value in candidates)
+        _validate_candidate_order(candidates, candidate_facts)
+        retained = {value["reference"]: value["preview_sha256"] for value in candidates}
+        source_bindings = {
+            binding["reference"]: (candidate["reference"], binding["preview_sha256"])
+            for candidate in candidates
+            for binding in candidate["source_bindings"]
+        }
+        if len(source_bindings) != sum(
+            len(candidate["source_bindings"]) for candidate in candidates
+        ):
+            raise ValueError
+        retained_bytes = sum(candidate["preview_bytes"] for candidate in candidates)
+        if retained_bytes > MAX_COVER_PACKET_BYTES:
+            raise ValueError
+        _validate_omissions(
+            packet["omissions"], retained, source_bindings, retained_bytes
+        )
+        packet_body = canonical_packet_json(
+            {
+                "candidates": packet["candidates"],
+                "omissions": packet["omissions"],
+                "schema_version": packet["schema_version"],
+            }
+        )
+        if (
+            packet["packet_reference"]
+            != "cover_packet_" + hashlib.sha256(packet_body.encode()).hexdigest()
+        ):
+            raise ValueError
+        return packet
+    except (
+        EvidenceValueError,
+        json.JSONDecodeError,
+        RecursionError,
+        TypeError,
+        UnicodeError,
+        ValueError,
+    ) as error:
+        raise ValueError("cover packet is invalid") from error
+
+
+def bind_cover_packet(
+    packet_document: str,
+    image_payloads: tuple[tuple[str, str, bytes], ...],
+) -> AdmittedCoverPacket:
+    """Validate every v2 packet field, invariant, and exact ordered image."""
+    packet = read_cover_packet_document(packet_document)
+    try:
+        candidates = cast("list[dict[str, object]]", packet["candidates"])
+        if type(image_payloads) is not tuple or any(
+            type(value) is not tuple or len(value) != 3 for value in image_payloads
+        ):
+            raise ValueError
         supplied = tuple((value[0], value[1]) for value in image_payloads)
         expected = tuple(
             (value["transport_reference"], value["transport_sha256"])
@@ -487,35 +533,11 @@ def bind_cover_packet(
                 raise ValueError
             validate_cover_preview(
                 payload,
-                expected_width=candidate["preview_width"],
-                expected_height=candidate["preview_height"],
+                expected_width=cast("int", candidate["preview_width"]),
+                expected_height=cast("int", candidate["preview_height"]),
             )
             total += len(payload)
         if total > MAX_COVER_PACKET_BYTES:
-            raise ValueError
-        _validate_candidate_order(candidates, candidate_facts)
-        retained = {value["reference"]: value["preview_sha256"] for value in candidates}
-        source_bindings = {
-            binding["reference"]: (candidate["reference"], binding["preview_sha256"])
-            for candidate in candidates
-            for binding in candidate["source_bindings"]
-        }
-        if len(source_bindings) != sum(
-            len(candidate["source_bindings"]) for candidate in candidates
-        ):
-            raise ValueError
-        _validate_omissions(packet["omissions"], retained, source_bindings, total)
-        packet_body = canonical_packet_json(
-            {
-                "candidates": packet["candidates"],
-                "omissions": packet["omissions"],
-                "schema_version": packet["schema_version"],
-            }
-        )
-        if (
-            packet["packet_reference"]
-            != "cover_packet_" + hashlib.sha256(packet_body.encode()).hexdigest()
-        ):
             raise ValueError
         return AdmittedCoverPacket(packet_document, image_payloads)
     except (
@@ -804,4 +826,5 @@ __all__ = [
     "normalize_cover_preview",
     "normalize_provenance",
     "provenance_sort_key",
+    "read_cover_packet_document",
 ]

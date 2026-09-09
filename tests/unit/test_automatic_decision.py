@@ -5,6 +5,7 @@ import json
 
 import pytest
 
+from mechanical_librarian.domain import automatic_decision
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     QUALIFIED_POLICY_OPTIONS,
@@ -175,6 +176,90 @@ def test_f38_contributor_consensus_binds_its_own_manifest() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+@pytest.mark.parametrize("narrowed", (False, True))
+@pytest.mark.parametrize(
+    "prior_digest",
+    (
+        "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
+        "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
+    ),
+)
+def test_v11_v12_series_history_survives_narrowed_current_authority(
+    monkeypatch: pytest.MonkeyPatch, option: str, narrowed: bool, prior_digest: str
+) -> None:
+    prior_core = {
+        "review_case_id": "review_case_" + "a" * 64,
+        "report_id": "report_" + "b" * 64,
+        "proposal_set_id": "proposal_set_" + "c" * 64,
+        "proposal_id": "review_proposal_" + "d" * 64,
+        "target_fingerprint": "e" * 64,
+        "destination": "series",
+        "outcome": "candidate",
+        "candidate_id": "alternative_" + "f" * 64,
+        "resolved_policy_id": "resolved_policy_" + "0" * 64,
+        "policy_generation": 1,
+        "rule_id": "shadow_rule_" + "1" * 64,
+        "policy_category": "series",
+        "policy_option": option,
+        "qualification_manifest_sha256": prior_digest,
+        "source_outcome_id": "shadow_outcome_" + "3" * 64,
+        "bundle_id": None,
+    }
+    document = json.dumps(
+        {
+            **prior_core,
+            "decision_id": "automatic_decision_"
+            + _digest({**prior_core, "occurred_at": 1}),
+            "idempotency_digest": _digest(prior_core),
+            "occurred_at": 1,
+            "origin": "automatic_policy",
+            "schema_version": "automatic-decision-v1",
+        },
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    # A future qualification may narrow the live options; historical authority
+    # belongs to its exact frozen manifest rather than that live option set.
+    current = AutomaticDecision.create(
+        **{
+            **prior_core,
+            "qualification_manifest_sha256": F20_QUALIFICATION_CANDIDATE_SHA256,
+        },
+        occurred_at=2,
+    )
+    assert qualification_manifest_is_current(
+        "series", option, current.qualification_manifest_sha256
+    )
+    if narrowed:
+        monkeypatch.setattr(
+            automatic_decision, "F20_PASSING_AUTOMATIC_OPTIONS", frozenset()
+        )
+        monkeypatch.setattr(automatic_decision, "QUALIFIED_POLICY_OPTIONS", frozenset())
+    prior = AutomaticDecision.from_json(document)
+    assert prior.to_json() == document
+    assert not qualification_manifest_is_current(
+        "series", option, prior.qualification_manifest_sha256
+    )
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(**prior._core(), occurred_at=2)
+    for invalid in (
+        {"qualification_manifest_sha256": "9" * 64},
+        {"policy_option": "invented_membership"},
+    ):
+        invalid_core = {**prior._core(), **invalid}
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision(
+                **invalid_core,
+                decision_id="automatic_decision_"
+                + _digest({**invalid_core, "occurred_at": 1}),
+                idempotency_digest=_digest(invalid_core),
+                occurred_at=1,
+            )
+
+
 def test_prior_f20_decision_remains_readable_without_granting_new_authority() -> None:
     current = AutomaticDecision.create(
         review_case_id="review_case_" + "a" * 64,
@@ -209,6 +294,9 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         "535348d225d6f160a4096c17c3379ee060741cb1d704ad0d741fc4631fc01d9b",
         "1315e324edd78e698587e14497aa0ab11e33fd65612f00cd8a78a462fd6445fd",
         "c8843d96dfda862b04f6269fd1ab3ab202338815ed5d0efbc0c4c480293adea3",
+        "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
+        "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
+        "a7af724b0711177ff04ff1ae56c8a7db42c1166fe97390c29e60fed506440500",
     )
     for prior_digest in prior_digests:
         prior_core = {

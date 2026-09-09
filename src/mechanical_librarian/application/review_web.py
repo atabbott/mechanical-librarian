@@ -105,6 +105,7 @@ class CurrentReviewCaseSnapshot:
     suspension_causes: tuple[tuple[str, ReviewFieldCause], ...] = ()
     cover_consideration_document: str | None = None
     cover_history: tuple[dict[str, object], ...] = ()
+    current_cover_automatic_decision_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -361,6 +362,12 @@ class InspectCurrentReviewCase:
                     decisions[decision.destination] = decision
                 else:
                     destination = str(projected["destination"])
+                    if (
+                        destination == "cover"
+                        and projected["decision_id"]
+                        != snapshot.current_cover_automatic_decision_id
+                    ):
+                        continue
                     automatic[destination] = projected
                     automatic_source_outcome_ids[destination] = (
                         parse_automatic_authority(document).source_outcome_id
@@ -382,14 +389,25 @@ class InspectCurrentReviewCase:
                 report.target.fields
             ).items()
         }
-        current_cover_consideration = (
-            None
-            if self._cover_considerations is None
-            else self._cover_considerations.project(
-                snapshot.cover_consideration_document
+        if self._cover_considerations is None:
+            current_cover_consideration = None
+            cover_currentness = "inactive"
+        else:
+            (
+                current_cover_consideration,
+                cover_currentness,
+            ) = self._cover_considerations.project_for_review(
+                snapshot.cover_consideration_document,
+                review_case_id,
+                report.to_json(),
             )
+        cover_is_current = (
+            current_cover_consideration is not None
+            and current_cover_consideration["current"] is True
         )
-        if current_cover_consideration is None:
+        cover_refresh_required = cover_currentness == "refresh_required"
+        cover_undecided = "cover" not in decisions and "cover" not in automatic
+        if not cover_is_current:
             # A stale or replay-obsolete cover decision remains immutable history,
             # but it no longer resolves the current owner interaction.
             decisions.pop("cover", None)
@@ -470,10 +488,30 @@ class InspectCurrentReviewCase:
                 evidence,
             )
             classification = classify_review_field(
-                attention_candidate=_needs_attention(
-                    proposal,
-                    snapshot.automatic_attention_destinations,
-                    owner_only=case.media_kind == "audiobook",
+                attention_candidate=(
+                    (
+                        (
+                            destination != "cover"
+                            or snapshot.cover_consideration_document is None
+                            or cover_is_current
+                            or (
+                                cover_refresh_required
+                                and result["outcome"] == "unresolved_choice"
+                                and cover_undecided
+                            )
+                        )
+                        and _needs_attention(
+                            proposal,
+                            snapshot.automatic_attention_destinations,
+                            owner_only=case.media_kind == "audiobook",
+                        )
+                    )
+                    or (
+                        destination == "cover"
+                        and cover_is_current
+                        and current_cover_consideration is not None
+                        and current_cover_consideration["ready"] is True
+                    )
                 ),
                 automatic_outcome=(
                     "abstention"
@@ -497,11 +535,25 @@ class InspectCurrentReviewCase:
                     alternative["value"] for alternative in alternatives
                 ),
             )
-            actions = decision_actions(proposal)
+            cover_preparation_available = (
+                destination == "cover"
+                and self._cover_considerations is not None
+                and not cover_is_current
+                and (
+                    snapshot.cover_consideration_document is None
+                    or (
+                        cover_refresh_required
+                        and result["outcome"] == "unresolved_choice"
+                        and cover_undecided
+                    )
+                )
+            )
+            actions = () if cover_preparation_available else decision_actions(proposal)
             # Classification retains the field's owner context. Action
             # availability is a separate exact-proposal contract; an empty
             # action list is context-only, never an implied choice envelope.
-            needs_attention = classification.needs_attention and bool(actions)
+            has_owner_action = bool(actions) or cover_preparation_available
+            needs_attention = classification.needs_attention and has_owner_action
             inventory_role = _field_inventory_role(
                 classification.state,
                 destination,
@@ -524,7 +576,7 @@ class InspectCurrentReviewCase:
                 "manual_hold": decision is not None and automatic_decision is not None,
                 "classification": classification.state,
                 "classification_reason": classification.reason,
-                "editable": classification.editable and bool(actions),
+                "editable": classification.editable and has_owner_action,
                 "navigation_role": classification.navigation_role,
                 "needs_attention": needs_attention,
                 "decision_actions": list(actions),
@@ -2329,6 +2381,7 @@ def _attention_item(
             # the row reports (#966).
             _needs_attention(proposal, owner_only=case.media_kind == "audiobook")
             or cause == "automatic_safety_suspended"
+            or (destination == "cover" and work_attention_count > 0)
         ),
         automatic_outcome=("abstention" if automatic_outcome == "abstention" else None),
         has_human_decision=False,

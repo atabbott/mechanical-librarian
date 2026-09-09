@@ -59,6 +59,14 @@ unavailable. They are not claimed as PASS evidence. This PASS is limited to the
 versioned minimums above and the verified current-schema report, artifact,
 split, review, and adjudication evidence.
 
+The #999 follow-up regenerated all 50 retained qualification packets from the
+immutable archived reports and artifacts after correcting incumbent duplicate
+dimensions. Packet bindings, omissions, references, transport digests and
+independent identity/order/readiness expectations remained within the frozen
+qualification contract. This is retained regression evidence, not a new
+holdout or an acquisition-quality claim; the archive, scorer, selection and
+adjudication inputs remained immutable.
+
 Provider cover outcomes are bounded aggregate observations, not semantic
 quality measurements:
 
@@ -510,6 +518,15 @@ The exact candidate digest is
 `b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457`;
 the scorer digest is
 `1f87667eaa0373afddef9118976f0f091e234f19bb4a9ad64eb1d4e67afe7c3e`.
+
+Issue #999 retains that v1 manifest and its original scorer as historical
+authority and introduces `cover-election-qualification-v2`, digest
+`ff705f8cb4fec150824183f4edf7f6830a7edf9d3f2ac9cd013a9f58caa976d0`.
+The successor makes actual-target state explicit and measures owner readiness
+independently from automatic recommendation. Original cases remain known-empty
+continuity evidence; incumbent, active-fetching, timeout-recovery, and
+owner-final cases are separate prospective synthetic checks and do not enlarge
+or relabel the frozen real cohorts.
 All cohorts passed on their first permitted exposure:
 
 | Cohort | Packets / candidates | Confirmed / conservative exclusions | Ready | False admission / duplicate / order / recommendation / readiness errors |

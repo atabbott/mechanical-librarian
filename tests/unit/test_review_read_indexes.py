@@ -87,6 +87,9 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
         1,
         lambda value: value.casefold() if type(value) is str else value,
     )
+    connection.create_function(
+        "ml_cover_consideration_current", 2, lambda _document, _replay: 0
+    )
     _create_schema(connection)
     reports = []
     proposals = []
@@ -355,7 +358,7 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
                 "report_id": case.report_id,
                 "replay_digest": replay_digest,
                 "review_case_id": case.review_case_id,
-                "schema_version": "cover-consideration-v3",
+                "schema_version": "cover-consideration-v4",
                 "supersedes_id": None,
             },
             separators=(",", ":"),
@@ -446,7 +449,7 @@ def _count_with_step_limit(
         maximum,
         lambda: connection.execute(
             _CURRENT_REVIEW_CASE_COUNT_SQL,
-            (None, "", "", "", "", ""),
+            (None, None, None, "", "", "", "", ""),
         ).fetchone(),
     )
     assert row is not None

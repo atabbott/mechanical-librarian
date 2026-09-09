@@ -90,7 +90,7 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
         proposal_set.proposal_set_id
         == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
     )
-    assert "fixed-conservative-v19" == POLICY_VERSION
+    assert "fixed-conservative-v22" == POLICY_VERSION
     assert POLICY_VERSION == proposal_set.policy_version
     assert (
         re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id)
@@ -126,7 +126,19 @@ def test_prior_policy_document_is_rejected_and_current_replay_is_exact() -> None
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(canonical_json(prior))
     prior = json.loads(current.to_json())
+    prior["policy_version"] = "fixed-conservative-v20"
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json(canonical_json(prior))
+    prior = json.loads(current.to_json())
+    prior["policy_version"] = "fixed-conservative-v21"
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json(canonical_json(prior))
+    prior = json.loads(current.to_json())
     prior["schema_version"] = "proposal-set-v1"
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json(canonical_json(prior))
+    prior = json.loads(current.to_json())
+    prior["schema_version"] = "proposal-set-v6"
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(canonical_json(prior))
 

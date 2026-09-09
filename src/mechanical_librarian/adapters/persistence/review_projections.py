@@ -97,6 +97,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             ],
         ],
         count_current_attention_fields: Callable[[str | None], int],
+        current_cover_authority: Callable[[], tuple[str | None, str | None]],
     ) -> None:
         super().__init__(connection, binding)
         self._require_staged_shadow_projection_current = (
@@ -112,6 +113,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.count_current_review_cases = count_current_review_cases
         self.list_current_attention_documents = list_current_attention_documents
         self.count_current_attention_fields = count_current_attention_fields
+        self._current_cover_authority = current_cover_authority
 
     @contextmanager
     def _consistent_review_read(self) -> Iterator[None]:
@@ -231,8 +233,32 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     if history_limit is None
                     else self.cover_consideration_history(review_case_id, history_limit)
                 ),
+                current_cover_automatic_decision_id=(
+                    self._current_cover_automatic_decision_id(review_case_id)
+                ),
             )
         return snapshot
+
+    def _current_cover_automatic_decision_id(self, review_case_id: str) -> str | None:
+        row = self._connection.execute(
+            "SELECT selection.decision_id FROM current_review_case_lineages lineage "
+            "JOIN current_cover_considerations current_cover "
+            "ON current_cover.review_case_id=lineage.review_case_id "
+            "JOIN current_cover_selection_authorities current_selection ON "
+            "current_selection.connection_name=lineage.connection_name AND "
+            "current_selection.library_name=lineage.library_name AND "
+            "current_selection.item_id=lineage.item_id "
+            "JOIN cover_selection_authorities selection ON "
+            "selection.selection_id=current_selection.selection_id AND "
+            "selection.consideration_id=current_cover.consideration_id "
+            "WHERE lineage.review_case_id=? AND selection.kind='automatic'",
+            (review_case_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        if len(row) != 1 or type(row[0]) is not str:
+            raise MetadataReportError("review case snapshot is unavailable")
+        return row[0]
 
     def _automatic_source_outcome_documents(
         self, review_case_id: str
@@ -400,6 +426,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
 
     def _current_attention_count(self, review_case_id: str) -> int:
         """Use the same persisted field-membership predicate as every attention view."""
+        cover_authority = self._current_cover_authority()
         row = self._connection.execute(
             "SELECT count(*) "
             + _CURRENT_REVIEW_FROM_SQL
@@ -408,7 +435,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE result.review_case_id=? AND "
             + _REVIEW_FIELD_ATTENTION_SQL
             + _EPUB_INAPPLICABLE_ATTENTION_SQL,
-            (review_case_id,),
+            (review_case_id, *cover_authority),
         ).fetchone()
         if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
             raise MetadataReportError("review library is unavailable")

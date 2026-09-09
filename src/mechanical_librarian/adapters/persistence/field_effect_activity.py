@@ -2230,6 +2230,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
               JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
               JOIN review_cases review ON review.review_case_id=event.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
+             WHERE event.kind<>'selected' OR NOT EXISTS (
+                   SELECT 1 FROM cover_selection_authorities selection
+                    WHERE selection.decision_id=event.decision_id
+                      AND selection.kind='automatic')
             UNION ALL
             SELECT transition.transition_id, NULL, 'policy', 'Library policy', transition.updated_at,
                    'policy', NULL, transition.state, 'Library policy', '{}', 'policy',

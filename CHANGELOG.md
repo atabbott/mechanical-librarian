@@ -1,6 +1,43 @@
 # Changelog
 
+- A sole confirmed ebook cover remains available for owner review when sibling
+  acquisition times out. Automatic cover replacement distinguishes a known
+  empty target from an unverified incumbent and replaces a confirmed incumbent
+  only with a strict rank upgrade. Existing installs require a clean rebuild.
+  (#999)
+
 ## Unreleased
+
+- Cover comparisons keep the exact Audiobookshelf incumbent artifact and
+  dimensions when another source has the same preview bytes. Library attention
+  now follows live provider recovery, and a successful replacement after a
+  stale comparison clears that comparison's recovery notice. (#999)
+
+- Equivalent local description evidence no longer replaces an eligible
+  provider's exact text or makes a qualified automatic fill disappear. Source
+  provenance and owner choices remain visible, and existing installs require a
+  clean `fixed-conservative-v21` rebuild. (#1001)
+
+- An ISBN hit about a different work no longer suppresses bounded title-and-author
+  discovery or lends publication-date or automatic-genre authority. The retained
+  evidence stays inspectable, including cases where exact work identity cannot be
+  proved. Existing installs require a clean `metadata-report-v38` database and
+  `fixed-conservative-v20` proposal state. (#1000)
+
+- Automatic series fill refuses unproved work identity, including mismatched
+  ISBN results, while accepting source-attested title decorations, exact
+  edition titles and conservative single-author comma inversion. Ask choices
+  and surviving values retain their original bundle and provenance. (#895)
+
+- Library completion and recorded summaries retain the owner's current value,
+  including an empty value, after overriding an automatic candidate. (#895)
+
+- Qualified series fill preserves populated Automatic fields, accepts
+  absent numbers without inventing them, and selects one uniquely compatible
+  source bundle instead of combining memberships. Failure checks follow its
+  actual evidence; Library explains editable automatic outcomes and number
+  certainty. V13 binds the repair through exposed regression; historical v11/v12
+  decisions remain readable and guarded writes require current authority. (#895)
 
 - Preparation no longer stalls when a recovery wake opens the database while
   another connection is writing: same-process dependent opens borrow the live

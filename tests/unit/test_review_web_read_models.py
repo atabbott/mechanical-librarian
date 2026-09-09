@@ -276,12 +276,13 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         "reviewer_model": None,
         "reviewer_status": "unavailable",
         "reviewer_unavailable_reason": None,
-        "schema_version": "cover-consideration-v3",
+        "schema_version": "cover-consideration-v4",
         "supersedes_id": None,
         "target_fingerprint": case.target_fingerprint,
     }
     covers = Mock()
     covers.project.return_value = view
+    covers.project_for_review.return_value = (view, "current")
     covers.ensure.return_value = view
     covers.image.return_value = b"\x89PNG\r\n\x1a\nsynthetic"
     configuration = ReviewWebConfiguration(

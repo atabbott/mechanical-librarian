@@ -22,6 +22,7 @@ from mechanical_librarian.domain.work_identity import (
     WorkTitleTransformationSide,
     admit_provider_work_identity,
     apply_work_title_transformation,
+    closed_creator_display_possibility,
     narrowing_work_query,
     replay_provider_work_identity_admission,
     work_dispatch_lineage_from_data,
@@ -30,6 +31,96 @@ from mechanical_librarian.domain.work_identity import (
     work_title_has_variant_marker,
     work_title_transformation_lineage_from_data,
 )
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    (
+        (("Ada Example",), ("Ada L Example",)),
+        (("Ada L Example",), ("Ada Example",)),
+        (("Ada L. Example",), ("Ada L Example",)),
+        (
+            ("Ada Example", "Bob B Example"),
+            ("Bob Example", "Ada A Example"),
+        ),
+        (
+            ("Ada Example", "Ada B Example"),
+            ("Ada Example", "Ada B. Example"),
+        ),
+        (("Anaïs Example",), ("Anai\u0308s J. Example",)),
+        (("Ada Éclair",), ("Ada L E\u0301clair",)),
+    ),
+    ids=(
+        "target_omits_middle",
+        "provider_omits_middle",
+        "optional_period",
+        "permutation",
+        "ambiguous_complete_pairings",
+        "nfc_accented_given",
+        "nfc_accented_family",
+    ),
+)
+def test_closed_creator_display_possibility_accepts_only_complete_pairings(
+    left: tuple[str, ...], right: tuple[str, ...]
+) -> None:
+    assert closed_creator_display_possibility(left, right)
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    (
+        (("Ada L Example",), ("Ada M Example",)),
+        (("Ada Example",), ("Other Author",)),
+        (("Ada Example", "Bob Example"), ("Ada Example",)),
+        (("A Example",), ("A L Example",)),
+        (("Ada E",), ("Ada L E",)),
+        (("Ada Louise Example",), ("Ada Example",)),
+        (("Ada L, Example",), ("Ada L Example",)),
+        (("Ada Example", "Ada Example"), ("Ada L Example", "Ada Example")),
+        ((". Example",), (". B. Example",)),
+        ((". B. Example",), (". Example",)),
+        (("Ada .",), ("Ada B. .",)),
+        (("Ada B. .",), ("Ada .",)),
+        (("1 Example",), ("1 B. Example",)),
+        (("1 B. Example",), ("1 Example",)),
+        (("Ada 1",), ("Ada B. 1",)),
+        (("Ada B. 1",), ("Ada 1",)),
+        (("A.. Example",), ("A.. B. Example",)),
+        (("A.. B. Example",), ("A.. Example",)),
+        (("Ada E..",), ("Ada B. E..",)),
+        (("Ada B. E..",), ("Ada E..",)),
+        (("Ada É Example",), ("Ada Example",)),
+        (("Ada Example",), ("Ada É Example",)),
+    ),
+    ids=(
+        "unequal_initials",
+        "disjoint",
+        "unequal_cardinality",
+        "initial_only_given",
+        "initial_only_family",
+        "full_middle_name",
+        "arbitrary_punctuation",
+        "duplicate_creator",
+        "punctuation_given_left",
+        "punctuation_given_right",
+        "punctuation_family_left",
+        "punctuation_family_right",
+        "digit_given_left",
+        "digit_given_right",
+        "digit_family_left",
+        "digit_family_right",
+        "malformed_punctuation_given_left",
+        "malformed_punctuation_given_right",
+        "malformed_punctuation_family_left",
+        "malformed_punctuation_family_right",
+        "non_ascii_initial_left",
+        "non_ascii_initial_right",
+    ),
+)
+def test_closed_creator_display_possibility_rejects_outside_shapes(
+    left: tuple[str, ...], right: tuple[str, ...]
+) -> None:
+    assert not closed_creator_display_possibility(left, right)
 
 
 @pytest.mark.parametrize(

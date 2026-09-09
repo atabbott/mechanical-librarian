@@ -110,6 +110,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         policy_destinations_for: Callable[
             [MetadataReport, ProposalSet], dict[str, str] | None
         ],
+        current_cover_authority: Callable[[], tuple[str | None, str | None]],
         record_browse_unavailable_exception: Callable[[sqlite3.Error], None],
     ) -> None:
         super().__init__(connection, binding)
@@ -117,6 +118,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         # written, from here.  They keep the names their moved call sites use.
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
         self._policy_destinations_for = policy_destinations_for
+        self._current_cover_authority = current_cover_authority
         self._record_browse_unavailable_exception = record_browse_unavailable_exception
 
     def admit_review_case(self, proposal_set: ProposalSet) -> str:
@@ -505,13 +507,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
     ) -> tuple[tuple[str | None, str], ...]:
         try:
             query, pattern = _review_search_pattern(search)
+            cover_authority = self._current_cover_authority()
             condition = _REVIEW_ATTENTION_SQL
             if attention is False:
-                condition = f"NOT ({condition})"
+                condition = "attention=0"
+            elif attention is True:
+                condition = "attention=1"
             elif attention is None:
                 condition = "1"
             terminal_union = ""
             parameters: list[object] = [
+                *cover_authority,
                 query,
                 pattern,
                 pattern,
@@ -538,7 +544,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 parameters.extend((query, pattern, pattern, pattern, pattern))
             parameters.extend((limit, offset))
             rows = self._connection.execute(
-                "WITH page AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
+                "WITH candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
                 "mr.report_id,"
                 "CASE WHEN "
                 "rc.proposal_set_id=ml.proposal_set_id AND rc.report_id=ml.report_id "
@@ -547,29 +553,33 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "ml.item_id AS item_id,c.outcome AS outcome,"
                 "CASE WHEN "
                 + _REVIEW_ATTENTION_SQL
-                + " THEN 0 ELSE 1 END AS attention_order,"
+                + " THEN 1 ELSE 0 END AS attention,"
                 # A report's provider lanes are current evidence, not a
                 # second workflow state. Aggregate-only observations have no
                 # lanes, so the LEFT JOIN falls back to their own status.
                 # Provider completeness matters only inside the attention
                 # group: the no-attention lens remains alphabetical.
-                "CASE WHEN "
-                + _REVIEW_ATTENTION_SQL
-                + " AND EXISTS(SELECT 1 FROM json_each(mr.document,'$.providers') provider "
+                "CASE WHEN EXISTS(SELECT 1 FROM json_each(mr.document,'$.providers') provider "
                 "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 "
                 "WHERE COALESCE(json_extract(lane.value,'$.status'),"
                 "json_extract(provider.value,'$.status')) IN ("
                 "'authentication','authorization','rate_limited','unavailable',"
                 "'incomplete','malformed','oversized','candidate_limit_exceeded',"
-                "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_order,"
+                "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_limited,"
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) AS title_order,"
                 "COALESCE(rc.review_case_id,'') AS case_order,"
                 "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
                 "NULL AS recovery_attempt,NULL AS failure_code "
                 + _CURRENT_LIBRARY_FROM_SQL
-                + " WHERE COALESCE(c.outcome,'')<>'tombstoned' AND "
-                + condition
+                + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
                 + _REVIEW_SEARCH_SQL
+                + "),page AS MATERIALIZED (SELECT case_id,report_id,proposal_set_id,"
+                "connection_name,library_name,item_id,outcome,"
+                "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
+                "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
+                "AS provider_order,title_order,case_order,work_id,attempt,stage,"
+                "failure_root,recovery_attempt,failure_code FROM candidates WHERE "
+                + condition
                 + terminal_union
                 + " ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
                 "connection_name,case_order LIMIT ? OFFSET ?) "
@@ -648,9 +658,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
     def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
         try:
             query, pattern = _review_search_pattern(search)
+            cover_authority = self._current_cover_authority()
             row = self._connection.execute(
                 _CURRENT_REVIEW_CASE_COUNT_SQL,
-                (query, pattern, pattern, pattern, pattern, pattern),
+                (*cover_authority, query, pattern, pattern, pattern, pattern, pattern),
             ).fetchone()
             if (
                 row is None
@@ -683,17 +694,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         # the `str` the row validation below proves.
         try:
             query, pattern = _review_search_pattern(search)
+            cover_authority = self._current_cover_authority()
             rows = self._connection.execute(
-                "WITH page AS MATERIALIZED (SELECT rc.review_case_id AS review_case_id,"
+                "WITH candidates AS MATERIALIZED (SELECT rc.review_case_id AS review_case_id,"
                 "mr.report_id AS report_id,CASE WHEN "
                 "rc.proposal_set_id=c.proposal_set_id AND rc.report_id=c.report_id "
                 "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
                 "result.destination AS destination,"
-                "(SELECT count(*) FROM review_case_field_facts result "
-                "WHERE result.review_case_id=rc.review_case_id AND "
+                "CASE WHEN "
                 + _REVIEW_FIELD_ATTENTION_SQL
                 + _EPUB_INAPPLICABLE_ATTENTION_SQL
-                + ") AS attention_count,"
+                + " THEN 1 ELSE 0 END AS attention,"
                 "(SELECT outcome.disposition FROM shadow_decision_outcomes shadow "
                 "JOIN shadow_outcome_field_facts outcome "
                 "ON outcome.outcome_set_id=shadow.outcome_set_id "
@@ -708,11 +719,13 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "AS title_order,c.library_name AS library_name,c.item_id AS item_id "
                 + _CURRENT_REVIEW_FROM_SQL
                 + " JOIN review_case_field_facts result "
-                "ON result.review_case_id=rc.review_case_id WHERE "
-                + _REVIEW_FIELD_ATTENTION_SQL
-                + _EPUB_INAPPLICABLE_ATTENTION_SQL
+                "ON result.review_case_id=rc.review_case_id WHERE 1"
                 + _REVIEW_SEARCH_SQL
-                + " ORDER BY "
+                + "),attentive AS MATERIALIZED (SELECT review_case_id,report_id,"
+                "proposal_set_id,destination,count(*) OVER (PARTITION BY review_case_id) "
+                "AS attention_count,disposition,cause,title_order,library_name,item_id "
+                "FROM candidates WHERE attention=1),page AS MATERIALIZED (SELECT * "
+                "FROM attentive" + " ORDER BY "
                 "title_order,library_name,item_id,destination,review_case_id "
                 "LIMIT ? OFFSET ?) "
                 "SELECT rc.document,mr.document,page.proposal_set_id,page.destination,"
@@ -721,7 +734,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "JOIN metadata_reports mr ON mr.report_id=page.report_id "
                 "ORDER BY page.title_order,page.library_name,page.item_id,"
                 "page.destination,page.review_case_id",
-                (query, pattern, pattern, pattern, pattern, pattern, limit, offset),
+                (
+                    *cover_authority,
+                    query,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    limit,
+                    offset,
+                ),
             ).fetchall()
             values = []
             for row in rows:
@@ -765,6 +788,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
     def count_current_attention_fields(self, search: str | None) -> int:
         try:
             query, pattern = _review_search_pattern(search)
+            cover_authority = self._current_cover_authority()
             row = self._connection.execute(
                 "SELECT count(*) "
                 + _CURRENT_REVIEW_FROM_SQL
@@ -773,7 +797,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + _REVIEW_FIELD_ATTENTION_SQL
                 + _EPUB_INAPPLICABLE_ATTENTION_SQL
                 + _REVIEW_SEARCH_SQL,
-                (query, pattern, pattern, pattern, pattern, pattern),
+                (*cover_authority, query, pattern, pattern, pattern, pattern, pattern),
             ).fetchone()
             if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
                 raise MetadataReportError("review attention count is invalid")

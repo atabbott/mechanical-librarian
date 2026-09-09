@@ -81,6 +81,9 @@ def _open_read_only(path: Path) -> sqlite3.Connection:
     connection.create_function(
         "ml_casefold", 1, lambda value: value, deterministic=True
     )
+    connection.create_function(
+        "ml_cover_consideration_current", 2, lambda _document, _replay: 0
+    )
     return connection
 
 

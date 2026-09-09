@@ -7,6 +7,7 @@ import json
 import re
 import unicodedata
 from dataclasses import dataclass
+from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Mapping, Self, cast
 
@@ -54,6 +55,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
     TargetSeries,
+    WorkIdentityContradiction,
     canonical_asin,
     canonical_json,
     complete_creator_identity_bindings,
@@ -62,9 +64,12 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
+    provider_candidate_series_identity_matches,
     provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
+    provider_candidate_work_identity_contradiction,
     publication_date_is_voting,
+    target_work_identity_context,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkTitleElectionMatch,
@@ -76,13 +81,13 @@ from mechanical_librarian.domain.work_identity import (
 if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
-PROPOSAL_SCHEMA = "proposal-set-v6"
+PROPOSAL_SCHEMA = "proposal-set-v7"
 # What the proposals in one set were formed for. F47 owns the writes, so this
 # is what tells a decision recorded against an audiobook apart from one that
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v19"
+POLICY_VERSION = "fixed-conservative-v22"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -283,6 +288,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("field_policy_conflict",),
             ("no_safe_bibliographic_combination",),
             ("current_cover_verified", "owner_cover_choice_required"),
+            ("cover_gallery_incomplete", "owner_cover_choice_required"),
             (
                 "current_cover_unavailable",
                 "current_cover_unverified",
@@ -1116,8 +1122,13 @@ def evaluate_report(
             destination,
             targets[destination],
             observations,
+            report,
             _dependencies(destination),
         )
+        if destination is TargetDestination.SERIES:
+            result = _resolve_series_subset(
+                result, targets[destination], observations, report
+            )
         if (
             destination is TargetDestination.ISBN
             and not observations
@@ -2138,6 +2149,7 @@ def _subtitle_component_is_preserved(
         TargetDestination.SUBTITLE,
         target,
         _observations(report, TargetDestination.SUBTITLE),
+        report,
     )
     return any(
         alternative.value.kind is ProposalValueKind.TEXT
@@ -2468,6 +2480,8 @@ def _target_backed_lookup_contains(
     report: MetadataReport,
     provider: ProviderObservation,
     candidate: ProviderCandidate,
+    *,
+    required_lane: ProviderLaneObservation | None = None,
 ) -> bool:
     """Require a successful candidate lane backed by the exact report target."""
     local_claims = {claim.reference: claim for claim in report.local_claims}
@@ -2586,6 +2600,7 @@ def _target_backed_lookup_contains(
             )
         )
         for lane in provider.lanes
+        if required_lane is None or lane == required_lane
     )
 
 
@@ -2643,25 +2658,12 @@ def provider_candidate_represents_target_work(
     candidate: ProviderCandidate,
 ) -> bool:
     """Prove one retained candidate describes the target work through its lane."""
-    targets = {field.destination: field for field in report.target.fields}
-    title = targets[TargetDestination.TITLE]
-    authors = targets[TargetDestination.AUTHORS]
-    if (
-        title.state is not TargetFieldState.VALUE
-        or type(title.value) is not str
-        or authors.state is not TargetFieldState.VALUE
-        or type(authors.value) is not tuple
-        or not authors.value
-        or not all(type(value) is str for value in authors.value)
-        or not _target_backed_lookup_contains(report, provider, candidate)
+    context = target_work_identity_context(report.target)
+    if context is None or not _target_backed_lookup_contains(
+        report, provider, candidate
     ):
         return False
-    expected_title = normalize_title(title.value)
-    expected_authors = tuple(
-        normalize_title(value) for value in cast("tuple[str, ...]", authors.value)
-    )
-    if len({value.casefold() for value in expected_authors}) != len(expected_authors):
-        return False
+    expected_title, expected_authors = context
     candidates_by_identity = {value.identity: value for value in provider.candidates}
     for lane in provider.lanes:
         if (
@@ -2724,6 +2726,76 @@ def provider_candidate_represents_target_work(
     return False
 
 
+def provider_candidate_represents_target_series_work(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> bool:
+    """Keep strict WORK admission first, with a series-only ISBN fallback."""
+    if provider_candidate_represents_target_work(report, provider, candidate):
+        return True
+    targets = {field.destination: field for field in report.target.fields}
+    title = targets[TargetDestination.TITLE]
+    authors = targets[TargetDestination.AUTHORS]
+    if (
+        title.state is not TargetFieldState.VALUE
+        or type(title.value) is not str
+        or not title.value
+        or authors.state is not TargetFieldState.VALUE
+        or type(authors.value) is not tuple
+        or not authors.value
+        or not all(type(value) is str and value for value in authors.value)
+    ):
+        return False
+    by_identity = {value.identity: value for value in provider.candidates}
+    for lane in provider.lanes:
+        if (
+            lane.kind is not ProviderQueryKind.ISBN
+            or lane.status is not ProviderStatus.CANDIDATES
+            or lane.matched_family is None
+            or not lane.input_references
+            or not lane.candidates
+            or any(
+                member.edition_identity not in by_identity for member in lane.candidates
+            )
+        ):
+            continue
+        sources = tuple(
+            by_identity[member.edition_identity] for member in lane.candidates
+        )
+        if (
+            candidate not in sources
+            or len({source.work_identity for source in sources}) != 1
+            or any(
+                source.work_identity in {"", "unresolved"}
+                or member.work_identity != source.work_identity
+                for member, source in zip(lane.candidates, sources, strict=True)
+            )
+        ):
+            continue
+        if not all(
+            _target_backed_lookup_contains(report, provider, source, required_lane=lane)
+            and (
+                families := tuple(
+                    isbn_family(claim.value)
+                    for claim in source.claims
+                    if claim.kind is ClaimKind.ISBN
+                    and claim.scope is ClaimScope.EDITION
+                    and claim.state is FieldState.VALID
+                    and type(claim.value) is str
+                )
+            )
+            and all(family == lane.matched_family for family in families)
+            and provider_candidate_series_identity_matches(
+                source, title.value, cast("tuple[str, ...]", authors.value)
+            )
+            for source in sources
+        ):
+            continue
+        return True
+    return False
+
+
 def _creator_sets_match(
     authors: tuple[ProviderClaim, ...],
     author_bindings: tuple[ProviderIdentityBinding, ...] | None,
@@ -2768,6 +2840,77 @@ def _controlled_creator_placeholder(claim: LocalClaim) -> bool:
         and claim.canonical is not None
         and " ".join(unicodedata.normalize("NFKC", claim.canonical).split()).casefold()
         == "unknown"
+    )
+
+
+def _series_bundle_dominates(candidate: ProposalValue, other: ProposalValue) -> bool:
+    """Compare source bundles without rewriting their names or positions."""
+    if (
+        candidate.kind is not ProposalValueKind.SERIES
+        or other.kind is not ProposalValueKind.SERIES
+    ):
+        return False
+    # ProposalValue validates the correlated TargetSeries tuple for this kind.
+    candidate_memberships = cast("tuple[TargetSeries, ...]", candidate.value)
+    other_memberships = cast("tuple[TargetSeries, ...]", other.value)
+    memberships = {
+        series_name_equivalence_key(item.name): item.sequence
+        for item in candidate_memberships
+    }
+    if len(memberships) != len(candidate_memberships):
+        return False
+    for item in other_memberships:
+        name = series_name_equivalence_key(item.name)
+        if name not in memberships:
+            return False
+        position = memberships[name]
+        if item.sequence is None or item.sequence == position:
+            continue
+        if (
+            position is None
+            or not all(
+                re.fullmatch(r"(?:0|[1-9][0-9]*)(?:\.[0-9]+)?", value)
+                for value in (position, item.sequence)
+            )
+            or Decimal(position) != Decimal(item.sequence)
+        ):
+            return False
+    return True
+
+
+def _resolve_series_subset(
+    result: ProposalResult,
+    target: TargetField,
+    observations: tuple[_Observed, ...],
+    report: MetadataReport,
+) -> ProposalResult:
+    """Elect only a unique existing bundle that covers every alternative."""
+    if (
+        result.outcome is not ProposalOutcome.UNRESOLVED_CHOICE
+        or len(result.alternatives) < 2
+    ):
+        return result
+    dominant = tuple(
+        candidate
+        for candidate in result.alternatives
+        if all(
+            _series_bundle_dominates(candidate.value, other.value)
+            for other in result.alternatives
+        )
+    )
+    if len(dominant) != 1:
+        return result
+    references = set(dominant[0].evidence_references)
+    return _evaluate(
+        TargetDestination.SERIES,
+        target,
+        tuple(
+            observed
+            for observed in observations
+            if set(observed.references) <= references
+        ),
+        report,
+        result.dependencies,
     )
 
 
@@ -2885,6 +3028,7 @@ def _series_from_claims(
 
 def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
     values: list[_Observed] = []
+    work_context = target_work_identity_context(report.target)
     claim: LocalClaim | ProviderClaim
     for claim in report.local_claims:
         if (
@@ -2915,6 +3059,14 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 )
     for provider in report.providers:
         for candidate in provider.candidates:
+            if (
+                work_context is not None
+                and provider_candidate_work_identity_contradiction(
+                    candidate, *work_context
+                )
+                is WorkIdentityContradiction.EXPLICIT
+            ):
+                continue
             for claim in candidate.claims:
                 if (
                     claim.kind is ClaimKind.PUBLICATION_DATE
@@ -3023,6 +3175,7 @@ def _publication_results(
         TargetDestination.PUBLISHED_DATE,
         date_target,
         dates,
+        report,
     )
     year_result = ProposalResult(
         TargetDestination.PUBLISHED_YEAR,
@@ -3257,6 +3410,14 @@ def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult
             ("no_supported_evidence",),
         )
     if incomplete:
+        if candidates:
+            return ProposalResult(
+                TargetDestination.COVER,
+                ProposalOutcome.UNRESOLVED_CHOICE,
+                candidates,
+                None,
+                ("cover_gallery_incomplete", "owner_cover_choice_required"),
+            )
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.DEFER,
@@ -3277,9 +3438,10 @@ def _evaluate(
     destination: TargetDestination,
     target: TargetField,
     observations: tuple[_Observed, ...],
+    report: MetadataReport,
     dependencies: tuple[TargetDestination, ...] = (),
 ) -> ProposalResult:
-    alternatives = _alternatives(destination, target, observations)
+    alternatives = _alternatives(destination, target, observations, report)
     if target.state in {
         TargetFieldState.UNLOADED,
         TargetFieldState.MALFORMED,
@@ -3459,6 +3621,7 @@ def _alternatives(
     destination: TargetDestination,
     target: TargetField,
     observations: tuple[_Observed, ...],
+    report: MetadataReport,
 ) -> tuple[ProposalAlternative, ...]:
     grouped: dict[
         tuple[
@@ -3491,6 +3654,10 @@ def _alternatives(
     ):
         values = grouped[key]
         proposal_values = tuple(value.value for value in values)
+        if destination is TargetDestination.DESCRIPTION:
+            ordinary_provider_values = _ordinary_description_values(report, values)
+            if ordinary_provider_values:
+                proposal_values = ordinary_provider_values
         if destination is TargetDestination.ISBN:
             isbn13_values = tuple(
                 value
@@ -3819,6 +3986,28 @@ def _eligible_description(destination: TargetDestination, value: str) -> bool:
     )
 
 
+def ordinary_provider_description_source_is_safe(
+    claim: ProviderClaim,
+    candidate: ProviderCandidate,
+) -> bool:
+    """Recognize one exact ordinary provider description source."""
+    return (
+        type(claim) is ProviderClaim
+        and type(candidate) is ProviderCandidate
+        and claim in candidate.claims
+        and claim.kind is ClaimKind.DESCRIPTION
+        and claim.scope is ClaimScope.WORK
+        and claim.state is FieldState.VALID
+        and type(claim.value) is str
+        and _eligible_description(TargetDestination.DESCRIPTION, claim.value)
+        and not any(
+            evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
+            and evidence.scope is ClaimScope.WORK
+            for evidence in candidate.evidence
+        )
+    )
+
+
 def _eligible_provider_description(
     destination: TargetDestination,
     value: str,
@@ -3839,6 +4028,25 @@ def _eligible_provider_description(
         and evidence.scope is ClaimScope.WORK
         and evidence.value == "google-books-html-visible-text-v1"
         for evidence in candidate.evidence
+    )
+
+
+def _ordinary_description_values(
+    report: MetadataReport,
+    observations: list[_Observed],
+) -> tuple[ProposalValue, ...]:
+    references = {
+        reference for observed in observations for reference in observed.references
+    }
+    return tuple(
+        _value(TargetDestination.DESCRIPTION, claim.value)
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.reference in references
+        and claim.value is not None
+        and ordinary_provider_description_source_is_safe(claim, candidate)
+        and provider_candidate_represents_target_work(report, provider, candidate)
     )
 
 
