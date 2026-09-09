@@ -806,9 +806,7 @@ def _prior_f20_decision(prior_digest: str) -> AutomaticDecision:
     )
     core = {
         **current._core(),
-        "qualification_manifest_sha256": (
-            prior_digest
-        ),
+        "qualification_manifest_sha256": (prior_digest),
     }
     return AutomaticDecision(
         decision_id="automatic_decision_" + digest({**core, "occurred_at": 1}),
@@ -908,11 +906,16 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
     assert transitions[-1] == ("activity", None)
 
 
-@pytest.mark.parametrize("prior_digest", (
-    "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
-    "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
-))
-def test_schedule_skips_prior_f20_before_no_change_authority_or_capability(prior_digest: str) -> None:
+@pytest.mark.parametrize(
+    "prior_digest",
+    (
+        "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
+        "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
+    ),
+)
+def test_schedule_skips_prior_f20_before_no_change_authority_or_capability(
+    prior_digest: str,
+) -> None:
     decision = _prior_f20_decision(prior_digest)
     assert AutomaticDecision.from_json(decision.to_json()) == decision
 

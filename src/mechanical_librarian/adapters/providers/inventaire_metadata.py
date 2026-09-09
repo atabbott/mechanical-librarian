@@ -396,7 +396,8 @@ class InventaireMetadataProvider:
                 for candidate, descriptor in pairs
                 if provider_candidate_work_identity_contradiction(
                     candidate, lookup.title or "", lookup.authors
-                ) is not WorkIdentityContradiction.EXPLICIT
+                )
+                is not WorkIdentityContradiction.EXPLICIT
             )
             merged = merge_provider_cover_descriptors(
                 self.cover_descriptors,
@@ -602,10 +603,15 @@ class InventaireMetadataProvider:
                     or len(missing) > _MAX_ENTITY_BATCH
                     or any(type(uri) is not str for uri in missing)
                     or len(set(missing)) != len(missing)
-                    or (missing and (
-                        entities or redirects or set(missing) != set(isbn_uris)
-                        or len(isbn_uris) != len(uris)
-                    ))
+                    or (
+                        missing
+                        and (
+                            entities
+                            or redirects
+                            or set(missing) != set(isbn_uris)
+                            or len(isbn_uris) != len(uris)
+                        )
+                    )
                 ):
                     raise ValueError("provider ISBN absence is malformed")
                 if missing:
@@ -980,7 +986,9 @@ def _add_values(
                 local_claims,
                 len(claims),
                 applicability=(
-                    "not_applicable" if applicability is None or text is None else applicability(text)
+                    "not_applicable"
+                    if applicability is None or text is None
+                    else applicability(text)
                 ),
                 role=role,
             )

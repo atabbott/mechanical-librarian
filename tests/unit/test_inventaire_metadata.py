@@ -252,7 +252,10 @@ def test_work_search_hydrates_discovery_identity_before_mapping() -> None:
     observation = provider.observe(lookup)
 
     assert observation.status is ProviderStatus.CANDIDATES
-    assert qualify_provider_observation(observation, lookup).status is ProviderStatus.CANDIDATES
+    assert (
+        qualify_provider_observation(observation, lookup).status
+        is ProviderStatus.CANDIDATES
+    )
     assert observation.candidates[0].identity == "inventaire-work-wd-Q100"
     assert observation.candidates[0].work_identity == "inventaire-work-wd-Q100"
     assert observation.candidates[0].claims
@@ -781,11 +784,16 @@ def test_optional_label_absence_preserves_work_search_evidence() -> None:
         claim.kind is ClaimKind.TITLE and claim.value == "Example Book"
         for claim in candidate.claims
     )
-    authors = tuple(claim for claim in candidate.claims if claim.kind is ClaimKind.CREATOR)
+    authors = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.CREATOR
+    )
     assert len(authors) == 1
     assert authors[0].role == "author"
     assert authors[0].state is FieldState.ABSENT
-    assert qualify_provider_observation(observation, lookup).status is ProviderStatus.NO_MATCH
+    assert (
+        qualify_provider_observation(observation, lookup).status
+        is ProviderStatus.NO_MATCH
+    )
     assert provider.cover_descriptors[0].provenance is not None
     assert provider.cover_descriptors[0].provenance.designation is CoverDesignation.WORK
     assert len(requests) == 3
@@ -1021,47 +1029,85 @@ def test_identifier_candidate_without_work_identity_preserves_work_search() -> N
 
 
 def test_exact_missing_isbn_is_no_match() -> None:
-    observation = _provider(httpx.MockTransport(lambda _: httpx.Response(
-        200, json={"entities": {}, "redirects": {}, "notFound": ["isbn:9780306406157"]},
-    ))).observe(_lookup())
+    observation = _provider(
+        httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "entities": {},
+                    "redirects": {},
+                    "notFound": ["isbn:9780306406157"],
+                },
+            )
+        )
+    ).observe(_lookup())
     assert observation.status is ProviderStatus.NO_MATCH
     assert observation.candidates == ()
     assert observation.input_references == (_isbn().reference,)
 
 
-@pytest.mark.parametrize("missing", (
-    None, "isbn:9780306406157", {}, [], ["isbn:9780000000002"],
-    ["isbn:9780306406157", "isbn:9780306406157"], [1],
-))
-def test_missing_isbn_envelope_requires_exact_negative_membership(missing: object) -> None:
-    observation = _provider(httpx.MockTransport(lambda _: httpx.Response(
-        200, json={"entities": {}, "redirects": {}, "notFound": missing},
-    ))).observe(_lookup())
+@pytest.mark.parametrize(
+    "missing",
+    (
+        None,
+        "isbn:9780306406157",
+        {},
+        [],
+        ["isbn:9780000000002"],
+        ["isbn:9780306406157", "isbn:9780306406157"],
+        [1],
+    ),
+)
+def test_missing_isbn_envelope_requires_exact_negative_membership(
+    missing: object,
+) -> None:
+    observation = _provider(
+        httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={"entities": {}, "redirects": {}, "notFound": missing},
+            )
+        )
+    ).observe(_lookup())
     assert observation.status is ProviderStatus.MALFORMED
     assert observation.candidates == ()
 
 
-@pytest.mark.parametrize("entities,redirects", (
-    ({}, {"isbn:9780306406157": "inv:edition-one"}),
-    ({"inv:edition-one": {"uri": "inv:edition-one", "claims": {}}}, {}),
-))
+@pytest.mark.parametrize(
+    "entities,redirects",
+    (
+        ({}, {"isbn:9780306406157": "inv:edition-one"}),
+        ({"inv:edition-one": {"uri": "inv:edition-one", "claims": {}}}, {}),
+    ),
+)
 def test_negative_isbn_contradictions_fail_before_absence(
     entities: dict[str, object], redirects: dict[str, str]
 ) -> None:
-    observation = _provider(httpx.MockTransport(lambda _: httpx.Response(
-        200, json={"entities": entities, "redirects": redirects,
-                   "notFound": ["isbn:9780306406157"]},
-    ))).observe(_lookup())
+    observation = _provider(
+        httpx.MockTransport(
+            lambda _: httpx.Response(
+                200,
+                json={
+                    "entities": entities,
+                    "redirects": redirects,
+                    "notFound": ["isbn:9780306406157"],
+                },
+            )
+        )
+    ).observe(_lookup())
     assert observation.status is ProviderStatus.MALFORMED
 
 
-@pytest.mark.parametrize("matching,unresolved,expected,count", (
-    (1, False, ProviderStatus.CANDIDATES, 1),
-    (0, False, ProviderStatus.NO_MATCH, 0),
-    (2, False, ProviderStatus.CANDIDATES, 2),
-    (3, False, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, 0),
-    (1, True, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, 0),
-))
+@pytest.mark.parametrize(
+    "matching,unresolved,expected,count",
+    (
+        (1, False, ProviderStatus.CANDIDATES, 1),
+        (0, False, ProviderStatus.NO_MATCH, 0),
+        (2, False, ProviderStatus.CANDIDATES, 2),
+        (3, False, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, 0),
+        (1, True, ProviderStatus.CANDIDATE_LIMIT_EXCEEDED, 0),
+    ),
+)
 def test_three_search_rows_prune_only_explicit_wrong_work(
     matching: int, unresolved: bool, expected: ProviderStatus, count: int
 ) -> None:
@@ -1071,40 +1117,77 @@ def test_three_search_rows_prune_only_explicit_wrong_work(
         requests.append(request)
         if request.url.path == "/api/search":
             assert request.url.params["limit"] == "3"
-            return httpx.Response(200, json={"results": [
-                {"id": f"Q{index}", "type": "works", "uri": f"wd:Q{index}"}
-                for index in range(3)
-            ]})
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {"id": f"Q{index}", "type": "works", "uri": f"wd:Q{index}"}
+                        for index in range(3)
+                    ]
+                },
+            )
         uris = request.url.params.get_list("uris")
         if uris == ["wd:Q42"]:
-            return httpx.Response(200, json={"entities": {
-                "wd:Q42": {"uri": "wd:Q42", "labels": {"en": "Ada Example"}, "claims": {}}
-            }, "redirects": {}})
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "wd:Q42": {
+                            "uri": "wd:Q42",
+                            "labels": {"en": "Ada Example"},
+                            "claims": {},
+                        }
+                    },
+                    "redirects": {},
+                },
+            )
         assert uris == ["wd:Q0", "wd:Q1", "wd:Q2"]
-        return httpx.Response(200, json={"entities": {
-            f"wd:Q{index}": {
-                "uri": f"wd:Q{index}",
-                "claims": {"wdt:P1476": ["Example Book" if index < matching else "Other Book"],
-                           "wdt:P50": [] if unresolved and index >= matching else ["wd:Q42"]},
-                "image": {"url": "/img/entities/" + str(index) * 40},
-            } for index in range(3)
-        }, "redirects": {}})
+        return httpx.Response(
+            200,
+            json={
+                "entities": {
+                    f"wd:Q{index}": {
+                        "uri": f"wd:Q{index}",
+                        "claims": {
+                            "wdt:P1476": [
+                                "Example Book" if index < matching else "Other Book"
+                            ],
+                            "wdt:P50": []
+                            if unresolved and index >= matching
+                            else ["wd:Q42"],
+                        },
+                        "image": {"url": "/img/entities/" + str(index) * 40},
+                    }
+                    for index in range(3)
+                },
+                "redirects": {},
+            },
+        )
 
-    lookup = MetadataLookup(ProviderQueryKind.WORK, (), title="Example Book", authors=("Ada Example",))
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK, (), title="Example Book", authors=("Ada Example",)
+    )
     provider = _provider(httpx.MockTransport(respond))
     observation = provider.observe(lookup)
     assert observation.status is expected
     assert len(observation.candidates) == count
     searches = [request for request in requests if request.url.path == "/api/search"]
-    assert len(searches) == (2 if expected is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED else 1)
+    assert len(searches) == (
+        2 if expected is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED else 1
+    )
     qualified = qualify_provider_observation(observation, lookup)
     assert qualified.status is (ProviderStatus.NO_MATCH if matching == 2 else expected)
     if matching == 1 and not unresolved:
-        assert {descriptor.provenance.work_identity for descriptor in provider.cover_descriptors
-                if descriptor.provenance is not None} == {"inventaire-work-wd-Q0"}
+        assert {
+            descriptor.provenance.work_identity
+            for descriptor in provider.cover_descriptors
+            if descriptor.provenance is not None
+        } == {"inventaire-work-wd-Q0"}
         assert qualified.dispatch_lineage == observation.dispatch_lineage
     assert observation.request_accounting.initial_dispatches == 3
-    assert observation.request_accounting.retry_dispatches == (1 if len(searches) == 2 else 0)
+    assert observation.request_accounting.retry_dispatches == (
+        1 if len(searches) == 2 else 0
+    )
 
 
 @pytest.mark.parametrize("second_label", (None, {"en": 123}, {"en": "Other Author"}))
@@ -1113,21 +1196,50 @@ def test_incomplete_or_different_p50_authors_cannot_become_single_author(
 ) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/search":
-            return httpx.Response(200, json={"results": [{"id": "Q1", "uri": "wd:Q1", "type": "works"}]})
+            return httpx.Response(
+                200, json={"results": [{"id": "Q1", "uri": "wd:Q1", "type": "works"}]}
+            )
         if request.url.params.get_list("uris") == ["wd:Q1"]:
-            return httpx.Response(200, json={"entities": {"wd:Q1": {
-                "uri": "wd:Q1", "claims": {"wdt:P1476": ["Example Book"], "wdt:P50": ["wd:Q42", "wd:Q43"]},
-            }}, "redirects": {}})
-        return httpx.Response(200, json={"entities": {
-            "wd:Q42": {"uri": "wd:Q42", "labels": {"en": "Ada Example"}},
-            "wd:Q43": {"uri": "wd:Q43", "labels": second_label},
-        }, "redirects": {}})
+            return httpx.Response(
+                200,
+                json={
+                    "entities": {
+                        "wd:Q1": {
+                            "uri": "wd:Q1",
+                            "claims": {
+                                "wdt:P1476": ["Example Book"],
+                                "wdt:P50": ["wd:Q42", "wd:Q43"],
+                            },
+                        }
+                    },
+                    "redirects": {},
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "entities": {
+                    "wd:Q42": {"uri": "wd:Q42", "labels": {"en": "Ada Example"}},
+                    "wd:Q43": {"uri": "wd:Q43", "labels": second_label},
+                },
+                "redirects": {},
+            },
+        )
 
-    lookup = MetadataLookup(ProviderQueryKind.WORK, (), title="Example Book", authors=("Ada Example",))
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK, (), title="Example Book", authors=("Ada Example",)
+    )
     observation = _provider(httpx.MockTransport(respond)).observe(lookup)
-    assert qualify_provider_observation(observation, lookup).status is ProviderStatus.NO_MATCH
+    assert (
+        qualify_provider_observation(observation, lookup).status
+        is ProviderStatus.NO_MATCH
+    )
     if second_label != {"en": "Other Author"}:
-        authors = [claim for claim in observation.candidates[0].claims if claim.kind is ClaimKind.CREATOR]
+        authors = [
+            claim
+            for claim in observation.candidates[0].claims
+            if claim.kind is ClaimKind.CREATOR
+        ]
         assert len(authors) == 2
         assert all(claim.role == "author" for claim in authors)
         assert sum(claim.state is FieldState.ABSENT for claim in authors) == 1

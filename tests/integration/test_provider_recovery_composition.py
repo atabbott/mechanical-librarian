@@ -18,8 +18,11 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
 )
+from mechanical_librarian.adapters.providers.inventaire_metadata import (
+    InventaireMetadataProvider,
+    InventairePacer,
+)
 from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
-from mechanical_librarian.adapters.providers.inventaire_metadata import InventaireMetadataProvider, InventairePacer
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -730,9 +733,7 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
             ),
             (MediaMountConfiguration("books", "/container", "/service", True),),
             (
-                ProviderConnectionConfiguration(
-                    "google", True, False, None, adapter
-                ),
+                ProviderConnectionConfiguration("google", True, False, None, adapter),
                 ProviderConnectionConfiguration(
                     "hardcover", True, False, "/run/hardcover-token", "hardcover"
                 ),
@@ -801,16 +802,26 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
                 assert request.url.path == "/api/entities/by-uris"
                 if status is ProviderStatus.RATE_LIMITED:
                     return httpx.Response(429, headers={"Retry-After": "37"})
-                return httpx.Response(200, json={
-                    "entities": {"inv:edition-one": {
-                        "uri": "inv:edition-one",
-                        "claims": {"wdt:P212": ["9780306406157"], "wdt:P1476": ["Recovered title"]},
-                    }},
-                    "redirects": {"isbn:9780306406157": "inv:edition-one"},
-                })
+                return httpx.Response(
+                    200,
+                    json={
+                        "entities": {
+                            "inv:edition-one": {
+                                "uri": "inv:edition-one",
+                                "claims": {
+                                    "wdt:P212": ["9780306406157"],
+                                    "wdt:P1476": ["Recovered title"],
+                                },
+                            }
+                        },
+                        "redirects": {"isbn:9780306406157": "inv:edition-one"},
+                    },
+                )
 
             return InventaireMetadataProvider(
-                name, httpx.Client(transport=httpx.MockTransport(respond)), 65_536,
+                name,
+                httpx.Client(transport=httpx.MockTransport(respond)),
+                65_536,
                 pacer=InventairePacer(0.001, sleep=lambda _: None),
                 sleep=lambda _: None,
             )
@@ -822,7 +833,9 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
             patch.object(composition, "google_books_client", return_value=object()),
             patch.object(
                 composition,
-                "GoogleBooksMetadataProvider" if adapter == "google_books" else "InventaireMetadataProvider",
+                "GoogleBooksMetadataProvider"
+                if adapter == "google_books"
+                else "InventaireMetadataProvider",
                 side_effect=google_provider,
             ),
             patch.object(

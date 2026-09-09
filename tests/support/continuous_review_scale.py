@@ -1678,8 +1678,10 @@ class _InstalledQualificationEnvironment:
 
     @contextmanager
     def running_preparation(
-        self, phase_observer: _InstalledPhaseObserver | None = None,
-        *, report_factory: Callable[[MetadataReport], MetadataReport] | None = None,
+        self,
+        phase_observer: _InstalledPhaseObserver | None = None,
+        *,
+        report_factory: Callable[[MetadataReport], MetadataReport] | None = None,
     ) -> Iterator[_InstalledPreparationRun]:
         with _running_installed_preparation(
             database=self.database,
