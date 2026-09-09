@@ -57,6 +57,125 @@ from tests.unit.review_app_fixture import (
 )
 
 
+def test_retained_policy_snapshot_cannot_borrow_concurrent_resolution(tmp_path) -> None:
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    database = tmp_path / "policy-snapshot.sqlite"
+    reader = open_repository(database)
+    report = retained_decoration_report("subtitle")
+    builtin = MetadataPolicyProfile.builtin()
+    destinations = dict(builtin.destinations)
+    destinations.update(title_layout="ask", subtitle="ask")
+    first = MetadataPolicyProfile.create(
+        "First Ask", dict(builtin.options), destinations
+    )
+    first_resolution = resolve_policy(first, report.target.library)
+    reader.enter_shadow_preview(1)
+    reader.create_metadata_policy_draft(first.canonical_json)
+    reader.activate_metadata_policy(
+        first.policy_id,
+        builtin.policy_id,
+        (
+            (
+                report.target.library,
+                first_resolution.resolved_id,
+                first_resolution.canonical_json,
+            ),
+        ),
+        2,
+    )
+    proposal = evaluate_report(
+        report,
+        first_resolution.resolved_id,
+        human_review_destinations(first_resolution),
+    )
+    reader.publish(report, lambda: True)
+    reader.publish_proposal(proposal)
+    case_id = json.loads(reader.admit_review_case(proposal))["review_case_id"]
+    destinations.update(title_layout="automatic", subtitle="automatic")
+    second = MetadataPolicyProfile.create(
+        "Second Automatic", dict(builtin.options), destinations
+    )
+    second_resolution = resolve_policy(second, report.target.library)
+    reader.create_metadata_policy_draft(second.canonical_json)
+    written = threading.Event()
+    finished = threading.Event()
+    errors: list[BaseException] = []
+    writer_path = database if reader._binding is None else reader._binding.alias_path
+
+    def advance():
+        connection = sqlite3.connect(writer_path, isolation_level=None)
+        connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute("PRAGMA busy_timeout=5000")
+        writer = SQLiteMetadataReportRepository(connection)
+        try:
+            connection.set_trace_callback(
+                lambda statement: (
+                    written.set()
+                    if statement.startswith("INSERT INTO metadata_policy_resolutions")
+                    else None
+                )
+            )
+            writer.activate_metadata_policy(
+                second.policy_id,
+                first.policy_id,
+                (
+                    (
+                        report.target.library,
+                        second_resolution.resolved_id,
+                        second_resolution.canonical_json,
+                    ),
+                ),
+                3,
+            )
+            successor = evaluate_report(
+                report,
+                second_resolution.resolved_id,
+                human_review_destinations(second_resolution),
+            )
+            writer.publish_proposal(successor)
+            writer.admit_review_case(successor)
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            writer.close()
+            finished.set()
+
+    original = reader.get_review_case
+
+    def interleave(identity):
+        result = original(identity)
+        threading.Thread(target=advance, daemon=True).start()
+        assert written.wait(5), errors
+        return result
+
+    with patch.object(reader, "get_review_case", side_effect=interleave):
+        before = reader.read_current_review_case(case_id, None)
+    assert json.loads(before.case_document)["current"] is True
+    assert {"title", "subtitle"} <= set(before.policy_attention_destinations)
+    assert finished.wait(5)
+    assert errors == []
+    # The historical case retains its exact Ask resolution, while its successor
+    # reads Automatic even though both generations remain in the same store.
+    after = reader.read_current_review_case(case_id, None)
+    assert json.loads(after.case_document)["current"] is False
+    assert after.policy_attention_destinations == before.policy_attention_destinations
+    successor_id = reader.current_review_case_successor(case_id)
+    assert successor_id is not None
+    assert (
+        reader.read_current_review_case(
+            successor_id, None
+        ).policy_attention_destinations
+        == ()
+    )
+    reader.close()
+
+
 def test_current_case_snapshot_cannot_mix_concurrent_supersession() -> None:
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "application.sqlite3"

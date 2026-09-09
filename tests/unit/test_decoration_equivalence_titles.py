@@ -371,3 +371,39 @@ def test_collapsed_title_retains_independently_supported_component(component, ke
         value for value in selections if value.destination.value == component
     )
     assert component_selection.kind.value == "candidate"
+
+
+@pytest.mark.parametrize("third_title", ("Plain Work: A Second Look", "Different Work"))
+def test_failed_election_never_creates_component_associations(third_title):
+    from mechanical_librarian.domain import proposal_set as policy
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    original_report = retained_decoration_report("subtitle")
+    report = _report(
+        title=original_report.target.current_title,
+        fields=original_report.target.fields,
+        local_claims=original_report.local_claims,
+        providers=(
+            *original_report.providers,
+            _provider_title("google_books", third_title),
+        ),
+    )
+    destination = TargetDestination.TITLE
+    targets = {value.destination: value for value in report.target.fields}
+    observations = policy._observations(report, destination)
+    original = policy._evaluate(
+        destination,
+        targets[destination],
+        observations,
+        report,
+        policy._dependencies(destination),
+    )
+    result, associations = policy._decoration_equivalence_election(
+        report, targets, original, observations
+    )
+    assert associations == {}
+    assert result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+    if third_title == "Plain Work: A Second Look":
+        assert "decoration_equivalence_decorated_consensus" in result.reasons
+    else:
+        assert result == original

@@ -98,6 +98,7 @@ class CurrentReviewCaseSnapshot:
     history: tuple[dict[str, object], ...]
     automatic_source_outcome_documents: tuple[str, ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
+    policy_attention_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
     shadow_abstention_destinations: tuple[str, ...] = ()
     override_blocked_destinations: tuple[str, ...] = ()
@@ -129,7 +130,7 @@ class ReviewLibrarySnapshot:
 
 @dataclass(frozen=True, slots=True)
 class ReviewAttentionSnapshot:
-    rows: tuple[tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...]
+    rows: tuple[tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...]
     total: int
 
 
@@ -503,6 +504,7 @@ class InspectCurrentReviewCase:
                         and _needs_attention(
                             proposal,
                             snapshot.automatic_attention_destinations,
+                            policy_attention_destinations=snapshot.policy_attention_destinations,
                             owner_only=case.media_kind == "audiobook",
                         )
                     )
@@ -1103,6 +1105,7 @@ class BrowseReviewLibrary:
                         work_attention_count,
                         automatic_outcome,
                         cause,
+                        policy_attention,
                     ) = row
                     item = _attention_item(
                         case_document,
@@ -1111,6 +1114,7 @@ class BrowseReviewLibrary:
                         work_attention_count,
                         automatic_outcome=automatic_outcome,
                         cause=cause,
+                        policy_attention=policy_attention,
                     )
                     if len(items) < bounded_limit:
                         consumed += 1
@@ -1905,10 +1909,11 @@ def _needs_attention(
     automatic_attention_destinations: tuple[str, ...] = (),
     *,
     owner_only: bool = False,
+    policy_attention_destinations: tuple[str, ...] = (),
 ) -> bool:
     """Whether one proposal is the owner's to answer rather than settled.
 
-    A settled `propose_change` waits for the automatic lane on an ebook. No
+    A settled `propose_change` waits unless its bound policy routes it to Ask. No
     automatic authority ever reaches a recording, so on one there is nothing
     to wait for and every proposal is the owner's. The action list beside this
     decides whether a choice exists at all (#966).
@@ -1919,6 +1924,7 @@ def _needs_attention(
     assert type(reasons) is list
     return (
         owner_only
+        or proposal["destination"] in policy_attention_destinations
         or proposal["destination"] in automatic_attention_destinations
         or (proposal["destination"] == "cover" and "current_cover_verified" in reasons)
         or result["outcome"] == "unresolved_choice"
@@ -2358,6 +2364,7 @@ def _attention_item(
     work_attention_count: int,
     automatic_outcome: str | None = None,
     cause: ReviewFieldCause | None = None,
+    policy_attention: bool = False,
 ) -> dict[str, object] | None:
     case, report = _case_and_report(case_document, report_document)
     if _omitted_for_epub(destination, report.file.format):
@@ -2380,6 +2387,7 @@ def _attention_item(
             # made of it, and dropping it here would page short of the count
             # the row reports (#966).
             _needs_attention(proposal, owner_only=case.media_kind == "audiobook")
+            or policy_attention
             or cause == "automatic_safety_suspended"
             or (destination == "cover" and work_attention_count > 0)
         ),

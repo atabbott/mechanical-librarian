@@ -185,6 +185,7 @@ def test_f38_contributor_consensus_binds_its_own_manifest() -> None:
     (
         "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
         "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
+        "4420a5d1ea34f2e46e9c854b07c068e827324fbce942b4da8c301b3cd7409168",
     ),
 )
 def test_v11_v12_series_history_survives_narrowed_current_authority(
@@ -362,6 +363,7 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
         bundle_id=None,
     )
     prior_digests = (
+        "f7a4493d94f0188e6974aad1b68f9238d9e7733aa1a2e064e5663e385af0fe6e",
         "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
         "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
         "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",

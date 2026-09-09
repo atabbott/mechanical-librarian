@@ -306,3 +306,26 @@ option keeps 1.0 precision with zero structural or unsupported outputs.
 The historical machine-readable candidate described in this section is
 [`f20-rich-metadata-qualification-candidate-v11.json`](../reference/f20-rich-metadata-qualification-candidate-v11.json).
 The v10 manifest remains a readable historical record.
+
+## Retained title-component associations (#1002)
+
+The [v18 F20](../reference/f20-rich-metadata-qualification-candidate-v18.json)
+and [v6 F19a](../reference/f19a-qualification-manifest-v6.json)
+successors bind proposal policy v23. Exposed retained replays preserve 17 correct
+title tidies and 19 keeps across 75 cases, 21 correct subtitle fills in each of
+missing/null/empty target states across 113 cases, all 108 series projections or
+abstentions, and all 980 other-option projections or abstentions. No false
+decisions were observed; subtitle recall remains 21/76 per state. These are
+continuity replays, not fresh holdouts or a library-wide yield claim.
+
+Synthetic admitted-case proof covers the repaired one-plain-authority tuple.
+Series tidy remains qualified under all three options; an already plain title
+with only a decorated provider work title still requires owner review because
+the association cannot supply independent series work applicability. Earlier
+manifests remain immutable historical evidence and cannot authorize new effects.
+
+Settled retained components remain actionable under their case-bound Ask policy.
+Detail, Library counts and Attention use that original policy consistently;
+Automatic precedence and recorded owner decisions remain unchanged. This review
+projection follow-up changes no scoring input or option outcome, so the retained
+measurements remain bound to their original measured source commit.

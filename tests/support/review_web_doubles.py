@@ -78,7 +78,7 @@ from tests.unit.review_app_fixture import (
 # The exact attention row `ReviewAttentionSnapshot` declares. `rows` below is
 # annotated with it so a narrowed row fails the gate rather than reaching the
 # reader as padding (#703).
-_AttentionRow = tuple[str, str, str, int, str | None, ReviewFieldCause | None]
+_AttentionRow = tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool]
 
 # The exact library row `ReviewLibrarySnapshot` declares, annotated for the
 # same reason (#711). The double emitted five of these seven columns behind a
@@ -147,6 +147,7 @@ class FakeReviewRepository:
         # automatic handling is suspended for it.
         self.attention_dispositions: dict[str, str] = {}
         self.attention_causes: dict[str, ReviewFieldCause] = {}
+        self.policy_attention_destinations: tuple[str, ...] = ()
         # The four library columns the real adapter derives per row, keyed so a
         # page carries a different value for each work: the first three by the
         # review case the adapter looks them up by, the terminal document by
@@ -432,6 +433,7 @@ class FakeReviewRepository:
                 else self.get_review_case_history(review_case_id, history_limit)
             ),
             override_blocked_destinations=self.override_blocked_destinations,
+            policy_attention_destinations=self.policy_attention_destinations,
         )
 
     def field_effect_capability_suspension(
@@ -630,10 +632,12 @@ class FakeReviewRepository:
                 sum(self._field_attention(case, other) for other in case.proposals),
                 self.attention_dispositions.get(cast(str, proposal["destination"])),
                 self.attention_causes.get(cast(str, proposal["destination"])),
+                proposal["destination"] in self.policy_attention_destinations,
             )
             for case, report in self._searched(search)
             for proposal in case.proposals
             if self._field_attention(case, proposal)
+            or proposal["destination"] in self.policy_attention_destinations
         ]
         return tuple(rows[offset : offset + limit])
 

@@ -2493,3 +2493,167 @@ def test_a_recorded_owner_decision_is_blocked_only_once_its_effect_advances() ->
         assert advanced["classification"] == "human_recorded"
         assert advanced["editable"] is False
         repository.close()
+
+
+@pytest.mark.parametrize("component", ("subtitle", "series"))
+def test_retained_component_ask_agrees_across_detail_library_and_attention(
+    tmp_path, component
+):
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    report = retained_decoration_report(component)
+    destinations = {
+        name: "unsupported" if value == "unsupported" else "ask"
+        for name, value in MetadataPolicyProfile.builtin().destinations
+    }
+    profile = MetadataPolicyProfile.create(
+        "Retained Ask", dict(MetadataPolicyProfile.builtin().options), destinations
+    )
+    resolved = resolve_policy(profile, report.target.library)
+    repository = open_repository(tmp_path / "review.sqlite")
+    repository.enter_shadow_preview(1)
+    repository.create_metadata_policy_draft(profile.canonical_json)
+    repository.activate_metadata_policy(
+        profile.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        2,
+    )
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    assert len(proposal.bibliographic_combinations) == 1
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    browser = BrowseReviewLibrary(repository)
+    for recorded in (False, True):
+        if recorded:
+            repository.persist_shadow_outcome(case_id, 3)
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        affected = {
+            field["destination"]: field
+            for field in detail["fields"]
+            if field["destination"] in ("title", component)
+        }
+        assert all(
+            field["classification"] == "needs_attention" and field["editable"]
+            for field in affected.values()
+        )
+        library = browser.library(
+            lens="needs_attention", search=None, limit=10, cursor=None
+        )
+        attention = browser.attention(search=None, limit=10, cursor=None)
+        all_works = browser.library(lens="all", search=None, limit=10, cursor=None)
+        assert len(library["items"]) == 1
+        assert (
+            all_works["counts"]
+            == library["counts"]
+            == {"all": 1, "needs_attention": 1, "no_attention_needed": 0}
+        )
+        assert {"title", component} <= {
+            item["destination"] for item in attention["items"]
+        }
+        assert library["items"][0]["attention_count"] == attention["total"]
+        assert all_works["items"][0]["attention_count"] == attention["total"]
+    field = affected[component]
+    RecordHumanDecision(repository, clock=lambda: 4).run(
+        case_id,
+        proposal_id=field["proposal_id"],
+        target_fingerprint=field["target_fingerprint"],
+        destination=component,
+        actor="owner",
+        outcome="accept",
+        selected_value=field["proposed_values"][0],
+        idempotency_key="retained-component-owner-choice",
+    )
+    assert component not in {
+        item["destination"]
+        for item in browser.attention(search=None, limit=10, cursor=None)["items"]
+    }
+    repository.close()
+    repository = open_repository(tmp_path / "review.sqlite")
+    field = next(
+        field
+        for field in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+        if field["destination"] == component
+    )
+    assert field["classification"] == "human_recorded"
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    ("title_layout", "subtitle", "expected"),
+    (
+        ("ask", "ask", True),
+        ("ignore", "ask", True),
+        ("ask", "ignore", True),
+        ("ask", "automatic", False),
+        ("automatic", "ask", False),
+        ("unsupported", "unsupported", False),
+        ("ignore", "ignore", False),
+    ),
+)
+def test_retained_subtitle_attention_uses_original_mixed_policy(
+    tmp_path, title_layout, subtitle, expected
+):
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    report = retained_decoration_report("subtitle")
+    builtin = MetadataPolicyProfile.builtin()
+    destinations = dict(builtin.destinations)
+    destinations.update(title_layout=title_layout, subtitle=subtitle)
+    profile = MetadataPolicyProfile.create(
+        "Mixed retained subtitle", dict(builtin.options), destinations
+    )
+    resolved = resolve_policy(profile, report.target.library)
+    repository = open_repository(tmp_path / "mixed.sqlite")
+    repository.enter_shadow_preview(1)
+    repository.create_metadata_policy_draft(profile.canonical_json)
+    repository.activate_metadata_policy(
+        profile.policy_id,
+        builtin.policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        2,
+    )
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    if title_layout == subtitle == "ignore":
+        assert case_id is None
+        assert (
+            BrowseReviewLibrary(repository).attention(
+                search=None, limit=20, cursor=None
+            )["items"]
+            == []
+        )
+        repository.close()
+        return
+    snapshot = repository.read_current_review_case(case_id, None)
+    assert ("subtitle" in snapshot.policy_attention_destinations) is expected
+    field = next(
+        field
+        for field in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+        if field["destination"] == "subtitle"
+    )
+    assert (field["classification"] == "needs_attention") is expected
+    attention = BrowseReviewLibrary(repository).attention(
+        search=None, limit=20, cursor=None
+    )
+    assert (
+        "subtitle" in {item["destination"] for item in attention["items"]}
+    ) is expected
+    repository.close()

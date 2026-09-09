@@ -43,6 +43,10 @@ V16_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v16
 CURRENT_MANIFEST = MANIFEST.with_name(
     "f20-rich-metadata-qualification-candidate-v17.json"
 )
+LATEST_MANIFEST = MANIFEST.with_name(
+    "f20-rich-metadata-qualification-candidate-v18.json"
+)
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -84,7 +88,7 @@ RICH_FIELDS = (
 )
 
 
-def test_v17_binds_current_source_and_preserves_historical_v11_to_v16_bytes() -> None:
+def test_v17_preserves_historical_v11_to_v17_bytes() -> None:
     manifest = json.loads(CURRENT_MANIFEST.read_bytes())
     assert manifest["schema"] == "f20-rich-metadata-qualification-candidate-v17"
     assert manifest["automatic_authority"] == "decision_only"
@@ -132,63 +136,9 @@ def test_v17_binds_current_source_and_preserves_historical_v11_to_v16_bytes() ->
     )
     assert manifest["authority_rotation"]["prior_manifest_sha256"] == v16
     assert prior != F20_QUALIFICATION_CANDIDATE_SHA256
-    sources = manifest["frozen_contract"]["behavior_sources"]
-    assert {
-        "src/mechanical_librarian/domain/work_identity.py",
-        "src/mechanical_librarian/domain/field_value_comparison.py",
-        "src/mechanical_librarian/domain/review_case.py",
-        "src/mechanical_librarian/application/field_effects.py",
-        "src/mechanical_librarian/application/continuous_field_effects.py",
-        "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
-        "src/mechanical_librarian/adapters/persistence/field_effect_validation.py",
-        "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
-    } <= sources.keys()
-    for source, digest in sources.items():
-        assert (
-            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
-            == digest
-        )
-    rotation = manifest["authority_rotation"]
     assert (
-        rotation["measured_candidate_head"]
-        == "27b2f646e050a498289b9a35368688695ad89b9b"
-    )
-    assert rotation["measured_behavior_sources"] == {
-        "src/mechanical_librarian/domain/proposal_set.py": "d34802c10673a8269c66b7a9a9fc14437177617a20d9e6e51f82ee3feaee00ce",
-    }
-    assert all(
-        sources[name] == digest
-        for name, digest in rotation["measured_behavior_sources"].items()
-    )
-    closure = rotation["source_closure"]
-    assert closure["f20_option_outcomes_changed"] is False
-    assert closure["f20_scoring_inputs_changed"] is False
-    assert len(closure["bound_source_classification"]) == 35
-    assert set(closure["bound_source_classification"]) == set(sources)
-    assert set(closure["bound_source_classification"].values()) == {
-        "unchanged",
-        "cover_currentness_read_model_wiring",
-        "historical_v16_reader_only",
-    }
-    for source, digest in closure["current_byte_bindings"].items():
-        assert (
-            hashlib.sha256((MANIFEST.parents[2] / source).read_bytes()).hexdigest()
-            == digest
-        )
-    history = rotation["historical_reader_delta"]
-    assert history["current_sha256"] == sources[history["identity"]]
-    assert (
-        history["measured_sha256"]
-        == json.loads(V16_MANIFEST.read_bytes())["frozen_contract"]["behavior_sources"][
-            history["identity"]
-        ]
-    )
-    assert len(sources) == 35
-    assert manifest["frozen_contract"]["runtime_envelope"]["identity"] not in sources
-    root = MANIFEST.parents[2]
-    assert (
-        manifest["frozen_contract"]["uv_lock_sha256"]
-        == hashlib.sha256((root / "uv.lock").read_bytes()).hexdigest()
+        hashlib.sha256(CURRENT_MANIFEST.read_bytes()).hexdigest()
+        == "4420a5d1ea34f2e46e9c854b07c068e827324fbce942b4da8c301b3cd7409168"
     )
 
 
@@ -1245,11 +1195,10 @@ def test_f19a_successor_manifest_binds_f35_and_preserves_f36_evidence() -> None:
     manifest_bytes = F19A_MANIFEST.read_bytes()
     manifest = json.loads(manifest_bytes)
 
-    if F19A_QUALIFICATION_MANIFEST_SHA256 not in PLACEHOLDER_DIGESTS:
-        assert (
-            hashlib.sha256(manifest_bytes).hexdigest()
-            == F19A_QUALIFICATION_MANIFEST_SHA256
-        )
+    assert (
+        hashlib.sha256(manifest_bytes).hexdigest()
+        == "f7a4493d94f0188e6974aad1b68f9238d9e7733aa1a2e064e5663e385af0fe6e"
+    )
     assert "f19a-v13-result" == manifest["schema"]
     assert (
         "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec"
@@ -1351,9 +1300,9 @@ def test_f38_manifest_separately_qualifies_provider_consensus_contributor_displa
 
 
 def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> None:
-    manifest = json.loads(CURRENT_MANIFEST.read_text(encoding="utf-8"))
+    manifest = json.loads(LATEST_MANIFEST.read_text(encoding="utf-8"))
     assert (
-        hashlib.sha256(CURRENT_MANIFEST.read_bytes()).hexdigest()
+        hashlib.sha256(LATEST_MANIFEST.read_bytes()).hexdigest()
         == F20_QUALIFICATION_CANDIDATE_SHA256
     )
     passing = frozenset(
@@ -1401,3 +1350,55 @@ def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> Non
     with pytest.raises(TypeError):
         F20_OPTION_DISPOSITIONS["genres:add"] = "passing_automatic"
     assert "passing_automatic" == F20_OPTION_DISPOSITIONS["genres:add"]
+
+
+def test_association_successors_bind_current_sources_and_retained_scoring():
+    rich = json.loads(LATEST_MANIFEST.read_text())
+    title = json.loads(LATEST_F19A_MANIFEST.read_text())
+    assert (
+        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
+        == F19A_QUALIFICATION_MANIFEST_SHA256
+    )
+    assert (
+        title["prior_manifest_sha256"]
+        == hashlib.sha256(F19A_MANIFEST.read_bytes()).hexdigest()
+    )
+    assert (
+        rich["authority_rotation"]["prior_manifest_sha256"]
+        == hashlib.sha256(CURRENT_MANIFEST.read_bytes()).hexdigest()
+    )
+    assert (
+        rich["proposal_policy_version"]
+        == title["proposal_policy_version"]
+        == "fixed-conservative-v23"
+    )
+    assert rich["schema"] == "f20-rich-metadata-qualification-candidate-v18"
+    sources = rich["frozen_contract"]["behavior_sources"]
+    assert set(sources) == set(
+        json.loads(CURRENT_MANIFEST.read_text())["frozen_contract"]["behavior_sources"]
+    )
+    for name, digest in sources.items():
+        assert (
+            hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+            == digest
+        )
+    evidence = rich["evidence_method"]["title_component_associations"]
+    assert title["association_requalification"] == evidence
+    assert evidence["fresh_holdout_claim"] is False
+    assert evidence["title"]["metrics"]["zero_tolerance_failures"] == 0
+    assert evidence["title"]["metrics"]["automatic_predictions"] == 17
+    assert evidence["title"]["semantic_decisions_equal"] is True
+    assert evidence["subtitle"]["metrics"]["distinct_cases"] == 113
+    for state in ("missing", "null", "empty"):
+        metrics = evidence["subtitle"]["metrics"]["by_target_state"][state]
+        assert metrics["correct_predictions"] == metrics["automatic_predictions"] == 21
+        assert metrics["zero_tolerance_failures"] == 0
+    assert evidence["continuity"]["series"]["observations"] == 108
+    assert evidence["continuity"]["other"]["observations"] == 980
+    assert all(
+        value["semantic_outcomes_equal"] for value in evidence["continuity"].values()
+    )
+    assert (
+        rich["passing_automatic_options"]
+        == json.loads(CURRENT_MANIFEST.read_text())["passing_automatic_options"]
+    )

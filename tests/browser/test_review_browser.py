@@ -268,6 +268,8 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    retained_decoration: tuple[str, bool] | None = None,
+    retained_component_text: str | None = None,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
     cohort: int = 0,
     preparation: bool = False,
@@ -383,12 +385,56 @@ def _server(
             bind_policy=repository.bind_current_cover_authority,
         )
         cover_considerations.update_policy(CoverPolicy())
+    elif retained_decoration is not None:
+        from tests.support.proposal_evidence import retained_decoration_report
+
+        component, keep = retained_decoration
+        report = retained_decoration_report(
+            component, keep=keep, component_text=retained_component_text
+        )
     else:
         report = _report()
     repository.publish(report, lambda: True)
-    proposal_set = evaluate_report(report)
+    if retained_decoration is not None:
+        from mechanical_librarian.domain.metadata_policy import (
+            MetadataPolicyProfile,
+            human_review_destinations,
+            resolve_policy,
+        )
+
+        destinations = {
+            name: "unsupported" if value == "unsupported" else "ask"
+            for name, value in MetadataPolicyProfile.builtin().destinations
+        }
+        if automatic_fixture:
+            destinations.update(
+                title_layout="automatic", subtitle="automatic", series="automatic"
+            )
+        profile = MetadataPolicyProfile.create(
+            "Retained components",
+            dict(MetadataPolicyProfile.builtin().options),
+            destinations,
+        )
+        resolved = resolve_policy(profile, report.target.library)
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        if automatic_fixture:
+            repository.activate_qualified_automatic(3)
+        proposal_set = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+    else:
+        proposal_set = evaluate_report(report)
     repository.publish_proposal(proposal_set)
     case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
+    if retained_decoration is not None and automatic_fixture:
+        repository.persist_shadow_outcome(case_id, 4)
     if preparation:
         repository.request_review_scan(
             "primary",
@@ -4388,4 +4434,84 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     page.get_by_role("heading", name="Settings", exact=True)
                 ).to_be_visible()
                 assert not errors
+            browser.close()
+
+
+@pytest.mark.parametrize("component", ("subtitle", "series"))
+@pytest.mark.parametrize("long_component", (False, True))
+def test_retained_decoration_is_visible_through_real_library(component, long_component):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1280, "height": 800}
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    retained_decoration=(component, False),
+                    retained_component_text=(
+                        "A Journey Through the Carefully Remembered Stories of the Northern Coast"
+                        if long_component
+                        else None
+                    ),
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&case={case_id}")
+                page.get_by_role("button", name=re.compile("^Plain Work")).first.click()
+                page.get_by_role("button", name=re.compile("^Title ")).click()
+                expect(page.get_by_text("Plain Work", exact=True).first).to_be_visible()
+                page.get_by_role(
+                    "button", name=re.compile("^" + component.capitalize() + " ")
+                ).click()
+                expected = (
+                    "A Second Look" if component == "subtitle" else "The Sequence"
+                )
+                if long_component:
+                    expected = "A Journey Through the Carefully Remembered Stories of the Northern Coast"
+                expect(page.get_by_text(expected, exact=True).first).to_be_visible()
+                proposed = page.get_by_role(
+                    "button", name="Choose proposed value", exact=False
+                ).first
+                with page.expect_response(
+                    lambda response: response.url.endswith("/decisions")
+                ) as accepted:
+                    proposed.click()
+                assert accepted.value.status == 200
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field={component}"
+                )
+                expect(proposed).to_have_attribute("aria-pressed", "true")
+                page.reload()
+                expect(page.get_by_text(expected, exact=True).first).to_be_visible()
+                expect(proposed).to_have_attribute("aria-pressed", "true")
+                current = page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).first
+                current.focus()
+                with page.expect_response(
+                    lambda response: response.url.endswith("/decisions")
+                ) as kept:
+                    page.keyboard.press("Enter")
+                assert kept.value.status == 200
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field={component}"
+                )
+                expect(current).to_have_attribute("aria-pressed", "true")
+                page.reload()
+                expect(current).to_have_attribute("aria-pressed", "true")
             browser.close()

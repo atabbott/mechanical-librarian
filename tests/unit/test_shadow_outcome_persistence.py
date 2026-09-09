@@ -7417,9 +7417,45 @@ def _assert_retained_decoration_automatic_value(component, option, keep, *, appl
             _automatic_decision_value(decision, case, report, proposal, outcome)
             == expected
         )
+        from mechanical_librarian.domain.rich_metadata_qualification import (
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+        )
+
         assert decision.policy_option == option
-        assert len(proposal.bibliographic_combinations) == 1
-        assert len(proposal.bibliographic_combinations[0].selections) == 3
+        assert (
+            decision.qualification_manifest_sha256 == F20_QUALIFICATION_CANDIDATE_SHA256
+        )
+        assert field.combination_ids == (combination.combination_id,)
+        title_row = repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination='title'"
+        ).fetchone()
+        if not keep:
+            assert title_row is not None
+            title_decision = AutomaticDecision.from_json(title_row[0])
+            assert (
+                title_decision.qualification_manifest_sha256
+                == F19A_QUALIFICATION_MANIFEST_SHA256
+            )
+            assert _automatic_decision_value(
+                title_decision, case, report, proposal, outcome
+            ) == {"kind": "text", "value": "Plain Work"}
+        repository.close()
+        repository = open_repository(path)
+        assert (
+            ShadowOutcomeSet.from_json(repository.persist_shadow_outcome(case_id, 5))
+            == outcome
+        )
+        reopened = AutomaticDecision.from_json(
+            repository._connection.execute(
+                "SELECT document FROM automatic_decisions WHERE destination=?",
+                (component,),
+            ).fetchone()[0]
+        )
+        assert reopened == decision
+        assert (
+            _automatic_decision_value(reopened, case, report, proposal, outcome)
+            == expected
+        )
         repository.close()
 
 

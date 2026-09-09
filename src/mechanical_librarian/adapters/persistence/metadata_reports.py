@@ -1283,7 +1283,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...]:
+    ) -> tuple[tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...]:
         return self._review_cases.list_current_attention_documents(
             search, limit, offset
         )

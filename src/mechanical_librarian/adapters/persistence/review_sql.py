@@ -27,6 +27,24 @@ _CURRENT_LIBRARY_FROM_SQL = (
     "LEFT JOIN review_cases rc ON rc.review_case_id=ml.review_case_id"
 )
 _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL = "result.manual_bibliographic_attention=1"
+# Original case-bound policy only: automatic projection must not become Ask.
+_POLICY_ASK_ATTENTION_SQL = (
+    "EXISTS (SELECT 1 FROM proposal_sets policy_proposal "
+    "JOIN metadata_policy_resolutions policy_resolution ON "
+    "policy_resolution.resolved_policy_id="
+    "json_extract(policy_proposal.document,'$.resolved_policy_id') "
+    "AND policy_resolution.library_name=mr.library_name "
+    "WHERE policy_proposal.proposal_set_id=rc.proposal_set_id AND ("
+    "(result.destination='title' AND "
+    "json_extract(policy_resolution.document,'$.destinations.title_layout')='ask') OR "
+    "(result.destination='series' AND "
+    "json_extract(policy_resolution.document,'$.destinations.series')='ask') OR "
+    "(result.destination='subtitle' AND "
+    "(json_extract(policy_resolution.document,'$.destinations.title_layout')='ask' OR "
+    "json_extract(policy_resolution.document,'$.destinations.subtitle')='ask') AND "
+    "json_extract(policy_resolution.document,'$.destinations.title_layout')<>'automatic' AND "
+    "json_extract(policy_resolution.document,'$.destinations.subtitle')<>'automatic')))"
+)
 _SHADOW_ABSTENTION_SQL = (
     "EXISTS (SELECT 1 FROM shadow_outcome_field_facts outcome WHERE "
     "outcome.review_case_id=rc.review_case_id AND "
@@ -87,6 +105,8 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     + _AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL
     + " OR "
     + _REVIEW_MANUAL_BIBLIOGRAPHIC_SQL
+    + " OR "
+    + _POLICY_ASK_ATTENTION_SQL
     + " OR "
     + _AUTOMATIC_SAFETY_ATTENTION_SQL
     + " OR "
@@ -169,6 +189,7 @@ __all__ = [
     "_AUDIOBOOK_OWNER_ONLY_ATTENTION_SQL",
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
+    "_POLICY_ASK_ATTENTION_SQL",
     "_REVIEW_ATTENTION_SQL",
     "_REVIEW_FIELD_ATTENTION_SQL",
     "_REVIEW_MANUAL_BIBLIOGRAPHIC_SQL",

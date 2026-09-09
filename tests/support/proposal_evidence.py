@@ -786,10 +786,13 @@ def retained_decoration_report(
     keep: bool = False,
     supported: bool = True,
     state: TargetFieldState = TargetFieldState.MISSING,
+    component_text: str | None = None,
 ) -> MetadataReport:
     """One plain authority and one decorated representation with its component."""
     plain = "Plain Work"
     value = "A Second Look" if component == "subtitle" else "The Sequence"
+    if component_text is not None:
+        value = component_text
     decorated = f"{plain}: {value}" if component == "subtitle" else f"{plain} ({value})"
     current = plain if keep else decorated
     kind = ClaimKind.SUBTITLE if component == "subtitle" else ClaimKind.SERIES

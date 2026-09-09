@@ -1776,7 +1776,7 @@ def test_attention_cursor_keeps_the_complete_work_field_count(
 def test_attention_reads_the_automatic_outcome_and_cause_columns(
     web: ReviewWebContext[_CloseRecordingRepository],
 ) -> None:
-    """The queue classifies from all six declared attention columns.
+    """The queue retains automatic precedence in the seven-column contract.
 
     The reader consumed the last two positionally behind `len(row)`
     guards, so a store that stopped at four columns produced a plain
@@ -1816,6 +1816,28 @@ def test_attention_reads_the_automatic_outcome_and_cause_columns(
     # The third row carries neither column, so the two above prove the
     # reader read them rather than a constant the double always emits.
     assert reasons["subtitle"] == "This field needs your review."
+
+
+def test_retained_policy_attention_fact_reaches_detail_and_attention(web):
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    report = retained_decoration_report("subtitle")
+    case = ReviewCase.create(evaluate_report(report), report)
+    web.repository.case = case
+    web.repository.report = report
+    web.repository.browse_cases = [(case, report)]
+    web.repository.policy_attention_destinations = ("title", "subtitle")
+    web.login()
+    detail = web.client.get(f"/api/v1/review-cases/{case.review_case_id}")
+    assert detail.status_code == 200, detail.text
+    fields = {field["destination"]: field for field in detail.json()["fields"]}
+    assert fields["subtitle"]["classification"] == "needs_attention"
+    assert fields["subtitle"]["editable"] is True
+    attention = web.client.get("/api/v1/attention?limit=10")
+    assert attention.status_code == 200, attention.text
+    assert {"title", "subtitle"} <= {
+        item["destination"] for item in attention.json()["items"]
+    }
 
 
 def test_epub_inventory_and_attention_omit_narrator_and_explicit() -> None:
