@@ -347,3 +347,63 @@ def test_the_collapse_never_double_claims_a_consensus_election() -> None:
 
     assert consensus.reasons[0].startswith("provider_consensus_title_")
     assert not equivalence.reasons[0].startswith("provider_consensus_title_")
+
+
+@pytest.mark.parametrize("component", ("subtitle", "series"))
+@pytest.mark.parametrize("keep", (False, True))
+def test_collapsed_title_retains_independently_supported_component(component, keep):
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    report = retained_decoration_report(component, keep=keep)
+    proposal = evaluate_report(report)
+    title = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.TITLE
+    )
+    assert len(title.alternatives) == 1
+    assert title.alternatives[0].value.value == "Plain Work"
+    assert len(proposal.bibliographic_combinations) == 1
+    selections = proposal.bibliographic_combinations[0].selections
+    assert len(selections) == 3
+    assert selections[0].kind.value == ("preserve_target" if keep else "candidate")
+    component_selection = next(
+        value for value in selections if value.destination.value == component
+    )
+    assert component_selection.kind.value == "candidate"
+
+
+@pytest.mark.parametrize("third_title", ("Plain Work: A Second Look", "Different Work"))
+def test_failed_election_never_creates_component_associations(third_title):
+    from mechanical_librarian.domain import proposal_set as policy
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    original_report = retained_decoration_report("subtitle")
+    report = _report(
+        title=original_report.target.current_title,
+        fields=original_report.target.fields,
+        local_claims=original_report.local_claims,
+        providers=(
+            *original_report.providers,
+            _provider_title("google_books", third_title),
+        ),
+    )
+    destination = TargetDestination.TITLE
+    targets = {value.destination: value for value in report.target.fields}
+    observations = policy._observations(report, destination)
+    original = policy._evaluate(
+        destination,
+        targets[destination],
+        observations,
+        report,
+        policy._dependencies(destination),
+    )
+    result, associations = policy._decoration_equivalence_election(
+        report, targets, original, observations
+    )
+    assert associations == {}
+    assert result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+    if third_title == "Plain Work: A Second Look":
+        assert "decoration_equivalence_decorated_consensus" in result.reasons
+    else:
+        assert result == original

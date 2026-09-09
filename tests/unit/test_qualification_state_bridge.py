@@ -246,7 +246,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
 
 def test_target_schema_binding_is_the_exact_installed_contract() -> None:
     assert bridge._TARGET_SCHEMA_OBJECTS_SHA256 == (
-        "6ab7440f7c4dd8f4e17c7909305fa6296fdb597b42497b6f326f32cc9216fb0f"
+        "1faba21f99d464fbdd0b5948a64fc8b2abd51137a7f09f968b443f58f013d36e"
     )
     assert (
         bridge._expected_schema_objects_digest() == bridge._TARGET_SCHEMA_OBJECTS_SHA256
@@ -358,6 +358,41 @@ def test_exact_output_and_backup_make_rerun_idempotent(
     )
 
     assert result["status"] == "already-current"
+    assert (_digest(source), _digest(backup), _digest(output)) == before
+
+
+def test_prior_v22_output_is_rejected_without_mutating_any_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source, backup, output = _paths(tmp_path)
+    _create_source(source)
+    _accept_synthetic_source(monkeypatch, source)
+    bridge.bridge_qualification_state(
+        source, backup, output, RETAINED_LIBRARY_V26_TO_V32
+    )
+    with sqlite3.connect(output) as connection:
+        connection.execute("PRAGMA writable_schema=ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql=replace(sql, ?, ?) WHERE name='proposal_sets'",
+            ("fixed-conservative-v23", "fixed-conservative-v22"),
+        )
+        connection.commit()
+        connection.execute("PRAGMA writable_schema=OFF")
+    connection.close()
+    with sqlite3.connect(f"file:{output}?mode=ro", uri=True) as connection:
+        assert bridge._schema_objects_digest(connection) == (
+            "6ab7440f7c4dd8f4e17c7909305fa6296fdb597b42497b6f326f32cc9216fb0f"
+        )
+    connection.close()
+    before = (_digest(source), _digest(backup), _digest(output))
+
+    with pytest.raises(MetadataReportError):
+        open_repository(output, create=False)
+    assert (_digest(source), _digest(backup), _digest(output)) == before
+    with pytest.raises(MetadataReportError):
+        bridge.bridge_qualification_state(
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
+        )
     assert (_digest(source), _digest(backup), _digest(output)) == before
 
 
@@ -651,8 +686,9 @@ def test_frozen_target_contract_is_checked_before_filesystem_access(
     ["unknown", "", "review-owner-decision-actions-v1"],
 )
 def test_unknown_plan_is_rejected_without_filesystem_access(
-    tmp_path: Path, plan: str
+    tmp_path: Path, plan: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setattr(bridge, "_TARGET_SCHEMA_OBJECTS_SHA256", "0" * 64)
     source, backup, output = _paths(tmp_path)
 
     with pytest.raises(MetadataReportError, match="plan is unsupported"):

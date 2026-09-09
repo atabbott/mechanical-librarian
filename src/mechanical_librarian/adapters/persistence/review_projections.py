@@ -41,6 +41,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _LATEST_PREPARATION_WORK_SQL,
+    _POLICY_ASK_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
 )
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
@@ -92,7 +93,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         list_current_attention_documents: Callable[
             [str | None, int, int],
             tuple[
-                tuple[str, str, str, int, str | None, ReviewFieldCause | None],
+                tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool],
                 ...,
             ],
         ],
@@ -206,6 +207,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     ()
                     if history_limit is None
                     else self.get_review_case_history(review_case_id, history_limit)
+                ),
+                policy_attention_destinations=self._policy_attention_destinations(
+                    review_case_id
                 ),
                 automatic_attention_destinations=self._automatic_attention_destinations(
                     review_case_id
@@ -440,6 +444,20 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
             raise MetadataReportError("review library is unavailable")
         return row[0]
+
+    def _policy_attention_destinations(self, review_case_id: str) -> tuple[str, ...]:
+        return tuple(
+            row[0]
+            for row in self._connection.execute(
+                "SELECT result.destination FROM review_cases rc "
+                "JOIN metadata_reports mr ON mr.report_id=rc.report_id "
+                "JOIN review_case_field_facts result ON result.review_case_id=rc.review_case_id "
+                "WHERE rc.review_case_id=? AND "
+                + _POLICY_ASK_ATTENTION_SQL
+                + " ORDER BY result.destination",
+                (review_case_id,),
+            )
+        )
 
     def _automatic_attention_destinations(self, review_case_id: str) -> tuple[str, ...]:
         rows = self._connection.execute(

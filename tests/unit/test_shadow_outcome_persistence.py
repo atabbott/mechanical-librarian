@@ -7310,3 +7310,177 @@ def test_owner_activation_acknowledgement_is_durable() -> None:
         assert persisted is not None
         assert (persisted.acknowledged, persisted.origin) == (True, "activation")
         reopened.close()
+
+
+def _assert_retained_decoration_automatic_value(component, option, keep, *, applicable):
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    report = retained_decoration_report(component, keep=keep)
+    options = dict(DEFAULT_OPTIONS)
+    options[component] = option
+    destinations = dict(_preview_automatic_profile().destinations)
+    destinations[component] = "automatic"
+    profile = MetadataPolicyProfile.create("Retained component", options, destinations)
+    resolved = resolve_policy(profile, report.target.library)
+    with tempfile.TemporaryDirectory() as temporary:
+        path = Path(temporary) / "reports.sqlite"
+        repository = open_repository(path)
+        repository.enter_shadow_preview(1)
+        repository.create_metadata_policy_draft(profile.canonical_json)
+        repository.activate_metadata_policy(
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            2,
+        )
+        repository.activate_qualified_automatic(3)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        field = next(
+            value for value in outcome.outcomes if value.destination == component
+        )
+        assert len(proposal.bibliographic_combinations) == 1
+        combination = proposal.bibliographic_combinations[0]
+        assert len(combination.selections) == 3
+        title_selection = combination.selections[0]
+        assert title_selection.kind.value == (
+            "preserve_target" if keep else "candidate"
+        )
+        if keep:
+            from mechanical_librarian.domain.proposal_set import BibliographicSelection
+
+            assert title_selection == BibliographicSelection.preserve(
+                report.target.fields[0]
+            )
+        if not applicable:
+            from mechanical_librarian.domain.rich_metadata_preview import (
+                compile_rich_metadata_preview,
+            )
+
+            preview = next(
+                value
+                for value in compile_rich_metadata_preview(
+                    resolved, report, proposal
+                ).fields
+                if value.field == "series"
+            )
+            assert preview.outcome == "abstain"
+            assert preview.reason == "target_work_applicability_unproved"
+            assert field.disposition == "abstention"
+            assert field.reason_code == "no_eligible_action"
+            assert field.candidate_id is None
+            assert next(
+                value
+                for value in proposal.results
+                if value.destination is TargetDestination.SERIES
+            ).alternatives
+            assert repository._connection.execute(
+                "SELECT count(*) FROM automatic_decisions WHERE destination='series'"
+            ).fetchone() == (0,)
+            repository.close()
+            repository = open_repository(path)
+            replay = ShadowOutcomeSet.from_json(
+                repository.persist_shadow_outcome(case_id, 5)
+            )
+            assert replay == outcome
+            assert repository._connection.execute(
+                "SELECT count(*) FROM automatic_decisions WHERE destination='series'"
+            ).fetchone() == (0,)
+            repository.close()
+            return
+        assert field.disposition == "candidate"
+        row = repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination=?",
+            (component,),
+        ).fetchone()
+        assert row is not None
+        decision = AutomaticDecision.from_json(row[0])
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        expected = (
+            {"kind": "text", "value": "A Second Look"}
+            if component == "subtitle"
+            else {
+                "kind": "series",
+                "value": [{"name": "The Sequence", "sequence": None}],
+            }
+        )
+        assert (
+            _automatic_decision_value(decision, case, report, proposal, outcome)
+            == expected
+        )
+        from mechanical_librarian.domain.rich_metadata_qualification import (
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+        )
+
+        assert decision.policy_option == option
+        assert (
+            decision.qualification_manifest_sha256 == F20_QUALIFICATION_CANDIDATE_SHA256
+        )
+        assert field.combination_ids == (combination.combination_id,)
+        title_row = repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination='title'"
+        ).fetchone()
+        if not keep:
+            assert title_row is not None
+            title_decision = AutomaticDecision.from_json(title_row[0])
+            assert (
+                title_decision.qualification_manifest_sha256
+                == F19A_QUALIFICATION_MANIFEST_SHA256
+            )
+            assert _automatic_decision_value(
+                title_decision, case, report, proposal, outcome
+            ) == {"kind": "text", "value": "Plain Work"}
+        repository.close()
+        repository = open_repository(path)
+        assert (
+            ShadowOutcomeSet.from_json(repository.persist_shadow_outcome(case_id, 5))
+            == outcome
+        )
+        reopened = AutomaticDecision.from_json(
+            repository._connection.execute(
+                "SELECT document FROM automatic_decisions WHERE destination=?",
+                (component,),
+            ).fetchone()[0]
+        )
+        assert reopened == decision
+        assert (
+            _automatic_decision_value(reopened, case, report, proposal, outcome)
+            == expected
+        )
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    ("component", "option", "keep"),
+    (
+        ("subtitle", "fill_empty", False),
+        ("subtitle", "fill_empty", True),
+        ("series", "primary_narrative", False),
+        ("series", "source_order", False),
+        ("series", "all_qualified", False),
+    ),
+)
+def test_retained_decoration_component_reaches_persisted_automatic_value(
+    component, option, keep
+):
+    _assert_retained_decoration_automatic_value(
+        component, option, keep, applicable=True
+    )
+
+
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_plain_title_keep_does_not_borrow_series_work_applicability(option):
+    _assert_retained_decoration_automatic_value(
+        "series", option, True, applicable=False
+    )

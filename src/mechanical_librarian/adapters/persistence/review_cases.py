@@ -54,6 +54,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_CASE_COUNT_SQL,
     _CURRENT_REVIEW_FROM_SQL,
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
+    _POLICY_ASK_ATTENTION_SQL,
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
@@ -687,8 +688,10 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
-    ) -> tuple[tuple[str, str, str, int, str | None, ReviewFieldCause | None], ...]:
-        # The last column is a `CASE` expression over
+    ) -> tuple[
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+    ]:
+        # The cause column is a `CASE` expression over
         # `_AUTOMATIC_SAFETY_ATTENTION_SQL` whose only non-null result is the
         # literal `'automatic_safety_suspended'`, so the cause is narrower than
         # the `str` the row validation below proves.
@@ -715,6 +718,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "(CASE WHEN "
                 + _AUTOMATIC_SAFETY_ATTENTION_SQL
                 + " THEN 'automatic_safety_suspended' ELSE NULL END) AS cause,"
+                "CASE WHEN "
+                + _POLICY_ASK_ATTENTION_SQL
+                + " THEN 1 ELSE 0 END AS policy_attention,"
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
                 "AS title_order,c.library_name AS library_name,c.item_id AS item_id "
                 + _CURRENT_REVIEW_FROM_SQL
@@ -723,13 +729,13 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + _REVIEW_SEARCH_SQL
                 + "),attentive AS MATERIALIZED (SELECT review_case_id,report_id,"
                 "proposal_set_id,destination,count(*) OVER (PARTITION BY review_case_id) "
-                "AS attention_count,disposition,cause,title_order,library_name,item_id "
+                "AS attention_count,disposition,cause,policy_attention,title_order,library_name,item_id "
                 "FROM candidates WHERE attention=1),page AS MATERIALIZED (SELECT * "
                 "FROM attentive" + " ORDER BY "
                 "title_order,library_name,item_id,destination,review_case_id "
                 "LIMIT ? OFFSET ?) "
                 "SELECT rc.document,mr.document,page.proposal_set_id,page.destination,"
-                "page.attention_count,page.disposition,page.cause FROM page "
+                "page.attention_count,page.disposition,page.cause,page.policy_attention FROM page "
                 "JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
                 "JOIN metadata_reports mr ON mr.report_id=page.report_id "
                 "ORDER BY page.title_order,page.library_name,page.item_id,"
@@ -759,6 +765,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     or row[4] < 1
                     or (row[5] is not None and type(row[5]) is not str)
                     or (row[6] is not None and type(row[6]) is not str)
+                    or type(row[7]) is not int
+                    or row[7] not in (0, 1)
                 ):
                     raise MetadataReportError("review attention field is invalid")
                 values.append(
@@ -769,6 +777,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         row[4],
                         row[5],
                         cast("ReviewFieldCause | None", row[6]),
+                        bool(row[7]),
                     )
                 )
             return tuple(values)

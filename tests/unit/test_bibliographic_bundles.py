@@ -40,6 +40,7 @@ from tests.support.proposal_evidence import (
     _report,
     consensus_local_title,
     consensus_provider_title,
+    retained_decoration_report,
 )
 
 
@@ -731,18 +732,9 @@ def test_combination_representations_reject_mixed_members_as_packet_errors(
         rebuild(document)
 
 
-def test_persistence_replay_and_currentness_include_combinations() -> None:
-    report = _bibliographic_report(
-        current_title="Secret History: Mistborn",
-        providers=(
-            _source(
-                "catalogue",
-                "edition-1",
-                titles=("Secret History",),
-                series="Mistborn",
-            ),
-        ),
-    )
+@pytest.mark.parametrize("component", ("subtitle", "series"))
+def test_persistence_replay_and_currentness_include_combinations(component) -> None:
+    report = retained_decoration_report(component)
     proposal = evaluate_report(report)
     without_relationship = ProposalSet.create(
         report_id=proposal.report_id,
@@ -762,7 +754,129 @@ def test_persistence_replay_and_currentness_include_combinations() -> None:
         assert "admitted" == first["status"]
         assert "replayed" == replay["status"]
 
+        repository.close()
+        repository = open_repository(Path(directory) / "reports.sqlite")
+        assert repository.get_proposal(proposal.proposal_set_id) == proposal.to_json()
+        assert (
+            json.loads(repository.admit_review_case(proposal))["review_case_id"]
+            == first["review_case_id"]
+        )
         repository.publish_proposal(without_relationship)
         with pytest.raises(ReviewAdmissionIncompatibleError):
             repository.admit_review_case(without_relationship)
         repository.close()
+
+
+@pytest.mark.parametrize("component", ("subtitle", "series"))
+def test_decoration_association_preserves_evidence_and_provider_order(component):
+    from mechanical_librarian.domain import proposal_set as policy
+
+    report = retained_decoration_report(component)
+    proposal = evaluate_report(report)
+    reordered_report = _report(
+        title=report.target.current_title,
+        fields=report.target.fields,
+        local_claims=report.local_claims,
+        providers=tuple(reversed(report.providers)),
+        covers=report.cover_sources,
+    )
+    assert reordered_report == report
+    assert evaluate_report(reordered_report).to_json() == proposal.to_json()
+    destination = TargetDestination.TITLE
+    targets = {field.destination: field for field in report.target.fields}
+    observations = policy._observations(report, destination)
+    original = policy._evaluate(
+        destination,
+        targets[destination],
+        observations,
+        report,
+        policy._dependencies(destination),
+    )
+    plain = next(
+        value for value in original.alternatives if value.value.value == "Plain Work"
+    )
+    elected, associations = policy._decoration_equivalence_election(
+        report, targets, original, observations
+    )
+    assert elected.alternatives == (plain,)
+    assert len(plain.correlations) == 1
+    assert associations
+    assert set(associations.values()) == {plain.alternative_id}
+    assert all(
+        value
+        in {
+            observation.representation
+            for observation in observations
+            if observation.value.value != "Plain Work"
+        }
+        for value in associations
+    )
+
+
+@pytest.mark.parametrize("binding", ("missing", "absent_member", "direct_precedence"))
+def test_combination_title_lookup_uses_only_surviving_proven_association(binding):
+    # These private seams own the ephemeral association contract; no alias is serialized.
+    from mechanical_librarian.domain import proposal_set as policy
+
+    report = retained_decoration_report("subtitle")
+    proposal = evaluate_report(report)
+    targets = {field.destination: field for field in report.target.fields}
+    results = {result.destination: result for result in proposal.results}
+    observations = {
+        destination: policy._observations(report, destination)
+        for destination in (
+            TargetDestination.TITLE,
+            TargetDestination.SUBTITLE,
+            TargetDestination.SERIES,
+        )
+    }
+    title = TargetDestination.TITLE
+    original = policy._evaluate(
+        title, targets[title], observations[title], report, policy._dependencies(title)
+    )
+    elected, associations = policy._decoration_equivalence_election(
+        report, targets, original, observations[title]
+    )
+    if binding == "missing":
+        associations = {}
+    elif binding == "absent_member":
+        associations = dict.fromkeys(associations, "alternative_" + "0" * 64)
+    else:
+        results[title] = original
+    combinations, _ = policy._bibliographic_combinations(
+        targets, results, observations, associations
+    )
+    assert combinations == ()
+    assert (
+        elected.alternatives == results[title].alternatives
+        if binding != "direct_precedence"
+        else len(results[title].alternatives) == 2
+    )
+
+
+@pytest.mark.parametrize("ignored", ("title_layout", "subtitle"))
+def test_ignored_members_are_not_resurrected_by_decoration_association(ignored):
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations[ignored] = "ignore"
+    if ignored == "subtitle":
+        destinations["title_layout"] = "ignore"
+    proposal = evaluate_report(
+        retained_decoration_report("subtitle"), policy_destinations=destinations
+    )
+    destination = (
+        TargetDestination.TITLE
+        if ignored == "title_layout"
+        else TargetDestination.SUBTITLE
+    )
+    result = next(
+        value for value in proposal.results if value.destination is destination
+    )
+    assert result.alternatives == ()
+    assert all(
+        selection.destination is not destination
+        or selection.kind.value == "preserve_target"
+        for combination in proposal.bibliographic_combinations
+        for selection in combination.selections
+    )

@@ -12,7 +12,7 @@ The current installed contract is intentionally narrow:
 - `config-v8` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v38` plus `proposal-set-v7` under
-  `fixed-conservative-v22`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v23`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v6`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v11`,
@@ -170,3 +170,8 @@ loaded as application state or used to widen the supported reviewer tuple.
 This is a pre-release reset and not a deprecation cycle. Compatibility requires
 a named present user need. A future public release must document its own
 compatibility, migration, and restore promises before users depend on them.
+
+The #1002 title-component association increment declares **clean rebuild required**
+for `fixed-conservative-v22` proposal state. Only exact v23 policy state is
+accepted; report v38, proposal document v7 and relationship v1 remain unchanged.
+No alias is persisted and no adoption or migration is provided.
