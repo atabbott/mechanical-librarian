@@ -43,8 +43,11 @@ V16_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v16
 CURRENT_MANIFEST = MANIFEST.with_name(
     "f20-rich-metadata-qualification-candidate-v17.json"
 )
-LATEST_MANIFEST = MANIFEST.with_name(
+ASSOCIATION_MANIFEST = MANIFEST.with_name(
     "f20-rich-metadata-qualification-candidate-v18.json"
+)
+LATEST_MANIFEST = MANIFEST.with_name(
+    "f20-rich-metadata-qualification-candidate-v19.json"
 )
 LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 HISTORICAL_MANIFEST = (
@@ -1353,7 +1356,7 @@ def test_runtime_envelope_pins_every_terminal_disposition_and_authority() -> Non
 
 
 def test_association_successors_bind_current_sources_and_retained_scoring():
-    rich = json.loads(LATEST_MANIFEST.read_text())
+    rich = json.loads(ASSOCIATION_MANIFEST.read_text())
     title = json.loads(LATEST_F19A_MANIFEST.read_text())
     assert (
         hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
@@ -1377,11 +1380,7 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
     assert set(sources) == set(
         json.loads(CURRENT_MANIFEST.read_text())["frozen_contract"]["behavior_sources"]
     )
-    for name, digest in sources.items():
-        assert (
-            hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
-            == digest
-        )
+    assert hashlib.sha256(ASSOCIATION_MANIFEST.read_bytes()).hexdigest() == "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74"
     evidence = rich["evidence_method"]["title_component_associations"]
     assert title["association_requalification"] == evidence
     for name, digest in evidence["review_projection_followup"][
@@ -1409,3 +1408,22 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
         rich["passing_automatic_options"]
         == json.loads(CURRENT_MANIFEST.read_text())["passing_automatic_options"]
     )
+
+
+def test_inventaire_successor_binds_current_sources_and_preserves_authority() -> None:
+    current = json.loads(LATEST_MANIFEST.read_text())
+    prior = json.loads(ASSOCIATION_MANIFEST.read_text())
+    assert current["authority_rotation"]["prior_manifest_sha256"] == hashlib.sha256(ASSOCIATION_MANIFEST.read_bytes()).hexdigest()
+    assert current["proposal_policy_version"] == prior["proposal_policy_version"] == "fixed-conservative-v23"
+    assert current["options"] == prior["options"]
+    assert current["passing_automatic_options"] == prior["passing_automatic_options"]
+    for name, digest in current["frozen_contract"]["behavior_sources"].items():
+        assert hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest() == digest
+    proof = current["evidence_method"]
+    assert proof["non_series_complete_previews"] == 980
+    assert proof["series_complete_previews"] == 108
+    assert proof["all_13_options_unchanged"] is True
+    assert proof["retained_source_contract"]["canonical_sources_admitted"] == 21
+    assert proof["retained_source_contract"]["full_preparation_recovery_claim"] is False
+    for name in ("non-series.json", "series.json"):
+        assert proof["continuity"][name]["complete_semantic_results_equal"] is True

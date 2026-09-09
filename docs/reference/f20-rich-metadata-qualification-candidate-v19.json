@@ -1,0 +1,419 @@
+{
+  "authority_rotation": {
+    "measured_candidate_head": "9a89321f12dbe99ad7088ada69dffb4d1d6fc0d4",
+    "prior_manifest_sha256": "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
+    "scope": "Inventaire source-contract and bounded author-aware observation correction; unchanged decision-only policy and option dispositions."
+  },
+  "automatic_authority": "decision_only",
+  "evidence_method": {
+    "all_13_options_unchanged": true,
+    "continuity": {
+      "non-series.json": {
+        "baseline_sha256": "53d9950159aa88c7847cb471102a29b23e731834616bcd56aaa85451e8a13817",
+        "candidate_sha256": "5144637c17b411841ac024fa9a1c460a91b0375af84c93c1af0da0c780b9ede6",
+        "complete_semantic_results_equal": true
+      },
+      "sealed_series_bindings_equal": true,
+      "series.json": {
+        "baseline_sha256": "e79a09805d2fc6bd20a36983503c06c5f6ce804399aa39b2327dc6316e95252b",
+        "candidate_sha256": "f2d6fba6bb18ffc753f731ba8e76f7aa75cd2c643ba5f7c5913da0ecc17a3778",
+        "complete_semantic_results_equal": true
+      }
+    },
+    "limitations": [
+      "Retained reports are exposed downstream continuity evidence, not fresh provider accuracy or a new holdout.",
+      "Twenty-one retained failure cases contain eighteen unique source IDs; admission is not full historical preparation recovery.",
+      "Only two documented empty ISBN envelopes could be reconstructed; the original seven malformed reports lack complete raw response coverage.",
+      "Search shape logs retain counts, not hydrated identity payloads; synthetic transport tests prove filtering and ambiguity."
+    ],
+    "non_series_complete_previews": 980,
+    "prior_evidence_manifest_sha256": "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
+    "retained_source_contract": {
+      "canonical_sources_admitted": 21,
+      "full_preparation_recovery_claim": false,
+      "historical_completed_reports": {
+        "insufficient_input": 3,
+        "malformed": 7,
+        "overflow": 19
+      },
+      "historical_preparations": {
+        "completed": 29,
+        "failed": 21,
+        "total": 50
+      },
+      "retained_failed_cases": 21,
+      "source_sha": "9a89321f12dbe99ad7088ada69dffb4d1d6fc0d4",
+      "unique_source_ids": 18,
+      "validated_negative_shapes": 2
+    },
+    "retained_source_contract_receipt_sha256": "5a10db6e61b7a98eff1dea56198e692ad1231a9438552da29daaea101a449450",
+    "series_complete_previews": 108,
+    "synthetic_proof": {
+      "acquisition": "tests/unit/test_cover_observer.py",
+      "durable_recovery": "tests/integration/test_provider_recovery_composition.py",
+      "negative_isbn_search_and_authors": "tests/unit/test_inventaire_metadata.py",
+      "report_reopen": "tests/unit/test_metadata_report_persistence.py",
+      "source_ids_and_states": "tests/unit/test_cover_evidence.py"
+    }
+  },
+  "excluded_destinations": [
+    "narrators",
+    "cover"
+  ],
+  "external_acceptance_required": [
+    "Supported isolated Audiobookshelf decision-to-effect qualification",
+    "Exact-installed acceptance and terminal candidate preflight"
+  ],
+  "frozen_contract": {
+    "behavior_sources": {
+      "src/mechanical_librarian/adapters/field_effect_authority.py": "e639517bfe9e0e6a7bd9e34225cc320801c0013fd951ee9ffa65208b68afae95",
+      "src/mechanical_librarian/adapters/field_effect_runtime.py": "cfcc6edea33937d3e8c9ed85371c5f15dca434b85642bde37184d12cf5797c19",
+      "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py": "85f289ca2c97c97be2cc0476f963e2b366ba40fcc549160a2183541151b92953",
+      "src/mechanical_librarian/adapters/persistence/documents.py": "eeb855cafe56a39b6adc318eff41c42225553bf5d544d91b8ab9405486410baa",
+      "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "8986b39c743225b9b98ef39b28ee62fc856ded4c97380e8c1b05c3d04e9d4cf8",
+      "src/mechanical_librarian/adapters/persistence/field_effect_validation.py": "196479934ea0cdcc155645c50e36f0fdbf28170b1062bca1fb8db1f650f39617",
+      "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "b13eb350de28386822639babdca72e1ad045d01a68e59e2823e3a6205071952b",
+      "src/mechanical_librarian/adapters/persistence/transactions.py": "d925b8d8829c4b06d9b8ebd22eb85bdf4dfefd2de918997253312554c09f2ab9",
+      "src/mechanical_librarian/adapters/providers/inventaire_metadata.py": "5add892d54d7da440218fe23f8a8a3d1e558add45b7ac547f79d81596eccec2d",
+      "src/mechanical_librarian/application/continuous_field_effects.py": "05aed3f2b762edece5a4245447a458e0c808ca07e47409dd0ab1f0b28b98b037",
+      "src/mechanical_librarian/application/field_effects.py": "491bbd4b2508c116f70007e94c2affd911380088591100755caae30b3bc21070",
+      "src/mechanical_librarian/application/metadata_policy.py": "7003d6f98a8b733aeef600e8eb1fdd033b541280f80463c814bde52fb4748047",
+      "src/mechanical_librarian/domain/audio_inspection.py": "10eb3766b9b609053f85ed354fedc3fcbd3a32d2ec1b055ce2ee82cc51f9f28f",
+      "src/mechanical_librarian/domain/automatic_decision.py": "5f538053bbd6b982eab738da7bca74042c346c3c88f795ccb421a861b789d0b9",
+      "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
+      "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
+      "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
+      "src/mechanical_librarian/domain/epub_opening.py": "1d6714c2d668f0ef82c4e12e0ee3075f8b2164aade9bb5c2ecf2d7506f99bf12",
+      "src/mechanical_librarian/domain/evidence_bounds.py": "dd21b6b9fe02af6b666f51077e31c39d5249d0888e3ffa37119fa50e5bc05957",
+      "src/mechanical_librarian/domain/failure_diagnostics.py": "90adc37a72a0dcad63ab8833da1c9a071bedacd0c4d84911a5c5d79c069b06b7",
+      "src/mechanical_librarian/domain/field_effect.py": "568966dc223144042a4d951d807aa606368a91ad8f2ef5ed98ff0b9fb64cc2b4",
+      "src/mechanical_librarian/domain/field_outcomes.py": "e8f989da95c8a6527cb49c55e4c0cc25f0e6d148a9a47edb678cd24c78818772",
+      "src/mechanical_librarian/domain/field_value_comparison.py": "000f661e9c24585e51465bfd43998d1ff13edb3af7375225125436d53bf14f36",
+      "src/mechanical_librarian/domain/identifiers.py": "ab8862f3259921b9cd5e00bf2bf636c846b810db79c58c293c8cf12bd1c54f6a",
+      "src/mechanical_librarian/domain/metadata_policy.py": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0",
+      "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
+      "src/mechanical_librarian/domain/proposal_set.py": "a90c3aa5050a45c8a8f6146d10006c354e01257236cdedb9cbfcead944193932",
+      "src/mechanical_librarian/domain/review_case.py": "9382023a5363fd0200007e7362a5bdcff362bf7a53973c27833b3efdffbca92a",
+      "src/mechanical_librarian/domain/reviewer_decision_summary.py": "dabf218ef80bbd59076e7e235dc506819950016dca25f581fd3020edade70555",
+      "src/mechanical_librarian/domain/rich_metadata_preview.py": "40696bad9423d43a27676b020140a6cb868c960a8b1ee88f1c9e6e114474eea2",
+      "src/mechanical_librarian/domain/shadow_decision.py": "ddadeb6be88ebf03f3f9476b2cb7fff158c1a7e6d057d659dff093f9788c2d76",
+      "src/mechanical_librarian/domain/shadow_outcome.py": "a347408dd62085ca9ba8be1b962491685cd59fcb4934234ef48b50175eac64b7",
+      "src/mechanical_librarian/domain/shadow_review.py": "16153d513d6d5ddf7b7844533f42c988103167d443c1b7af6c1708f986ce5b5c",
+      "src/mechanical_librarian/domain/shadow_review_actions.py": "24b9473a8cc102226c99e2ce5b497c3a30e60132354bd1608689803d32db4791",
+      "src/mechanical_librarian/domain/validation.py": "c72da11903fc02514af0430bee2e813a58e70dfd285d4e82bcfa42a4f72e526f",
+      "src/mechanical_librarian/domain/work_identity.py": "da96b62cb77a4b0246ed3bfb6e381d9f4f9fdde1c035073e356a52da44b912a7"
+    },
+    "original_programme_seal_sha256": "95f2aca28d154b41bf0381bfc4af7dc1628fa3c6f69ca3199b2bd100e9a9ada9",
+    "runtime_envelope": {
+      "binding": "The exact manifest digest and closed option/disposition/public-summary contract are asserted independently; this file is excluded from its own manifest's byte hash.",
+      "identity": "src/mechanical_librarian/domain/rich_metadata_qualification.py"
+    },
+    "scorer": {
+      "identity": "score_series_v2.py",
+      "sha256": "4d1e68e655ca8cb51eb6384b1f58f729b1103b3b79dea127dab2b588554cf76d"
+    },
+    "thresholds": {
+      "identity": "qualification-contract-v6.json",
+      "sha256": "e6585c9bb7fee3a062d3b4fd0b8645aadfa27456be896a8805c664541a0b3000"
+    },
+    "uv_lock_sha256": "b70957d1879bedc2d4e117458cb6610b0db134bfb8b13807b340e59f16293de8"
+  },
+  "human_only_options": [
+    "explicit:unsupported"
+  ],
+  "options": [
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 339,
+      "evidence_origin": "historical_v11",
+      "identity": "subtitle:fill_empty",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 63,
+        "automatic_recall": 0.27631578947368424,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "not_qualified",
+      "eligible_opportunities": 49,
+      "evidence_origin": "historical_v11",
+      "identity": "subtitle:corroborated_split",
+      "metrics": {
+        "automatic_precision": null,
+        "automatic_predictions": 0,
+        "automatic_recall": 0,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "identity": "series:primary_narrative",
+      "metrics_by_batch": [
+        "confirmation",
+        "final"
+      ]
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "identity": "series:source_order",
+      "metrics_by_batch": [
+        "confirmation",
+        "final"
+      ]
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "identity": "series:all_qualified",
+      "metrics_by_batch": [
+        "confirmation",
+        "final"
+      ]
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 147,
+      "evidence_origin": "historical_v11",
+      "identity": "genres:fill_empty",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 15,
+        "automatic_recall": 0.10204081632653061,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 49,
+      "evidence_origin": "historical_v11",
+      "identity": "genres:add",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 4,
+        "automatic_recall": 0.08163265306122448,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 49,
+      "evidence_origin": "historical_v11",
+      "identity": "genres:replace",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 4,
+        "automatic_recall": 0.08163265306122448,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 49,
+      "evidence_origin": "historical_v11",
+      "identity": "tags:fill_empty",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 3,
+        "automatic_recall": 0.061224489795918366,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 49,
+      "evidence_origin": "historical_v11",
+      "identity": "tags:add",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 3,
+        "automatic_recall": 0.061224489795918366,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 49,
+      "evidence_origin": "historical_v11",
+      "identity": "tags:replace",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 3,
+        "automatic_recall": 0.061224489795918366,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 48,
+      "evidence_origin": "historical_v11",
+      "identity": "description_fill:safe_plain_text",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 27,
+        "automatic_recall": 0.5625,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "not_qualified",
+      "eligible_opportunities": 49,
+      "evidence_origin": "historical_v11",
+      "identity": "description_fill:google_visible_text",
+      "metrics": {
+        "automatic_precision": null,
+        "automatic_predictions": 0,
+        "automatic_recall": 0,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 42,
+      "evidence_origin": "historical_v11",
+      "identity": "isbn_form:preserve_exact",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 42,
+        "automatic_recall": 1,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "sufficient",
+      "disposition": "passing_automatic",
+      "eligible_opportunities": 42,
+      "evidence_origin": "historical_v11",
+      "identity": "isbn_form:prefer_isbn13",
+      "metrics": {
+        "automatic_precision": 1,
+        "automatic_predictions": 42,
+        "automatic_recall": 1,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "insufficient",
+      "disposition": "insufficient_coverage",
+      "eligible_opportunities": 0,
+      "evidence_origin": "historical_v11",
+      "identity": "asin:preserve_exact",
+      "metrics": {
+        "automatic_precision": null,
+        "automatic_predictions": 0,
+        "automatic_recall": null,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "insufficient",
+      "disposition": "insufficient_coverage",
+      "eligible_opportunities": 0,
+      "evidence_origin": "historical_v11",
+      "identity": "asin:ebook_manifestation",
+      "metrics": {
+        "automatic_precision": null,
+        "automatic_predictions": 0,
+        "automatic_recall": null,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    },
+    {
+      "cohort_sufficiency": "not_applicable",
+      "disposition": "passing_human_only",
+      "eligible_opportunities": 0,
+      "evidence_origin": "historical_v11",
+      "identity": "explicit:unsupported",
+      "metrics": {
+        "automatic_precision": null,
+        "automatic_predictions": 0,
+        "automatic_recall": null,
+        "structural_or_sensitive_violations": 0,
+        "unsupported_output": 0
+      }
+    }
+  ],
+  "passing_automatic_options": [
+    "description_fill:safe_plain_text",
+    "genres:add",
+    "genres:fill_empty",
+    "genres:replace",
+    "isbn_form:prefer_isbn13",
+    "isbn_form:preserve_exact",
+    "series:all_qualified",
+    "series:primary_narrative",
+    "series:source_order",
+    "subtitle:fill_empty",
+    "tags:add",
+    "tags:fill_empty",
+    "tags:replace"
+  ],
+  "policy_only_options": [
+    "tags:off"
+  ],
+  "proposal_policy_version": "fixed-conservative-v23",
+  "schema": "f20-rich-metadata-qualification-candidate-v19",
+  "zero_tolerance": {
+    "evaluation_status": "passed",
+    "failure_counts": {
+      "cross_source_list_synthesis": 0,
+      "historical_qualification_write": 0,
+      "incomplete_ordered_list": 0,
+      "inferred_series_sequence": 0,
+      "invalid_list_operation": 0,
+      "invented_value": 0,
+      "populated_series_replacement": 0,
+      "private_data_disclosure": 0,
+      "silent_description_rewrite_or_truncation": 0,
+      "stale_target_apply": 0,
+      "taxonomy_translation": 0,
+      "unsafe_description": 0,
+      "wrong_manifestation_identifier": 0,
+      "wrong_work_applicability": 0
+    },
+    "proof": "Focused synthetic proposal, preview, identity, automatic-decision, persisted outcome, guarded effect and supported-adapter regression tests, plus exact full-preview exposed regression. Historical non-series controls are retained; metric results do not replace source/current-authority proof.",
+    "required_controls": [
+      "cross_source_list_synthesis",
+      "incomplete_ordered_list",
+      "invalid_list_operation",
+      "invented_value",
+      "private_data_disclosure",
+      "silent_description_rewrite_or_truncation",
+      "stale_target_apply",
+      "taxonomy_translation",
+      "unsafe_description",
+      "wrong_work_applicability",
+      "wrong_manifestation_identifier",
+      "populated_series_replacement",
+      "historical_qualification_write",
+      "inferred_series_sequence"
+    ]
+  }
+}

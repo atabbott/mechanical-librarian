@@ -35,7 +35,7 @@ def test_installed_owner_decision_activity_smoke() -> None:
         CoverSourceState.TIMEOUT,
     ),
 )
-def test_inventaire_failure_then_authenticated_reprepare_preserves_history(
+def test_inventaire_failure_then_authenticated_reprepare_starts_new_run(
     state: CoverSourceState,
 ) -> None:
     with harness._installed_qualification_environment(
@@ -77,6 +77,13 @@ def test_inventaire_failure_then_authenticated_reprepare_preserves_history(
                     assert connection.execute(
                         "SELECT count(*) FROM metadata_reports"
                     ).fetchone() == (2,)
+                    prior_documents = dict(connection.execute("SELECT report_id,document FROM metadata_reports"))
+                    first_run = connection.execute("SELECT run_id,state FROM review_preparation_presentation WHERE row_id='run'").fetchone()
+                    assert first_run is not None and first_run[1] == "completed_with_failures"
+                    assert connection.execute("SELECT count(*) FROM review_preparation_presentation WHERE row_kind='work' AND work_outcome='failed'").fetchone() == (1,)
+                    assert [connection.execute("SELECT count(*) FROM " + table).fetchone()[0]
+                            for table in ("proposal_sets", "review_cases")] == [2, 2]
+
                 fixture.fail = False
                 html = client.get(environment.origin + "/library").text
                 csrf = re.search(r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', html)
@@ -106,6 +113,11 @@ def test_inventaire_failure_then_authenticated_reprepare_preserves_history(
                             "review_cases",
                         )
                     ] == [3, 3, 3]
+                    final_run = connection.execute("SELECT run_id,state FROM review_preparation_presentation WHERE row_id='run'").fetchone()
+                    assert final_run is not None and final_run[0] != first_run[0]
+                    assert final_run[1] == "completed_clean"
+                    current_documents = dict(connection.execute("SELECT report_id,document FROM metadata_reports"))
+                    assert all(current_documents[identity] == document for identity, document in prior_documents.items())
                     documents = [
                         json.loads(row[0])
                         for row in connection.execute(

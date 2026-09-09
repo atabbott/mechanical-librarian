@@ -187,11 +187,14 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
     assert report == MetadataReport.from_json(report.to_json())
 
 
-def test_work_search_hydrates_discovery_identity_before_mapping() -> None:
+@pytest.mark.parametrize("missing_isbn", (False, True))
+def test_work_search_hydrates_discovery_identity_before_mapping(missing_isbn: bool) -> None:
     requests: list[httpx.Request] = []
 
     def respond(request: httpx.Request) -> httpx.Response:
         requests.append(request)
+        if request.url.params.get_list("uris") == ["isbn:9780306406157"]:
+            return httpx.Response(200, json={"entities": {}, "redirects": {}, "notFound": ["isbn:9780306406157"]})
         if str(request.url).startswith(INVENTAIRE_SEARCH_URL):
             return httpx.Response(
                 200,
@@ -249,26 +252,36 @@ def test_work_search_hydrates_discovery_identity_before_mapping() -> None:
         authors=("Ada Example",),
     )
     provider = _provider(httpx.MockTransport(respond))
-    observation = provider.observe(lookup)
+    plan = MetadataDiscoveryPlan(lookup.local_claims, (
+        MetadataDiscoveryLane("lane_" + "1" * 64, ProviderQueryKind.WORK, (_isbn().reference,), title=lookup.title, authors=lookup.authors),
+        MetadataDiscoveryLane("lane_" + "2" * 64, ProviderQueryKind.ISBN, (_isbn().reference,), matched_family="9780306406157", canonical_isbns=("9780306406157",)),
+    ))
+    observation = provider.observe(plan if missing_isbn else lookup)
+    if missing_isbn:
+        assert {lane.kind: lane.status for lane in observation.lanes} == {
+            ProviderQueryKind.ISBN: ProviderStatus.NO_MATCH,
+            ProviderQueryKind.WORK: ProviderStatus.CANDIDATES,
+        }
 
     assert observation.status is ProviderStatus.CANDIDATES
-    assert (
-        qualify_provider_observation(observation, lookup).status
-        is ProviderStatus.CANDIDATES
-    )
+    if not missing_isbn:
+        assert (
+            qualify_provider_observation(observation, lookup).status
+            is ProviderStatus.CANDIDATES
+        )
     assert observation.candidates[0].identity == "inventaire-work-wd-Q100"
     assert observation.candidates[0].work_identity == "inventaire-work-wd-Q100"
     assert observation.candidates[0].claims
     assert observation.candidates[0].claims[0].kind is ClaimKind.TITLE
-    assert len(requests) == 3
+    assert len(requests) == 3 + int(missing_isbn)
     # A work entity image remains work-scoped; no edition identity is invented.
     descriptor = provider.cover_descriptors[0]
     assert descriptor.provenance is not None
     assert descriptor.provenance.designation is CoverDesignation.WORK
     assert descriptor.provenance.edition_identity is None
     assert descriptor.provenance.work_identity == "inventaire-work-wd-Q100"
-    assert requests[0].url.path == "/api/search"
-    assert requests[1].url.path == "/api/entities/by-uris"
+    assert requests[int(missing_isbn)].url.path == "/api/search"
+    assert requests[1 + int(missing_isbn)].url.path == "/api/entities/by-uris"
 
 
 def test_latin_fold_reaches_inventaire_only_on_final_bounded_search() -> None:
