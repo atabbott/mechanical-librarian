@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+- Library explains provider evidence groups, lookup states, and field-local automatic withholding (#891).
+
 - Inventaire cover evidence now survives preparation. Valid missing ISBNs permit
   bounded title-and-author fallback, and three-row searches retain useful work
   evidence without concealing ambiguity or incomplete author identities.

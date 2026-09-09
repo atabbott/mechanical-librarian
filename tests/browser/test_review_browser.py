@@ -268,6 +268,7 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    provider_recovery: bool = False,
     retained_decoration: tuple[str, bool] | None = None,
     retained_component_text: str | None = None,
     cover_shapes: tuple[tuple[int, int], ...] = ((1, 1), (1, 1)),
@@ -394,47 +395,60 @@ def _server(
         )
     else:
         report = _report()
-    repository.publish(report, lambda: True)
-    if retained_decoration is not None:
-        from mechanical_librarian.domain.metadata_policy import (
-            MetadataPolicyProfile,
-            human_review_destinations,
-            resolve_policy,
-        )
+    if provider_recovery:
+        from tests.support.provider_recovery_rail import publish_provider_failure_case
 
-        destinations = {
-            name: "unsupported" if value == "unsupported" else "ask"
-            for name, value in MetadataPolicyProfile.builtin().destinations
-        }
-        if automatic_fixture:
-            destinations.update(
-                title_layout="automatic", subtitle="automatic", series="automatic"
-            )
-        profile = MetadataPolicyProfile.create(
-            "Retained components",
-            dict(MetadataPolicyProfile.builtin().options),
-            destinations,
-        )
-        resolved = resolve_policy(profile, report.target.library)
-        repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
-        if automatic_fixture:
-            repository.activate_qualified_automatic(3)
-        proposal_set = evaluate_report(
-            report, resolved.resolved_id, human_review_destinations(resolved)
-        )
+        case_id, report, _, proposal_set = publish_provider_failure_case(repository)
     else:
-        proposal_set = evaluate_report(report)
-    repository.publish_proposal(proposal_set)
-    case_id = json.loads(repository.admit_review_case(proposal_set))["review_case_id"]
-    if retained_decoration is not None and automatic_fixture:
-        repository.persist_shadow_outcome(case_id, 4)
+        repository.publish(report, lambda: True)
+        if retained_decoration is not None:
+            from mechanical_librarian.domain.metadata_policy import (
+                MetadataPolicyProfile,
+                human_review_destinations,
+                resolve_policy,
+            )
+
+            destinations = {
+                name: "unsupported" if value == "unsupported" else "ask"
+                for name, value in MetadataPolicyProfile.builtin().destinations
+            }
+            if automatic_fixture:
+                destinations.update(
+                    title_layout="automatic", subtitle="automatic", series="automatic"
+                )
+            profile = MetadataPolicyProfile.create(
+                "Retained components",
+                dict(MetadataPolicyProfile.builtin().options),
+                destinations,
+            )
+            resolved = resolve_policy(profile, report.target.library)
+            repository.enter_shadow_preview(1)
+            repository.create_metadata_policy_draft(profile.canonical_json)
+            repository.activate_metadata_policy(
+                profile.policy_id,
+                MetadataPolicyProfile.builtin().policy_id,
+                (
+                    (
+                        report.target.library,
+                        resolved.resolved_id,
+                        resolved.canonical_json,
+                    ),
+                ),
+                2,
+            )
+            if automatic_fixture:
+                repository.activate_qualified_automatic(3)
+            proposal_set = evaluate_report(
+                report, resolved.resolved_id, human_review_destinations(resolved)
+            )
+        else:
+            proposal_set = evaluate_report(report)
+        repository.publish_proposal(proposal_set)
+        case_id = json.loads(repository.admit_review_case(proposal_set))[
+            "review_case_id"
+        ]
+        if retained_decoration is not None and automatic_fixture:
+            repository.persist_shadow_outcome(case_id, 4)
     if preparation:
         repository.request_review_scan(
             "primary",
@@ -4537,4 +4551,92 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                 expect(current).to_have_attribute("aria-pressed", "true")
                 page.reload()
                 expect(current).to_have_attribute("aria-pressed", "true")
+            browser.close()
+
+
+def test_provider_recovery_rail_explains_exact_automatic_withholding():
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1280, "height": 800}
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    provider_recovery=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}")
+                expect(
+                    page.get_by_role("heading", name="Provider evidence limited")
+                ).to_be_visible()
+                row = page.get_by_role("button", name=re.compile(r"^Current title\."))
+                expect(row).to_have_attribute(
+                    "aria-describedby", re.compile("provider-summary")
+                )
+                row.click()
+                page.get_by_role("button", name=re.compile("^Series ")).click()
+                reason = "Automatic decision withheld: a contributing provider lookup did not supply usable evidence. You can review this field."
+                expect(page.get_by_text(reason)).to_be_visible()
+                expect(
+                    page.get_by_role(
+                        "button", name="Choose proposed value", exact=False
+                    ).first
+                ).to_be_enabled()
+                for width in (1280, 390):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    expect(page.get_by_text(reason)).to_be_visible()
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= innerWidth"
+                    )
+                page.goto(f"{origin}/review/{case_id}?subview=evidence")
+                expect(page.get_by_text(reason)).to_be_visible()
+                expect(
+                    page.get_by_role(
+                        "button", name="Choose proposed value", exact=False
+                    )
+                ).to_have_count(0)
+                from tests.support.provider_recovery_rail import provider_failure_report
+
+                writer = open_repository(root / "review.sqlite")
+                original_report = provider_failure_report()
+                recovered = provider_failure_report(contributing=False)
+                policy = writer.current_resolved_metadata_policy(
+                    recovered.target.library
+                )
+                assert policy is not None
+                writer.publish(
+                    recovered, lambda: True, expected_current=original_report.report_id
+                )
+                successor = evaluate_report(
+                    recovered, policy.resolved_id, dict(policy.destinations)
+                )
+                writer.publish_proposal(successor)
+                successor_id = json.loads(writer.admit_review_case(successor))[
+                    "review_case_id"
+                ]
+                writer.persist_shadow_outcome(successor_id, 4)
+                writer.close()
+                page.reload()
+                expect(page.get_by_text(reason)).to_have_count(0)
+                page.goto(f"{origin}/review/{successor_id}?subview=evidence")
+                expect(
+                    page.get_by_role("heading", name="Evidence", exact=True)
+                ).to_be_visible()
+                expect(page.get_by_text(reason)).to_have_count(0)
             browser.close()

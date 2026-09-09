@@ -773,3 +773,19 @@ describe('Library review ownership', () => {
     )
   })
 })
+
+it('keeps automatic withholding attached to its field on direct Evidence entry', async () => {
+  const reason =
+    'Automatic decision withheld: a contributing provider lookup did not supply usable evidence. You can review this field.'
+  const http = createHttp()
+  const field = detail.fields[0]
+  if (!field) throw new Error('Detail fixture field missing')
+  http.getCaseDetail = vi.fn(async () => ({
+    ...detail,
+    fields: [{ ...field, automaticWithheldReason: reason }],
+  }))
+  renderRoute('/review/case-1?subview=evidence', http)
+  expect(await screen.findByText(reason)).toBeVisible()
+  expect(screen.getByRole('heading', { name: 'Title' })).toBeVisible()
+  expect(screen.queryByRole('button', { name: /Choose/ })).toBeNull()
+})

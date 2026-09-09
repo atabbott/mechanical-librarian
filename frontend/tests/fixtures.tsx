@@ -81,6 +81,7 @@ export const detail: CaseDetailView = {
       targetFingerprint: 'fingerprint-1',
       humanDecision: null,
       automaticDecision: null,
+      automaticWithheldReason: null,
       notices: [],
       provenance: [],
       preservationOnly: false,

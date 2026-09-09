@@ -31,6 +31,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
     decision_actions,
 )
+from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ProviderLaneObservation,
@@ -38,12 +39,18 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFacts,
 )
-from mechanical_librarian.domain.proposal_set import canonical_target_fields
+from mechanical_librarian.domain.proposal_set import (
+    canonical_target_fields,
+    evaluate_report,
+)
 from mechanical_librarian.domain.review_browse import browse_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
     classify_review_field,
+)
+from mechanical_librarian.domain.rich_metadata_preview import (
+    compile_rich_metadata_preview,
 )
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
@@ -107,6 +114,7 @@ class CurrentReviewCaseSnapshot:
     cover_consideration_document: str | None = None
     cover_history: tuple[dict[str, object], ...] = ()
     current_cover_automatic_decision_id: str | None = None
+    resolved_policy_document: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -576,6 +584,7 @@ class InspectCurrentReviewCase:
                     None if decision is None else _decision_projection(decision)
                 ),
                 "automatic_decision": automatic_decision,
+                "automatic_withheld_reason": None,
                 "automatic_selection_sources": automatic_selection_sources,
                 "manual_hold": decision is not None and automatic_decision is not None,
                 "classification": classification.state,
@@ -642,7 +651,50 @@ class InspectCurrentReviewCase:
             raise ReviewWebError("unavailable") from error
 
     def run(self, review_case_id: str) -> dict[str, object]:
-        detail, _, _ = self._read(review_case_id)
+        detail, report, snapshot = self._read(review_case_id)
+        if snapshot.resolved_policy_document is None:
+            return detail
+        try:
+            policy = ResolvedMetadataPolicy.from_data(
+                json.loads(snapshot.resolved_policy_document)
+            )
+            case = ReviewCase.create_from_data(
+                json.loads(snapshot.case_document)["case"]
+            )
+            proposal = evaluate_report(
+                report, policy.resolved_id, dict(policy.destinations)
+            )
+            if proposal.proposal_set_id != case.proposal_set_id:
+                return detail
+            preview = compile_rich_metadata_preview(policy, report, proposal)
+            withheld = {
+                field.field
+                for field in preview.fields
+                if dict(policy.destinations).get(field.field) == "automatic"
+                and field.outcome == "abstain"
+                and field.reason
+                in {
+                    "series_provider_failure_isbn",
+                    "series_provider_failure_work",
+                    "series_provider_failure_asin",
+                }
+            }
+            fields = detail["fields"]
+            assert type(fields) is list
+            for field in fields:
+                assert type(field) is dict
+                if (
+                    field["destination"] in withheld
+                    and field["needs_attention"] is True
+                    and field["human_decision"] is None
+                    and field["automatic_decision"] is None
+                ):
+                    field["automatic_withheld_reason"] = (
+                        "Automatic decision withheld: a contributing provider lookup "
+                        "did not supply usable evidence. You can review this field."
+                    )
+        except Exception as error:
+            raise ReviewWebError("unavailable") from error
         return detail
 
     def evidence(
@@ -1961,14 +2013,14 @@ _NON_LIMITING_PROVIDER_STATUSES = frozenset(
     {"candidates", "disabled", "insufficient_input"}
 )
 _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
-    "candidates": "Returned matching metadata for this work.",
+    "candidates": "Returned metadata candidates for comparison.",
     "no_match": "Returned no matching metadata, so nothing was retained.",
     "disabled": "Not enabled, so this source was never asked.",
     "insufficient_input": "This work lacks the identifiers this source needs.",
     "authentication": "Refused the credentials it was given; nothing was retained.",
     "authorization": "Refused this request; nothing was retained.",
-    "rate_limited": "Limited the request rate; a bounded retry is scheduled.",
-    "unavailable": "Could not be reached; a bounded retry is scheduled.",
+    "rate_limited": "Limited the request rate.",
+    "unavailable": "Could not be reached.",
     "incomplete": "Answered only partially, so nothing was retained.",
     "malformed": "Returned an unreadable answer, so nothing was retained.",
     "oversized": "Returned more than the accepted bound, so nothing was retained.",

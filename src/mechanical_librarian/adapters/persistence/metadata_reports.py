@@ -386,6 +386,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._review_projections = SQLiteReviewProjectionRepository(
             connection,
             binding,
+            current_resolved_metadata_policy=(
+                lambda library: self.current_resolved_metadata_policy(library)
+            ),
             require_staged_shadow_projection_current=(
                 lambda review_case_id, action: (
                     self._require_staged_shadow_projection_current(

@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
@@ -72,21 +72,22 @@ const chapterSpan = (start: number, end: number) => {
 // The static map is exercised directly by the source-status content proof.
 // eslint-disable-next-line react-refresh/only-export-components
 export const sourceStatusLabel = (status: string) =>
-  status === 'candidates'
-    ? 'Match'
-    : status === 'no_match'
-      ? 'No match'
-      : status === 'candidate_limit_exceeded'
-        ? 'Too many candidates'
-        : status === 'rate_limited' || status === 'unavailable'
-          ? 'Retry scheduled'
-          : status === 'disabled'
-            ? 'Not enabled'
-            : status === 'insufficient_input'
-              ? 'Not enough identity'
-              : status === 'query_limit_exceeded'
-                ? 'Query allowance reached'
-                : 'Provider failure'
+  ({
+    __proto__: null,
+    candidates: 'Candidates found',
+    no_match: 'No match',
+    disabled: 'Not enabled',
+    insufficient_input: 'Not enough identity',
+    authentication: 'Authentication failed',
+    authorization: 'Access denied',
+    rate_limited: 'Rate limited',
+    unavailable: 'Unavailable',
+    incomplete: 'Incomplete evidence',
+    malformed: 'Malformed evidence',
+    oversized: 'Response too large',
+    candidate_limit_exceeded: 'Too many candidates',
+    query_limit_exceeded: 'Query allowance reached',
+  })[status] ?? 'Provider failure'
 const reviewerUnavailableDetail = (reason: string | null) =>
   reason === 'profile contract requires memory_bytes=1073741824'
     ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
@@ -482,6 +483,35 @@ const comparisonNotices = (field: ReviewField) =>
   )
     ? []
     : field.notices.filter((notice) => materialComparisonReasons.has(notice))
+
+// Match the persisted Library ordering; recovery eligibility is a separate contract.
+const limitingProviderStatuses = new Set([
+  'authentication',
+  'authorization',
+  'rate_limited',
+  'unavailable',
+  'incomplete',
+  'malformed',
+  'oversized',
+  'candidate_limit_exceeded',
+  'query_limit_exceeded',
+])
+const providerGroup = (work: LibraryWorkView) =>
+  work.attentionCount === 0
+    ? 'No attention needed'
+    : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
+      ? 'Provider evidence limited'
+      : 'Provider evidence complete'
+const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
+  const counts = new Map<string, number>()
+  for (const outcome of outcomes) {
+    const label = sourceStatusLabel(outcome.status)
+    counts.set(label, (counts.get(label) ?? 0) + 1)
+  }
+  return [...counts]
+    .map(([label, count]) => `${label}${count > 1 ? ` × ${String(count)}` : ''}`)
+    .join(' · ')
+}
 
 // Two surfaces, one disclosure. The review comparison carries the protected
 // evidence footer -- one line, no subtitle -- while the work summary, which is
@@ -2703,7 +2733,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 ) : null}
               </div>
             ) : (
-              data.works.map((work) => {
+              data.works.map((work, index) => {
                 const selectedWorkRow =
                   !preparationSelected &&
                   (work.reviewCaseId
@@ -2731,6 +2761,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         : `${String(work.attentionCount)} fields need attention`
                       : 'No attention needed'
                 const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
+                const group = providerGroup(work)
+                const previousWork = data.works[index - 1]
+                const showGroup =
+                  search.lens !== 'no_attention_needed' &&
+                  (!previousWork || providerGroup(previousWork) !== group)
+                const summary = providerSummary(work.preparationOutcomes)
+                const summaryId = summary ? `provider-summary-${work.id}` : undefined
                 const preparation = work.preparation
                 const preparationId = preparation ? `preparation-${work.id}` : undefined
                 const row = (
@@ -2744,6 +2781,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       <span className="library-work-origin">
                         {work.library} · {fieldLabel(work.mediaKind)}
                       </span>
+                      {summary ? (
+                        <span id={summaryId} className="library-provider-summary">
+                          {summary}
+                        </span>
+                      ) : null}
                       <span className="library-work-status">
                         <span
                           className={
@@ -2764,26 +2806,44 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     </span>
                   </>
                 )
-                return terminalFailure ? (
-                  <article
-                    key={work.id}
-                    className="library-work-row is-terminal"
-                    aria-label="Terminal preparation failure"
-                  >
-                    {row}
-                  </article>
-                ) : (
-                  <button
-                    key={work.id}
-                    type="button"
-                    className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
-                    aria-current={selectedWorkRow ? 'true' : undefined}
-                    aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
-                    aria-describedby={preparationId}
-                    onClick={() => void select(work)}
-                  >
-                    {row}
-                  </button>
+                return (
+                  <Fragment key={work.id}>
+                    {showGroup ? (
+                      <div className="library-provider-group">
+                        <h3>{group}</h3>
+                        {group !== 'No attention needed' ? (
+                          <p>
+                            {group === 'Provider evidence complete'
+                              ? 'Lookups completed or did not apply; a match is not guaranteed.'
+                              : 'Some lookups did not supply usable evidence. Recoverable lookups can change this group when new evidence arrives.'}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {terminalFailure ? (
+                      <article
+                        key={work.id}
+                        className="library-work-row is-terminal"
+                        aria-label="Terminal preparation failure"
+                      >
+                        {row}
+                      </article>
+                    ) : (
+                      <button
+                        key={work.id}
+                        type="button"
+                        className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
+                        aria-current={selectedWorkRow ? 'true' : undefined}
+                        aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
+                        aria-describedby={
+                          [preparationId, summaryId].filter(Boolean).join(' ') || undefined
+                        }
+                        onClick={() => void select(work)}
+                      >
+                        {row}
+                      </button>
+                    )}
+                  </Fragment>
                 )
               })
             )}
@@ -3101,7 +3161,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           : fieldLabel(selected.destination)}
                       </h2>
                       {selectedActionable ? (
-                        <p>{`${fieldLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
+                        <>
+                          <p>{`${fieldLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
+                          {selected.automaticWithheldReason ? (
+                            <p className="automatic-withheld-reason">
+                              {selected.automaticWithheldReason}
+                            </p>
+                          ) : null}
+                        </>
                       ) : selectedRevisitable ? (
                         <p>
                           The recorded outcome is marked below. You can select another eligible

@@ -2657,3 +2657,272 @@ def test_retained_subtitle_attention_uses_original_mixed_policy(
         "subtitle" in {item["destination"] for item in attention["items"]}
     ) is expected
     repository.close()
+
+
+@pytest.mark.parametrize(
+    "contributing,automatic,expected",
+    ((True, True, True), (False, True, False), (True, False, False)),
+)
+def test_provider_withheld_reason_requires_exact_contributing_automatic_evidence(
+    tmp_path, contributing, automatic, expected
+):
+    from tests.support.provider_recovery_rail import publish_provider_failure_case
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    case_id, _, _, _ = publish_provider_failure_case(
+        repository, contributing=contributing, automatic=automatic
+    )
+    before = tuple(repository._connection.iterdump())
+    changes = repository._connection.total_changes
+    detail = InspectCurrentReviewCase(repository).run(case_id)
+    series = next(
+        field for field in detail["fields"] if field["destination"] == "series"
+    )
+    assert (series["automatic_withheld_reason"] is not None) is expected
+    if expected:
+        assert series["needs_attention"] is True
+        assert "contributing provider lookup" in series["automatic_withheld_reason"]
+    assert tuple(repository._connection.iterdump()) == before
+    assert repository._connection.total_changes == changes
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "mode", ("admission_only", "absent", "mismatched", "human", "malformed")
+)
+def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode):
+    from dataclasses import replace
+
+    from mechanical_librarian.application.review_web import ReviewWebError
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from tests.support.provider_recovery_rail import publish_provider_failure_case
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    case_id, report, _, _ = publish_provider_failure_case(
+        repository, project=mode != "admission_only"
+    )
+    if mode == "human":
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "series"
+        )
+        RecordHumanDecision(repository, clock=lambda: 5).run(
+            review_case_id=case_id,
+            proposal_id=field["proposal_id"],
+            target_fingerprint=field["target_fingerprint"],
+            destination="series",
+            outcome="keep_current",
+            selected_value=None,
+            actor="owner",
+            idempotency_key="a" * 32,
+        )
+    snapshot = repository.read_current_review_case(case_id, None)
+    if mode in {"absent", "mismatched", "malformed"}:
+        document = (
+            None
+            if mode == "absent"
+            else "{}"
+            if mode == "malformed"
+            else resolve_policy(
+                MetadataPolicyProfile.builtin(), report.target.library
+            ).canonical_json
+        )
+        snapshot = replace(snapshot, resolved_policy_document=document)
+    # A snapshot collaborator isolates absent/unmatched authority from production
+    # policy persistence, whose validator correctly refuses corrupt later state.
+    store = Mock()
+    store.read_current_review_case.return_value = snapshot
+    if mode == "malformed":
+        with pytest.raises(ReviewWebError, match="unavailable"):
+            InspectCurrentReviewCase(store).run(case_id)
+    else:
+        detail = InspectCurrentReviewCase(store).run(case_id)
+        assert all(f["automatic_withheld_reason"] is None for f in detail["fields"])
+    repository.close()
+
+
+def test_provider_withheld_read_preserves_settled_database_bytes(tmp_path):
+    from tests.support.provider_recovery_rail import publish_provider_failure_case
+
+    database = tmp_path / "review.sqlite"
+    repository = open_repository(database)
+    case_id, _, _, _ = publish_provider_failure_case(repository)
+    repository._connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    before = database.read_bytes()
+    InspectCurrentReviewCase(repository).run(case_id)
+    assert database.read_bytes() == before
+    repository.close()
+
+
+def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp_path):
+    from mechanical_librarian.application.review_web import ReviewWebError
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from tests.support.provider_recovery_rail import (
+        provider_failure_report,
+        publish_provider_failure_case,
+    )
+
+    database = tmp_path / "review.sqlite"
+    reader = open_repository(database)
+    case_id, original_report, policy, _ = publish_provider_failure_case(reader)
+    profile = MetadataPolicyProfile.create(
+        "Successor policy", dict(policy.options), dict(policy.destinations)
+    )
+    next_policy = resolve_policy(profile, policy.library)
+    reader.create_metadata_policy_draft(profile.canonical_json)
+    writer_path = database if reader._binding is None else reader._binding.alias_path
+    inserted = threading.Event()
+    finished = threading.Event()
+    errors = []
+    successor_ids = []
+
+    def publish_successor():
+        writer = None
+        try:
+            connection = sqlite3.connect(writer_path, isolation_level=None)
+            connection.execute("PRAGMA foreign_keys=ON")
+            connection.execute("PRAGMA busy_timeout=5000")
+            writer = SQLiteMetadataReportRepository(connection)
+            connection.set_trace_callback(
+                lambda statement: (
+                    inserted.set()
+                    if statement.startswith("INSERT INTO metadata_reports")
+                    else None
+                )
+            )
+            connection.set_trace_callback(
+                lambda statement: (
+                    inserted.set()
+                    if statement.startswith("UPDATE metadata_policy_state")
+                    else None
+                )
+            )
+            writer.activate_metadata_policy(
+                profile.policy_id,
+                policy.profile_id,
+                (
+                    (
+                        policy.library,
+                        next_policy.resolved_id,
+                        next_policy.canonical_json,
+                    ),
+                ),
+                4,
+            )
+            report = provider_failure_report(contributing=False)
+            writer.publish(
+                report, lambda: True, expected_current=original_report.report_id
+            )
+            proposal = evaluate_report(
+                report, next_policy.resolved_id, dict(next_policy.destinations)
+            )
+            writer.publish_proposal(proposal)
+            successor_ids.append(
+                json.loads(writer.admit_review_case(proposal))["review_case_id"]
+            )
+            writer.persist_shadow_outcome(successor_ids[0], 4)
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            if writer is not None:
+                writer.close()
+            finished.set()
+
+    original = reader.get_review_case
+    started = False
+    writer_thread = threading.Thread(target=publish_successor, daemon=True)
+
+    def interleave(selected_id):
+        nonlocal started
+        value = original(selected_id)
+        if not started:
+            started = True
+            writer_thread.start()
+            assert inserted.wait(5)
+        return value
+
+    try:
+        with patch.object(reader, "get_review_case", side_effect=interleave):
+            detail = InspectCurrentReviewCase(reader).run(case_id)
+        assert any(f["automatic_withheld_reason"] is not None for f in detail["fields"])
+        writer_thread.join(timeout=5)
+        assert not writer_thread.is_alive()
+        assert errors == []
+        assert len(successor_ids) == 1
+        with pytest.raises(ReviewWebError, match="stale"):
+            InspectCurrentReviewCase(reader).run(case_id)
+        current = BrowseReviewLibrary(reader).library(
+            lens="all", search=None, limit=10, cursor=None
+        )
+        assert len(current["items"]) == 1
+        assert current["items"][0]["review_case_id"] == successor_ids[0]
+        reports = reader.read_review_library(None, 10, 0, None).rows
+        assert (
+            MetadataReport.from_json(reports[0][1]).report_id
+            == provider_failure_report(contributing=False).report_id
+        )
+        after = InspectCurrentReviewCase(reader).run(successor_ids[0])
+        assert all(f["automatic_withheld_reason"] is None for f in after["fields"])
+    finally:
+        if started:
+            writer_thread.join(timeout=5)
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    "status,reason",
+    (
+        (ProviderStatus.CANDIDATES, "Returned metadata candidates for comparison."),
+        (ProviderStatus.UNAVAILABLE, "Could not be reached."),
+        (ProviderStatus.RATE_LIMITED, "Limited the request rate."),
+    ),
+)
+def test_provider_snapshot_copy_does_not_invent_match_or_retry(status, reason):
+    from dataclasses import replace
+
+    from tests.support.provider_recovery_rail import provider_failure_report
+
+    base = provider_failure_report()
+    provider = base.providers[0]
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(
+            replace(
+                provider,
+                status=status,
+                lanes=(),
+                candidates=provider.candidates
+                if status is ProviderStatus.CANDIDATES
+                else (),
+            ),
+        ),
+    )
+    outcomes = _provider_outcomes(report)
+    assert outcomes[0]["status"] == status.value
+    assert outcomes[0]["reason"] == reason
+
+
+def test_existing_automatic_outcome_never_gets_provider_withheld_claim(tmp_path):
+    from tests.support.provider_recovery_rail import publish_provider_failure_case
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    case_id, _, _, _ = publish_provider_failure_case(
+        repository, contributing=False, project=False
+    )
+    repository.activate_qualified_automatic(3)
+    repository.persist_shadow_outcome(case_id, 4)
+    detail = InspectCurrentReviewCase(repository).run(case_id)
+    series = next(f for f in detail["fields"] if f["destination"] == "series")
+    assert series["automatic_decision"] is not None
+    assert series["automatic_withheld_reason"] is None
+    repository.close()

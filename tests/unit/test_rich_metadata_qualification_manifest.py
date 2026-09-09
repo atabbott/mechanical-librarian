@@ -48,11 +48,13 @@ ASSOCIATION_MANIFEST = MANIFEST.with_name(
     "f20-rich-metadata-qualification-candidate-v18.json"
 )
 V19_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v19.json")
+V20_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v20.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v20.json"
+    "f20-rich-metadata-qualification-candidate-v21.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
+V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1389,9 +1391,13 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
     )
     evidence = rich["evidence_method"]["title_component_associations"]
     assert title["association_requalification"] == evidence
-    for name, digest in evidence["review_projection_followup"][
-        "behavior_sources"
-    ].items():
+    latest_projection = json.loads(LATEST_MANIFEST.read_text())[
+        "review_projection_source_closure"
+    ]["behavior_sources"]
+    assert set(evidence["review_projection_followup"]["behavior_sources"]) < set(
+        latest_projection
+    )
+    for name, digest in latest_projection.items():
         assert (
             hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
             == digest
@@ -1447,11 +1453,11 @@ def test_inventaire_successor_binds_current_sources_and_preserves_authority() ->
 def test_inventaire_f19a_successor_preserves_historical_measurements_and_options() -> (
     None
 ):
-    current = json.loads(LATEST_F19A_MANIFEST.read_text())
+    current = json.loads(V7_F19A_MANIFEST.read_text())
     prior = json.loads(ASSOCIATION_F19A_MANIFEST.read_text())
     assert (
-        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
-        == F19A_QUALIFICATION_MANIFEST_SHA256
+        hashlib.sha256(V7_F19A_MANIFEST.read_bytes()).hexdigest()
+        == "62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014"
     )
     assert (
         current["prior_manifest_sha256"]
@@ -1482,7 +1488,7 @@ def test_inventaire_f19a_successor_preserves_historical_measurements_and_options
 
 
 def test_provider_contract_rotation_binds_complete_sources_without_rescoring():
-    current = json.loads(LATEST_MANIFEST.read_text())
+    current = json.loads(V20_MANIFEST.read_text())
     prior = json.loads(V19_MANIFEST.read_text())
     assert current["schema"] == "f20-rich-metadata-qualification-candidate-v20"
     assert (
@@ -1524,9 +1530,111 @@ def test_provider_contract_rotation_binds_complete_sources_without_rescoring():
     assert set(current["frozen_contract"]["behavior_sources"]) == set(
         prior["frozen_contract"]["behavior_sources"]
     )
+    assert (
+        hashlib.sha256(V20_MANIFEST.read_bytes()).hexdigest()
+        == "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd"
+    )
+    latest = json.loads(LATEST_MANIFEST.read_text())
+    assert set(latest["frozen_contract"]["behavior_sources"]) == set(
+        current["frozen_contract"]["behavior_sources"]
+    )
     for sources in (
         closure["behavior_sources"],
-        current["frozen_contract"]["behavior_sources"],
+        latest["frozen_contract"]["behavior_sources"],
+    ):
+        for name, digest in sources.items():
+            assert (
+                hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+                == digest
+            )
+
+
+def test_review_projection_successors_bind_current_sources_without_rescoring():
+    rich = json.loads(LATEST_MANIFEST.read_text())
+    title = json.loads(LATEST_F19A_MANIFEST.read_text())
+    prior_rich = json.loads(V20_MANIFEST.read_text())
+    prior_title = json.loads(V7_F19A_MANIFEST.read_text())
+    assert (
+        hashlib.sha256(LATEST_MANIFEST.read_bytes()).hexdigest()
+        == F20_QUALIFICATION_CANDIDATE_SHA256
+    )
+    assert (
+        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
+        == F19A_QUALIFICATION_MANIFEST_SHA256
+    )
+    assert rich["schema"] == "f20-rich-metadata-qualification-candidate-v21"
+    assert (
+        title["prior_manifest_sha256"]
+        == hashlib.sha256(V7_F19A_MANIFEST.read_bytes()).hexdigest()
+    )
+    assert (
+        rich["authority_rotation"]["prior_manifest_sha256"]
+        == hashlib.sha256(V20_MANIFEST.read_bytes()).hexdigest()
+    )
+    assert {
+        k: v
+        for k, v in title.items()
+        if k not in {"prior_manifest_sha256", "review_projection_source_closure"}
+    } == {k: v for k, v in prior_title.items() if k != "prior_manifest_sha256"}
+    assert {
+        k: v
+        for k, v in rich.items()
+        if k
+        not in {
+            "schema",
+            "authority_rotation",
+            "review_projection_source_closure",
+            "frozen_contract",
+        }
+    } == {
+        k: v
+        for k, v in prior_rich.items()
+        if k not in {"schema", "authority_rotation", "frozen_contract"}
+    }
+    assert {
+        k: v for k, v in rich["frozen_contract"].items() if k != "behavior_sources"
+    } == {
+        k: v
+        for k, v in prior_rich["frozen_contract"].items()
+        if k != "behavior_sources"
+    }
+    broad = rich["frozen_contract"]["behavior_sources"]
+    assert set(broad) == set(prior_rich["frozen_contract"]["behavior_sources"])
+    assert len(broad) == 36
+    assert {
+        name
+        for name in broad
+        if broad[name] != prior_rich["frozen_contract"]["behavior_sources"][name]
+    } == {
+        "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
+        "src/mechanical_librarian/domain/automatic_decision.py",
+    }
+    assert (
+        rich["provider_contract_source_closure"]
+        == prior_rich["provider_contract_source_closure"]
+    )
+    assert len(rich["provider_contract_source_closure"]["behavior_sources"]) == 15
+    closure = rich["review_projection_source_closure"]
+    assert closure == title["review_projection_source_closure"]
+    assert (
+        closure["fresh_scoring_run"] is False
+        and closure["fresh_holdout_claim"] is False
+    )
+    assert set(closure["behavior_sources"]) == {
+        "src/mechanical_librarian/" + name
+        for name in (
+            "adapters/persistence/metadata_reports.py",
+            "adapters/persistence/metadata_policy.py",
+            "adapters/persistence/review_cases.py",
+            "adapters/persistence/review_projections.py",
+            "adapters/persistence/review_sql.py",
+            "application/review_web.py",
+        )
+    }
+    for sources in (
+        broad,
+        closure["behavior_sources"],
+        rich["provider_contract_source_closure"]["behavior_sources"],
     ):
         for name, digest in sources.items():
             assert (

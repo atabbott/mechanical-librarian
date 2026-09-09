@@ -843,6 +843,23 @@ describe('ReviewApiClient', () => {
     })
 
     expect(mapCaseDetail(response([field()])).fields[0]?.currentValue).toBe('A Book')
+    expect(mapCaseDetail(response([field()])).fields[0]?.automaticWithheldReason).toBeNull()
+    expect(
+      mapCaseDetail(response([field({ automatic_withheld_reason: null })])).fields[0]
+        ?.automaticWithheldReason,
+    ).toBeNull()
+    expect(
+      mapCaseDetail(
+        response([field({ automatic_withheld_reason: 'Contributing lookup unavailable.' })]),
+      ).fields[0]?.automaticWithheldReason,
+    ).toBe('Contributing lookup unavailable.')
+    expect(() => mapCaseDetail(response([field({ automatic_withheld_reason: 1 })]))).toThrow(
+      ApiError,
+    )
+    expect(() =>
+      mapCaseDetail(response([field({ automatic_withheld_reason: 'x'.repeat(513) })])),
+    ).toThrow(ApiError)
+
     const retainedEvidence = field({
       decision_actions: ['keep_current', 'accept'],
       proposed_values: [{ kind: 'text', value: 'Alternative' }],

@@ -1433,13 +1433,13 @@ describe('Library route', () => {
   })
 
   it.each([
-    ['candidates', 'Match'],
+    ['candidates', 'Candidates found'],
     ['no_match', 'No match'],
-    ['rate_limited', 'Retry scheduled'],
-    ['unavailable', 'Retry scheduled'],
+    ['rate_limited', 'Rate limited'],
+    ['unavailable', 'Unavailable'],
     ['candidate_limit_exceeded', 'Too many candidates'],
-    ['authentication', 'Provider failure'],
-    ['malformed', 'Provider failure'],
+    ['authentication', 'Authentication failed'],
+    ['malformed', 'Malformed evidence'],
     ['a_status_this_build_has_never_seen', 'Provider failure'],
   ])('names the %s source status for an owner as %s', (status, label) => {
     expect(sourceStatusLabel(status)).toBe(label)
@@ -6803,4 +6803,159 @@ describe('Library route', () => {
       grants: [{ library: 'fiction', destinations: ['title'] }],
     })
   })
+})
+
+const providerRailWork = library.works[0]
+const providerRailField = detail.fields[0]
+if (!providerRailWork || !providerRailField) throw new Error('Provider rail fixtures are missing')
+
+describe('Provider evidence rail', () => {
+  it.each(['all', 'needs_attention'])(
+    'shows server-ordered page-local boundaries in %s',
+    async (lens) => {
+      const works = [
+        {
+          ...providerRailWork,
+          id: 'complete',
+          reviewCaseId: 'case-1',
+          title: 'Zulu complete',
+          preparationOutcomes: [
+            {
+              provider: 'Catalogue',
+              laneKind: 'isbn',
+              status: 'no_match',
+              reason: 'No match',
+              providerRequests: 1,
+            },
+          ],
+        },
+        {
+          ...providerRailWork,
+          id: 'limited',
+          reviewCaseId: 'case-2',
+          title: 'Alpha limited',
+          preparationOutcomes: [
+            {
+              provider: 'Catalogue',
+              laneKind: 'isbn',
+              status: 'unavailable',
+              reason: 'Unavailable',
+              providerRequests: 1,
+            },
+          ],
+        },
+        ...(lens === 'all'
+          ? [
+              {
+                ...providerRailWork,
+                id: 'clear',
+                reviewCaseId: 'case-3',
+                title: 'Clear work',
+                attentionCount: 0,
+              },
+            ]
+          : []),
+      ]
+      const http = Object.assign(createHttp(), {
+        getLibrary: vi.fn(async () => ({ ...library, works })),
+      })
+      renderRoute(`/library?lens=${lens}`, http)
+      const complete = await screen.findByRole('heading', { name: 'Provider evidence complete' })
+      const limited = screen.getByRole('heading', { name: 'Provider evidence limited' })
+      expect(
+        complete.compareDocumentPosition(limited) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+      expect(screen.getByRole('button', { name: /Zulu complete/ })).toHaveAccessibleDescription(
+        'No match',
+      )
+      expect(screen.getByRole('button', { name: /Alpha limited/ })).toHaveAccessibleDescription(
+        'Unavailable',
+      )
+      expect(screen.queryByText('Retry scheduled')).toBeNull()
+      if (lens === 'all')
+        expect(screen.getByRole('heading', { name: 'No attention needed' })).toBeVisible()
+    },
+  )
+
+  it.each([
+    ['candidates', 'Candidates found', 'complete'],
+    ['no_match', 'No match', 'complete'],
+    ['disabled', 'Not enabled', 'complete'],
+    ['insufficient_input', 'Not enough identity', 'complete'],
+    ['authentication', 'Authentication failed', 'limited'],
+    ['authorization', 'Access denied', 'limited'],
+    ['rate_limited', 'Rate limited', 'limited'],
+    ['unavailable', 'Unavailable', 'limited'],
+    ['incomplete', 'Incomplete evidence', 'limited'],
+    ['malformed', 'Malformed evidence', 'limited'],
+    ['oversized', 'Response too large', 'limited'],
+    ['candidate_limit_exceeded', 'Too many candidates', 'limited'],
+    ['query_limit_exceeded', 'Query allowance reached', 'limited'],
+  ])(
+    'names %s visibly and accessibly on a page starting within a group',
+    async (status, label, group) => {
+      const http = Object.assign(createHttp(), {
+        getLibrary: vi.fn(async () => ({
+          ...library,
+          page: 2,
+          works: [
+            {
+              ...providerRailWork,
+              preparationOutcomes: [
+                {
+                  provider: 'Catalogue',
+                  laneKind: 'discovery',
+                  status,
+                  reason: 'Bounded status',
+                  providerRequests: 0,
+                },
+              ],
+            },
+          ],
+        })),
+      })
+      renderRoute('/library?lens=all', http)
+      const row = await screen.findByRole('button', { name: /A Book\./ })
+      expect(row).toHaveAccessibleDescription(label)
+      expect(within(row).getByText(label)).toBeVisible()
+      expect(screen.getByRole('heading', { name: `Provider evidence ${group}` })).toBeVisible()
+    },
+  )
+
+  it('shows the field-local reason while keeping direct choices available', async () => {
+    const reason =
+      'Automatic decision withheld: a contributing provider lookup did not supply usable evidence. You can review this field.'
+    const http = createHttp()
+    http.getCaseDetail = vi.fn(async () => ({
+      ...detail,
+      fields: [{ ...providerRailField, automaticWithheldReason: reason }],
+    }))
+    renderRoute('/library?lens=all&preview=case-1', http)
+    expect(await screen.findByText(reason)).toBeVisible()
+    expect(screen.getByRole('button', { name: /New title/ })).toBeEnabled()
+  })
+})
+
+it('keeps clear and empty lenses free of provider headers and bounds many lane hints', async () => {
+  const http = createHttp()
+  http.getLibrary = vi.fn(async () => ({
+    ...library,
+    works: [
+      {
+        ...providerRailWork,
+        attentionCount: 0,
+        preparationOutcomes: Array.from({ length: 40 }, (_, index) => ({
+          provider: `Source ${String(index)}`,
+          laneKind: 'isbn',
+          status: 'no_match',
+          reason: 'No match',
+          providerRequests: 1,
+        })),
+      },
+    ],
+  }))
+  renderRoute('/library?lens=no_attention_needed', http)
+  const row = await screen.findByRole('button', { name: /A Book\./ })
+  expect(row).toHaveAccessibleDescription('No match × 40')
+  expect(screen.queryByRole('heading', { name: /Provider evidence/ })).toBeNull()
 })

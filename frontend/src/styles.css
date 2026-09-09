@@ -1007,3 +1007,9 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   .source-ledger li { grid-template-columns:1fr; }
   .source-ledger li b { text-align:left; }
 }
+
+.library-provider-group { padding: 1rem 0.75rem 0.5rem; border-top: 1px solid var(--line); }
+.library-provider-group h3 { margin: 0; font: inherit; font-weight: 800; }
+.library-provider-group p { margin: 0.35rem 0 0; font-size: 0.72rem; line-height: 1.5; color: var(--soft); }
+.library-provider-summary { display: block; font-size: 0.7rem; line-height: 1.5; overflow-wrap: anywhere; color: var(--soft); }
+.automatic-withheld-reason { font-size: 0.78rem; line-height: 1.55; overflow-wrap: anywhere; }

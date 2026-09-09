@@ -221,6 +221,9 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   return (
                     <section className="diagnostic-entry evidence-field" key={field.destination}>
                       <h3>{fieldLabel(field.destination)}</h3>
+                      {field.automaticWithheldReason ? (
+                        <p className="automatic-withheld-reason">{field.automaticWithheldReason}</p>
+                      ) : null}
                       {fieldObservations.length ? (
                         <ul className="evidence-values">
                           {fieldObservations.map((item, index) => (
