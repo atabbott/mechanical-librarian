@@ -1142,7 +1142,9 @@ def test_series_without_sequence_remains_eligible() -> None:
     assert ProposalOutcome.KEEP == result.outcome
 
 
-@pytest.mark.parametrize("kind", [CoverSourceKind.HARDCOVER, CoverSourceKind.INVENTAIRE])
+@pytest.mark.parametrize(
+    "kind", [CoverSourceKind.HARDCOVER, CoverSourceKind.INVENTAIRE]
+)
 def test_cover_requires_one_complete_safe_artifact(kind: CoverSourceKind) -> None:
     artifact = CoverArtifact.create(b"cover", b"preview", "image/png", 10, 20)
     source = CoverSource(

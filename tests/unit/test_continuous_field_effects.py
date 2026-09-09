@@ -17,7 +17,10 @@ from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
     TargetServiceUnavailable,
 )
-from mechanical_librarian.domain.automatic_decision import AutomaticDecision, F19A_QUALIFICATION_MANIFEST_SHA256
+from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    AutomaticDecision,
+)
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     FieldEffectError,
@@ -785,7 +788,10 @@ def _prior_qualification_decision(prior_digest: str) -> AutomaticDecision:
             ).encode("utf-8")
         ).hexdigest()
 
-    f19a = prior_digest == "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6"
+    f19a = (
+        prior_digest
+        == "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6"
+    )
     current = AutomaticDecision.create(
         review_case_id="review_case_" + "1" * 64,
         report_id="report_" + "2" * 64,
@@ -800,7 +806,9 @@ def _prior_qualification_decision(prior_digest: str) -> AutomaticDecision:
         rule_id="shadow_rule_" + "7" * 64,
         policy_category="title" if f19a else "genres",
         policy_option="replace_target:decoration_tidy" if f19a else "add",
-        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256 if f19a else F20_QUALIFICATION_CANDIDATE_SHA256,
+        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256
+        if f19a
+        else F20_QUALIFICATION_CANDIDATE_SHA256,
         source_outcome_id="shadow_outcome_" + "8" * 64,
         bundle_id=None,
         occurred_at=1,

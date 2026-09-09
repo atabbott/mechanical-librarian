@@ -12,7 +12,15 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
     open_repository,
 )
-from mechanical_librarian.domain.cover_evidence import (CoverArtifact, CoverDesignation, CoverProvenance, CoverSource, CoverSourceKind, CoverSourceState, cover_source_id)
+from mechanical_librarian.domain.cover_evidence import (
+    CoverArtifact,
+    CoverDesignation,
+    CoverProvenance,
+    CoverSource,
+    CoverSourceKind,
+    CoverSourceState,
+    cover_source_id,
+)
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
@@ -793,12 +801,18 @@ def test_disk_full_equivalent_rolls_back_every_review_row() -> None:
         repository.close()
 
 
-def test_retrieved_inventaire_proposal_reopens_admits_and_browses(tmp_path: Path) -> None:
+def test_retrieved_inventaire_proposal_reopens_admits_and_browses(
+    tmp_path: Path,
+) -> None:
     artifact = CoverArtifact.create(b"cover", b"preview", "image/png", 10, 20)
     source = CoverSource(
         cover_source_id(CoverSourceKind.INVENTAIRE, "synthetic-cover"),
-        CoverSourceKind.INVENTAIRE, CoverSourceState.RETRIEVED, artifact,
-        provenance=CoverProvenance("inventaire", CoverDesignation.WORK, "inventaire-work-wd-Q1"),
+        CoverSourceKind.INVENTAIRE,
+        CoverSourceState.RETRIEVED,
+        artifact,
+        provenance=CoverProvenance(
+            "inventaire", CoverDesignation.WORK, "inventaire-work-wd-Q1"
+        ),
     )
     report = _cover_report(covers=(source,))
     original = report.to_json()
@@ -811,7 +825,9 @@ def test_retrieved_inventaire_proposal_reopens_admits_and_browses(tmp_path: Path
     repository = open_repository(path)
     reopened = ProposalSet.from_json(repository.get_proposal(proposal.proposal_set_id))
     assert proposal == reopened
-    alternative = next(result for result in reopened.results if result.destination.value == "cover").alternatives[0]
+    alternative = next(
+        result for result in reopened.results if result.destination.value == "cover"
+    ).alternatives[0]
     assert (source.source_id,) == alternative.evidence_references
     assert artifact.artifact_id == alternative.value.value
     admitted = json.loads(repository.admit_review_case(reopened))
