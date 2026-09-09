@@ -268,6 +268,8 @@ def test_installed_qualification_composes_application_before_fastapi(
     preparation = Mock()
     reviewer_access = Mock()
     continuous = Mock()
+    activity_projection = Mock()
+    close_activity_projection = Mock()
     cover_considerations = Mock()
     application = object()
     client = object()
@@ -302,6 +304,8 @@ def test_installed_qualification_composes_application_before_fastapi(
             continuous,
             (("books", None),),
             Path("/synthetic/artifacts"),
+            activity_projection,
+            close_activity_projection,
         )
 
     assert result is client
@@ -310,6 +314,9 @@ def test_installed_qualification_composes_application_before_fastapi(
     compose.assert_called_once()
     assert compose.call_args.kwargs["cover_considerations"] is cover_considerations
     assert compose.call_args.kwargs["reviewer_access"] is reviewer_access
+    assert compose.call_args.kwargs["activity_projection"] is activity_projection
+    compose.call_args.kwargs["close_activity_projection"]()
+    close_activity_projection.assert_called_once_with()
     compose_covers.assert_called_once_with(
         repository, Path("/synthetic/artifacts"), review, reviewer_access
     )

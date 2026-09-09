@@ -28,7 +28,7 @@ import urllib.request
 import uuid
 import xml.etree.ElementTree as ET
 import zipfile
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -77,6 +77,9 @@ from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
     authority_from_decision,
@@ -292,6 +295,8 @@ def _compose_review_client(
     continuous: object,
     policy_libraries: tuple[tuple[str, dict[str, object] | None], ...],
     artifact_store_path: Path,
+    activity_projection: ContinuousGuardedApplication,
+    close_activity_projection: Callable[[], None],
 ) -> TestClient:
     cover_considerations = composition._compose_cover_considerations(
         repository, artifact_store_path, review, reviewer_access
@@ -322,6 +327,8 @@ def _compose_review_client(
         preparation=preparation,
         policy_libraries=policy_libraries,
         field_application=continuous,
+        activity_projection=activity_projection,
+        close_activity_projection=close_activity_projection,
         cover_considerations=cover_considerations,
         reviewer_access=reviewer_access,
     )
@@ -1511,6 +1518,11 @@ def _installed_continuous_qualification(
             preparation,
             provider_recovery=provider_recovery,
         )
+        activity_projection, close_activity_projection = (
+            composition.open_field_effect_activity_projection(
+                configuration, database, bound_repository.authority, provider_recovery
+            )
+        )
         client = _compose_review_client(
             bound_repository,
             configuration.review,
@@ -1524,6 +1536,8 @@ def _installed_continuous_qualification(
                 for item in configuration.libraries
             ),
             artifacts,
+            activity_projection,
+            close_activity_projection,
         )
         return client, continuous
 
@@ -2498,6 +2512,11 @@ def _installed_automatic_series_qualification(
                 library_id=library_id,
                 artifacts=CoverArtifactStore(artifacts),
             )
+            activity_projection, close_activity_projection = (
+                composition.open_field_effect_activity_projection(
+                    configuration, database, repository.authority, recovery
+                )
+            )
             client = _compose_review_client(
                 repository,
                 configuration.review,
@@ -2514,6 +2533,8 @@ def _installed_automatic_series_qualification(
                     ),
                 ),
                 artifacts,
+                activity_projection,
+                close_activity_projection,
             )
             with client:
                 origin = {"Origin": "https://review.test"}
