@@ -11,9 +11,7 @@ from typing import Any, Callable
 import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
-    ProviderAttemptRecord,
     ProviderFailure,
-    ProviderIncompleteCauseRecord,
     ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_retry_after,
@@ -23,19 +21,25 @@ from mechanical_librarian.adapters.providers.sdk import (
     ProviderClocks,
     ProviderResponseFacts,
     provider_bounds,
+    provider_client_lifetime,
 )
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
+    ProviderFailureSnapshot,
     ProviderLaneResult,
+    ProviderResult,
     identifier_suppresses_discovery,
     merge_provider_cover_descriptors,
     provider_discovery_lane_order,
     provider_isbn_applicability,
     provider_observation,
     qualify_provider_observation,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -152,25 +156,39 @@ class InventaireMetadataProvider:
         self._called = False
         self._schema_rejections = 0
         self._pacer = active_pacer
-        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
-        self.cover_pacer = active_pacer
-        self.cover_kind = CoverSourceKind.INVENTAIRE
-        self.cover_allow_redirects = False
-        self.cover_user_agent = INVENTAIRE_USER_AGENT
-
-    @property
-    def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
-        return self._session.attempt_records
-
-    @property
-    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
-        return self._session.incomplete_causes
-
-    @property
-    def accessed_at(self) -> str | None:
-        return self._session.accessed_at
+        self._cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
     def observe(
+        self,
+        plan: MetadataDiscoveryPlan | MetadataLookup,
+        *,
+        deadline: float | None = None,
+    ) -> ProviderResult:
+        failure: BaseException | None = None
+        try:
+            observation = self._observe(plan, deadline=deadline)
+        except BaseException as error:
+            failure = error
+        try:
+            snapshot = ProviderFailureSnapshot(
+                self._cover_descriptors,
+                ProviderOperationalEvidence(
+                    self._session.accessed_at,
+                    self._session.attempt_records,
+                    self._session.incomplete_causes,
+                ),
+            )
+        except BaseException:
+            if failure is not None:
+                raise failure from None
+            raise
+        if failure is not None:
+            snapshot.raise_from(failure)
+        return ProviderResult(
+            observation, snapshot.cover_descriptors, snapshot.evidence
+        )
+
+    def _observe(
         self,
         plan: MetadataDiscoveryPlan | MetadataLookup,
         *,
@@ -193,7 +211,7 @@ class InventaireMetadataProvider:
             ledger = _DiscoveryRequestLedger("inventaire", "entities-v5.1.1")
             self._register(ledger, plan)
             self._session.ledger = ledger
-            try:
+            with provider_client_lifetime(self._client):
                 observation, _ = ledger.resolve(
                     kind=plan.kind.value,
                     matched_family=plan.matched_family,
@@ -207,8 +225,6 @@ class InventaireMetadataProvider:
                     diagnostics=self._schema_diagnostics(),
                     request_accounting=ledger.accounting(),
                 )
-            finally:
-                self._client.close()
         if type(plan) is not MetadataDiscoveryPlan:
             raise ValueError("provider lookup is invalid")
         if plan.overflow:
@@ -223,7 +239,7 @@ class InventaireMetadataProvider:
             self._register(ledger, lane)
         self._session.ledger = ledger
         results: list[ProviderLaneResult] = []
-        try:
+        with provider_client_lifetime(self._client):
             for lane in provider_discovery_lane_order(plan):
                 if identifier_suppresses_discovery(plan, results, lane):
                     ledger.suppress(
@@ -260,8 +276,6 @@ class InventaireMetadataProvider:
                         transformation_lineage=qualified.transformation_lineage,
                     )
                 )
-        finally:
-            self._client.close()
         return provider_observation(
             self._name,
             tuple(results),
@@ -400,12 +414,12 @@ class InventaireMetadataProvider:
                 is not WorkIdentityContradiction.EXPLICIT
             )
             merged = merge_provider_cover_descriptors(
-                self.cover_descriptors,
+                self._cover_descriptors,
                 tuple(value for _, value in pairs if value is not None),
             )
             if merged is None:
                 raise ValueError("provider cover descriptors conflict")
-            self.cover_descriptors = merged
+            self._cover_descriptors = merged
             candidates = tuple(value for value, _ in pairs)
         except ProviderFailure as error:
             return self._result(lookup, error.status)
@@ -462,12 +476,12 @@ class InventaireMetadataProvider:
                 )
             )
         merged = merge_provider_cover_descriptors(
-            self.cover_descriptors,
+            self._cover_descriptors,
             tuple(value for _, value in pairs if value is not None),
         )
         if merged is None:
             raise ValueError("provider cover descriptors conflict")
-        self.cover_descriptors = merged
+        self._cover_descriptors = merged
         return tuple(value for value, _ in pairs)
 
     def _resolve_labels(

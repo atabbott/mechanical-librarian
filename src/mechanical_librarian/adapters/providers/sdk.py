@@ -15,6 +15,8 @@ import asyncio
 import json
 import random
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any, Callable
@@ -22,15 +24,17 @@ from typing import Any, Callable
 import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
-    ProviderAttemptRecord,
     ProviderFailure,
-    ProviderIncompleteCause,
-    ProviderIncompleteCauseRecord,
     ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderAttemptRecord,
+    ProviderIncompleteCause,
+    ProviderIncompleteCauseRecord,
 )
 from mechanical_librarian.domain.metadata_report import (
     ProviderStatus,
@@ -506,3 +510,18 @@ __all__ = [
     "decode_json",
     "provider_bounds",
 ]
+
+
+@contextmanager
+def provider_client_lifetime(client: httpx.Client) -> Iterator[None]:
+    """Close at the existing boundary without replacing its dispatch failure."""
+    try:
+        yield
+    except BaseException:
+        try:
+            client.close()
+        except BaseException:
+            pass
+        raise
+    else:
+        client.close()

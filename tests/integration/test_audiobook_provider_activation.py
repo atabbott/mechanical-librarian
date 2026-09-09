@@ -34,6 +34,7 @@ from mechanical_librarian.application.metadata_report import (
     AudioInspectionResult,
     ProviderCoverDescriptor,
     ProviderLaneResult,
+    ProviderResult,
     TargetFile,
     TargetSnapshot,
     provider_observation,
@@ -267,33 +268,42 @@ class _FakeAudiobookProvider:
             # Invoked, with nothing it could be asked: the same shape the real
             # store adapter states for a plan carrying no work lane.
             self.calls.append((self.authority, ProviderQueryKind.NONE))
-            return composition.ProviderObservation(
-                self.name,
-                ProviderStatus.INSUFFICIENT_INPUT,
-                authority=self.authority,
+            return ProviderResult(
+                composition.ProviderObservation(
+                    self.name,
+                    ProviderStatus.INSUFFICIENT_INPUT,
+                    authority=self.authority,
+                ),
+                cover_descriptors=self.cover_descriptors,
             )
         if self.status is not ProviderStatus.CANDIDATES:
             self.calls.append((self.authority, ProviderQueryKind.NONE))
-            return provider_observation(
-                self.name,
-                tuple(ProviderLaneResult(lane, self.status) for lane in lanes),
-                authority=self.authority,
+            return ProviderResult(
+                provider_observation(
+                    self.name,
+                    tuple(ProviderLaneResult(lane, self.status) for lane in lanes),
+                    authority=self.authority,
+                ),
+                cover_descriptors=self.cover_descriptors,
             )
-        return provider_observation(
-            self.name,
-            tuple(
-                ProviderLaneResult(
-                    lane,
-                    ProviderStatus.CANDIDATES,
-                    (
-                        _enrichment_candidate(
-                            self.name, plan.local_claims, self.duration
+        return ProviderResult(
+            provider_observation(
+                self.name,
+                tuple(
+                    ProviderLaneResult(
+                        lane,
+                        ProviderStatus.CANDIDATES,
+                        (
+                            _enrichment_candidate(
+                                self.name, plan.local_claims, self.duration
+                            ),
                         ),
-                    ),
-                )
-                for lane in lanes
+                    )
+                    for lane in lanes
+                ),
+                authority=self.authority,
             ),
-            authority=self.authority,
+            cover_descriptors=self.cover_descriptors,
         )
 
 

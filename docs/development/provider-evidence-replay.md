@@ -104,3 +104,11 @@ Issue #939's accepted proof used 12 works across ISBN-plus-work, ISBN-only, and
 work-only discovery and all three configured providers. It did not capture the
 roughly 2,000-work library. Therefore it narrows no #938 responsibility and
 makes no full-library replay claim.
+
+Capture and replay explicitly extract `ProviderResult.observation` after the
+production normalization boundary. Adapter attempts, incomplete causes, access
+time and descriptors are snapshots in that result, not post-call adapter
+properties. Qualification compares complete canonical outputs and descriptor
+facts; callback identity comparison preserves the existing function and owner
+without copying credential-bearing clients or pacer locks. Historical source
+measurements remain historical when the F20 source closure rotates.

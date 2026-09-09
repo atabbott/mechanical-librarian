@@ -14,6 +14,7 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     AudibleCatalogMetadataProvider,
     AudibleCatalogPacer,
 )
+from mechanical_librarian.application.metadata_report import ProviderObservationFailure
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSourceKind,
@@ -107,7 +108,7 @@ def _evidence(candidate: Any, kind: ProviderEvidenceKind) -> tuple[Any, ...]:
 
 def test_a_lookup_maps_the_captured_product_onto_report_claims() -> None:
     seen, handle = _recorder(default=_json(payload("audible_lookup")))
-    observation = _provider(handle).observe(asin_plan())
+    observation = _provider(handle).observe(asin_plan()).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert ProviderQueryKind.ASIN is observation.query_kind
@@ -152,7 +153,7 @@ def test_a_lookup_maps_the_captured_product_onto_report_claims() -> None:
 def test_a_stated_runtime_agrees_with_the_container_inside_the_band() -> None:
     """970 stated minutes and 58,244.201 measured seconds are one recording."""
     _seen, handle = _recorder(default=_json(payload("audible_lookup")))
-    observation = _provider(handle).observe(asin_plan())
+    observation = _provider(handle).observe(asin_plan()).observation
     duration = _claims(observation.candidates[0], ClaimKind.DURATION)[0]
 
     assert "58200.000" == duration.value
@@ -169,8 +170,10 @@ def test_a_lookup_walks_the_marketplace_order_and_names_the_one_that_resolved() 
         {AUDIBLE_CATALOG_URLS["de"]: _json(payload("audible_lookup"))},
         default=_json({"message": "not found"}, 404),
     )
-    observation = _provider(handle, marketplaces=("us", "uk", "de")).observe(
-        asin_plan()
+    observation = (
+        _provider(handle, marketplaces=("us", "uk", "de"))
+        .observe(asin_plan())
+        .observation
     )
 
     assert ProviderStatus.CANDIDATES is observation.status
@@ -188,7 +191,9 @@ def test_a_lookup_walks_the_marketplace_order_and_names_the_one_that_resolved() 
 
 def test_an_asin_absent_from_every_marketplace_is_a_no_match() -> None:
     seen, handle = _recorder(default=_json({"message": "not found"}, 404))
-    observation = _provider(handle, marketplaces=("us", "uk")).observe(asin_plan())
+    observation = (
+        _provider(handle, marketplaces=("us", "uk")).observe(asin_plan()).observation
+    )
 
     assert ProviderStatus.NO_MATCH is observation.status
     assert 2 == len(seen)
@@ -209,7 +214,9 @@ def test_a_service_failure_ends_the_lane_rather_than_reading_as_absence(
     status_code: int, expected: ProviderStatus
 ) -> None:
     seen, handle = _recorder(default=_json({"message": "no"}, status_code))
-    observation = _provider(handle, marketplaces=("us", "uk")).observe(asin_plan())
+    observation = (
+        _provider(handle, marketplaces=("us", "uk")).observe(asin_plan()).observation
+    )
 
     assert expected is observation.status
     assert [AUDIBLE_MARKETPLACE_HOSTS["us"]] == [url.host for url in seen]
@@ -225,7 +232,7 @@ def test_a_throttled_request_honours_retry_after_and_retries() -> None:
             return _json({"message": "slow down"}, 429, **{"retry-after": "7"})
         return _json(payload("audible_lookup"))
 
-    observation = _provider(handle, delays=delays).observe(asin_plan())
+    observation = _provider(handle, delays=delays).observe(asin_plan()).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert [7.0] == delays
@@ -234,8 +241,10 @@ def test_a_throttled_request_honours_retry_after_and_retries() -> None:
 
 def test_a_search_lane_contacts_only_the_first_configured_marketplace() -> None:
     seen, handle = _recorder(default=_json(payload("audible_search")))
-    observation = _provider(handle, marketplaces=("uk", "us", "de")).observe(
-        work_plan()
+    observation = (
+        _provider(handle, marketplaces=("uk", "us", "de"))
+        .observe(work_plan())
+        .observation
     )
 
     assert ProviderStatus.CANDIDATES is observation.status
@@ -269,11 +278,15 @@ def test_latin_fold_reaches_audible_only_on_the_final_bounded_search() -> None:
         seen.append(request.url)
         return _json({"total_results": 0, "products": []} if len(seen) < 3 else page)
 
-    observation = _provider(handle).observe(
-        work_plan(
-            title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
-            authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+    observation = (
+        _provider(handle)
+        .observe(
+            work_plan(
+                title="Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+                authors=("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+            )
         )
+        .observation
     )
 
     assert [
@@ -306,7 +319,7 @@ def test_a_search_page_above_the_candidate_bound_is_refused_whole() -> None:
         {**copy.deepcopy(product), "asin": f"B0{index:08d}"} for index in range(6)
     ]
     _seen, handle = _recorder(default=_json(page))
-    observation = _provider(handle).observe(work_plan())
+    observation = _provider(handle).observe(work_plan()).observation
 
     assert ProviderStatus.CANDIDATE_LIMIT_EXCEEDED is observation.status
     assert () == observation.candidates
@@ -325,14 +338,17 @@ def test_a_product_without_a_canonical_identity_fails_closed(asin: object) -> No
         document["product"]["asin"] = asin
     _seen, handle = _recorder(default=_json(document))
 
-    assert ProviderStatus.MALFORMED is _provider(handle).observe(asin_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
 
 
 def test_a_lower_case_identifier_is_normalised_rather_than_refused() -> None:
     document = copy.deepcopy(payload("audible_lookup"))
     document["product"]["asin"] = _ASIN.lower()
     _seen, handle = _recorder(default=_json(document))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
 
     assert (_ASIN,) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.ASIN)
@@ -344,7 +360,7 @@ def test_an_isbn_ten_shaped_asin_is_a_genuine_identifier() -> None:
     document = copy.deepcopy(payload("audible_lookup"))
     document["product"]["asin"] = "0743563123"
     _seen, handle = _recorder(default=_json(document))
-    observation = _provider(handle).observe(asin_plan("0743563123"))
+    observation = _provider(handle).observe(asin_plan("0743563123")).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert ("0743563123",) == tuple(
@@ -364,7 +380,7 @@ def test_a_series_statement_becomes_a_name_and_a_sequence() -> None:
         {"asin": "B0000000AA", "title": "The Hail Mary Cycle", "sequence": "1"}
     ]
     _seen, handle = _recorder(default=_json(document))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
 
     assert ("The Hail Mary Cycle",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.SERIES)
@@ -384,7 +400,7 @@ def test_a_markup_summary_projects_as_visible_plain_text() -> None:
     del document["product"]["short_description"]
     stated = document["product"]["publisher_summary"]
     _seen, handle = _recorder(default=_json(document))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     description = _claims(candidate, ClaimKind.DESCRIPTION)[0]
 
     assert "<" in stated
@@ -421,7 +437,7 @@ def test_markup_the_renderer_refuses_stays_unprojectable_rather_than_absent() ->
     del document["product"]["short_description"]
     document["product"]["publisher_summary"] = "<script>alert(1)</script>"
     _seen, handle = _recorder(default=_json(document))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     description = _claims(candidate, ClaimKind.DESCRIPTION)[0]
 
     assert FieldState.MALFORMED is description.state
@@ -437,7 +453,10 @@ def test_an_html_two_hundred_is_malformed_rather_than_parsed() -> None:
         )
     )
 
-    assert ProviderStatus.MALFORMED is _provider(handle).observe(asin_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
 
 
 def test_every_url_the_adapter_can_build_comes_from_the_closed_host_set() -> None:
@@ -457,10 +476,16 @@ def test_one_adapter_serves_one_observation_and_then_closes() -> None:
     _seen, handle = _recorder(default=_json(payload("audible_lookup")))
     provider = _provider(handle)
 
-    assert ProviderStatus.CANDIDATES is provider.observe(asin_plan()).status
-    assert ProviderStatus.UNAVAILABLE is provider.observe(asin_plan()).status
-    with pytest.raises(ValueError, match="lookup"):
+    assert (
+        ProviderStatus.CANDIDATES is (provider.observe(asin_plan())).observation.status
+    )
+    assert (
+        ProviderStatus.UNAVAILABLE is (provider.observe(asin_plan())).observation.status
+    )
+    with pytest.raises(ProviderObservationFailure) as invalid:
         _provider(handle).observe(object())  # type: ignore[arg-type]
+    assert isinstance(invalid.value.__cause__, ValueError)
+    assert invalid.value.__cause__.args == ("provider lookup is invalid",)
 
 
 def test_the_pacer_is_the_shared_request_start_clock() -> None:
@@ -478,7 +503,9 @@ def test_a_corroborated_search_lane_keeps_the_edition_it_established() -> None:
     narrator and the running time itself.
     """
     seen, handle = _recorder(default=_json(payload("audible_search")))
-    observation = _provider(handle).observe(work_plan(local_runtime_claim()))
+    observation = (
+        _provider(handle).observe(work_plan(local_runtime_claim())).observation
+    )
     candidate = observation.candidates[0]
 
     assert ProviderStatus.CANDIDATES is observation.status
@@ -502,7 +529,11 @@ def test_a_corroborated_search_lane_keeps_the_edition_it_established() -> None:
 def test_a_search_lane_outside_the_band_keeps_only_its_work_shape() -> None:
     """A runtime two hours away is a different recording, not this one."""
     seen, handle = _recorder(default=_json(payload("audible_search")))
-    observation = _provider(handle).observe(work_plan(local_runtime_claim("51000.000")))
+    observation = (
+        _provider(handle)
+        .observe(work_plan(local_runtime_claim("51000.000")))
+        .observation
+    )
     candidate = observation.candidates[0]
 
     assert 1 == len(seen)
@@ -516,9 +547,9 @@ def test_an_asin_lookup_states_one_exact_edition_cover_source() -> None:
     _seen, handle = _recorder(default=_json(payload("audible_lookup")))
     provider = _provider(handle)
 
-    provider.observe(asin_plan())
+    provider_result = provider.observe(asin_plan())
 
-    (descriptor,) = provider.cover_descriptors
+    (descriptor,) = provider_result.cover_descriptors
     assert "audible" == descriptor.provider
     assert CoverSourceKind.AUDIBLE_CATALOG is descriptor.kind
     assert descriptor.url is not None
@@ -534,19 +565,20 @@ def test_a_work_search_states_related_edition_covers_for_retained_candidates() -
     _seen, handle = _recorder(default=_json(payload("audible_search")))
     provider = _provider(handle)
 
-    observation = provider.observe(work_plan(local_runtime_claim()))
+    provider_result = provider.observe(work_plan(local_runtime_claim()))
+    observation = (provider_result).observation
 
     identities = {candidate.identity for candidate in observation.candidates}
     assert identities
     assert identities == {
         descriptor.provenance.edition_identity
-        for descriptor in provider.cover_descriptors
+        for descriptor in provider_result.cover_descriptors
         if descriptor.provenance is not None
     }
     assert all(
         descriptor.provenance is not None
         and descriptor.provenance.designation is CoverDesignation.RELATED_EDITION
-        for descriptor in provider.cover_descriptors
+        for descriptor in provider_result.cover_descriptors
     )
 
 
@@ -559,9 +591,9 @@ def test_the_widest_stated_product_image_is_the_one_asked_for() -> None:
     _seen, handle = _recorder(default=_json(document))
     provider = _provider(handle)
 
-    provider.observe(asin_plan())
+    provider_result = provider.observe(asin_plan())
 
-    (descriptor,) = provider.cover_descriptors
+    (descriptor,) = provider_result.cover_descriptors
     assert descriptor.url is not None
     assert descriptor.url.endswith("large._SL1024_.jpg")
 
@@ -584,10 +616,11 @@ def test_a_cover_url_outside_the_closed_host_set_is_refused_with_a_typed_state(
     _seen, handle = _recorder(default=_json(document))
     provider = _provider(handle)
 
-    observation = provider.observe(asin_plan())
+    provider_result = provider.observe(asin_plan())
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
-    (descriptor,) = provider.cover_descriptors
+    (descriptor,) = provider_result.cover_descriptors
     assert descriptor.url is None
     assert CoverSourceState.UNSAFE_REMOTE is descriptor.terminal_state
 
@@ -598,9 +631,9 @@ def test_a_product_that_states_no_art_states_an_absent_cover_source() -> None:
     _seen, handle = _recorder(default=_json(document))
     provider = _provider(handle)
 
-    provider.observe(asin_plan())
+    provider_result = provider.observe(asin_plan())
 
-    (descriptor,) = provider.cover_descriptors
+    (descriptor,) = provider_result.cover_descriptors
     assert descriptor.url is None
     assert descriptor.terminal_state is None
 
@@ -611,8 +644,63 @@ def test_an_unreadable_product_image_declaration_is_typed_not_dropped() -> None:
     _seen, handle = _recorder(default=_json(document))
     provider = _provider(handle)
 
-    provider.observe(asin_plan())
+    provider_result = provider.observe(asin_plan())
 
-    (descriptor,) = provider.cover_descriptors
+    (descriptor,) = provider_result.cover_descriptors
     assert descriptor.url is None
     assert CoverSourceState.INVALID_DECLARATION is descriptor.terminal_state
+
+
+@pytest.mark.parametrize("after_descriptor", (False, True))
+def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
+    monkeypatch, after_descriptor
+):
+    from mechanical_librarian.adapters.providers import audible_catalog_metadata
+    from mechanical_librarian.application.metadata_report import MetadataDiscoveryPlan
+
+    first, second = asin_plan(), asin_plan("B000000002")
+    plan = MetadataDiscoveryPlan(
+        tuple(
+            {
+                claim.reference: claim
+                for claim in first.local_claims + second.local_claims
+            }.values()
+        ),
+        tuple(sorted(first.lanes + second.lanes, key=lambda lane: lane.identity)),
+    )
+    cause = RuntimeError("second lane")
+    seen = []
+    calls = 0
+
+    def dispatch(request):
+        nonlocal calls
+        calls += 1
+        if calls == 2 and not after_descriptor:
+            raise cause
+        value = copy.deepcopy(payload("audible_lookup"))
+        value["product"]["asin"] = plan.lanes[calls - 1].canonical_asin
+        return _json(value)
+
+    provider = _provider(dispatch)
+    qualify = audible_catalog_metadata.qualify_provider_observation
+
+    def qualification(observation, lookup):
+        # This adapter-local field is the pre-1005 dispatch-boundary projection.
+        seen.append(provider._cover_descriptors)
+        if len(seen) == 2:
+            raise cause
+        return qualify(observation, lookup)
+
+    monkeypatch.setattr(
+        audible_catalog_metadata, "qualify_provider_observation", qualification
+    )
+    with pytest.raises(ProviderObservationFailure) as caught:
+        provider.observe(plan)
+    assert calls == 2
+    assert seen[0]
+    expected = seen[1] if after_descriptor else ()
+    assert caught.value.snapshot.cover_descriptors == expected
+    if after_descriptor:
+        assert expected and expected != seen[0]
+    assert caught.value.__cause__ is cause
+    assert caught.value.snapshot.evidence.accessed_at == "2023-11-14T22:13:20.000000Z"

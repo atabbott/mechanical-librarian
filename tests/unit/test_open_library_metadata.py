@@ -24,6 +24,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
+    ProviderObservationFailure,
     TargetSnapshot,
     metadata_discovery_plan,
     qualify_provider_observation,
@@ -142,12 +143,16 @@ def test_identifier_no_match_falls_back_to_open_library_discovery() -> None:
             json={"numFound": 0, "docs": []},
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_identifier_first_plan())
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert "isbn:9780306406157" == queries[0]
     assert 2 == len(queries)
@@ -177,12 +182,16 @@ def test_identifier_candidate_without_work_identity_preserves_open_library_disco
             json=value,
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_identifier_first_plan())
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert "isbn:9780306406157" == queries[0]
     assert 2 == len(queries)
@@ -209,12 +218,16 @@ def test_malformed_identifier_falls_back_to_open_library_discovery() -> None:
             json={"numFound": 0, "docs": []},
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_identifier_first_plan())
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_identifier_first_plan())
+        .observation
+    )
 
     assert "isbn:9780306406157" == queries[0]
     assert 2 == len(queries)
@@ -240,12 +253,16 @@ def test_work_query_ladder_is_bounded_and_accounted_as_retries() -> None:
         "Local work title: Subtitle",
         ("Ada & Bea",),
     )
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(lookup)
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(lookup)
+        .observation
+    )
 
     assert ProviderStatus.NO_MATCH is observation.status
     assert 3 == len(requests)
@@ -297,18 +314,22 @@ def test_latin_fold_reaches_open_library_only_on_final_bounded_search() -> None:
             ),
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(
-        MetadataLookup(
-            ProviderQueryKind.WORK,
-            (),
-            "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
-            ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
         )
+        .observe(
+            MetadataLookup(
+                ProviderQueryKind.WORK,
+                (),
+                "Caf\N{LATIN SMALL LETTER E WITH ACUTE}: Notes",
+                ("Jos\N{LATIN SMALL LETTER E WITH ACUTE}",),
+            )
+        )
+        .observation
     )
 
     searches = [request for request in requests if request.url.path == "/search.json"]
@@ -350,12 +371,16 @@ def test_decoration_only_work_query_is_insufficient_without_request(title: str) 
         requests.append(request)
         return httpx.Response(500)
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(lookup)
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(lookup)
+        .observation
+    )
 
     assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
     assert [] == requests
@@ -390,20 +415,24 @@ def test_filename_author_prefix_shapes_open_library_query_but_never_admits() -> 
         "/books/OL1M.json": _edition("/books/OL1M"),
         "/works/OL5W.json": work,
     }
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=values[request.url.path],
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
                 )
-            )
-        ),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(lookup)
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(lookup)
+        .observation
+    )
     qualified = qualify_provider_observation(observation, lookup)
 
     assert ProviderStatus.CANDIDATES is observation.status
@@ -436,12 +465,16 @@ def test_candidate_limit_gets_one_open_library_phrase_retry() -> None:
             json={"docs": docs if len(requests) == 1 else []},
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_work_lookup())
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_work_lookup())
+        .observation
+    )
 
     assert ProviderStatus.NO_MATCH is observation.status
     assert 2 == len(requests)
@@ -604,7 +637,8 @@ def test_detail_schema_diagnostics_are_context_local_and_replay_exact() -> None:
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert 2 == observation.diagnostics[0].count
@@ -623,7 +657,7 @@ def test_detail_schema_diagnostics_are_context_local_and_replay_exact() -> None:
     assert "wrong work publisher" not in retained
     assert all(
         context.value not in {"wrong edition subject", "wrong work publisher"}
-        for descriptor in provider.cover_descriptors
+        for descriptor in provider_result.cover_descriptors
         if descriptor.provenance is not None
         for context in descriptor.provenance.context
     )
@@ -958,20 +992,24 @@ def test_work_detail_author_identity_survives_unusable_search_and_edition_links(
         "/books/OL1M.json": edition,
         "/works/OL5W.json": work,
     }
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=values[request.url.path],
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
                 )
-            )
-        ),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_work_lookup())
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_work_lookup())
+        .observation
+    )
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert 3 == observation.diagnostics[0].count
@@ -1026,20 +1064,24 @@ def test_optional_detail_failures_are_local_and_diagnosed_once(
         "/books/OL1M.json": edition,
         "/works/OL5W.json": work,
     }
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
+                    )
                 )
-            )
-        ),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_isbn_lookup((_isbn(),)))
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert (1,) == tuple(value.count for value in observation.diagnostics)
@@ -1133,20 +1175,24 @@ def test_optional_provenance_failures_are_local_diagnosed_and_replayable(
         "/books/OL1M.json": edition,
         "/works/OL5W.json": work,
     }
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
+                    )
                 )
-            )
-        ),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_isbn_lookup((_isbn(),)))
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert (1,) == tuple(value.count for value in observation.diagnostics)
@@ -1299,20 +1345,24 @@ def test_revision_aliases_are_independent_and_replay_one_preferred_value(
         "/books/OL1M.json": edition,
         "/works/OL5W.json": work,
     }
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
+                    )
                 )
-            )
-        ),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_isbn_lookup((_isbn(),)))
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert (() if diagnostic_count == 0 else (diagnostic_count,)) == tuple(
@@ -1402,20 +1452,24 @@ def test_nested_work_author_evidence_persists_with_exact_source_semantics() -> N
         "/books/OL1M.json": edition,
         "/works/OL5W.json": work,
     }
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: httpx.Response(
-                    200,
-                    headers={"content-type": "application/json"},
-                    json=values[request.url.path],
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=values[request.url.path],
+                    )
                 )
-            )
-        ),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_isbn_lookup((_isbn(),)))
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
     report = MetadataReport.create(
         target=TargetFacts(
             "primary",
@@ -1787,15 +1841,19 @@ def test_first_dispatch_captures_injected_access_time() -> None:
             json={"numFound": 0, "docs": []},
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            headers={"User-Agent": "Mechanical-Librarian/test"},
-            transport=httpx.MockTransport(handler),
-        ),
-        65_536,
-        wall_clock=lambda: 1_700_000_000.125,
-    ).observe(_isbn_lookup((_isbn(),)))
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                headers={"User-Agent": "Mechanical-Librarian/test"},
+                transport=httpx.MockTransport(handler),
+            ),
+            65_536,
+            wall_clock=lambda: 1_700_000_000.125,
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
     assert ProviderStatus.NO_MATCH == observation.status
     assert "2023-11-14T22:13:20.125000Z" == observation.accessed_at
     assert 1 == len(requests)
@@ -1861,7 +1919,7 @@ def test_work_plan_persists_ordered_qualified_creators_through_replay() -> None:
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(plan)
+    observation = (provider.observe(plan)).observation
     assert ProviderStatus.CANDIDATES == observation.status
     assert ProviderQueryKind.WORK == observation.query_kind
     assert (title.reference,) == observation.input_references
@@ -1955,12 +2013,16 @@ def test_work_plan_accepts_reordered_and_preserves_duplicate_invalid_and_overflo
             json=value,
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(plan)
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(plan)
+        .observation
+    )
     assert expected == observation.status
     assert (1 if expected is ProviderStatus.CANDIDATES else 0) == len(
         observation.candidates
@@ -2009,7 +2071,7 @@ def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_w
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
     lookup = _work_lookup()
-    observation = provider.observe(lookup)
+    observation = (provider.observe(lookup)).observation
     assert ProviderQueryKind.WORK == observation.query_kind
     assert "Local work title" == requests[0].url.params["title"]
     assert "Ada Example" == requests[0].url.params["author"]
@@ -2128,7 +2190,8 @@ def test_exact_search_details_rich_evidence_and_covers_are_bounded() -> None:
         65_536,
         pacer=OpenLibraryPacer(clock=lambda: now[0], sleep=sleep),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(), _title())))
+    provider_result = provider.observe(_isbn_lookup((_isbn(), _title())))
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert [
@@ -2182,7 +2245,7 @@ def test_exact_search_details_rich_evidence_and_covers_are_bounded() -> None:
         if claim.kind is ClaimKind.TITLE and claim.scope is ClaimScope.WORK
     )
     assert Comparison.AGREEMENT == work_title.links[0].outcome
-    assert 3 == len(provider.cover_descriptors)
+    assert 3 == len(provider_result.cover_descriptors)
     assert {
         cover_source_id(
             CoverSourceKind.OPEN_LIBRARY,
@@ -2196,14 +2259,13 @@ def test_exact_search_details_rich_evidence_and_covers_are_bounded() -> None:
             CoverSourceKind.OPEN_LIBRARY,
             "open_library:work:/works/OL5W",
         ),
-    } == {value.source_id for value in provider.cover_descriptors}
+    } == {value.source_id for value in provider_result.cover_descriptors}
     assert all(
         value.provenance is not None and value.provenance.provider == "open_library"
-        for value in provider.cover_descriptors
+        for value in provider_result.cover_descriptors
     )
-    assert (
-        ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
-    )
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    assert ProviderStatus.UNAVAILABLE == (provider_result).observation.status
     assert 4 == len(requests)
 
 
@@ -2231,7 +2293,7 @@ def test_zero_or_multiple_usable_families_make_no_request(claims) -> None:
     )
     assert (
         ProviderStatus.INSUFFICIENT_INPUT
-        == provider.observe(_isbn_lookup(claims)).status
+        == (provider.observe(_isbn_lookup(claims))).observation.status
     )
     assert [] == requests
 
@@ -2252,15 +2314,19 @@ def test_discovery_plan_searches_each_valid_family() -> None:
         TargetSnapshot("ebook", None, ()),
         claims,
     )
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            headers={"User-Agent": "Mechanical-Librarian/test"},
-            transport=httpx.MockTransport(handler),
-        ),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(plan)
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                headers={"User-Agent": "Mechanical-Librarian/test"},
+                transport=httpx.MockTransport(handler),
+            ),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(plan)
+        .observation
+    )
     assert 2 == len(requests)
     assert 2 == len(observation.lanes)
     assert {"isbn:9780306406157", "isbn:9780140328721"} == {
@@ -2283,12 +2349,16 @@ def test_terminal_detail_failure_finalizes_reserved_details() -> None:
         return httpx.Response(404)
 
     plan = metadata_discovery_plan(TargetSnapshot("ebook", None, ()), (_isbn(),))
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(plan)
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(plan)
+        .observation
+    )
 
     assert ["/search.json", "/books/OL1M.json"] == requests
     assert ProviderStatus.UNAVAILABLE == observation.status
@@ -2320,15 +2390,19 @@ def test_discovery_oversized_lane_stops_remaining_requests_at_exact_bound(
             content=payload + (b" " if oversized else b""),  # noqa: B023 - closure is created and consumed within this iteration
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(
-            headers={"User-Agent": "Mechanical-Librarian/test"},
-            transport=httpx.MockTransport(handler),
-        ),
-        len(payload),
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(plan)
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(
+                headers={"User-Agent": "Mechanical-Librarian/test"},
+                transport=httpx.MockTransport(handler),
+            ),
+            len(payload),
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(plan)
+        .observation
+    )
     assert (1 if oversized else 2) == len(requests)
     assert (
         {ProviderStatus.OVERSIZED, ProviderStatus.INCOMPLETE}
@@ -2425,11 +2499,12 @@ def test_conflicting_lane_contributes_no_cover_descriptors() -> None:
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
 
-    observation = provider.observe(plan)
+    provider_result = provider.observe(plan)
+    observation = (provider_result).observation
 
     assert {ProviderStatus.CANDIDATES} == {lane.status for lane in observation.lanes}
     assert 1 == shared_work_count
-    assert 4 == len(provider.cover_descriptors)
+    assert 4 == len(provider_result.cover_descriptors)
 
 
 def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicability() -> (
@@ -2505,12 +2580,16 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
             json=value,
         )
 
-    isbn_only = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_isbn_lookup((ebook,)))
+    isbn_only = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((ebook,)))
+        .observation
+    )
     isbn_duplicate_publishers = tuple(
         evidence
         for evidence in isbn_only.candidates[0].evidence
@@ -2525,7 +2604,8 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(plan)
+    provider_result = provider.observe(plan)
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert 7 == observation.diagnostics[0].count
@@ -2659,11 +2739,11 @@ def test_discovery_converges_repeated_lane_evidence_authors_and_isbn_applicabili
         == {link.local_reference for link in claim.links}
         for claim in isbn_claims
     )
-    assert 2 == len(provider.cover_descriptors)
-    assert 2 == len({value.source_id for value in provider.cover_descriptors})
+    assert 2 == len(provider_result.cover_descriptors)
+    assert 2 == len({value.source_id for value in provider_result.cover_descriptors})
     edition_cover = next(
         value
-        for value in provider.cover_descriptors
+        for value in provider_result.cover_descriptors
         if value.provenance is not None
         and value.provenance.edition_identity is not None
     )
@@ -2686,11 +2766,15 @@ def test_isbn_10_and_13_of_one_family_share_one_exact_search() -> None:
 
     ten = _isbn("0306406152")
     thirteen = _isbn()
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(_isbn_lookup((ten, thirteen)))
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(_isbn_lookup((ten, thirteen)))
+        .observation
+    )
     assert ProviderStatus.NO_MATCH == observation.status
     assert (
         tuple(sorted((ten.reference, thirteen.reference)))
@@ -2773,7 +2857,8 @@ def test_two_distinct_works_use_the_five_request_maximum_in_order() -> None:
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
     assert ProviderStatus.CANDIDATES == observation.status
     assert [
         "/search.json",
@@ -2782,13 +2867,13 @@ def test_two_distinct_works_use_the_five_request_maximum_in_order() -> None:
         "/books/OL2M.json",
         "/works/OL9W.json",
     ] == [request.url.path for request in requests]
-    assert 4 == len(provider.cover_descriptors)
+    assert 4 == len(provider_result.cover_descriptors)
     assert {
         "https://covers.openlibrary.org/b/id/100-L.jpg?default=false",
         "https://covers.openlibrary.org/b/id/200-L.jpg?default=false",
         "https://covers.openlibrary.org/b/id/300-L.jpg?default=false",
         "https://covers.openlibrary.org/b/id/400-L.jpg?default=false",
-    } == {value.url for value in provider.cover_descriptors}
+    } == {value.url for value in provider_result.cover_descriptors}
 
 
 def test_third_exact_candidate_is_terminal_before_detail_requests() -> None:
@@ -2814,10 +2899,11 @@ def test_third_exact_candidate_is_terminal_before_detail_requests() -> None:
         httpx.Client(transport=httpx.MockTransport(handler)),
         65_536,
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
     assert ProviderStatus.CANDIDATE_LIMIT_EXCEEDED == observation.status
     assert () == observation.candidates
-    assert () == provider.cover_descriptors
+    assert () == provider_result.cover_descriptors
     assert ["/search.json"] == [request.url.path for request in requests]
 
 
@@ -2834,11 +2920,15 @@ def test_nonmatching_search_rows_are_ignored_without_detail_requests() -> None:
             json=search,
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(_isbn_lookup((_isbn(),)))
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
     assert ProviderStatus.NO_MATCH == observation.status
     assert ["/search.json"] == [request.url.path for request in requests]
 
@@ -2912,7 +3002,7 @@ def test_required_request_failures_are_terminal_and_mapped(
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider.observe(_isbn_lookup((_isbn(),)))).observation
     assert expected == observation.status
     assert () == observation.candidates
     expected_paths = ["/search.json", "/books/OL1M.json"]
@@ -2960,7 +3050,10 @@ def test_transient_retries_use_exact_status_retry_after_and_pacing(
         sleep=sleep,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.NO_MATCH == provider.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.NO_MATCH
+        == (provider.observe(_isbn_lookup((_isbn(),)))).observation.status
+    )
     expected_delay = 60.0 if status_code == 503 else 1.0
     assert [0.0, expected_delay] == starts
     assert [expected_delay] == sleeps
@@ -2980,7 +3073,8 @@ def test_transient_retries_use_exact_status_retry_after_and_pacing(
         sleep=lambda _: pytest.fail("429 must never retry"),
     )
     assert (
-        ProviderStatus.RATE_LIMITED == terminal.observe(_isbn_lookup((_isbn(),))).status
+        ProviderStatus.RATE_LIMITED
+        == (terminal.observe(_isbn_lookup((_isbn(),)))).observation.status
     )
     assert 1 == calls
 
@@ -3004,7 +3098,9 @@ def test_transient_retries_use_exact_status_retry_after_and_pacing(
     )
     assert (
         ProviderStatus.UNAVAILABLE
-        == deadline_provider.observe(_isbn_lookup((_isbn(),)), deadline=2.0).status
+        == (
+            deadline_provider.observe(_isbn_lookup((_isbn(),)), deadline=2.0)
+        ).observation.status
     )
     assert 1 == deadline_calls
 
@@ -3031,10 +3127,13 @@ def test_recovers_at_every_permitted_status_retry_ordinal(
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.NO_MATCH == provider.observe(_isbn_lookup((_isbn(),))).status
-    assert prior_failures + 1 == len(provider.attempt_records)
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    assert ProviderStatus.NO_MATCH == (provider_result).observation.status
+    assert provider_result.evidence.attempt_records is not None
+    assert prior_failures + 1 == len(provider_result.evidence.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
     assert ["retry"] * prior_failures + ["response_received"] == [
-        record.outcome for record in provider.attempt_records
+        record.outcome for record in provider_result.evidence.attempt_records
     ]
 
 
@@ -3051,11 +3150,12 @@ def test_final_retry_after_is_retained_when_local_attempts_are_exhausted() -> No
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert (
-        ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
-    )
-    assert "exhausted" == provider.attempt_records[-1].outcome
-    assert 7.0 == provider.attempt_records[-1].delay_seconds
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    assert ProviderStatus.UNAVAILABLE == (provider_result).observation.status
+    assert provider_result.evidence.attempt_records is not None
+    assert "exhausted" == provider_result.evidence.attempt_records[-1].outcome
+    assert provider_result.evidence.attempt_records is not None
+    assert 7.0 == provider_result.evidence.attempt_records[-1].delay_seconds
 
 
 @pytest.mark.parametrize(
@@ -3086,7 +3186,7 @@ def test_error_response_bodies_are_charged_before_status_retry(
     )
     assert (
         ProviderStatus.OVERSIZED
-        == oversized_provider.observe(_isbn_lookup((_isbn(),))).status
+        == (oversized_provider.observe(_isbn_lookup((_isbn(),)))).observation.status
     )
     assert 1 == oversized_calls
     assert 0 == oversized_provider._remaining_response_bytes
@@ -3102,7 +3202,10 @@ def test_error_response_bodies_are_charged_before_status_retry(
         1_024,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    assert ProviderStatus.NO_MATCH == control.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.NO_MATCH
+        == (control.observe(_isbn_lookup((_isbn(),)))).observation.status
+    )
     responses = [
         httpx.Response(503, stream=_InterruptedStream()),
         httpx.Response(
@@ -3120,7 +3223,8 @@ def test_error_response_bodies_are_charged_before_status_retry(
         jitter=lambda: 0.0,
     )
     assert (
-        ProviderStatus.NO_MATCH == interrupted.observe(_isbn_lookup((_isbn(),))).status
+        ProviderStatus.NO_MATCH
+        == (interrupted.observe(_isbn_lookup((_isbn(),)))).observation.status
     )
     assert (
         control._remaining_response_bytes - 1 == interrupted._remaining_response_bytes
@@ -3143,7 +3247,10 @@ def test_error_response_bodies_are_charged_before_status_retry(
         pacer=OpenLibraryPacer(sleep=lambda _: None),
         sleep=lambda _: pytest.fail("non-identity encoding must not retry"),
     )
-    assert ProviderStatus.MALFORMED == encoded.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.MALFORMED
+        == (encoded.observe(_isbn_lookup((_isbn(),)))).observation.status
+    )
     assert 1 == calls
     assert 1_024 * 49 - len(raw_body) == encoded._remaining_response_bytes
 
@@ -3156,7 +3263,10 @@ def test_error_response_bodies_are_charged_before_status_retry(
         pacer=OpenLibraryPacer(sleep=lambda _: None),
         sleep=lambda _: pytest.fail("preloaded non-identity response must not retry"),
     )
-    assert ProviderStatus.MALFORMED == encoded.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.MALFORMED
+        == (encoded.observe(_isbn_lookup((_isbn(),)))).observation.status
+    )
     assert 1_024 * 49 == encoded._remaining_response_bytes
 
 
@@ -3223,12 +3333,15 @@ def test_retry_budget_is_four_across_required_request_chain() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert (
-        ProviderStatus.UNAVAILABLE == provider.observe(_isbn_lookup((_isbn(),))).status
-    )
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    assert ProviderStatus.UNAVAILABLE == (provider_result).observation.status
     assert 9 == sum(path_calls.values())
-    assert 9 == len(provider.attempt_records)
-    assert 4 == sum(record.outcome == "retry" for record in provider.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
+    assert 9 == len(provider_result.evidence.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
+    assert 4 == sum(
+        record.outcome == "retry" for record in provider_result.evidence.attempt_records
+    )
 
 
 def test_nine_lane_observation_is_capped_at_49_dispatches() -> None:
@@ -3330,10 +3443,15 @@ def test_nine_lane_observation_is_capped_at_49_dispatches() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    observation = provider.observe(plan)
+    provider_result = provider.observe(plan)
+    observation = (provider_result).observation
     assert 49 == request_count
-    assert 49 == len(provider.attempt_records)
-    assert 4 == sum(record.outcome == "retry" for record in provider.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
+    assert 49 == len(provider_result.evidence.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
+    assert 4 == sum(
+        record.outcome == "retry" for record in provider_result.evidence.attempt_records
+    )
     assert 9 == len(observation.lanes)
 
 
@@ -3366,7 +3484,10 @@ def test_invalid_503_retry_after_falls_back_to_fresh_jitter(retry_after) -> None
         sleep=delays.append,
         jitter=lambda: 0.25,
     )
-    assert ProviderStatus.NO_MATCH == provider.observe(_isbn_lookup((_isbn(),))).status
+    assert (
+        ProviderStatus.NO_MATCH
+        == (provider.observe(_isbn_lookup((_isbn(),)))).observation.status
+    )
     assert [1.25] == delays
 
 
@@ -3393,7 +3514,8 @@ def test_interrupted_body_bytes_are_charged_before_retry() -> None:
         jitter=lambda: 0.0,
     )
     assert (
-        ProviderStatus.RATE_LIMITED == provider.observe(_isbn_lookup((_isbn(),))).status
+        ProviderStatus.RATE_LIMITED
+        == (provider.observe(_isbn_lookup((_isbn(),)))).observation.status
     )
     assert 2 == calls
     assert 48 == provider._remaining_response_bytes
@@ -3425,13 +3547,14 @@ def test_malformed_optional_cover_ids_do_not_erase_metadata() -> None:
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
     assert ProviderStatus.CANDIDATES == observation.status
     assert 1 == len(observation.candidates)
-    assert 2 == len(provider.cover_descriptors)
-    assert all(value.url is None for value in provider.cover_descriptors)
+    assert 2 == len(provider_result.cover_descriptors)
+    assert all(value.url is None for value in provider_result.cover_descriptors)
     assert (CoverSourceState.REJECTED, CoverSourceState.REJECTED) == tuple(
-        value.terminal_state for value in provider.cover_descriptors
+        value.terminal_state for value in provider_result.cover_descriptors
     )
     assert not (
         {
@@ -3478,8 +3601,8 @@ def test_missing_and_empty_cover_ids_remain_absent_while_valid_ids_request(
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    provider.observe(_isbn_lookup((_isbn(),)))
-    descriptor = provider.cover_descriptors[0]
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    descriptor = provider_result.cover_descriptors[0]
     assert expected_url == descriptor.url
     assert expected_state == descriptor.terminal_state
 
@@ -3519,10 +3642,13 @@ def test_invalid_present_cover_ids_are_rejected(covers) -> None:
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
     assert ProviderStatus.CANDIDATES == observation.status
-    assert CoverSourceState.REJECTED == provider.cover_descriptors[0].terminal_state
-    assert provider.cover_descriptors[0].url is None
+    assert (
+        CoverSourceState.REJECTED == provider_result.cover_descriptors[0].terminal_state
+    )
+    assert provider_result.cover_descriptors[0].url is None
     assert ProviderEvidenceKind.EDITION_COVER_ID not in {
         value.kind for value in observation.candidates[0].evidence
     }
@@ -3572,10 +3698,11 @@ def test_cover_context_at_its_limit_is_retained() -> None:
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
-    edition_descriptor = provider.cover_descriptors[0]
+    edition_descriptor = provider_result.cover_descriptors[0]
     assert edition_descriptor.terminal_state is None
     assert edition_descriptor.provenance is not None
     assert 16 == len(edition_descriptor.provenance.context)
@@ -3625,11 +3752,12 @@ def test_cover_context_overflow_retains_metadata_with_oversized_cover() -> None:
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert 1 == len(observation.candidates)
-    edition_descriptor = provider.cover_descriptors[0]
+    edition_descriptor = provider_result.cover_descriptors[0]
     assert CoverSourceState.OVERSIZED == edition_descriptor.terminal_state
     assert edition_descriptor.provenance is not None
     assert () == edition_descriptor.provenance.context
@@ -3667,11 +3795,12 @@ def test_cover_context_scalar_bound_preserves_metadata(length, terminal_state) -
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert 1 == len(observation.candidates)
-    edition_descriptor = provider.cover_descriptors[0]
+    edition_descriptor = provider_result.cover_descriptors[0]
     assert terminal_state == edition_descriptor.terminal_state
     assert edition_descriptor.provenance is not None
     if terminal_state is None:
@@ -3710,13 +3839,14 @@ def test_malformed_cover_ids_precede_oversized_context() -> None:
         65_536,
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
 
     assert ProviderStatus.CANDIDATES == observation.status
     assert (CoverSourceState.REJECTED, CoverSourceState.REJECTED) == tuple(
-        value.terminal_state for value in provider.cover_descriptors
+        value.terminal_state for value in provider_result.cover_descriptors
     )
-    assert all(value.url is None for value in provider.cover_descriptors)
+    assert all(value.url is None for value in provider_result.cover_descriptors)
     assert not (
         {
             ProviderEvidenceKind.EDITION_COVER_ID,
@@ -3758,11 +3888,12 @@ def test_unsafe_cover_context_remains_provider_malformed(value) -> None:
         pacer=OpenLibraryPacer(sleep=lambda _: None),
     )
 
-    observation = provider.observe(_isbn_lookup((_isbn(),)))
+    provider_result = provider.observe(_isbn_lookup((_isbn(),)))
+    observation = (provider_result).observation
 
     assert ProviderStatus.MALFORMED == observation.status
     assert () == observation.candidates
-    assert () == provider.cover_descriptors
+    assert () == provider_result.cover_descriptors
 
 
 def test_conflicting_detail_relation_preserves_bounded_candidates() -> None:
@@ -3785,12 +3916,16 @@ def test_conflicting_detail_relation_preserves_bounded_candidates() -> None:
             json=values[request.url.path],
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_isbn_lookup((_isbn(),)))
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
     assert ProviderStatus.CANDIDATES == observation.status
     assert 2 == len(observation.candidates)
     assert 1 == sum(
@@ -3839,12 +3974,16 @@ def test_conflicting_or_multiple_work_relations_keep_only_edition_authority(
             json=values[request.url.path],  # noqa: B023 - closure is created and consumed within this iteration
         )
 
-    observation = OpenLibraryMetadataProvider(
-        "open_library",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-        pacer=OpenLibraryPacer(sleep=lambda _: None),
-    ).observe(_isbn_lookup((_isbn(),)))
+    observation = (
+        OpenLibraryMetadataProvider(
+            "open_library",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
     assert ProviderStatus.CANDIDATES == observation.status
     candidate = observation.candidates[0]
     assert () == candidate.identity_bindings
@@ -4073,3 +4212,70 @@ def test_duplicate_work_rows_with_different_editions_fail_closed() -> None:
         open_library_metadata._admitted_candidates(source, "9780306406157")
     with pytest.raises(ValueError):
         open_library_metadata._admitted_work_candidates(source)
+
+
+@pytest.mark.parametrize("after_descriptor", (False, True))
+def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
+    monkeypatch, after_descriptor
+):
+    second = _isbn("9780140328721")
+    plan = metadata_discovery_plan(
+        TargetSnapshot("ebook", "Current title", ()), (_isbn(), second)
+    )
+    cause = RuntimeError("second lane")
+    seen = []
+    searches = 0
+    families = tuple(lane.matched_family for lane in plan.lanes)
+
+    def dispatch(request):
+        nonlocal searches
+        if request.url.path == "/search.json":
+            searches += 1
+            if searches == 2 and not after_descriptor:
+                raise cause
+            value = _search(f"/books/OL{searches}M", work=f"/works/OL{searches}W")
+            value["docs"][0]["editions"]["docs"][0]["isbn"] = [families[searches - 1]]
+        elif request.url.path.startswith("/books/"):
+            value = _edition(
+                request.url.path.removesuffix(".json"),
+                work=f"/works/OL{searches}W",
+                cover=searches,
+            )
+            value["isbn_10"] = []
+            value["isbn_13"] = [families[searches - 1]]
+        else:
+            value = _work(f"/works/OL{searches}W")
+        return httpx.Response(200, json=value)
+
+    provider = OpenLibraryMetadataProvider(
+        "catalogue",
+        httpx.Client(
+            transport=httpx.MockTransport(dispatch), headers={"User-Agent": "synthetic"}
+        ),
+        65536,
+        pacer=OpenLibraryPacer(clock=lambda: 0.0, sleep=lambda _: None),
+        clock=lambda: 0.0,
+        wall_clock=lambda: 1700000000.0,
+    )
+    qualify = open_library_metadata.qualify_provider_observation
+
+    def qualification(observation, lookup):
+        # This adapter-local field is the pre-1005 dispatch-boundary projection.
+        seen.append(provider._cover_descriptors)
+        if len(seen) == 2:
+            raise cause
+        return qualify(observation, lookup)
+
+    monkeypatch.setattr(
+        open_library_metadata, "qualify_provider_observation", qualification
+    )
+    with pytest.raises(ProviderObservationFailure) as caught:
+        provider.observe(plan)
+    assert searches == 2
+    assert seen[0]
+    expected = seen[1] if after_descriptor else ()
+    assert caught.value.snapshot.cover_descriptors == expected
+    if after_descriptor:
+        assert expected and expected != seen[0]
+    assert caught.value.__cause__ is cause
+    assert caught.value.snapshot.evidence.accessed_at == "2023-11-14T22:13:20.000000Z"

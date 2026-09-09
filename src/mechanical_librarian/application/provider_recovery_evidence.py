@@ -16,6 +16,7 @@ from mechanical_librarian.application.metadata_report import (
     PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
     CredentialError,
     CurrentnessError,
+    ProviderObservationFailure,
     TargetNotFoundError,
 )
 from mechanical_librarian.application.provider_recovery_policy import (
@@ -134,10 +135,10 @@ class TargetConnectionHeld(CurrentnessError):
 def classify_provider_recovery_failure(error: Exception) -> tuple[str, int | None]:
     if isinstance(error, TargetConnectionHeld):
         return "target_held", None
-    if isinstance(error, CredentialError) or (
-        isinstance(error, ProviderRetrySuccessorError)
-        and isinstance(error.__cause__, CredentialError)
-    ):
+    cause = error.__cause__ if isinstance(error, ProviderRetrySuccessorError) else None
+    if isinstance(cause, ProviderObservationFailure):
+        cause = cause.__cause__
+    if isinstance(error, CredentialError) or isinstance(cause, CredentialError):
         return "authentication", None
     if isinstance(error, ProviderRetryDisabled):
         return "disabled", None

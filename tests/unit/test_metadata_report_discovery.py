@@ -30,6 +30,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ProviderBinding,
     ProviderLaneResult,
+    ProviderResult,
     ReportRepository,
     TargetFile,
     TargetSnapshot,
@@ -2308,7 +2309,10 @@ def test_generate_report_preserves_only_work_lane_date_explanations() -> None:
                         transformation_lineage=qualified.transformation_lineage,
                     )
                 )
-            return provider_observation(self.name, tuple(results))
+            return ProviderResult(
+                provider_observation(self.name, tuple(results)),
+                cover_descriptors=self.cover_descriptors,
+            )
 
     names = ("google_books", "hardcover", "open_library")
     repository = FakeReportRepository()
@@ -2558,7 +2562,10 @@ def test_generate_report_uses_source_lexical_timestamp_voting_matrix() -> None:
                         qualified.candidates,
                     )
                 )
-            return provider_observation(self.name, tuple(results))
+            return ProviderResult(
+                provider_observation(self.name, tuple(results)),
+                cover_descriptors=self.cover_descriptors,
+            )
 
     lexical_cases = (
         ("2001-02-03T04:05:06Z", True),

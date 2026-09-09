@@ -98,7 +98,7 @@ def _evidence(candidate: Any, kind: ProviderEvidenceKind) -> tuple[Any, ...]:
 
 def test_a_lookup_joins_a_work_to_the_recording_it_named() -> None:
     seen, handle = _recorder()
-    observation = _provider(handle).observe(asin_plan())
+    observation = _provider(handle).observe(asin_plan()).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert ProviderQueryKind.ASIN is observation.query_kind
@@ -122,7 +122,7 @@ def test_a_lookup_joins_a_work_to_the_recording_it_named() -> None:
 
 def test_the_regional_identifier_map_becomes_claims_and_one_marketplace() -> None:
     _seen, handle = _recorder()
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     recording = payload("audiosilo_work")["recordings"][0]
 
     assert sorted(value["asin"] for value in recording["asin"]) == sorted(
@@ -138,7 +138,7 @@ def test_the_regional_identifier_map_becomes_claims_and_one_marketplace() -> Non
 
 def test_the_chapter_document_becomes_one_bounded_whole_second_vector() -> None:
     _seen, handle = _recorder()
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     structure = _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)[0]
     document = payload("audiosilo_chapters")
 
@@ -157,7 +157,7 @@ def test_the_chapter_document_becomes_one_bounded_whole_second_vector() -> None:
 
 def test_a_stated_runtime_agrees_with_the_container_inside_the_band() -> None:
     _seen, handle = _recorder()
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
     duration = _claims(candidate, ClaimKind.DURATION)[0]
     local = next(claim for claim in local_claims() if claim.kind is ClaimKind.DURATION)
     link = next(
@@ -173,7 +173,7 @@ def test_a_recording_without_chapters_is_never_asked_about_them() -> None:
     resolved = copy.deepcopy(payload("audiosilo_lookup"))
     resolved["recording_id"] = "william-angiuli-2024"
     seen, handle = _recorder(lookup=_json(resolved))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
 
     assert 2 == len(seen)
     assert () == _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)
@@ -184,7 +184,7 @@ def test_a_recording_without_chapters_is_never_asked_about_them() -> None:
 
 def test_an_unknown_identifier_is_a_no_match() -> None:
     seen, handle = _recorder(lookup=_json({"message": "not found"}, 404))
-    observation = _provider(handle).observe(asin_plan())
+    observation = _provider(handle).observe(asin_plan()).observation
 
     assert ProviderStatus.NO_MATCH is observation.status
     assert 1 == len(seen)
@@ -193,10 +193,16 @@ def test_an_unknown_identifier_is_a_no_match() -> None:
 def test_an_html_answer_is_never_read_as_evidence() -> None:
     """The service answers an unknown API path with its single-page document."""
     _seen, handle = _recorder(work=_html(404))
-    assert ProviderStatus.NO_MATCH is _provider(handle).observe(asin_plan()).status
+    assert (
+        ProviderStatus.NO_MATCH
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
 
     _seen, handle = _recorder(work=_html(200))
-    assert ProviderStatus.MALFORMED is _provider(handle).observe(asin_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
 
 
 def test_a_work_that_does_not_contain_the_named_recording_fails_closed() -> None:
@@ -204,7 +210,10 @@ def test_a_work_that_does_not_contain_the_named_recording_fails_closed() -> None
     work["recordings"] = work["recordings"][1:]
     _seen, handle = _recorder(work=_json(work))
 
-    assert ProviderStatus.MALFORMED is _provider(handle).observe(asin_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
 
 
 @pytest.mark.parametrize(
@@ -229,13 +238,16 @@ def test_a_lookup_without_a_usable_join_builds_no_url_at_all(
 ) -> None:
     seen, handle = _recorder(lookup=_json(resolved))
 
-    assert ProviderStatus.MALFORMED is _provider(handle).observe(asin_plan()).status
+    assert (
+        ProviderStatus.MALFORMED
+        is _provider(handle).observe(asin_plan()).observation.status
+    )
     assert 1 == len(seen)
 
 
 def test_a_work_lane_states_insufficient_input_and_sends_nothing() -> None:
     seen, handle = _recorder()
-    observation = _provider(handle).observe(work_plan())
+    observation = _provider(handle).observe(work_plan()).observation
 
     assert ProviderStatus.INSUFFICIENT_INPUT is observation.status
     assert [] == seen
@@ -256,7 +268,7 @@ def test_a_service_failure_ends_the_lane_rather_than_reading_as_absence(
 ) -> None:
     _seen, handle = _recorder(lookup=_json({"message": "no"}, status_code))
 
-    assert expected is _provider(handle).observe(asin_plan()).status
+    assert expected is _provider(handle).observe(asin_plan()).observation.status
 
 
 def test_a_throttled_request_honours_retry_after_and_retries() -> None:
@@ -270,7 +282,7 @@ def test_a_throttled_request_honours_retry_after_and_retries() -> None:
             return _json({"message": "slow down"}, 429, **{"retry-after": "5"})
         return inner(request)
 
-    observation = _provider(handle, delays=delays).observe(asin_plan())
+    observation = _provider(handle, delays=delays).observe(asin_plan()).observation
 
     assert ProviderStatus.CANDIDATES is observation.status
     assert [5.0] == delays
@@ -280,7 +292,7 @@ def test_a_missing_chapter_document_removes_evidence_rather_than_the_candidate()
     None
 ):
     _seen, handle = _recorder(chapters=_json({"message": "no"}, 404))
-    candidate = _provider(handle).observe(asin_plan()).candidates[0]
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
 
     assert () == _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)
     assert ("Project Hail Mary",) == tuple(
@@ -303,5 +315,9 @@ def test_one_adapter_serves_one_observation() -> None:
     _seen, handle = _recorder()
     provider = _provider(handle)
 
-    assert ProviderStatus.CANDIDATES is provider.observe(asin_plan()).status
-    assert ProviderStatus.UNAVAILABLE is provider.observe(asin_plan()).status
+    assert (
+        ProviderStatus.CANDIDATES is (provider.observe(asin_plan())).observation.status
+    )
+    assert (
+        ProviderStatus.UNAVAILABLE is (provider.observe(asin_plan())).observation.status
+    )

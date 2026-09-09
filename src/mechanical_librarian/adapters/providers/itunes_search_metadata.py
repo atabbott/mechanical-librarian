@@ -23,9 +23,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from mechanical_librarian.adapters.providers.retry_safety import (
-    ProviderAttemptRecord,
     ProviderFailure,
-    ProviderIncompleteCauseRecord,
     ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_retry_after,
@@ -35,6 +33,7 @@ from mechanical_librarian.adapters.providers.sdk import (
     ProviderClocks,
     ProviderResponseFacts,
     provider_bounds,
+    provider_client_lifetime,
 )
 from mechanical_librarian.adapters.providers.visible_text import (
     HTML_VISIBLE_TEXT_VERSION,
@@ -45,10 +44,15 @@ from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderCoverDescriptor,
+    ProviderFailureSnapshot,
     ProviderLaneResult,
+    ProviderResult,
     merge_provider_cover_descriptors,
     provider_observation,
     qualify_provider_observation,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -200,19 +204,7 @@ class ITunesSearchMetadataProvider:
         self._called = False
         self._schema_rejections = 0
         self._pacer = pacer
-        self.cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
-
-    @property
-    def attempt_records(self) -> tuple[ProviderAttemptRecord, ...]:
-        return self._session.attempt_records
-
-    @property
-    def incomplete_causes(self) -> tuple[ProviderIncompleteCauseRecord, ...]:
-        return self._session.incomplete_causes
-
-    @property
-    def accessed_at(self) -> str | None:
-        return self._session.accessed_at
+        self._cover_descriptors: tuple[ProviderCoverDescriptor, ...] = ()
 
     # The two budgets below are the session's own state.  They stay readable
     # and settable under their adapter-local names so a caller can position an
@@ -234,6 +226,36 @@ class ITunesSearchMetadataProvider:
         self._session.remaining_response_bytes = value
 
     def observe(
+        self,
+        plan: MetadataDiscoveryPlan,
+        *,
+        deadline: float | None = None,
+    ) -> ProviderResult:
+        failure: BaseException | None = None
+        try:
+            observation = self._observe(plan, deadline=deadline)
+        except BaseException as error:
+            failure = error
+        try:
+            snapshot = ProviderFailureSnapshot(
+                self._cover_descriptors,
+                ProviderOperationalEvidence(
+                    self._session.accessed_at,
+                    self._session.attempt_records,
+                    self._session.incomplete_causes,
+                ),
+            )
+        except BaseException:
+            if failure is not None:
+                raise failure from None
+            raise
+        if failure is not None:
+            snapshot.raise_from(failure)
+        return ProviderResult(
+            observation, snapshot.cover_descriptors, snapshot.evidence
+        )
+
+    def _observe(
         self,
         plan: MetadataDiscoveryPlan,
         *,
@@ -281,9 +303,9 @@ class ITunesSearchMetadataProvider:
         self._session.ledger = ledger
         results: list[ProviderLaneResult] = []
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
-        try:
+        with provider_client_lifetime(self._client):
             for lane in lanes:
-                self.cover_descriptors = ()
+                self._cover_descriptors = ()
                 lookup = _lane_lookup(lane, plan.local_claims)
                 physical = self._resolve(ledger, lane, lookup, deadline=deadline)
                 observation = qualify_provider_observation(physical, lookup)
@@ -299,7 +321,7 @@ class ITunesSearchMetadataProvider:
                 )
                 merged = merge_provider_cover_descriptors(
                     descriptors,
-                    _retained_cover_descriptors(self.cover_descriptors, observation),
+                    _retained_cover_descriptors(self._cover_descriptors, observation),
                 )
                 if merged is None:
                     results[-1] = ProviderLaneResult(
@@ -309,9 +331,7 @@ class ITunesSearchMetadataProvider:
                     )
                 else:
                     descriptors = merged
-        finally:
-            self._client.close()
-        self.cover_descriptors = descriptors
+        self._cover_descriptors = descriptors
         return provider_observation(
             self._name,
             tuple(results),
@@ -385,7 +405,7 @@ class ITunesSearchMetadataProvider:
                 lookup.local_claims,
                 schema_rejections=self._reject_schema_members,
             )
-            self.cover_descriptors = _cover_descriptors(
+            self._cover_descriptors = _cover_descriptors(
                 self._name, payload.get("results", []), self._cover_wait
             )
         except ProviderFailure as error:

@@ -100,3 +100,11 @@ Inventaire unavailable, incomplete, or rate-limited lane. Missing ISBNs,
 malformed evidence, overflow and insufficient input do not gain automatic
 retries. HTTP attempts, shaped search dispatches and durable queued recovery
 attempts remain separate counts (#1006).
+
+Recovery reads the same immutable provider result and operational evidence as
+initial generation. Its policy remains distinct: an ordinary construction or
+dispatch exception becomes `ProviderRetrySuccessorError` with the cause chained,
+and publishes no successor. Cancellation-compatible failures propagate with their
+partial snapshot. Retry delay comes only from the final canonical attempt:
+terminal or exhausted `http_429`, with an integral non-Boolean value from 1 to
+86,400 seconds. Initial-report unavailable-lane handling is not a recovery fallback.

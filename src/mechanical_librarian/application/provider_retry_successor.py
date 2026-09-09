@@ -18,7 +18,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.failure_diagnostics import (
     merge_provider_diagnostics,
-    provider_attempt_diagnostics,
+    provider_result_diagnostics,
 )
 from mechanical_librarian.application.metadata_report import (
     AudioInspector,
@@ -38,6 +38,9 @@ from mechanical_librarian.application.metadata_report import (
     metadata_discovery_plan,
     provider_observation,
     require_report_current,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderOperationalEvidence,
 )
 from mechanical_librarian.application.provider_recovery_policy import (
     provider_recovery_decision,
@@ -496,12 +499,12 @@ class GenerateProviderRetrySuccessor:
     ) -> tuple[ProviderObservation, int | None]:
         try:
             client: MetadataProvider = provider.binding.factory()
-            observation = client.observe(
+            result = client.observe(
                 MetadataDiscoveryPlan(plan.local_claims, selected), deadline=deadline
             )
         except Exception as error:
             # Provider construction and the remote observation are one dispatch
-            # across a protocol that declares no error type. Either failing
+            # across the complete result/failure contract. Either failing
             # means the retry produced no observation, and the checks below --
             # which reject a result that disagrees with the binding -- can only
             # run on a dispatch that returned. The cause is chained, and the
@@ -509,6 +512,7 @@ class GenerateProviderRetrySuccessor:
             raise ProviderRetrySuccessorError(
                 "provider retry dispatch failed"
             ) from error
+        observation = result.observation
         if type(observation) is ProviderObservation and observation.authority is None:
             observation = replace(observation, authority=provider.binding.authority)
         if (
@@ -524,37 +528,16 @@ class GenerateProviderRetrySuccessor:
             lane.status is ProviderStatus.MALFORMED for lane in observation.lanes
         ):
             raise ProviderRetrySuccessorError("provider retry result is invalid")
-        try:
-            attempt_records = getattr(client, "attempt_records", ())
-        except Exception:
-            attempt_records = None
-        try:
-            incomplete_causes = getattr(client, "incomplete_causes", ())
-        except Exception:
-            incomplete_causes = None
         observation = replace(
             observation,
-            diagnostics=merge_provider_diagnostics(
-                observation.diagnostics,
-                provider_attempt_diagnostics(
-                    attempt_records,
-                    status=observation.status.value,
-                    incomplete_causes=incomplete_causes,
-                ),
-            ),
+            diagnostics=provider_result_diagnostics(observation, result.evidence),
         )
-        return observation, self._retry_after(client)
+        return observation, self._retry_after(result.evidence)
 
     @staticmethod
-    def _retry_after(provider: MetadataProvider) -> int | None:
-        """Read only a canonical final bounded delay from adapter-safe evidence."""
-        try:
-            # Adapter-optional evidence the MetadataProvider contract
-            # deliberately does not require; a provider without the attribute
-            # is handled by the AttributeError branch below.
-            records = provider.attempt_records  # type: ignore[attr-defined]  # reason: optional adapter evidence, guarded by the except clause
-        except (AttributeError, TypeError, ValueError):
-            return None
+    def _retry_after(evidence: ProviderOperationalEvidence) -> int | None:
+        """Read only a canonical final bounded delay from the result snapshot."""
+        records = evidence.attempt_records
         if type(records) is not tuple or not records:
             return None
         record = records[-1]
@@ -566,7 +549,7 @@ class GenerateProviderRetrySuccessor:
             return None
         if category != "http_429" or outcome not in {"exhausted", "terminal"}:
             return None
-        if type(delay) not in {int, float} or isinstance(delay, bool):
+        if delay is None or type(delay) not in {int, float} or isinstance(delay, bool):
             return None
         try:
             integer = int(delay)

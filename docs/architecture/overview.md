@@ -220,3 +220,19 @@ Review preparation performs background read-only progression only after an
 authenticated owner request. Automatic polling, policy decisions, approval,
 apply, target/media writes, destructive actions, and automatic provider retry
 remain unavailable.
+
+### Provider result ownership
+
+All eight metadata adapters return the application-owned immutable `ProviderResult`
+with `observation`, `cover_descriptors`, and `evidence`. `ProviderOperationalEvidence`
+owns the first `accessed_at`, bounded `attempt_records`, and `incomplete_causes`;
+`None` means unavailable evidence and `()` means known empty evidence. Callers
+consume the returned snapshot, never mutable adapter output attributes. The
+transport SDK retains private execution state and provider-local retry authority.
+
+Declared failures carry `ProviderFailureSnapshot(cover_descriptors, evidence)`.
+`ProviderObservationFailure`, `ProviderObservationCancelled`, and
+`ProviderObservationInterrupted` chain the original cause; the latter two preserve
+`asyncio.CancelledError` and `KeyboardInterrupt` propagation. Client cleanup does
+not replace an active failure. Descriptors retain their acquisition-only pacing
+callback and its existing owner; snapshots do not copy clients, pacers or locks.

@@ -121,9 +121,13 @@ def test_rich_schema_query_and_field_order_are_closed() -> None:
             200, headers={"content-type": "application/json"}, json=payload
         )
 
-    observation = HardcoverMetadataProvider(
-        "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
-    ).observe(isbn_lookup((isbn_claim(), title_claim())))
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue", httpx.Client(transport=httpx.MockTransport(handler)), 65_536
+        )
+        .observe(isbn_lookup((isbn_claim(), title_claim())))
+        .observation
+    )
     assert observation.status == ProviderStatus.CANDIDATES
     claims = observation.candidates[0].claims
     assert "B012345678" == next(
@@ -183,11 +187,15 @@ def test_hardcover_operations_keep_relationship_selections_within_depth_three(
         )
 
     captured.clear()
-    observation = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(transport=httpx.MockTransport(handler)),
-        65_536,
-    ).observe(lookup)
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+        )
+        .observe(lookup)
+        .observation
+    )
     assert ProviderStatus.NO_MATCH == observation.status
     operation = captured[0]
     query = cast("str", operation["query"])
@@ -252,31 +260,36 @@ def test_http_success_graphql_errors_are_typed_before_data(
         ),
         65_536,
     )
-    observation = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
+    provider_result = provider.observe(isbn_lookup((isbn_claim(), title_claim())))
+    observation = (provider_result).observation
     assert ProviderStatus.UNAVAILABLE == observation.status
     assert () == observation.candidates
-    assert () == provider.cover_descriptors
+    assert () == provider_result.cover_descriptors
 
 
 def test_graphql_error_envelope_bounds_are_closed_and_do_not_leak() -> None:
     def observe(payload: object) -> ProviderObservation:
-        return HardcoverMetadataProvider(
-            "catalogue",
-            httpx.Client(
-                transport=httpx.MockTransport(
-                    lambda request: httpx.Response(
-                        200,
-                        headers={"content-type": "application/json"},
-                        content=(
-                            payload
-                            if type(payload) is bytes
-                            else json.dumps(payload).encode()
-                        ),
+        return (
+            HardcoverMetadataProvider(
+                "catalogue",
+                httpx.Client(
+                    transport=httpx.MockTransport(
+                        lambda request: httpx.Response(
+                            200,
+                            headers={"content-type": "application/json"},
+                            content=(
+                                payload
+                                if type(payload) is bytes
+                                else json.dumps(payload).encode()
+                            ),
+                        )
                     )
-                )
-            ),
-            65_536,
-        ).observe(isbn_lookup((isbn_claim(),)))
+                ),
+                65_536,
+            )
+            .observe(isbn_lookup((isbn_claim(),)))
+            .observation
+        )
 
     exact_message = "x" * hardcover_metadata.MAX_GRAPHQL_ERROR_MESSAGE_CHARACTERS
     for errors in (
@@ -318,34 +331,42 @@ def test_graphql_error_envelope_bounds_are_closed_and_do_not_leak() -> None:
 
 
 def test_graphql_error_transport_timeout_and_expired_deadline_are_unavailable() -> None:
-    timed_out = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: (_ for _ in ()).throw(
-                    httpx.ReadTimeout("synthetic timeout")
+    timed_out = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: (_ for _ in ()).throw(
+                        httpx.ReadTimeout("synthetic timeout")
+                    )
                 )
-            )
-        ),
-        65_536,
-        sleep=lambda _: None,
-        jitter=lambda: 0.0,
-    ).observe(isbn_lookup((isbn_claim(),)))
+            ),
+            65_536,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
     assert ProviderStatus.UNAVAILABLE == timed_out.status
 
     requests: list[httpx.Request] = []
-    expired = HardcoverMetadataProvider(
-        "catalogue",
-        httpx.Client(
-            transport=httpx.MockTransport(
-                lambda request: (
-                    requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
-                    or httpx.Response(500)
+    expired = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: (
+                        requests.append(request)  # type: ignore[func-returns-value]  # reason: `append(...) or x` deliberately records the request and still yields the response.
+                        or httpx.Response(500)
+                    )
                 )
-            )
-        ),
-        65_536,
-    ).observe(isbn_lookup((isbn_claim(),)), deadline=0)
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)), deadline=0)
+        .observation
+    )
     assert ProviderStatus.INCOMPLETE == expired.status
     assert [] == requests
 
@@ -373,12 +394,11 @@ def test_hardcover_retries_declared_transients_with_exact_authority() -> None:
             sleep=delays.append,
             jitter=lambda: 0.0,
         )
-        assert (
-            ProviderStatus.NO_MATCH
-            == provider.observe(isbn_lookup((isbn_claim(),))).status
-        )
+        provider_result = provider.observe(isbn_lookup((isbn_claim(),)))
+        assert ProviderStatus.NO_MATCH == (provider_result).observation.status
         assert ([60.0] if status_code == 503 else [1.0]) == delays
-        assert 2 == len(provider.attempt_records)
+        assert provider_result.evidence.attempt_records is not None
+        assert 2 == len(provider_result.evidence.attempt_records)
 
     dispatches = 0
 
@@ -394,13 +414,13 @@ def test_hardcover_retries_declared_transients_with_exact_authority() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert (
-        ProviderStatus.UNAVAILABLE
-        == exhausted.observe(isbn_lookup((isbn_claim(),))).status
-    )
+    exhausted_result = exhausted.observe(isbn_lookup((isbn_claim(),)))
+    assert ProviderStatus.UNAVAILABLE == (exhausted_result).observation.status
     assert 3 == dispatches
-    assert "exhausted" == exhausted.attempt_records[-1].outcome
-    assert 7.0 == exhausted.attempt_records[-1].delay_seconds
+    assert exhausted_result.evidence.attempt_records is not None
+    assert "exhausted" == exhausted_result.evidence.attempt_records[-1].outcome
+    assert exhausted_result.evidence.attempt_records is not None
+    assert 7.0 == exhausted_result.evidence.attempt_records[-1].delay_seconds
 
 
 @pytest.mark.parametrize("prior_failures", range(3), ids=("none", "one", "two"))
@@ -424,12 +444,13 @@ def test_hardcover_recovers_at_every_permitted_retry_ordinal(
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    assert (
-        ProviderStatus.NO_MATCH == provider.observe(isbn_lookup((isbn_claim(),))).status
-    )
-    assert prior_failures + 1 == len(provider.attempt_records)
+    provider_result = provider.observe(isbn_lookup((isbn_claim(),)))
+    assert ProviderStatus.NO_MATCH == (provider_result).observation.status
+    assert provider_result.evidence.attempt_records is not None
+    assert prior_failures + 1 == len(provider_result.evidence.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
     assert ["retry"] * prior_failures + ["response_received"] == [
-        record.outcome for record in provider.attempt_records
+        record.outcome for record in provider_result.evidence.attempt_records
     ]
 
 
@@ -449,7 +470,7 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
     )
     assert (
         ProviderStatus.OVERSIZED
-        == oversized_provider.observe(isbn_lookup((isbn_claim(),))).status
+        == (oversized_provider.observe(isbn_lookup((isbn_claim(),)))).observation.status
     )
     assert 1 == oversized_calls
     assert 0 == oversized_provider._remaining_response_bytes
@@ -465,7 +486,8 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
         1_024,
     )
     assert (
-        ProviderStatus.NO_MATCH == control.observe(isbn_lookup((isbn_claim(),))).status
+        ProviderStatus.NO_MATCH
+        == (control.observe(isbn_lookup((isbn_claim(),)))).observation.status
     )
     responses = [
         httpx.Response(503, stream=InterruptedProviderStream()),
@@ -484,7 +506,7 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
     )
     assert (
         ProviderStatus.NO_MATCH
-        == interrupted.observe(isbn_lookup((isbn_claim(),))).status
+        == (interrupted.observe(isbn_lookup((isbn_claim(),)))).observation.status
     )
     assert (
         control._remaining_response_bytes - 1 == interrupted._remaining_response_bytes
@@ -509,7 +531,7 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
         )
         assert (
             ProviderStatus.MALFORMED
-            == encoded.observe(isbn_lookup((isbn_claim(),))).status
+            == (encoded.observe(isbn_lookup((isbn_claim(),)))).observation.status
         )
         assert 1 == calls
         assert 1_024 * 9 - len(raw_body) == encoded._remaining_response_bytes
@@ -529,7 +551,7 @@ def test_hardcover_charges_error_bodies_before_status_retry() -> None:
         )
         assert (
             ProviderStatus.MALFORMED
-            == encoded.observe(isbn_lookup((isbn_claim(),))).status
+            == (encoded.observe(isbn_lookup((isbn_claim(),)))).observation.status
         )
         assert 1_024 * 9 == encoded._remaining_response_bytes
 
@@ -552,7 +574,7 @@ def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never() -> Non
     )
     assert (
         ProviderStatus.NO_MATCH
-        == recovered.observe(isbn_lookup((isbn_claim(),))).status
+        == (recovered.observe(isbn_lookup((isbn_claim(),)))).observation.status
     )
     assert [2.0] == delays
 
@@ -577,7 +599,7 @@ def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never() -> Non
         )
         assert (
             ProviderStatus.RATE_LIMITED
-            == provider.observe(isbn_lookup((isbn_claim(),))).status
+            == (provider.observe(isbn_lookup((isbn_claim(),)))).observation.status
         )
         assert 1 == calls
 
@@ -598,13 +620,15 @@ def test_hardcover_429_retries_only_valid_retry_after_and_graphql_never() -> Non
         65_536,
         sleep=lambda _: pytest.fail("GraphQL errors must not retry"),
     )
-    assert (
-        ProviderStatus.UNAVAILABLE
-        == graphql.observe(isbn_lookup((isbn_claim(),))).status
-    )
+    graphql_result = graphql.observe(isbn_lookup((isbn_claim(),)))
+    assert ProviderStatus.UNAVAILABLE == (graphql_result).observation.status
     assert 1 == graphql_calls
-    assert "provider_declared_error" == graphql.attempt_records[0].category
-    assert "terminal" == graphql.attempt_records[0].outcome
+    assert graphql_result.evidence.attempt_records is not None
+    assert (
+        "provider_declared_error" == graphql_result.evidence.attempt_records[0].category
+    )
+    assert graphql_result.evidence.attempt_records is not None
+    assert "terminal" == graphql_result.evidence.attempt_records[0].outcome
 
 
 @pytest.mark.parametrize(
@@ -657,10 +681,13 @@ def test_hardcover_authoritative_rate_headers_record_exact_evidence(
         wall_clock=lambda: 1000.0,
         sleep=lambda _: pytest.fail("classified throttling must leave the lane"),
     )
-    observation = provider.observe(isbn_lookup((isbn_claim(),)), deadline=1.0)
+    provider_result = provider.observe(isbn_lookup((isbn_claim(),)), deadline=1.0)
+    observation = (provider_result).observation
     assert ProviderStatus.RATE_LIMITED == observation.status
-    assert category == provider.attempt_records[-1].category
-    assert delay == provider.attempt_records[-1].delay_seconds
+    assert provider_result.evidence.attempt_records is not None
+    assert category == provider_result.evidence.attempt_records[-1].category
+    assert provider_result.evidence.attempt_records is not None
+    assert delay == provider_result.evidence.attempt_records[-1].delay_seconds
 
 
 @pytest.mark.parametrize(
@@ -690,11 +717,10 @@ def test_hardcover_ambiguous_rate_headers_remain_generic(
         wall_clock=lambda: 1000.0,
         sleep=lambda _: pytest.fail("ambiguous throttling must not retry"),
     )
-    assert (
-        ProviderStatus.RATE_LIMITED
-        == provider.observe(isbn_lookup((isbn_claim(),)), deadline=1.0).status
-    )
-    assert "http_429" == provider.attempt_records[-1].category
+    provider_result = provider.observe(isbn_lookup((isbn_claim(),)), deadline=1.0)
+    assert ProviderStatus.RATE_LIMITED == (provider_result).observation.status
+    assert provider_result.evidence.attempt_records is not None
+    assert "http_429" == provider_result.evidence.attempt_records[-1].category
 
 
 def test_hardcover_pacer_shares_one_second_dispatch_starts() -> None:
@@ -777,7 +803,10 @@ def test_hardcover_requests_retries_and_instances_share_pacing() -> None:
         sleep=sleep,
         jitter=lambda: 0.0,
     )
-    assert ProviderStatus.NO_MATCH == first.observe(isbn_lookup((isbn_claim(),))).status
+    assert (
+        ProviderStatus.NO_MATCH
+        == (first.observe(isbn_lookup((isbn_claim(),)))).observation.status
+    )
     assert [0.0, 1.0] == dispatch_times
     assert [1.0] == sleeps
 
@@ -801,7 +830,8 @@ def test_hardcover_requests_retries_and_instances_share_pacing() -> None:
         sleep=sleep,
     )
     assert (
-        ProviderStatus.NO_MATCH == second.observe(isbn_lookup((isbn_claim(),))).status
+        ProviderStatus.NO_MATCH
+        == (second.observe(isbn_lookup((isbn_claim(),)))).observation.status
     )
     assert [0.0, 1.0, 2.0] == dispatch_times
     assert [1.0, 1.0] == sleeps
@@ -824,7 +854,9 @@ def test_hardcover_deadline_and_aggregate_attempt_bounds_are_exact() -> None:
     )
     assert (
         ProviderStatus.RATE_LIMITED
-        == deadline_provider.observe(isbn_lookup((isbn_claim(),)), deadline=2.0).status
+        == (
+            deadline_provider.observe(isbn_lookup((isbn_claim(),)), deadline=2.0)
+        ).observation.status
     )
     assert 1 == rate_limit_calls
 
@@ -896,9 +928,10 @@ def test_hardcover_deadline_and_aggregate_attempt_bounds_are_exact() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    provider.observe(plan)
+    provider_result = provider.observe(plan)
     assert 27 == dispatches
-    assert 27 == len(provider.attempt_records)
+    assert provider_result.evidence.attempt_records is not None
+    assert 27 == len(provider_result.evidence.attempt_records)
 
     interrupted_dispatches = 0
 
@@ -918,6 +951,7 @@ def test_hardcover_deadline_and_aggregate_attempt_bounds_are_exact() -> None:
         sleep=lambda _: None,
         jitter=lambda: 0.0,
     )
-    interrupted_provider.observe(plan)
+    interrupted_provider_result = interrupted_provider.observe(plan)
     assert 9 == interrupted_dispatches
-    assert 9 == len(interrupted_provider.attempt_records)
+    assert interrupted_provider_result.evidence.attempt_records is not None
+    assert 9 == len(interrupted_provider_result.evidence.attempt_records)

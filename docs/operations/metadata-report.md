@@ -687,3 +687,11 @@ the pure proposal evaluator under the requested resolved draft, then projects
 the eight closed rich-field choices. The response reports the total and whether
 the sample was truncated. It performs no provider request, database mutation,
 decision, activation, queue transition, target call, or media write.
+
+Provider observation returns one complete application-owned result. Initial report
+generation consumes its observation, descriptor tuple and operational evidence
+together, normalizes diagnostics once, and validates descriptor ownership before
+cover acquisition. An unexpected dispatch failure still yields unavailable lanes
+using its declared partial snapshot; cancellation and interruption propagate.
+No-dispatch outcomes invent neither access time nor attempts. Later lanes and
+report reads retain the first actual access time.

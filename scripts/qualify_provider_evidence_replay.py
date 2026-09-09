@@ -910,7 +910,7 @@ def capture(
                 provider.adapter,
                 instance,
                 plan,
-            )
+            ).observation
             if any(
                 type(exchange.get("response")) is dict
                 and not exchange["response"]["complete"]
@@ -1276,7 +1276,7 @@ def replay(
                 provider.adapter,
                 instance,
                 plan,
-            )
+            ).observation
             if transport.mismatch or transport.cursor != len(exchanges):
                 invalidated.append(
                     {
