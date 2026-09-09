@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Qualified title decoration tidies retain independently supported subtitle and
+  series components in complete review choices; existing evidence and automatic
+  authority guards remain in force. Proposal policy v23 requires a clean rebuild
+  of earlier state (#1002).
+
 - Cover comparisons keep the exact Audiobookshelf incumbent artifact and
   dimensions when another source has the same preview bytes. Library attention
   now follows live provider recovery, and a successful replacement after a

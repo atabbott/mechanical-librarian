@@ -87,7 +87,7 @@ PROPOSAL_SCHEMA = "proposal-set-v7"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v22"
+POLICY_VERSION = "fixed-conservative-v23"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -1108,6 +1108,7 @@ def evaluate_report(
     targets = canonical_target_fields(report.target.fields)
     results: dict[TargetDestination, ProposalResult] = {}
     observed_by_destination: dict[TargetDestination, tuple[_Observed, ...]] = {}
+    title_associations: dict[str, str] = {}
     for destination in TargetDestination:
         if destination in {
             TargetDestination.PUBLISHED_YEAR,
@@ -1240,7 +1241,9 @@ def evaluate_report(
             and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
             and result.reasons == ("competing_evidence",)
         ):
-            result = _decoration_equivalence_election(report, targets, result)
+            result, title_associations = _decoration_equivalence_election(
+                report, targets, result, observations
+            )
         if destination in {TargetDestination.AUTHORS, TargetDestination.NARRATORS} and (
             (
                 result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
@@ -1269,6 +1272,7 @@ def evaluate_report(
         targets,
         results,
         observed_by_destination,
+        title_associations,
     )
     for destination in unresolved:
         result = results[destination]
@@ -1770,7 +1774,8 @@ def _decoration_equivalence_election(
     report: MetadataReport,
     targets: Mapping[TargetDestination, TargetField],
     result: ProposalResult,
-) -> ProposalResult:
+    observations: tuple[_Observed, ...],
+) -> tuple[ProposalResult, dict[str, str]]:
     """Collapse two provider-backed titles equal up to one closed decoration.
 
     Both forms are attested by providers, so neither is local noise; the class
@@ -1781,10 +1786,10 @@ def _decoration_equivalence_election(
     """
     target = targets[TargetDestination.TITLE]
     if target.state is not TargetFieldState.VALUE or type(target.value) is not str:
-        return result
+        return result, {}
     if len(result.alternatives) != 2:
         # A class is exactly one plain and one decorated provider-backed form.
-        return result
+        return result, {}
     if any(
         alternative.value.kind is not ProposalValueKind.TEXT
         or type(alternative.value.value) is not str
@@ -1795,22 +1800,22 @@ def _decoration_equivalence_election(
         )
         for alternative in result.alternatives
     ):
-        return result
+        return result, {}
     preserving = tuple(
         alternative
         for alternative in result.alternatives
         if alternative.assessment is ProposalAssessment.PRESERVES_TARGET
     )
     if len(preserving) != 1:
-        return result
+        return result, {}
     if target.value != preserving[0].value.value:
         # Preservation folds case and whitespace; the class does not. A current
         # value that is not literally a class member is neither kept as
         # equivalent nor tidied, since the write would recase the owner's title.
-        return result
+        return result, {}
     pair = _decoration_equivalence_pair(result.alternatives)
     if pair is None:
-        return result
+        return result, {}
     plain, decorated, match = pair
     if (
         match.family is WorkTitleTransformationFamily.PARENTHESIZED_SERIES_NAME
@@ -1819,7 +1824,7 @@ def _decoration_equivalence_election(
             match.preserved_component, report, targets
         )
     ):
-        return _unresolved(result, DECORATION_TIDY_SERIES_UNPRESERVED_REASON)
+        return _unresolved(result, DECORATION_TIDY_SERIES_UNPRESERVED_REASON), {}
     plain_key = _comparison(TargetDestination.TITLE, cast(str, plain.value.value))
     decorated_key = _comparison(
         TargetDestination.TITLE, cast(str, decorated.value.value)
@@ -1830,11 +1835,21 @@ def _decoration_equivalence_election(
     # correlations would miss it.
     authorities = _provider_work_title_authorities(report)
     if set(authorities) - {plain_key, decorated_key}:
-        return _unresolved(result, DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON)
+        return _unresolved(result, DECORATION_EQUIVALENCE_PROVIDER_DISSENT_REASON), {}
     if len(authorities.get(plain_key, frozenset())) < len(
         authorities.get(decorated_key, frozenset())
     ):
-        return _unresolved(result, DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON)
+        return _unresolved(
+            result, DECORATION_EQUIVALENCE_DECORATED_CONSENSUS_REASON
+        ), {}
+    # The election proves tuple membership only, not additional title evidence.
+    associations = {
+        observation.representation: plain.alternative_id
+        for observation in observations
+        if observation.scope is decorated.scope
+        and _observation_key(TargetDestination.TITLE, observation.value)
+        == _observation_key(TargetDestination.TITLE, decorated.value)
+    }
     if plain.assessment is ProposalAssessment.PRESERVES_TARGET:
         return ProposalResult(
             TargetDestination.TITLE,
@@ -1843,7 +1858,7 @@ def _decoration_equivalence_election(
             None,
             (f"decoration_equivalent_{match.family.value}",),
             _dependencies(TargetDestination.TITLE),
-        )
+        ), associations
     return ProposalResult(
         TargetDestination.TITLE,
         ProposalOutcome.PROPOSE_CHANGE,
@@ -1851,7 +1866,7 @@ def _decoration_equivalence_election(
         plain.alternative_id,
         (f"decoration_tidy_{match.family.value}",),
         _dependencies(TargetDestination.TITLE),
-    )
+    ), associations
 
 
 def _decoration_equivalence_pair(
@@ -4163,6 +4178,7 @@ def _bibliographic_combinations(
     targets: dict[TargetDestination, TargetField],
     results: dict[TargetDestination, ProposalResult],
     observations: dict[TargetDestination, tuple[_Observed, ...]],
+    title_associations: Mapping[str, str],
 ) -> tuple[
     tuple[BibliographicCombination, ...],
     tuple[TargetDestination, ...],
@@ -4193,16 +4209,28 @@ def _bibliographic_combinations(
                     observation.scope,
                 )
             )
+            direct = alternative is not None
+            if alternative is None and destination is TargetDestination.TITLE:
+                associated_id = title_associations.get(observation.representation)
+                alternative = next(
+                    (
+                        value
+                        for value in results[destination].alternatives
+                        if value.alternative_id == associated_id
+                    ),
+                    None,
+                )
             if alternative is None:
                 continue
             members.setdefault(observation.representation, {}).setdefault(
                 destination,
                 set(),
             ).add(alternative.alternative_id)
-            sources_by_alternative[destination].setdefault(
-                alternative.alternative_id,
-                set(),
-            ).add(observation.representation)
+            if direct:
+                sources_by_alternative[destination].setdefault(
+                    alternative.alternative_id,
+                    set(),
+                ).add(observation.representation)
 
     attempted: set[TargetDestination] = set()
     combinations: dict[

@@ -778,3 +778,97 @@ def _real_tigers_corroboration_report() -> MetadataReport:
             ),
         ),
     )
+
+
+def retained_decoration_report(
+    component: str,
+    *,
+    keep: bool = False,
+    supported: bool = True,
+    state: TargetFieldState = TargetFieldState.MISSING,
+) -> MetadataReport:
+    """One plain authority and one decorated representation with its component."""
+    plain = "Plain Work"
+    value = "A Second Look" if component == "subtitle" else "The Sequence"
+    decorated = f"{plain}: {value}" if component == "subtitle" else f"{plain} ({value})"
+    current = plain if keep else decorated
+    kind = ClaimKind.SUBTITLE if component == "subtitle" else ClaimKind.SERIES
+    scope = ClaimScope.EDITION if component == "subtitle" else ClaimScope.WORK
+    provider = "hardcover"
+    candidate = "hardcover-edition"
+    claims: tuple[ProviderClaim, ...] = (
+        _claim(provider, candidate, ClaimKind.TITLE, decorated, scope=ClaimScope.WORK),
+        _claim(
+            provider,
+            candidate,
+            kind,
+            value,
+            scope=scope,
+            applicability="ebook" if component == "subtitle" else "not_applicable",
+        ),
+    )
+    local: tuple[LocalClaim, ...] = (consensus_local_title(current),)
+    if supported:
+        local += (
+            LocalClaim.create(
+                kind=kind,
+                observed=value,
+                canonical=value,
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                basis="package_metadata",
+                excerpt=value,
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                occurrence=0,
+            ),
+        )
+    fields = _fields(
+        current,
+        authors=TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Example",)
+        ),
+        **{
+            component: TargetField(
+                TargetDestination(component),
+                state,
+            )
+        },
+    )
+    source = _provider(provider, candidate, claims, authority=provider)
+    if component == "series":
+        local += (_local_isbn("9780306406157", "valid_isbn_13"),)
+        claims += (
+            _claim(
+                provider,
+                candidate,
+                ClaimKind.CREATOR,
+                "Ada Example",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            _claim(
+                provider,
+                candidate,
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        )
+        source = _provider(provider, candidate, claims, authority=provider)
+        lane = metadata_discovery_plan(
+            TargetSnapshot("ebook", current, (), fields=fields), local
+        ).lanes[0]
+        source = provider_observation(
+            provider,
+            (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, source.candidates),),
+            authority=provider,
+        )
+    return _report(
+        title=current,
+        fields=fields,
+        local_claims=local,
+        providers=(consensus_provider_title("open_library", plain), source),
+    )

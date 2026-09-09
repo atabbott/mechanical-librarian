@@ -347,3 +347,27 @@ def test_the_collapse_never_double_claims_a_consensus_election() -> None:
 
     assert consensus.reasons[0].startswith("provider_consensus_title_")
     assert not equivalence.reasons[0].startswith("provider_consensus_title_")
+
+
+@pytest.mark.parametrize("component", ("subtitle", "series"))
+@pytest.mark.parametrize("keep", (False, True))
+def test_collapsed_title_retains_independently_supported_component(component, keep):
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    report = retained_decoration_report(component, keep=keep)
+    proposal = evaluate_report(report)
+    title = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.TITLE
+    )
+    assert len(title.alternatives) == 1
+    assert title.alternatives[0].value.value == "Plain Work"
+    assert len(proposal.bibliographic_combinations) == 1
+    selections = proposal.bibliographic_combinations[0].selections
+    assert len(selections) == 3
+    assert selections[0].kind.value == ("preserve_target" if keep else "candidate")
+    component_selection = next(
+        value for value in selections if value.destination.value == component
+    )
+    assert component_selection.kind.value == "candidate"

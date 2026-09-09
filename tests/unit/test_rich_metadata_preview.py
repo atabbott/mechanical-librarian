@@ -3567,3 +3567,50 @@ def test_asin_options_preserve_exact_text_and_require_ebook_manifestation() -> N
         if value.field == "asin"
     )
     assert "option_evidence_unavailable" == rejected.reason
+
+
+@pytest.mark.parametrize(
+    "state", (TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY)
+)
+@pytest.mark.parametrize("supported", (False, True))
+def test_retained_decoration_subtitle_requires_independent_support(state, supported):
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    report = retained_decoration_report("subtitle", state=state, supported=supported)
+    options = dict(MetadataPolicyProfile.builtin().options)
+    options["subtitle"] = "fill_empty"
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["subtitle"] = "automatic"
+    policy = resolve_policy(
+        MetadataPolicyProfile.create("Retained subtitle", options, destinations),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    field = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "subtitle"
+    )
+    if supported:
+        assert field.outcome == "projected"
+        assert field.desired_value == "A Second Look"
+        assert len(proposal.bibliographic_combinations) == 1
+    else:
+        assert field.outcome == "abstain"
+        assert field.qualified_value is None
+        assert next(
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.SUBTITLE
+        ).alternatives
+
+
+@pytest.mark.parametrize(
+    "option", ("primary_narrative", "source_order", "all_qualified")
+)
+def test_retained_decoration_series_preserves_qualified_projection(option):
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    field = _automatic_series_preview(retained_decoration_report("series"), option)
+    assert field.outcome == "projected"
+    assert field.desired_value == ({"name": "The Sequence", "sequence": None},)

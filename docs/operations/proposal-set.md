@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v22` policy. It does not construct or contact a metadata or
+`fixed-conservative-v23` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -44,7 +44,7 @@ older same-schema result is historical and receives one current successor.
 Success is exactly one canonical `proposal-set-v7` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v7` documents under `fixed-conservative-v22` and the exact current
+Only `proposal-set-v7` documents under `fixed-conservative-v23` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
@@ -53,7 +53,7 @@ Only `proposal-set-v7` documents under `fixed-conservative-v22` and the exact cu
 `fixed-conservative-v13`, `fixed-conservative-v14`, `fixed-conservative-v15`,
 `fixed-conservative-v16`, `fixed-conservative-v17`, `fixed-conservative-v18`, or
 `fixed-conservative-v19`, `fixed-conservative-v20`, or
-`fixed-conservative-v21` table shape is
+`fixed-conservative-v21`, or `fixed-conservative-v22` table shape is
 incompatible and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
@@ -81,11 +81,16 @@ alternative byte for byte, and the current value must equal one class member
 byte for byte, so a collapse never rewrites casing or spacing. The dissent and
 width guards compare under the closed title comparison.
 
-A collapsed title carries one alternative. Where the decorated representation
-also carries the component being preserved, the combination engine still fails
-closed with `no_safe_bibliographic_combination` rather than pairing the
-component with the plain selection; that shape is recorded as a deferred finding
-on #896.
+A collapsed title carries one alternative. After every election guard passes,
+an evaluation-local association retains the removed decorated representation's
+membership with that plain alternative (#1002). Direct title lookup takes
+precedence, and only alternatives surviving policy application can be bound.
+This adds no evidence, correlations, component values, or persisted alias.
+Subtitle and series components still need their own evidence, source coherence,
+complete three-field combination and independent automatic qualification.
+In particular, a decorated provider series title does not acquire applicability
+to an already plain target from this association. Policy v23 requires a clean
+rebuild of v22 state; report and proposal document shapes are unchanged.
 
 The generic-title preservation branch that emits an all-PRESERVE combination is
 now taken only when the title outcome is a keep, which is the only shape the

@@ -140,11 +140,12 @@ pre-empted the subtitle-segment and series families of F41 entirely.
   5 of 5 adjudicated same-work compound cases, rejected
   2 of 2 different-work collisions, with 0 false admissions
   and 0 false rejections; every other family kept its query-only disposition.
-- A collapsed title carries one alternative. Where the decorated representation
-  also carries the component being preserved, the combination engine still fails
-  closed with `no_safe_bibliographic_combination` rather than pairing the
-  component with the plain selection; that shape is recorded as a deferred
-  finding on #896.
+- A collapsed title carries one alternative. #1002 retains an evaluation-local
+  association from each eligible removed decorated representation to the plain
+  alternative after all election guards pass. Complete bibliographic tuples may
+  retain independently supported components without adding evidence or borrowing
+  source identity. Direct lookup and surviving policy membership remain authoritative;
+  series applicability and automatic qualification remain separate gates.
 - Subtitles a cross-source segment corroborates become automatically fillable
   instead of stalling as uncorroborated.
 
