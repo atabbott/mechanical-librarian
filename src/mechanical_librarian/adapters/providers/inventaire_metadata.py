@@ -69,10 +69,12 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
+    WorkIdentityContradiction,
     comparison_links,
     finalize_candidate_comparisons,
     isbn_family,
     normalize_date_value,
+    provider_candidate_work_identity_contradiction,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -380,12 +382,6 @@ class InventaireMetadataProvider:
                 query_retry=query_retry,
             )
             uris = _search_work_uris(payload, reject=self._reject_schema_members)
-            if len(uris) > _MAX_CANDIDATES:
-                return self._result(
-                    lookup,
-                    ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
-                    dispatch_lineage=lineage,
-                )
             works = self._entities(uris, deadline=deadline) if uris else ()
             labels = self._resolve_labels(works, deadline=deadline)
             pairs = tuple(
@@ -394,6 +390,13 @@ class InventaireMetadataProvider:
                     _work_cover_descriptor(self._name, work, self._pacer.wait),
                 )
                 for work in works
+            )
+            pairs = tuple(
+                (candidate, descriptor)
+                for candidate, descriptor in pairs
+                if provider_candidate_work_identity_contradiction(
+                    candidate, lookup.title or "", lookup.authors
+                ) is not WorkIdentityContradiction.EXPLICIT
             )
             merged = merge_provider_cover_descriptors(
                 self.cover_descriptors,
@@ -592,6 +595,21 @@ class InventaireMetadataProvider:
             raise ValueError("provider redirects are malformed")
         isbn_uris = tuple(uri for uri in uris if uri.startswith("isbn:"))
         if isbn_uris:
+            if "notFound" in payload:
+                missing = payload["notFound"]
+                if (
+                    type(missing) is not list
+                    or len(missing) > _MAX_ENTITY_BATCH
+                    or any(type(uri) is not str for uri in missing)
+                    or len(set(missing)) != len(missing)
+                    or (missing and (
+                        entities or redirects or set(missing) != set(isbn_uris)
+                        or len(isbn_uris) != len(uris)
+                    ))
+                ):
+                    raise ValueError("provider ISBN absence is malformed")
+                if missing:
+                    return ()
             if len(isbn_uris) != len(uris) or set(redirects) != set(isbn_uris):
                 raise ValueError("provider ISBN redirects are malformed")
             targets = tuple(redirects.values())
@@ -950,7 +968,7 @@ def _add_values(
         return
     for value in values:
         text = _label_or_literal(value, labels)
-        if text is None:
+        if text is None and role != "author":
             continue
         claims.append(
             _claim(
@@ -962,7 +980,7 @@ def _add_values(
                 local_claims,
                 len(claims),
                 applicability=(
-                    "not_applicable" if applicability is None else applicability(text)
+                    "not_applicable" if applicability is None or text is None else applicability(text)
                 ),
                 role=role,
             )
@@ -1099,6 +1117,7 @@ def _work_candidate(
             ClaimScope.WORK,
             local_claims,
             labels,
+            role="author" if key == "wdt:P50" else None,
         )
     return finalize_candidate_comparisons(
         ProviderCandidate(identity, identity, tuple(claims)), local_claims, provider

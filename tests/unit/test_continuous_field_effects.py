@@ -774,7 +774,7 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
     assert repository.retired == [(decision.decision_id, 102)]
 
 
-def _prior_f20_decision() -> AutomaticDecision:
+def _prior_f20_decision(prior_digest: str) -> AutomaticDecision:
     def digest(value: object) -> str:
         return hashlib.sha256(
             json.dumps(
@@ -807,7 +807,7 @@ def _prior_f20_decision() -> AutomaticDecision:
     core = {
         **current._core(),
         "qualification_manifest_sha256": (
-            "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a"
+            prior_digest
         ),
     }
     return AutomaticDecision(
@@ -908,8 +908,12 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
     assert transitions[-1] == ("activity", None)
 
 
-def test_schedule_skips_prior_f20_before_no_change_authority_or_capability() -> None:
-    decision = _prior_f20_decision()
+@pytest.mark.parametrize("prior_digest", (
+    "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
+    "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
+))
+def test_schedule_skips_prior_f20_before_no_change_authority_or_capability(prior_digest: str) -> None:
+    decision = _prior_f20_decision(prior_digest)
     assert AutomaticDecision.from_json(decision.to_json()) == decision
 
     class Repository(_PagedRepository):

@@ -488,6 +488,18 @@ candidate or cover evidence. Its aggregate diagnostic is
 `provider_declared_error`, never success. A malformed, empty, or over-bound
 error envelope is `malformed`; its content is never retained.
 
+Inventaire validates an exact missing-ISBN response before recording no match:
+empty entity and redirect maps must accompany the requested ISBN in `notFound`.
+A missing ISBN still permits the existing bounded title-and-author fallback.
+Search hydrates at most three rows, removes only explicit wrong-work identities,
+and retains at most two candidates. Missing author labels remain limitations,
+not proof of a different work; possible identities still count toward overflow.
+The author-specific `wdt:P50` property supplies WORK author claims, including
+absent claims for unresolved names, so a partial author list cannot establish
+complete identity. Existing set-level ambiguity and cover-admission guards
+remain authoritative. Canonical Inventaire cover outcomes survive report
+publication, including unavailable and timeout evidence (#1006).
+
 Inventaire ISBN lookup maps only namespaced `wdt:P212` and `wdt:P957` edition
 identifiers. It follows at most one `wdt:P629` work relation, resolves bounded
 Wikidata entity labels in English, then `fromclaims`, then deterministic

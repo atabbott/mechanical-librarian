@@ -541,6 +541,7 @@ def _start_deterministic_installed_server(
     origin: str,
     admit_case: Callable[[str, str], None],
     after_advance: Callable[[PipelineAction, str | None], None],
+    report_factory: Callable[[MetadataReport], MetadataReport] | None = None,
 ) -> tuple[
     uvicorn.Server,
     threading.Thread,
@@ -630,6 +631,8 @@ def _start_deterministic_installed_server(
             local_reasons=("opening_matter_title",),
             providers=(),
         )
+        if report_factory is not None:
+            report = report_factory(report)
         reports[report.report_id] = report
         repository.publish(
             report,
@@ -830,6 +833,7 @@ class _InstalledPreparationRun:
         origin: str,
         expected_total: int,
         phase_observer: _InstalledPhaseObserver | None,
+        report_factory: Callable[[MetadataReport], MetadataReport] | None = None,
     ) -> None:
         self._database = database
         self._configuration = configuration
@@ -844,6 +848,7 @@ class _InstalledPreparationRun:
         self._origin = origin
         self._expected_total = expected_total
         self._phase_observer = phase_observer
+        self._report_factory = report_factory
         self._case_id: str | None = None
         self._case_id_lock = threading.Lock()
         self._case_admitted = threading.Event()
@@ -873,6 +878,7 @@ class _InstalledPreparationRun:
                 origin=self._origin,
                 admit_case=self._capture_fixture_case,
                 after_advance=self._hold_fixture_case_after_advance,
+                report_factory=self._report_factory,
             )
         )
         with _review_client() as client:
@@ -1506,6 +1512,7 @@ def _running_installed_preparation(
     origin: str,
     expected_total: int,
     phase_observer: _InstalledPhaseObserver | None,
+    report_factory: Callable[[MetadataReport], MetadataReport] | None = None,
 ) -> Iterator[_InstalledPreparationRun]:
     """Close a phase observer before the installed server drains its lifecycle."""
 
@@ -1523,6 +1530,7 @@ def _running_installed_preparation(
         origin=origin,
         expected_total=expected_total,
         phase_observer=phase_observer,
+        report_factory=report_factory,
     )
     try:
         yield run.__enter__()
@@ -1670,7 +1678,8 @@ class _InstalledQualificationEnvironment:
 
     @contextmanager
     def running_preparation(
-        self, phase_observer: _InstalledPhaseObserver | None = None
+        self, phase_observer: _InstalledPhaseObserver | None = None,
+        *, report_factory: Callable[[MetadataReport], MetadataReport] | None = None,
     ) -> Iterator[_InstalledPreparationRun]:
         with _running_installed_preparation(
             database=self.database,
@@ -1686,6 +1695,7 @@ class _InstalledQualificationEnvironment:
             origin=self.origin,
             expected_total=self.expected_total,
             phase_observer=phase_observer,
+            report_factory=report_factory,
         ) as run:
             yield run
 

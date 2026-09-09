@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import (
@@ -18,6 +19,7 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
 )
 from mechanical_librarian.adapters.providers.retry_safety import ProviderAttemptRecord
+from mechanical_librarian.adapters.providers.inventaire_metadata import InventaireMetadataProvider, InventairePacer
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -578,7 +580,8 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
         empty.close()
 
 
-def test_three_work_shared_failure_then_real_f22_cutover() -> None:
+@pytest.mark.parametrize("adapter", ("google_books", "inventaire"))
+def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
@@ -623,7 +626,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
                     ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE)
                     for lane in plan.lanes
                 ),
-                authority="google_books",
+                authority=adapter,
             )
             title = f"Recovered title {index + 1}"
             hardcover = _provider(
@@ -728,7 +731,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
             (MediaMountConfiguration("books", "/container", "/service", True),),
             (
                 ProviderConnectionConfiguration(
-                    "google", True, False, None, "google_books"
+                    "google", True, False, None, adapter
                 ),
                 ProviderConnectionConfiguration(
                     "hardcover", True, False, "/run/hardcover-token", "hardcover"
@@ -749,7 +752,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
         )
         recovery.observe_failure(
             connection="google",
-            adapter="google_books",
+            adapter=adapter,
             scope="ebooks",
             generation=1,
             failure="transient",
@@ -789,7 +792,28 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
         _TargetReader.snapshots = snapshots
 
         def google_provider(name, *_args, **_kwargs):
-            return _GoogleProvider(name, outcomes.pop(0), calls)
+            status = outcomes.pop(0)
+            if adapter == "google_books":
+                return _GoogleProvider(name, status, calls)
+            calls.append(status)
+
+            def respond(request: httpx.Request) -> httpx.Response:
+                assert request.url.path == "/api/entities/by-uris"
+                if status is ProviderStatus.RATE_LIMITED:
+                    return httpx.Response(429, headers={"Retry-After": "37"})
+                return httpx.Response(200, json={
+                    "entities": {"inv:edition-one": {
+                        "uri": "inv:edition-one",
+                        "claims": {"wdt:P212": ["9780306406157"], "wdt:P1476": ["Recovered title"]},
+                    }},
+                    "redirects": {"isbn:9780306406157": "inv:edition-one"},
+                })
+
+            return InventaireMetadataProvider(
+                name, httpx.Client(transport=httpx.MockTransport(respond)), 65_536,
+                pacer=InventairePacer(0.001, sleep=lambda _: None),
+                sleep=lambda _: None,
+            )
 
         with (
             patch.object(composition.time, "time", side_effect=lambda: clock[0]),
@@ -798,7 +822,7 @@ def test_three_work_shared_failure_then_real_f22_cutover() -> None:
             patch.object(composition, "google_books_client", return_value=object()),
             patch.object(
                 composition,
-                "GoogleBooksMetadataProvider",
+                "GoogleBooksMetadataProvider" if adapter == "google_books" else "InventaireMetadataProvider",
                 side_effect=google_provider,
             ),
             patch.object(

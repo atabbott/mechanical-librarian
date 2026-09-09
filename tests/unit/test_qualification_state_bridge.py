@@ -1196,3 +1196,27 @@ def test_installed_command_distinguishes_recovery() -> None:
 
     assert result == 1
     assert stderr.getvalue() == "Qualification-state bridge requires recovery.\n"
+
+
+def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mechanical_librarian.domain.cover_evidence import CoverDesignation, CoverProvenance
+
+    data = json.loads(_v26_document(nonartifact_cover=True))
+    data["covers"] = [CoverSource(
+        cover_source_id(CoverSourceKind.INVENTAIRE, "work-1"),
+        CoverSourceKind.INVENTAIRE, CoverSourceState.UNAVAILABLE,
+        provenance=CoverProvenance("inventaire", CoverDesignation.WORK, "work-1"),
+    ).to_data()]
+    identity = {key: value for key, value in data.items() if key != "report_id"}
+    data["report_id"] = "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+    source, backup, output = _paths(tmp_path)
+    _create_source(source, document=canonical_json(data))
+    _accept_synthetic_source(monkeypatch, source)
+    before = source.read_bytes()
+    bridge.bridge_qualification_state(source, backup, output, RETAINED_LIBRARY_V26_TO_V32)
+    assert source.read_bytes() == before
+    with sqlite3.connect(output) as connection:
+        report = MetadataReport.from_json(connection.execute("SELECT document FROM metadata_reports").fetchone()[0])
+    assert report.schema_version == "metadata-report-v38"

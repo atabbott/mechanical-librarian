@@ -146,7 +146,8 @@ def test_gallery_admission_caps_provider_and_total_with_visible_truncation() -> 
     } == reasons
 
 
-def test_digest_deduplication_retains_every_provider_provenance() -> None:
+@pytest.mark.parametrize("kind", (CoverSourceKind.HARDCOVER, CoverSourceKind.INVENTAIRE))
+def test_digest_deduplication_retains_every_provider_provenance(kind: CoverSourceKind) -> None:
     configuration = ProviderConnectionConfiguration(
         "catalogue",
         True,
@@ -162,8 +163,8 @@ def test_digest_deduplication_retains_every_provider_provenance() -> None:
     descriptors = tuple(
         ProviderCoverDescriptor(
             "catalogue",
-            CoverSourceKind.HARDCOVER,
-            cover_source_id(CoverSourceKind.HARDCOVER, identity),
+            kind,
+            cover_source_id(kind, identity),
             f"https://example.com/{identity}.jpg",
             CoverProvenance(
                 "catalogue",
@@ -214,7 +215,8 @@ def test_digest_deduplication_retains_every_provider_provenance() -> None:
     }
 
 
-def test_terminal_descriptor_state_is_published_without_remote_fetch() -> None:
+@pytest.mark.parametrize("kind", (CoverSourceKind.HARDCOVER, CoverSourceKind.INVENTAIRE))
+def test_terminal_descriptor_state_is_published_without_remote_fetch(kind: CoverSourceKind) -> None:
     configuration = ProviderConnectionConfiguration(
         "catalogue",
         True,
@@ -229,8 +231,8 @@ def test_terminal_descriptor_state_is_published_without_remote_fetch() -> None:
     )
     descriptor = ProviderCoverDescriptor(
         "catalogue",
-        CoverSourceKind.HARDCOVER,
-        cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:edition-1"),
+        kind,
+        cover_source_id(kind, "catalogue:edition-1"),
         None,
         CoverProvenance(
             "catalogue",
@@ -255,7 +257,7 @@ def test_terminal_descriptor_state_is_published_without_remote_fetch() -> None:
             (descriptor,),
         )
     provider_value = next(
-        value for value in values if value.kind is CoverSourceKind.HARDCOVER
+        value for value in values if value.kind is kind
     )
     assert CoverSourceState.REJECTED == provider_value.state
     fetch.assert_not_called()
@@ -377,9 +379,10 @@ def test_abs_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout() -> Non
     )
 
 
-def test_remote_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout() -> None:
+@pytest.mark.parametrize("kind", (CoverSourceKind.HARDCOVER, CoverSourceKind.INVENTAIRE))
+def test_remote_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout(kind: CoverSourceKind) -> None:
     aggregate = time.monotonic() + 10.0
-    source_id = cover_source_id(CoverSourceKind.HARDCOVER, "candidate")
+    source_id = cover_source_id(kind, "candidate")
     with (
         tempfile.TemporaryDirectory() as directory,
         patch(
@@ -401,7 +404,7 @@ def test_remote_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout() -> 
         )._remote(
             ProviderCoverDescriptor(
                 "hardcover",
-                CoverSourceKind.HARDCOVER,
+                kind,
                 source_id,
                 "https://example.com/cover.jpg",
             ),
@@ -412,3 +415,27 @@ def test_remote_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout() -> 
         value.state,
         value.timeout_scope,
     )
+
+
+@pytest.mark.parametrize("outcome", ("absent", "unavailable", "deadline"))
+def test_inventaire_remote_nonretrieved_outcomes(outcome: str, tmp_path: Path) -> None:
+    from mechanical_librarian.adapters.providers.remote_cover import RemoteCoverError
+
+    descriptor = ProviderCoverDescriptor(
+        "inventaire", CoverSourceKind.INVENTAIRE,
+        cover_source_id(CoverSourceKind.INVENTAIRE, "work-1"),
+        None if outcome == "absent" else "https://inventaire.io/img/entities/" + "a" * 40,
+        CoverProvenance("inventaire", CoverDesignation.WORK, "work-1"),
+        wait=(lambda _: False) if outcome == "deadline" else None,
+    )
+    with patch("mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+               side_effect=RemoteCoverError("unavailable")) as fetch:
+        source = _CoverEvidenceObserver(_Target(None), CoverArtifactStore(tmp_path))._remote(
+            descriptor, CoverDeadline(time.monotonic() + 10, time.monotonic() + 10)
+        )
+    assert source.state is {"absent": CoverSourceState.ABSENT,
+                            "unavailable": CoverSourceState.UNAVAILABLE,
+                            "deadline": CoverSourceState.TIMEOUT}[outcome]
+    if outcome == "deadline":
+        assert source.timeout_scope == "not_started_due_to_aggregate_deadline"
+    assert fetch.call_count == (1 if outcome == "unavailable" else 0)

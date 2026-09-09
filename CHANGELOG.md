@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Inventaire cover evidence now survives preparation. Valid missing ISBNs permit
+  bounded title-and-author fallback, and three-row searches retain useful work
+  evidence without concealing ambiguity or incomplete author identities.
+  Corrected failures can be deliberately prepared again (#1006).
+
 - Qualified title decoration tidies retain independently supported subtitle and
   series components in complete review choices; existing evidence and automatic
   authority guards remain in force. Proposal policy v23 requires a clean rebuild

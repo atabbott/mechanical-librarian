@@ -90,3 +90,12 @@ The owner may run `mechanical-librarian provider-recovery` with the same
 configuration, database, catalogue, and artifact paths used by the server. It
 uses the same durable one-claim path as the supervisor; it neither bypasses
 leases nor retries a completed sibling.
+
+A structural failure before report publication remains terminal `unknown` and
+enrolls no provider recovery job. After correcting its cause, use the supported
+Library scan/retry to prepare a new cycle; the prior failed completion remains
+history. This deliberate reprepare differs from durable recovery of a published
+Inventaire unavailable, incomplete, or rate-limited lane. Missing ISBNs,
+malformed evidence, overflow and insufficient input do not gain automatic
+retries. HTTP attempts, shaped search dispatches and durable queued recovery
+attempts remain separate counts (#1006).
