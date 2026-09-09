@@ -730,9 +730,10 @@ class ContinuousGuardedApplication:
                 type(decision) is HumanDecision
                 and decision.application == "recorded_only"
             ):
-                # An audiobook decision is recorded, not applied. Advancing
-                # past it keeps the schedule moving and forms no plan the
-                # target could ever receive (#966).
+                # A decision retained from before audiobook writes existed
+                # is history, not pending work. Advancing past it keeps the
+                # schedule moving and forms no plan the target could ever
+                # receive (#968).
                 self._advance_schedule_cursor(decision, generation)
                 continue
             if type(

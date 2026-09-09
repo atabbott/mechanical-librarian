@@ -11,6 +11,8 @@ from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     qualify_provider_observation,
 )
+from mechanical_librarian.domain import human_decision
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -34,6 +36,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     finalize_candidate_comparisons,
 )
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.work_identity import work_query_ladder
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
@@ -46,6 +49,7 @@ __all__ = [
     "audiobook_candidate",
     "manual_audiobook_observation",
     "qualified_audiobook",
+    "retained_recorded_only_decision",
 ]
 
 
@@ -297,3 +301,61 @@ def asserted_asin_report(
         ),
         audio=single_track_audio_facts("b" * 64),
     )
+
+
+def retained_recorded_only_decision(
+    case: ReviewCase, destination: TargetDestination
+) -> HumanDecision:
+    """Rebuild one F45 decision exactly as it was retained before F47.
+
+    `HumanDecision.create` has said `apply` on both media since F47, so the
+    only way to hold the history the SQL seam, the scheduler and the planner
+    still have to recognise is to re-seal the document the way F45 sealed it
+    (#968).
+    """
+    proposal = next(
+        value for value in case.proposals if value["destination"] == destination.value
+    )
+    result = proposal["result"]
+    assert type(result) is dict
+    alternatives = result["alternatives"]
+    assert type(alternatives) is list
+    document = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination=destination.value,
+        actor="owner",
+        outcome="accept",
+        selected_value=alternatives[0]["value"],
+        idempotency_key="retained-recorded-only-0001",
+        occurred_at=1_000,
+    ).to_data()
+    document["application"] = "recorded_only"
+    document["request_digest"] = human_decision._sha256(
+        human_decision._canonical(
+            {
+                key: document[key]
+                for key in (
+                    "actor",
+                    "application",
+                    "destination",
+                    "idempotency_digest",
+                    "outcome",
+                    "proposal_id",
+                    "review_case_id",
+                    "selected_value",
+                    "target_fingerprint",
+                )
+            }
+        )
+    )
+    document["decision_id"] = "human_decision_" + human_decision._sha256(
+        human_decision._canonical(
+            {
+                "request_digest": document["request_digest"],
+                "occurred_at": document["occurred_at"],
+            }
+        )
+    )
+    return HumanDecision.from_json(human_decision._canonical(document))

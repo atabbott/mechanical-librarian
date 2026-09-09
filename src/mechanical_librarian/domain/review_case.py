@@ -522,10 +522,11 @@ class ReviewCase:
     def media_kind(self) -> str:
         """Name what this case's proposals were formed for.
 
-        F47 owns audiobook writes, so every surface that could act on a case
-        has to be able to ask what it is acting on. The answer is already
-        bound into the proposal document `__post_init__` validated, so it is
-        read from there rather than carried a second time (#966).
+        A recording and an ebook part company at more than one seam, so every
+        surface that could act on a case has to be able to ask what it is
+        acting on. The answer is already bound into the proposal document
+        `__post_init__` validated, so it is read from there rather than
+        carried a second time (#966).
         """
         return proposal_media_kind(self.proposal_document)
 

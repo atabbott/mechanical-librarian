@@ -2858,13 +2858,13 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
         assert errors == []
 
 
-def test_an_admitted_audiobook_is_decided_and_recorded_not_applied() -> None:
-    """The F45 outcome in the shipped browser, end to end.
+def test_an_admitted_audiobook_is_decided_like_any_other_case() -> None:
+    """The F47 outcome in the shipped browser, end to end.
 
     An admitted recording is a review case like any other: the owner opens it
     from the Library, sees Narrators and ASIN among its fields, accepts one,
-    and reads in the history that the decision was recorded rather than
-    applied. F47 owns the writes (#966).
+    and reads it in the history with no "recorded, not applied" note, because
+    an audiobook decision now applies through the guarded path (#968).
     """
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -2929,7 +2929,10 @@ def test_an_admitted_audiobook_is_decided_and_recorded_not_applied() -> None:
                 accept.click()
 
                 page.get_by_role("link", name="History").click()
-                expect(page.get_by_text(RECORDED_ONLY_REASON)).to_be_visible()
+                expect(
+                    page.get_by_text("Owner selected a proposed value.").first
+                ).to_be_visible()
+                assert 0 == page.get_by_text(RECORDED_ONLY_REASON).count()
             browser.close()
         assert errors == []
 

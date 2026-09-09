@@ -17,22 +17,29 @@ from mechanical_librarian.domain.review_case import (
 
 _IDEMPOTENCY_KEY = re.compile(r"^[A-Za-z0-9._:-]{16,128}$")
 _OUTCOMES = {"accept", "keep_current", "reject"}
-# What a recorded decision may go on to do. F47 owns audiobook writes, so a
-# decision made on a recording says so about itself rather than leaving every
-# later consumer to work it out from the case it came from (#966).
+# What a recorded decision may go on to do. Every decision formed since F47
+# carries `apply` on both media; `recorded_only` survives only as the F45
+# history of decisions taken before audiobook writes existed (#968).
 APPLICATIONS = ("apply", "recorded_only")
-RECORDED_ONLY_REASON = "recorded, not applied — audiobook writes arrive with F47"
+RECORDED_ONLY_REASON = (
+    "recorded, not applied — decided before audiobook writes were available"
+)
 HumanDecisionAction = Literal["accept", "keep_current"]
 
 
-def application_for(media_kind: str) -> str:
-    """Say what a decision on this kind of case may go on to do.
+def admitted_applications(media_kind: str) -> frozenset[str]:
+    """Say which applications a retained decision on this case may carry.
 
-    One derivation, used when the decision is formed and again whenever a
-    retained one is validated, so a document claiming `apply` against a
-    recording is stale rather than accepted (#966).
+    One derivation, used wherever a retained document is validated. A
+    `recorded_only` document is F45 history that only an audiobook case can
+    carry, so the same document is stale against an ebook case; new commands
+    are narrower still and must say `apply` (#968).
     """
-    return "recorded_only" if media_kind == "audiobook" else "apply"
+    return (
+        frozenset({"apply", "recorded_only"})
+        if media_kind == "audiobook"
+        else frozenset({"apply"})
+    )
 
 
 class HumanDecisionError(ValueError):
@@ -214,7 +221,7 @@ class HumanDecision:
             raise HumanDecisionError("stale")
         validate_decision_action(proposal, outcome, selected_value)
         idempotency_digest = cls.idempotency_digest_for(idempotency_key)
-        application = application_for(case.media_kind)
+        application = "apply"
         request = {
             "actor": actor,
             "application": application,
@@ -253,7 +260,7 @@ class HumanDecision:
             case.review_case_id,
             case.target_fingerprint,
             list(case.proposals),
-            application=application_for(case.media_kind),
+            applications=admitted_applications(case.media_kind),
         )
 
     def validate_new_for(self, case: ReviewCase) -> None:
@@ -263,7 +270,7 @@ class HumanDecision:
             case.target_fingerprint,
             list(case.proposals),
             new_command=True,
-            application=application_for(case.media_kind),
+            applications=admitted_applications(case.media_kind),
         )
 
     def validate_for_browse_case(
@@ -292,7 +299,7 @@ class HumanDecision:
             review_case_id,
             target_fingerprint,
             proposals,
-            application=application_for(media_kind),
+            applications=admitted_applications(media_kind),
         )
 
     def _validate_for(
@@ -302,7 +309,7 @@ class HumanDecision:
         proposals: list[object] | tuple[dict[str, object], ...],
         *,
         new_command: bool = False,
-        application: str | None = None,
+        applications: frozenset[str],
     ) -> None:
         proposal = next(
             (
@@ -318,7 +325,8 @@ class HumanDecision:
             self.review_case_id != review_case_id
             or self.target_fingerprint != target_fingerprint
             or proposal is None
-            or (application is not None and self.application != application)
+            or self.application not in applications
+            or (new_command and self.application != "apply")
         ):
             raise HumanDecisionError("stale")
         validator = (

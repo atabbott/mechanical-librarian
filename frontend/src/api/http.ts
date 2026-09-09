@@ -435,8 +435,9 @@ export interface HistoryValueView {
 export type HistoryItemView =
   | {
       category: 'owner'
-      // What the recorded decision may go on to do. An audiobook decision is
-      // recorded and never applied until F47, and the owner reads that here.
+      // What the recorded decision may go on to do. A decision retained from
+      // before audiobook writes existed is never applied, and the owner reads
+      // that here (#968).
       applicationReason: string | null
       destination: string
       outcome: string
@@ -2506,8 +2507,8 @@ export const mapHistory = (value: unknown): HistoryView => {
             `history_item_${String(index)}_selected_value`,
           ),
         }
-        // Only an owner decision states what it may go on to do; automatic
-        // authority never reaches an audiobook at all (#966).
+        // Only an owner decision states what it may go on to do; a retained
+        // F45 decision is the only one that carries a reason (#968).
         return kind === 'human_decision_recorded'
           ? {
               category: 'owner' as const,

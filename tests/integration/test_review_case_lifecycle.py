@@ -6,7 +6,23 @@ import tempfile
 import threading
 from pathlib import Path
 
+from mechanical_librarian.adapters.field_effect_fakes import (
+    FakeAuthorityCurrentness,
+    FakeBackupReadiness,
+    FakeCapabilityObserver,
+    FakeConsentCurrentness,
+    FakeDependencyCurrentness,
+    FakeForwardReevaluation,
+    FakeTargetService,
+    PrivateCoverRecoveryStore,
+)
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.field_effects import (
+    GuardedFieldApplication,
+    authority_from_decision,
+)
+from mechanical_librarian.domain.field_effect import project_decision_value
+from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -17,6 +33,8 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.audiobook_reports import admitted_audiobook_report
 
 
 def _actionable(report):
@@ -125,3 +143,145 @@ def test_concurrent_identical_admission_converges():
         [worker.start() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
         [worker.join() for worker in workers]  # type: ignore[func-returns-value]  # reason: the record-then-yield idiom is deliberate; the discarded None never reaches an assertion
         assert 1 == len({value["review_case_id"] for value in outcomes})
+
+
+def _audiobook_accept(case, destination: str, key: str):
+    proposal = next(
+        value for value in case.proposals if value["destination"] == destination
+    )
+    result = proposal["result"]
+    assert type(result) is dict
+    alternatives = result["alternatives"]
+    assert type(alternatives) is list
+    return HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination=destination,
+        actor="owner",
+        outcome="accept",
+        selected_value=alternatives[0]["value"],
+        idempotency_key=key,
+        occurred_at=1_000,
+    )
+
+
+def test_an_audiobook_decision_applies_through_the_guarded_path():
+    """F47's outcome, end to end on one admitted recording.
+
+    Decision, plan, apply, read-back verification and audit for each audiobook
+    destination, on the same guarded service an ebook uses. An ambiguous
+    response is reconciled from a targeted read rather than blindly retried,
+    and re-applying a settled plan issues no second request (ADR-0071, #968).
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        repository = open_repository(root / "reviews.sqlite", cross_thread=True)
+        report = admitted_audiobook_report()
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        assert "audiobook" == case.media_kind
+        target = FakeTargetService()
+        requests: list[str] = []
+        service_apply = target.apply
+
+        def counted(plan):
+            requests.append(plan.plan_id)
+            return service_apply(plan)
+
+        target.apply = counted  # type: ignore[method-assign]  # reason: the fake's write is the seam this test counts, and wrapping it is what proves an ambiguous response and a settled plan each issue exactly one.
+        authority = FakeAuthorityCurrentness()
+        consent = FakeConsentCurrentness(
+            repository.field_effect_consent_envelope_identity
+        )
+        ticks = [1_000]
+
+        def clock() -> int:
+            ticks[0] += 1
+            return ticks[0]
+
+        service = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            FakeCapabilityObserver("c" * 64),
+            authority,
+            FakeDependencyCurrentness(),
+            consent,
+            PrivateCoverRecoveryStore(root / "recovery", lambda _: b"old-cover"),
+            FakeForwardReevaluation(),
+            clock,
+        )
+        plans = {}
+        for index, destination in enumerate(("narrators", "asin")):
+            decision = _audiobook_accept(
+                case, destination, f"audiobook-apply-{index:04d}"
+            )
+            assert "apply" == decision.application
+            repository.record_human_decision(decision)
+            assert authority_from_decision(decision) is not None
+            authority.bind(
+                decision,
+                connection=report.target.connection,
+                library=report.target.library,
+                work_id=report.target.item,
+                target_version="version-1",
+            )
+            consent.allow(
+                connection=report.target.connection,
+                library=report.target.library,
+                destination=destination,
+            )
+            operation = service.plan(
+                decision,
+                connection=report.target.connection,
+                library=report.target.library,
+                work_id=report.target.item,
+                destination=destination,
+                pre_value=None,
+                desired_value=decision.selected_value,
+                target_fingerprint=case.target_fingerprint,
+                target_version="version-1",
+                dependency_digests=("d" * 64,),
+                capability_digest="c" * 64,
+            )
+            assert operation is not None
+            target.seed(operation.plan)
+            plans[destination] = operation.plan
+            issued = len(requests)
+            if destination == "asin":
+                # The library answers without saying what it did. One request
+                # left, the value did not move, and the plan waits for the
+                # targeted read rather than writing again.
+                target.ambiguous_next = "pre"
+                waiting = service.apply(operation.plan.plan_id)
+                assert "retryable" == waiting.state
+                assert 1 == len(requests) - issued
+            verified = service.apply(operation.plan.plan_id)
+
+            assert ("verified", None) == (verified.state, verified.failure)
+            assert target.read(operation.plan).value == project_decision_value(
+                destination, decision.selected_value
+            )
+            audit = [
+                json.loads(document)
+                for document in repository.field_effect_event_documents(
+                    operation.plan.plan_id
+                )
+            ]
+            assert "planned" == audit[0]["kind"]
+            assert "verified" == audit[-1]["kind"]
+            assert audit[-1]["state"] == verified.state
+
+        # Idempotent: a settled plan is already applied, and re-running it
+        # issues no further request to the library.
+        settled = len(requests)
+        for plan in plans.values():
+            assert "verified" == service.apply(plan.plan_id).state
+        assert settled == len(requests)
+        repository.close()

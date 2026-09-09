@@ -16,6 +16,8 @@ import pytest
 import scripts.qualify_audiobookshelf_field_effect as qualification
 from scripts.qualify_audiobookshelf_field_effect import (
     QualificationError,
+    _audiobook,
+    _audiobook_canary,
     _compose_review_client,
     _epub,
     _installed_consent_grants,
@@ -722,3 +724,173 @@ def test_operator_overlay_preserves_content_and_binds_valid_isbn_metadata() -> N
             assert isbn == metadata.findtext(dc + "identifier")
         assert "Synthetic Author." == author
         assert 1 == len(metadata.findall(dc + "creator"))
+
+
+def test_generated_audiobook_is_a_readable_m4b_carrying_the_scanned_title() -> None:
+    """No binary media is committed: the canary's audiobook is written in code."""
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "qualification-audiobook.m4b"
+        _audiobook(path)
+        body = path.read_bytes()
+
+        assert b"ftyp" == body[4:8]
+        assert b"M4B " == body[8:12]
+        assert qualification.AUDIOBOOK_TITLE.encode() in body
+        assert b"moov" in body and b"mdat" in body
+
+
+def test_the_audiobook_canary_records_every_destination_it_probed() -> None:
+    """Each book-media destination is discovered and applied on the audiobook."""
+    applied: list[str] = []
+
+    def apply(*arguments: object, **_: object) -> dict[str, object]:
+        destination = str(arguments[7])
+        applied.append(destination)
+        return {"destination": destination, "state": "verified"}
+
+    capabilities = SimpleNamespace(
+        result=lambda plan: SimpleNamespace(category="allowed")
+    )
+    with patch.object(qualification, "_apply", apply):
+        section = _audiobook_canary(
+            object(),
+            object(),
+            object(),
+            capabilities,
+            [],
+            object(),
+            "item-1",
+            lambda: 1,
+        )
+
+    expected = [destination for destination, _ in qualification.AUDIOBOOK_DESTINATIONS]
+    assert ["narrators", "series", "asin", "description", "language"] == expected
+    assert expected == applied
+    assert "adapter" == section["route"]
+    assert "canary-gamma" == section["library"]
+    assert "book" == section["item_media_type"]
+    assert dict.fromkeys(expected, "allowed") == section["capabilities"]
+    assert expected == [row["destination"] for row in section["outcomes"]]
+
+
+def test_one_rejected_audiobook_shape_disables_only_that_destination() -> None:
+    """The expansion boundary: a refusal is recorded, and the run continues.
+
+    A destination the capability probe did not allow is never applied at all,
+    and a pre-read the adapter refuses disables its own field. Both leave every
+    other destination to run.
+    """
+    applied: list[str] = []
+
+    def apply(*arguments: object, **_: object) -> dict[str, object]:
+        destination = str(arguments[7])
+        applied.append(destination)
+        if destination == "asin":
+            raise QualificationError("field_read_invalid_asin")
+        return {"destination": destination, "state": "verified"}
+
+    capabilities = SimpleNamespace(
+        result=lambda plan: SimpleNamespace(
+            category="field_unavailable" if plan.destination == "series" else "allowed"
+        )
+    )
+    with patch.object(qualification, "_apply", apply):
+        section = _audiobook_canary(
+            object(),
+            object(),
+            object(),
+            capabilities,
+            [],
+            object(),
+            "item-1",
+            lambda: 1,
+        )
+
+    outcomes = {str(row["destination"]): row for row in section["outcomes"]}
+    assert 5 == len(outcomes)
+    # The disallowed destination is never written to at all.
+    assert "series" not in applied
+    assert "field_unavailable" == outcomes["series"]["state"]
+    assert "field_unavailable" == outcomes["series"]["failure"]
+    assert "field_unavailable" == section["capabilities"]["series"]
+    # A refused pre-read disables only its own field.
+    assert "field_unavailable" == outcomes["asin"]["state"]
+    assert "field_read_invalid_asin" == outcomes["asin"]["failure"]
+    assert ["narrators", "description", "language"] == [
+        destination
+        for destination, row in outcomes.items()
+        if row["state"] == "verified"
+    ]
+
+
+def test_an_unverified_audiobook_write_is_a_failure_not_a_disabled_field() -> None:
+    """A write the service accepted but did not make must never read as history.
+
+    `field_unavailable` says the destination is unsupported. Evidence that a
+    supported write did not land is a qualification failure, so it leaves
+    `_audiobook_canary` and fails the run rather than becoming a receipt row.
+    """
+
+    def apply(*arguments: object, **_: object) -> dict[str, object]:
+        raise QualificationError("guarded_write_evidence_invalid")
+
+    capabilities = SimpleNamespace(
+        result=lambda plan: SimpleNamespace(category="allowed")
+    )
+    with (
+        patch.object(qualification, "_apply", apply),
+        pytest.raises(QualificationError, match="guarded_write_evidence_invalid"),
+    ):
+        _audiobook_canary(
+            object(),
+            object(),
+            object(),
+            capabilities,
+            [],
+            object(),
+            "item-1",
+            lambda: 1,
+        )
+
+
+@pytest.mark.parametrize(
+    "category", ("connection_unavailable", "insufficient_permission")
+)
+def test_a_non_shape_capability_refusal_aborts_the_audiobook_qualification(
+    category: str,
+) -> None:
+    """An unreachable service or an unauthorised key is a defect, not a field.
+
+    `field_unavailable` is the one category that means "this service cannot
+    carry this field's shape". Every other refusal says something about the
+    run, so recording it as a disabled destination would publish a receipt
+    claiming the library refused a field it was never asked about (#968).
+    """
+    applied: list[str] = []
+
+    def apply(*arguments: object, **_: object) -> dict[str, object]:
+        applied.append(str(arguments[7]))
+        return {"destination": str(arguments[7]), "state": "verified"}
+
+    capabilities = SimpleNamespace(
+        result=lambda plan: SimpleNamespace(
+            category=category if plan.destination == "series" else "allowed"
+        )
+    )
+    with (
+        patch.object(qualification, "_apply", apply),
+        pytest.raises(QualificationError, match="audiobook_capability_" + category),
+    ):
+        _audiobook_canary(
+            object(),
+            object(),
+            object(),
+            capabilities,
+            [],
+            object(),
+            "item-1",
+            lambda: 1,
+        )
+
+    # It stops at the refusal rather than writing the destinations after it.
+    assert ["narrators"] == applied
