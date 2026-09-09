@@ -200,9 +200,39 @@ export interface ProviderOutcomeView {
   reason: string
   status: string
 }
+// Every statement this build can make about an item's media. The set is
+// closed on the wire too, so a view switches on it exhaustively and a value
+// outside it is a server this client does not understand rather than a row it
+// renders blank; `_MediaHealthObservation` in the FastAPI adapter carries the
+// same nine values.
+export const MEDIA_HEALTH_KINDS = [
+  'runtime_short_of_provider',
+  'chapter_structure_mismatch',
+  'track_sequence_gap',
+  'track_sequence_disorder',
+  'track_duration_unavailable',
+  'chapter_atoms_partial',
+  'tag_disagrees_across_tracks',
+  'asin_disagrees_across_tracks',
+  'media_unreadable',
+] as const
+export type MediaHealthKind = (typeof MEDIA_HEALTH_KINDS)[number]
+// One typed statement about an item's media, in the closed shape both the
+// report detail and the terminal row carry. `cited` names what the statement
+// was read from and `bound` names the rule it says the media broke, so the
+// view renders evidence rather than an adjective.
+export interface MediaHealthObservationView {
+  bound: string
+  cited: readonly string[]
+  expected: string | null
+  kind: MediaHealthKind
+  observed: string | null
+  tracks: readonly number[]
+}
 export interface PreparationFailureView {
   attempt: number
   diagnosticReference: string
+  mediaHealth: readonly MediaHealthObservationView[]
   provider: string
   reason: string
   recovery: string
@@ -251,6 +281,7 @@ export interface ReportDetailView {
   evidenceTruncated: boolean
   item: string
   library: string
+  mediaHealth: readonly MediaHealthObservationView[]
   mediaKind: string
   providerSources: readonly ProviderOutcomeView[]
   providerEvidence: readonly ReportProviderEvidenceView[]
@@ -425,6 +456,7 @@ export interface CaseDetailView {
   authors: readonly string[]
   subtitle: string
   comparisonNotices: readonly string[]
+  mediaHealth: readonly MediaHealthObservationView[]
   writesConsented: boolean
   fields: readonly ReviewFieldView[]
 }
@@ -1635,6 +1667,14 @@ const stringArray = (value: unknown, field: string) => {
     throw new ApiError(502, `invalid_${field}`)
   return value
 }
+// A list the server is never entitled to send empty. Separate from
+// `stringArray` because most lists are legitimately empty, and reading an
+// absence as a value is the failure this refuses.
+const statedStringArray = (value: unknown, field: string) => {
+  const values = stringArray(value, field)
+  if (values.length === 0) throw new ApiError(502, `invalid_${field}`)
+  return values
+}
 const booleanValue = (value: unknown, field: string) => {
   if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`)
   return value
@@ -1697,6 +1737,42 @@ export const mapSettings = (value: unknown): SettingsView => {
     throw new ApiError(502, 'invalid_settings_response')
   return value as unknown as SettingsView
 }
+const mediaHealthKind = (value: unknown, field: string): MediaHealthKind => {
+  if (typeof value !== 'string' || !(MEDIA_HEALTH_KINDS as readonly string[]).includes(value))
+    throw new ApiError(502, `invalid_${field}`)
+  return value as MediaHealthKind
+}
+// `tracks` is required by review-report-detail-v3. A missing or non-array
+// member is a malformed document, not an observation about the whole item:
+// coercing it to no tracks would print "this item's audio files" where the
+// server named the files it read.
+const mediaHealthTracks = (value: unknown, field: string): number[] => {
+  if (!Array.isArray(value)) throw new ApiError(502, `invalid_${field}_tracks`)
+  return (value as unknown[]).map((ordinal, position) =>
+    integerValue(ordinal, `${field}_track_${String(position)}`),
+  )
+}
+const mapMediaHealth = (value: unknown, field: string): MediaHealthObservationView[] => {
+  if (!Array.isArray(value)) throw new ApiError(502, `invalid_${field}`)
+  return (value as unknown[]).map((observation, index) => {
+    if (!record(observation)) throw new ApiError(502, `invalid_${field}_${String(index)}`)
+    return {
+      bound: boundedStringValue(observation.bound, `${field}_${String(index)}_bound`, 256),
+      cited: statedStringArray(observation.cited, `${field}_${String(index)}_cited`),
+      expected:
+        observation.expected == null
+          ? null
+          : boundedStringValue(observation.expected, `${field}_${String(index)}_expected`, 256),
+      kind: mediaHealthKind(observation.kind, `${field}_${String(index)}_kind`),
+      observed:
+        observation.observed == null
+          ? null
+          : boundedStringValue(observation.observed, `${field}_${String(index)}_observed`, 256),
+      tracks: mediaHealthTracks(observation.tracks, `${field}_${String(index)}`),
+    }
+  })
+}
+
 const mapProviderOutcome = (value: unknown, index: number): ProviderOutcomeView => {
   if (!record(value)) throw new ApiError(502, `invalid_provider_outcome_${String(index)}`)
   return {
@@ -2248,7 +2324,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
 export const mapReportDetail = (value: unknown): ReportDetailView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-report-detail-v2' ||
+    value.schema_version !== 'review-report-detail-v3' ||
     !record(value.embedded_cover) ||
     !Array.isArray(value.chapters) ||
     !Array.isArray(value.evidence) ||
@@ -2291,6 +2367,7 @@ export const mapReportDetail = (value: unknown): ReportDetailView => {
     evidenceTruncated: value.evidence_truncated,
     item: stringValue(value.item, 'report_item'),
     library: stringValue(value.library, 'report_library'),
+    mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
     mediaKind: stringValue(value.media_kind, 'report_media_kind'),
     providerSources: (value.provider_sources as unknown[]).map(mapProviderOutcome),
     providerEvidence: (value.provider_evidence as unknown[]).map((claim, index) => {
@@ -2344,6 +2421,10 @@ export const mapLibrary = (value: unknown): LibraryView => {
               diagnosticReference: stringValue(
                 item.preparation.diagnostic_reference,
                 'preparation_diagnostic_reference',
+              ),
+              mediaHealth: mapMediaHealth(
+                item.preparation.media_health,
+                'preparation_media_health',
               ),
               provider: stringValue(item.preparation.provider, 'preparation_provider'),
               reason: stringValue(item.preparation.reason, 'preparation_reason'),
@@ -2670,6 +2751,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
     authors,
     subtitle: `${library} · ${mediaKind}`,
     comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
+    mediaHealth: mapMediaHealth(value.media_health, 'case_media_health'),
     writesConsented: booleanValue(dto.writes_consented, 'writes_consented'),
     fields: dto.fields.map((field) => {
       // The three fields dereferenced without a validator below: an entry that

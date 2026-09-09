@@ -1079,6 +1079,16 @@ class _IsolatedAudioInspector:
                 # which has no ordinal left to name.
                 raise _track_boundary_failure(error, named) from error
             try:
+                if opened.length == 0:
+                    # An empty file has no container to refuse. Handed to the
+                    # probe it comes back a parse failure, which reaches the
+                    # owner as `parser_refused` and asks them to supply a file
+                    # within the supported parsing limits -- advice about a
+                    # file with no bytes in it. It is an unavailable source,
+                    # and naming it here keeps the ordinal and spawns no child.
+                    raise AudioItemInspectionError(
+                        AudioInspectionOutcome.UNAVAILABLE_SOURCE, named
+                    )
                 if expired():
                     raise AudioItemInspectionError(
                         AudioInspectionOutcome.MULTI_FILE_BUDGET_EXCEEDED

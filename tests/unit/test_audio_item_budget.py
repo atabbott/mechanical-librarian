@@ -18,6 +18,9 @@ from mechanical_librarian.application.metadata_report import (
     AudioItemInspectionError,
     TargetFile,
 )
+from mechanical_librarian.application.review_pipeline import (
+    audio_inspection_failure_code,
+)
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.bootstrap.composition import _IsolatedAudioInspector
 from mechanical_librarian.domain.audio_inspection import (
@@ -271,6 +274,32 @@ def test_one_unreadable_track_ends_the_item_under_that_track_s_own_outcome(
 
     assert raised.value.outcome is AudioInspectionOutcome.MALFORMED
     assert raised.value.track == 2
+
+
+def test_an_empty_track_is_unreadable_media_before_any_child_runs(
+    mount: MediaMountConfiguration, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A file with no bytes is an unavailable source, not a parser refusal.
+
+    Handed to the probe, an empty file comes back a parse failure, which
+    reaches the owner as `parser_refused` and asks them to supply a file inside
+    the supported parsing limits -- advice about a file that has no bytes to
+    parse. The length is known the moment the file is opened, so the item ends
+    there, under the ordinal of the empty track and without paying for a child.
+    """
+    child = _RecordedChild()
+    monkeypatch.setattr(composition, "run_audio_inspector_child", child)
+    tracks = _tracks(mount, 3)
+    (Path(mount.container_path) / "02.mp3").write_bytes(b"")
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        _IsolatedAudioInspector().inspect(mount, tracks, _MAXIMUM)
+
+    assert raised.value.outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE
+    assert raised.value.track == 2
+    assert audio_inspection_failure_code(raised.value.outcome) == "unreadable_media"
+    # The first track's child ran; the empty track's never did.
+    assert len(child.calls) == 1
 
 
 def test_folder_evidence_reaches_only_the_first_track_s_child(

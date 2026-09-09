@@ -265,6 +265,41 @@ libraries without a named read-only mount stay excluded, exactly as before. See
 [ADR-0063](../architecture/decisions/0063-isolated-audiobook-inspector.md) and
 [ADR-0066](../architecture/decisions/0066-multi-file-audiobook-composition.md).
 
+The owner-facing evidence view also states what is wrong with the media itself,
+as a closed vocabulary of typed observations distinct from the claim set: none
+names a target field, and none can become a proposal or a decision. The section
+is derived at read time from what the report and the terminal preparation
+record already retain, so it exists for every report already published, no
+report is rebuilt to obtain it, and it moves no persisted schema — only the
+wire document `review-report-detail-v3`.
+
+| Observation | Cited | Bound |
+| --- | --- | --- |
+| `runtime_short_of_provider` | the local `DURATION` claim references and the candidate identity | the local running time is within 90 seconds of the running time the matched edition states |
+| `chapter_structure_mismatch` | the chapter composition kind and the candidate identity | the embedded chapter durations align with the matched edition's, allowing one skipped chapter at each end |
+| `track_sequence_gap` | each track ordinal and the sequence that track declared | the declared track sequence runs without a hole |
+| `track_sequence_disorder` | each track ordinal and the sequence that track declared | the declared track sequence rises with the file order |
+| `track_duration_unavailable` | each track ordinal and the sequence that track declared | every track states its own running time |
+| `chapter_atoms_partial` | each track ordinal and the sequence that track declared | either every track carries embedded chapters or none does |
+| `tag_disagrees_across_tracks` | the field, then each track ordinal and its declared sequence | one item states one value per tagged field |
+| `asin_disagrees_across_tracks` | the field, then each track ordinal and its declared sequence | one item states one ASIN across its files |
+| `media_unreadable` | the refusing track, or the item where it has one file | every file of the item opens and reads within the supported bounds |
+
+Two classes are stated only where the retained evidence supports them. A
+provider's running time survives publication only on a candidate that kept an
+edition-scope `DURATION` claim — the lanes fed by an ASIN the item's own tags,
+sidecars, or path carry, and any candidate the runtime band admitted — because
+a search, promoted, or asserted candidate the band did not corroborate is
+demoted to work scope before the report is written. A provider's chapter
+structure survives only on a corroborated candidate, so a chapter mismatch is
+stated only for items whose identity was settled by structure. Where the
+evidence is absent the section is silent rather than reassuring.
+
+A file with no bytes is an unavailable source rather than a parser refusal: the
+length is read at the open, so the item ends `unreadable_media` under the empty
+track's ordinal and no isolated child is spawned for it. Missing, empty, and
+unreadable files are not yet distinguished from one another to the owner.
+
 Google Books descriptions use one inert, bounded
 `google-books-html-visible-text-v1` projection. Its report-bound transformation
 evidence is retained only when rendering succeeds; scripts, styles, event

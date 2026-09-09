@@ -1054,6 +1054,7 @@ describe('Library route', () => {
       preparation: {
         attempt: 1,
         diagnosticReference: 'prep-0123456789abcdef',
+        mediaHealth: [],
         provider: 'hardcover-main',
         reason: 'Provider credentials need owner attention.',
         recovery: 'Update the configured provider credentials, then scan this library again.',
@@ -1170,6 +1171,17 @@ describe('Library route', () => {
       evidenceTruncated: false,
       item: 'item-9',
       library: 'audio',
+      mediaHealth: [
+        {
+          bound:
+            'The local running time is within 90 seconds of the running time the matched edition states.',
+          cited: ['local_abc123', 'audible-product-B08G9PRS1K'],
+          expected: '72000 seconds stated by the matched edition',
+          kind: 'runtime_short_of_provider' as const,
+          observed: '43200 seconds of local audio',
+          tracks: [],
+        },
+      ],
       mediaKind: 'm4b',
       providerSources: [
         {
@@ -1212,6 +1224,18 @@ describe('Library route', () => {
     // A claim the extraction could not trust must not read as sound evidence.
     expect(within(evidence).getByText(/Malformed/u)).toBeVisible()
     expect(within(evidence).getByText(/Embedded cover art is present/u)).toBeVisible()
+    // What is wrong with the media, stated as its own section: the observation,
+    // the rule it broke, and what it was read from -- with the opaque local
+    // reference standing for the evidence it points at rather than shown.
+    const health = within(evidence).getByRole('region', { name: 'Media health' })
+    expect(within(health).getByText('Runtime short of provider')).toBeVisible()
+    expect(
+      within(health).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
+    ).toBeVisible()
+    expect(within(health).getByText(/within 90 seconds/u)).toBeVisible()
+    expect(
+      within(health).getByText('Read from local evidence, audible-product-B08G9PRS1K'),
+    ).toBeVisible()
     // Chapters are a bounded structured section, disclosed like the source
     // ledger beside them rather than filling the panel.
     await user.click(within(evidence).getByText(/Chapters \(1\)/u))
@@ -1238,6 +1262,7 @@ describe('Library route', () => {
       preparation: {
         attempt: 1,
         diagnosticReference: 'prep-masked-0123456789',
+        mediaHealth: [],
         provider: 'hardcover-main',
         reason: 'Provider credentials need owner attention.',
         recovery: 'Update the configured provider credentials, then scan this library again.',
@@ -1264,6 +1289,63 @@ describe('Library route', () => {
     expect(row.querySelector('.needs-attention')).not.toBeNull()
   })
 
+  it('states media health on an openable row whose latest preparation could not read a file', async () => {
+    const firstWork = library.works[0]
+    if (!firstWork) throw new Error('library fixture requires one work')
+    const baseWork = { ...firstWork }
+    delete baseWork.reviewCaseId
+    const retained = {
+      ...baseWork,
+      id: 'library_work_unreadable',
+      workId: 'library_work_unreadable',
+      title: 'Retained audiobook',
+      attentionCount: 0,
+      attention: 'no_attention_needed',
+      detailUrl: '/api/v1/library/report?connection=primary&library=audio&item=item-8',
+      detailKind: 'report' as const,
+      preparation: {
+        attempt: 1,
+        diagnosticReference: 'prep-unreadable-0123456789',
+        mediaHealth: [
+          {
+            bound: 'Every declared track is readable by the installed decoder.',
+            cited: ['track_4'],
+            expected: null,
+            kind: 'media_unreadable' as const,
+            observed: null,
+            tracks: [4],
+          },
+        ],
+        provider: 'audiobookshelf-main',
+        reason: 'One file in this work could not be read.',
+        recovery: 'Repair or replace the unreadable file, then scan this library again.',
+        recoveryAttempt: 0,
+        stage: 'media',
+        status: 'unreadable_media',
+      },
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getLibrary: vi.fn(async () => ({
+        lens: 'all' as const,
+        page: 1,
+        counts: { attention: 0, all: 1, clear: 1 },
+        works: [retained],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    // The row stays openable because the earlier evidence is real, and the
+    // observation the failure produced travels with it instead of being
+    // dropped with the terminal panel it used to live in.
+    const row = await screen.findByRole('button', { name: /^Retained audiobook\./u })
+    expect(row).toHaveTextContent('Preparation failed safely')
+    const health = screen.getByRole('region', { name: 'Media health' })
+    expect(within(health).getByText('Media unreadable')).toBeVisible()
+    expect(within(health).getByText('Read from track_4')).toBeVisible()
+    expect(row).not.toContainElement(health)
+  })
+
   it('keeps a current case selectable while exposing its terminal preparation diagnostic', async () => {
     const user = userEvent.setup()
     const firstWork = library.works[0]
@@ -1273,6 +1355,7 @@ describe('Library route', () => {
       preparation: {
         attempt: 1,
         diagnosticReference: 'prep-safe-0123456789abcdef',
+        mediaHealth: [],
         provider: 'hardcover-main',
         reason: 'A <script> hostile diagnostic remains safe.',
         recovery: 'Scan again only after the source condition is corrected.',

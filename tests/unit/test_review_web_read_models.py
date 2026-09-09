@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     AudioPathContext,
@@ -45,7 +46,12 @@ from mechanical_librarian.application.review_web import (
     _provider_comparison_notices,
     _provider_label,
 )
+from mechanical_librarian.domain.audio_health import (
+    AUDIO_HEALTH_BOUNDS,
+    AudioHealthKind,
+)
 from mechanical_librarian.domain.audio_inspection import (
+    AudioChapter,
     AudioEvidenceSurface,
     AudioInspectionLimits,
     AudioTrackDigest,
@@ -75,7 +81,14 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.interfaces.web.app import _CoverOmission
+from mechanical_librarian.interfaces.web.app import (
+    _CoverOmission,
+    _MediaHealthObservation,
+)
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    asserted_asin_report,
+)
 from tests.support.proposal_evidence import (
     _claim as _proposal_claim,
 )
@@ -2159,7 +2172,7 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
 
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert body["schema_version"] == "review-report-detail-v2"
+    assert body["schema_version"] == "review-report-detail-v3"
     assert (body["connection"], body["library"], body["item"]) == (
         "primary",
         "ebooks",
@@ -2199,6 +2212,125 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
         "present": True,
         "surface": "container_stream",
     }
+    # A recording with nothing wrong with it states nothing: the section is
+    # present and empty rather than absent, so the owner reads a checked
+    # silence rather than a missing surface.
+    assert body["media_health"] == []
+
+
+def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    """The derived section on the wire, in the one closed shape both surfaces use.
+
+    This item carries its own ASIN, so the per-ASIN answer keeps the running
+    time it stated and the derivation has two sides to compare. What the owner
+    reads is the statement, what it was read from, and the rule it broke.
+    """
+    web.repository.browse_without_cases.append(
+        asserted_asin_report(
+            provider_duration="72000.000",
+            local_asin="B08G9PRS1K",
+            library="ebooks",
+            item="item-10",
+        )
+    )
+    web.login()
+
+    response = web.client.get(
+        "/api/v1/library/report?connection=primary&library=ebooks&item=item-10"
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["schema_version"] == "review-report-detail-v3"
+    assert len(body["media_health"]) == 1
+    stated = body["media_health"][0]
+    assert stated["kind"] == "runtime_short_of_provider"
+    assert (
+        stated["bound"]
+        == (AUDIO_HEALTH_BOUNDS[AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER])
+    )
+    assert stated["observed"] == "58244 seconds of local audio"
+    assert stated["expected"] == "72000 seconds stated by the matched edition"
+    assert stated["cited"][-1] == "audible-product-B08G9PRS1K"
+    assert stated["tracks"] == []
+
+
+def test_an_audiobook_case_states_its_media_health_beside_its_fields() -> None:
+    """The surface Library opens for an admitted audiobook carries the section.
+
+    An audiobook whose identity was admitted acquires a review case, so its row
+    opens `/review/<id>` and never the recorded-evidence view. Deriving the
+    section only there would have hidden it from exactly the items it was built
+    for, and it is read from the same retained report the fields beside it were
+    read from rather than from a second source.
+    """
+    report = admitted_audiobook_report(
+        chapters=(
+            AudioChapter(1, 0, 100_000, "One"),
+            AudioChapter(2, 100_000, 300_000, "Two"),
+        )
+    )
+    case = ReviewCase.create(evaluate_report(report), report)
+
+    detail = InspectCurrentReviewCase(FakeReviewRepository(case, report)).run(
+        case.review_case_id
+    )
+
+    stated = cast(list[dict[str, Any]], detail["media_health"])
+    assert [value["kind"] for value in stated] == ["chapter_structure_mismatch"]
+    assert stated[0]["cited"] == ["single_file", "audible-product-B08G9PRS1K"]
+    assert (
+        stated[0]["bound"]
+        == (AUDIO_HEALTH_BOUNDS[AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH])
+    )
+    # A recording with nothing wrong with it states a present and empty
+    # section rather than an absent member, so a reader can tell a checked
+    # silence from a surface that was never asked.
+    silent = admitted_audiobook_report()
+    silent_case = ReviewCase.create(evaluate_report(silent), silent)
+
+    assert (
+        InspectCurrentReviewCase(FakeReviewRepository(silent_case, silent)).run(
+            silent_case.review_case_id
+        )["media_health"]
+        == []
+    )
+
+
+def test_the_media_health_wire_vocabulary_is_the_closed_domain_vocabulary() -> None:
+    """The wire admits the nine kinds the domain states, and nothing else.
+
+    A bounded string would let a build widen the vocabulary without the client
+    ever being told, so the response model closes it and this pins the two sets
+    equal -- including in the generated OpenAPI, which is what the frontend's
+    types and any other reader are built from.
+    """
+    observation = {
+        "bound": AUDIO_HEALTH_BOUNDS[AudioHealthKind.MEDIA_UNREADABLE],
+        "cited": ["track 2"],
+        "expected": None,
+        "kind": AudioHealthKind.MEDIA_UNREADABLE.value,
+        "observed": None,
+        "tracks": [2],
+    }
+    published = _MediaHealthObservation.model_json_schema()["properties"]["kind"]
+
+    assert set(published["enum"]) == {kind.value for kind in AudioHealthKind}
+    assert {
+        _MediaHealthObservation.model_validate({**observation, "kind": kind.value}).kind
+        for kind in AudioHealthKind
+    } == {kind.value for kind in AudioHealthKind}
+    with pytest.raises(ValidationError):
+        _MediaHealthObservation.model_validate(
+            {**observation, "kind": "media_shredded"}
+        )
+    # An observation citing nothing cannot be checked against the report, which
+    # is the whole of what separates this vocabulary from an accusation. The
+    # domain shape refuses to build one; the wire refuses to carry one.
+    with pytest.raises(ValidationError):
+        _MediaHealthObservation.model_validate({**observation, "cited": []})
 
 
 def _claim_rich_report(count: int) -> MetadataReport:
@@ -2406,6 +2538,68 @@ def test_every_library_row_names_what_its_address_opens() -> None:
     # Preparation stopped before a report existed, so there is nothing to open
     # and the row says so rather than offering an address that answers nothing.
     assert (stopped["detail_kind"], stopped["detail_url"]) == (None, None)
+
+
+def test_a_terminal_unreadable_item_states_the_track_it_could_not_read() -> None:
+    """The terminal row carries media health in the report detail's own shape.
+
+    An item that stopped before publishing a report has no evidence to derive
+    from, so the one statement its record supports is the file that could not
+    be read -- and the owner reads it in the same vocabulary the evidence view
+    uses rather than only inside a sentence of prose.
+    """
+
+    def _terminal(status: str, root: str | None) -> str:
+        return json.dumps(
+            {
+                "attempt": 1,
+                "connection": "primary",
+                "failure_root": root,
+                "item": "item-4",
+                "lane": "extraction",
+                "library": "audio",
+                "recovery_attempt": 0,
+                "schema_version": "review-terminal-work-v1",
+                "status": status,
+                "work_id": "review_work_" + "d" * 64,
+            }
+        )
+
+    unreadable = _library_item(None, _terminal("unreadable_media", "track_2"), ())
+    whole_item = _library_item(None, _terminal("unreadable_media", None), ())
+    refused = _library_item(None, _terminal("parser_refused", "track_2"), ())
+    malformed = _library_item(None, _terminal("unreadable_media", "shredded"), ())
+    past_bound = _library_item(None, _terminal("unreadable_media", "track_600"), ())
+
+    assert cast(dict[str, Any], unreadable["preparation"])["media_health"] == [
+        {
+            "bound": AUDIO_HEALTH_BOUNDS[AudioHealthKind.MEDIA_UNREADABLE],
+            "cited": ["track 2"],
+            "expected": None,
+            "kind": "media_unreadable",
+            "observed": None,
+            "tracks": [2],
+        }
+    ]
+    # A single-file item records no ordinal and cites the item instead.
+    assert cast(dict[str, Any], whole_item["preparation"])["media_health"] == [
+        {
+            "bound": AUDIO_HEALTH_BOUNDS[AudioHealthKind.MEDIA_UNREADABLE],
+            "cited": ["this item's audio files"],
+            "expected": None,
+            "kind": "media_unreadable",
+            "observed": None,
+            "tracks": [],
+        }
+    ]
+    # Every other terminal status is about preparation rather than the bytes.
+    assert cast(dict[str, Any], refused["preparation"])["media_health"] == []
+    # The writer records either no root or one track ordinal within the
+    # composition bound, so anything else is malformed retained content. It
+    # states nothing rather than being read as "no track was named", which
+    # would turn a corrupt row into an accusation about every file of the item.
+    assert cast(dict[str, Any], malformed["preparation"])["media_health"] == []
+    assert cast(dict[str, Any], past_bound["preparation"])["media_health"] == []
 
 
 def test_a_package_row_pointing_at_another_work_serves_no_evidence(

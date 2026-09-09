@@ -234,7 +234,7 @@ def runtime_corroborated_candidate(
         return None
     admitted: list[tuple[ProviderCandidate, CorroborationSignal]] = []
     for candidate in candidates:
-        signal = runtime_agreement(local, _candidate_runtime_seconds(candidate))
+        signal = runtime_agreement(local, candidate_runtime_seconds(candidate))
         if signal.outcome is CorroborationOutcome.CORROBORATED:
             admitted.append((candidate, signal))
     if not admitted:
@@ -387,7 +387,7 @@ def _claim_runtime_seconds(claim: LocalClaim) -> int | None:
     return None if milliseconds is None else (milliseconds + 500) // 1000
 
 
-def _candidate_runtime_seconds(candidate: ProviderCandidate) -> int | None:
+def candidate_runtime_seconds(candidate: ProviderCandidate) -> int | None:
     """Read the one running time a candidate states, or nothing at all.
 
     Two `DURATION` claims on one candidate is two answers to a question that
@@ -443,6 +443,74 @@ def _best_alignment(
     return best
 
 
+def first_divergent_chapter(
+    local_durations: tuple[int, ...], provider_durations: tuple[int, ...]
+) -> tuple[int, int, int, int] | None:
+    """Name the first cut two chapter vectors disagree on, and both lengths.
+
+    The agreement gate answers whether the vectors align at all; a reader who
+    is told they do not needs the cut that proves it. Both questions have to be
+    asked under the same rule, so the same skip grid and the same per-chapter
+    tolerance are walked here: a publisher's branded intro is a systematic
+    offset, and naming the recording's second chapter against the edition's
+    first is the difference between a discrepancy an owner can open the file on
+    and an arithmetic complaint about chapter one.
+
+    The alignment chosen is the one that agrees for longest before it fails,
+    preferring no skip where two agree equally, which is the same preference
+    `chapter_vector_agreement` applies. Returns the local ordinal and its
+    seconds with the stated ordinal and its seconds, both one-based, or `None`
+    when no alignment disagrees anywhere within the cuts it compares -- a
+    recording contradicted on chapter count alone.
+    """
+    if (
+        type(local_durations) is not tuple
+        or type(provider_durations) is not tuple
+        or any(
+            type(value) is not int for value in (*local_durations, *provider_durations)
+        )
+    ):
+        raise CorroborationValueError("corroboration input is invalid")
+    skips = range(CHAPTER_ALIGNMENT_SKIP + 1)
+    best: tuple[int, bool, int, int, int, int] | None = None
+    for local_head in skips:
+        for local_tail in skips:
+            for provider_head in skips:
+                for provider_tail in skips:
+                    left = local_durations[
+                        local_head : len(local_durations) - local_tail
+                    ]
+                    right = provider_durations[
+                        provider_head : len(provider_durations) - provider_tail
+                    ]
+                    if not left or len(left) != len(right):
+                        continue
+                    for position, (one, other) in enumerate(
+                        zip(left, right, strict=True)
+                    ):
+                        if abs(one - other) > CHAPTER_DURATION_TOLERANCE_SECONDS:
+                            offset = bool(
+                                local_head
+                                or local_tail
+                                or provider_head
+                                or provider_tail
+                            )
+                            candidate = (
+                                position,
+                                not offset,
+                                local_head + position + 1,
+                                one,
+                                provider_head + position + 1,
+                                other,
+                            )
+                            if best is None or candidate[:2] > best[:2]:
+                                best = candidate
+                            break
+    if best is None:
+        return None
+    return best[2], best[3], best[4], best[5]
+
+
 def _perceptual_hash(value: str | None) -> int | None:
     if type(value) is not str or _PERCEPTUAL_HASH.fullmatch(value) is None:
         return None
@@ -461,8 +529,10 @@ __all__ = [
     "RUNTIME_BAND_LOOSE_SECONDS",
     "RUNTIME_BAND_TIGHT_SECONDS",
     "STRONG_CHAPTER_AGREEMENT_MINIMUM",
+    "candidate_runtime_seconds",
     "chapter_vector_agreement",
     "cover_hash_agreement",
+    "first_divergent_chapter",
     "local_chapter_durations_seconds",
     "local_claim_runtime_seconds",
     "local_runtime_seconds",

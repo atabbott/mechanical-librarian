@@ -1,4 +1,5 @@
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
+import { MediaHealth } from '../components/MediaHealth'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
@@ -665,6 +666,7 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
           Only the first {String(data.evidence.length)} recorded observations are shown.
         </p>
       ) : null}
+      <MediaHealth observations={data.mediaHealth} />
       <p className="library-work-cover-presence">
         {data.coverPresent
           ? `Embedded cover art is present${
@@ -2929,21 +2931,37 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         aria-label="Terminal preparation failure"
                       >
                         {row}
+                        {preparation?.mediaHealth.length ? (
+                          <MediaHealth observations={preparation.mediaHealth} />
+                        ) : null}
                       </article>
                     ) : (
-                      <button
-                        key={work.id}
-                        type="button"
-                        className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
-                        aria-current={selectedWorkRow ? 'true' : undefined}
-                        aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
-                        aria-describedby={
-                          [preparationId, summaryId].filter(Boolean).join(' ') || undefined
-                        }
-                        onClick={() => void select(work)}
-                      >
-                        {row}
-                      </button>
+                      <>
+                        <button
+                          key={work.id}
+                          type="button"
+                          className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
+                          aria-current={selectedWorkRow ? 'true' : undefined}
+                          aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
+                          aria-describedby={
+                            [preparationId, summaryId].filter(Boolean).join(' ') || undefined
+                          }
+                          onClick={() => void select(work)}
+                        >
+                          {row}
+                        </button>
+                        {/* A work whose latest preparation could not read a file
+                            still opens what it retained, so the row is a control
+                            and the section has to sit beside it rather than
+                            inside it: a section nested in a button is not an
+                            openable row, and the observation is the one thing
+                            the failed attempt proved. */}
+                        {preparation?.mediaHealth.length ? (
+                          <div className="library-work-row-aside">
+                            <MediaHealth observations={preparation.mediaHealth} />
+                          </div>
+                        ) : null}
+                      </>
                     )}
                   </Fragment>
                 )

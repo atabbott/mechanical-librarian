@@ -129,6 +129,22 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .library-work-values > div { display:grid; gap:.1rem; min-width:0; padding:.6rem 0; border-bottom:1px solid var(--line); }
 .library-work-values dt { color:var(--soft); font-size:.62rem; }
 .library-work-values dd { min-width:0; margin:0; overflow-wrap:anywhere; font-size:.8rem; }
+.library-work-media-health { margin:.85rem 0 0; }
+.library-work-media-health h4 { margin:0 0 .35rem; color:var(--soft); font-size:.62rem; letter-spacing:.04em; text-transform:uppercase; }
+.library-work-media-health > p { max-width:72ch; margin:0; color:var(--soft); font-size:.74rem; }
+.library-work-media-health ul { display:grid; gap:.55rem; margin:0; padding:0; border-top:1px solid var(--line); list-style:none; }
+.library-work-media-health li { display:grid; gap:.12rem; min-width:0; padding:.6rem 0; border-bottom:1px solid var(--line); overflow-wrap:anywhere; }
+.library-work-media-health li strong { font-size:.78rem; }
+.library-work-media-health li span { color:var(--ink); font-size:.74rem; }
+.library-work-media-health li p { max-width:72ch; margin:0; color:var(--soft); font-size:.72rem; line-height:1.45; }
+.library-work-media-health li small { color:var(--soft); font-size:.64rem; }
+/* Inside the terminal card the section is a third grid item, so it spans the
+   mark column rather than being squeezed into its 42px. Beside an openable
+   row it cannot be nested in the control at all, so it sits under it in the
+   list and takes the row's own padding and left offset. */
+.library-work-row.is-terminal .library-work-media-health { grid-column:1 / -1; }
+.library-work-row-aside { padding:0 .7rem .7rem calc(.7rem + 42px + .75rem); }
+.library-work-row-aside .library-work-media-health { margin:0; }
 .selected-work-surface { min-width:0; }
 .selected-work-surface > aside, .library-selection { min-height:25rem; padding:clamp(1.2rem,3vw,2.4rem); }
 .selected-work-surface > aside h2, .library-selection h2 { font-family:Georgia,serif; }

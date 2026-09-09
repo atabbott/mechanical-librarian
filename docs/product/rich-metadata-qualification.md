@@ -405,3 +405,16 @@ is retained separately with its exact bytes. Both v22 digests remain readable
 history for the same 13 options, without current effect authority. All inherited
 measurements, options and scoring remain unchanged; no fresh qualification or
 model-quality claim is made.
+
+## Audiobook media-health projection source closure (#144)
+
+The [v24 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v24.json)
+and [v10 F19a manifest](../reference/f19a-qualification-manifest-v10.json) are the
+current qualification. They restate the review-projection binding for the review
+web application, which now projects read-time audiobook media-health observations,
+and rotate the frontend byte binding for the same reason. V23 and F19a v9 remain
+byte-frozen and readable history without current effect authority. All 13 options,
+the 15 provider bindings, scoring, measurements, policy v23 and both closure flags
+are unchanged; no rescoring or fresh holdout is claimed. Each candidate's source
+classification states the delta against its immediate predecessor alone, so a
+source restated by an earlier candidate reads `unchanged` in the successor.

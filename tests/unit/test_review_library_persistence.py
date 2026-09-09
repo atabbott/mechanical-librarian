@@ -434,6 +434,8 @@ def test_terminal_failed_work_is_library_only_and_safe() -> None:
     assert item["preparation"] == {
         "attempt": 1,
         "diagnostic_reference": "prep-adcd2c66d60d4c88",
+        # A provider-credential terminal says nothing about the media.
+        "media_health": [],
         "provider": "hardcover-main",
         "reason": "Provider credentials need owner attention.",
         "recovery": "Update the configured provider credentials, then scan this library again.",

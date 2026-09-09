@@ -12,6 +12,7 @@ from mechanical_librarian.application.metadata_report import (
     qualify_provider_observation,
 )
 from mechanical_librarian.domain import human_decision
+from mechanical_librarian.domain.audio_inspection import AudioChapter
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -107,6 +108,7 @@ def audiobook_candidate(
     asin: str = "B08G9PRS1K",
     duration: str = "58200.000",
     provider: str = "catalogue",
+    chapters: ProviderChapterStructure | None = None,
 ) -> ProviderCandidate:
     """One candidate shaped exactly as the audiobook adapters build it."""
     specifications: tuple[tuple[ClaimKind, str, ClaimScope, str | None], ...] = (
@@ -130,7 +132,7 @@ def audiobook_candidate(
         )
         for order, (kind, value, scope, role) in enumerate(specifications)
     )
-    chapters = ProviderChapterStructure(2, 58_200, (29_100, 29_100), False)
+    chapters = chapters or ProviderChapterStructure(2, 58_200, (29_100, 29_100), False)
     evidence = tuple(
         sorted(
             (
@@ -165,9 +167,10 @@ def qualified_audiobook(
     authority: str | None = "audible_catalog",
     duration: str = "58200.000",
     candidates: tuple[ProviderCandidate, ...] | None = None,
+    chapters: ProviderChapterStructure | None = None,
 ) -> ProviderObservation:
     admitted = (
-        (audiobook_candidate(local_claims, duration=duration),)
+        (audiobook_candidate(local_claims, duration=duration, chapters=chapters),)
         if candidates is None
         else candidates
     )
@@ -216,6 +219,7 @@ def admitted_audiobook_report(
     identity: str = "a" * 64,
     content_digest: str = "b" * 64,
     additional_providers: tuple[ProviderObservation, ...] = (),
+    chapters: tuple[AudioChapter, ...] = (),
 ) -> MetadataReport:
     """One published recording whose work identity the runtime band admits.
 
@@ -236,7 +240,7 @@ def admitted_audiobook_report(
                 key=lambda value: value.provider,
             )
         ),
-        audio=single_track_audio_facts(content_digest),
+        audio=single_track_audio_facts(content_digest, chapters=chapters),
     )
 
 

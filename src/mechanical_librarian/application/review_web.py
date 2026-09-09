@@ -20,6 +20,11 @@ from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
 )
+from mechanical_librarian.domain.audio_health import (
+    derive_audio_health,
+    media_unreadable_observation,
+)
+from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
@@ -670,6 +675,11 @@ class InspectCurrentReviewCase:
                 "comparison_notices": _provider_comparison_notices(report),
                 "current": True,
                 "fields": fields,
+                # An admitted audiobook opens its case, not its report, so the
+                # media-health section has to reach the owner here too -- and
+                # it is derived from the same retained report the fields above
+                # were read from, never from a second source.
+                "media_health": _media_health(report),
                 "review_case_id": case.review_case_id,
                 "schema_version": "review-case-detail-v2",
                 # Read models never learn write authority. The composition root
@@ -1421,6 +1431,18 @@ _PUBLIC_PROVIDER_AUTHORITIES = frozenset(
 )
 
 
+def _media_health(recorded: MetadataReport) -> list[dict[str, object]]:
+    """Say what is wrong with one report's media, in the wire's closed shape.
+
+    Every surface that carries the section derives it here, from the same
+    retained report through the same rule, so the case an owner opens and the
+    evidence view behind it can never state different things about one
+    recording. A report with nothing wrong with it, or nothing audio about it,
+    states an empty list rather than an absent member.
+    """
+    return [value.to_data() for value in derive_audio_health(recorded)]
+
+
 def _report_detail(
     report: dict[str, object], recorded: MetadataReport
 ) -> dict[str, object]:
@@ -1500,6 +1522,11 @@ def _report_detail(
         "library": target["library"],
         "connection": target["connection"],
         "media_kind": file["format"],
+        # What is wrong with the media itself, as distinct from what the
+        # evidence says about the work. Derived from what this report already
+        # retains rather than persisted, so the section exists for every report
+        # already published and nothing was rebuilt to obtain it.
+        "media_health": _media_health(recorded),
         # What every configured provider was asked, and how each ended.
         "provider_sources": _provider_outcomes(recorded),
         # What the admitted candidates stated, under the same ceiling and the
@@ -1507,7 +1534,7 @@ def _report_detail(
         "provider_evidence": provider_claims[:_EVIDENCE_CEILING],
         "provider_evidence_truncated": len(provider_claims) > _EVIDENCE_CEILING,
         "report_id": report["report_id"],
-        "schema_version": "review-report-detail-v2",
+        "schema_version": "review-report-detail-v3",
         "title": _report_title(report),
     }
 
@@ -2295,6 +2322,33 @@ def _refusing_track_sentence(status: str, root: str | None) -> str:
     return f" The refusing file is track {matched.group(1)} of this item's audio files."
 
 
+def _terminal_media_health(status: str, root: str | None) -> list[dict[str, object]]:
+    """Say what the terminal record proves about the media, and nothing else.
+
+    A terminal item published no report, so nothing can be derived for it; the
+    one media-health statement its record supports is that a file could not be
+    read, with the ordinal the parent recorded. Every other terminal status is
+    about preparation rather than about the bytes and states nothing here.
+
+    Only an absent root is an item-wide statement. A root the writer's track
+    grammar does not admit -- or an ordinal past the composition bound -- is
+    malformed retained content, and reading it as "no track was named" would
+    turn a corrupt row into a statement about every file of the item. The
+    record supports nothing then, so nothing is stated.
+    """
+    if status != "unreadable_media":
+        return []
+    if root is None:
+        return [media_unreadable_observation(None).to_data()]
+    matched = _TRACK_ROOT.fullmatch(root)
+    if matched is None:
+        return []
+    ordinal = int(matched.group(1))
+    if not 1 <= ordinal <= MAX_AUDIO_TRACKS:
+        return []
+    return [media_unreadable_observation(ordinal).to_data()]
+
+
 def _library_item(
     case_document: str | None,
     report_document: str,
@@ -2326,6 +2380,7 @@ def _library_item(
                     raise ValueError
                 reason, recovery = guidance
                 reason += _refusing_track_sentence(status, root)
+                media_health = _terminal_media_health(status, root)
                 work_id, item, library = (
                     terminal["work_id"],
                     terminal["item"],
@@ -2359,6 +2414,10 @@ def _library_item(
                             terminal["recovery_attempt"],
                             status,
                         ),
+                        # The same closed shape the report detail carries, so
+                        # a reader holds one media-health vocabulary whether
+                        # the item produced a report or stopped before one.
+                        "media_health": media_health,
                         "provider": (
                             "provider"
                             if status in _TRACK_ROOT_STATUSES
