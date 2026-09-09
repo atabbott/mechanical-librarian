@@ -7890,9 +7890,12 @@ def test_manual_return_successor_discards_failed_scan_absence_candidates(
     assert progress.state == "queued"
 
 
+@pytest.mark.parametrize("visible_run", [False, True])
 def test_one_work_progresses_through_every_persisted_stage(
     application_path: Path,
+    visible_run: bool,
 ) -> None:
+    trigger = PreparationTrigger.MANUAL_SCAN if visible_run else None
     report = _report()
     proposal = evaluate_report(report)
     entries = [
@@ -7945,7 +7948,7 @@ def test_one_work_progresses_through_every_persisted_stage(
         ),
         clock=lambda: 20,
     )
-    pipeline.request("primary", "ebooks")
+    pipeline.request("primary", "ebooks", trigger=trigger)
     assert sum(pipeline.run_next(1) for _ in range(6)) == 6
     assert not pipeline.run_next(1)
     progress = pipeline.progress("primary", "ebooks")
@@ -7960,13 +7963,13 @@ def test_one_work_progresses_through_every_persisted_stage(
     assert len(prepared) == 1
     assert prepared[0].startswith("review_case_")
 
-    pipeline.request("primary", "ebooks")
+    pipeline.request("primary", "ebooks", trigger=trigger)
     assert pipeline.run_next(1)
     assert not pipeline.run_next(1)
     assert len(extracted) == 1
 
     entries[0] = replace(entries[0], updated_at=2, source_fingerprint="9" * 64)
-    pipeline.request("primary", "ebooks")
+    pipeline.request("primary", "ebooks", trigger=trigger)
     assert pipeline.run_next(1)
     assert pipeline.run_next(1)
     assert len(extracted) == 2
@@ -11030,3 +11033,31 @@ def test_empty_library_addition_drain_preserves_database_bytes(
     reopened.drain_library_additions((("primary", "fiction", "lib-1", _PRODUCER),), 100)
     reopened.close()
     assert application_path.read_bytes() == before
+
+
+def test_unchanged_completed_discovery_is_valid_before_next_claim(
+    application_path: Path,
+) -> None:
+    report = _audio_report("item", "1" * 64)
+    entry = _audio_entry("item", report.file.identity)
+    repository = open_repository(application_path)
+    _publish_terminal_audiobook(repository, entry, report, 10)
+    repository.request_review_scan(
+        "primary",
+        "fiction",
+        "lib-1",
+        _PRODUCER,
+        20,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(21)
+    assert discovery is not None
+    repository.complete_review_discovery(discovery, 2, "b" * 64, (entry,), 22)
+    repository.close()
+
+    reopened = open_repository(application_path, create=False)
+    assert reopened.claim_review_pipeline_action(23) is None
+    assert reopened._connection.execute(
+        "SELECT stage,state,outcome FROM review_preparation_work"
+    ).fetchone() == ("complete", "complete", "evidence_only")
+    reopened.close()

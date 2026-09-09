@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Rediscovering unchanged completed work keeps preparation valid for Activity
+  and restart without repeating inspection (#844).
+
 - Restarting an idle workspace preserves its application database bytes by
   avoiding an empty preparation cleanup write (#844).
 
