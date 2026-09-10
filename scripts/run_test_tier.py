@@ -836,12 +836,12 @@ def cohort_manifest(root: Path, name: str) -> dict[str, object]:
     }
 
 
-def run_cohort(root: Path, name: str) -> bool:
+def run_cohort(root: Path, name: str, test_timeout_seconds: int | None = None) -> bool:
     session = _CohortSession()
     stopped = threading.Event()
     reporter = threading.Thread(
         target=_report_stalled_test,
-        args=(session, stopped),
+        args=(session, stopped, test_timeout_seconds),
         daemon=True,
     )
     reporter.start()
@@ -1034,9 +1034,37 @@ def _report_failure_tracebacks(
 def _report_stalled_test(
     session: _CohortSession,
     stopped: threading.Event,
+    test_timeout_seconds: int | None = None,
 ) -> None:
     reported: str | None = None
     while not stopped.wait(timeout=1):
+        if test_timeout_seconds is not None:
+            # Identity, start and finish are one atomic lifecycle. Never act on
+            # a snapshot after releasing this lock: the test may have finished.
+            with session._progress_lock:
+                if (
+                    session._current_test_id is not None
+                    and time.monotonic() - session._current_started_at
+                    >= test_timeout_seconds
+                ):
+                    try:
+                        print(
+                            json.dumps(
+                                {
+                                    "schema": "test-tier-timeout-v1",
+                                    "tier": "fast",
+                                    "test_id": session._current_test_id,
+                                    "timeout_seconds": test_timeout_seconds,
+                                },
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ),
+                            file=sys.__stderr__,
+                            flush=True,
+                        )
+                    finally:
+                        # Exception handlers in the test cannot absorb this.
+                        os._exit(1)
         identifier = session.stalled_test(time.monotonic())
         if identifier is None or identifier == reported:
             continue
@@ -1141,7 +1169,16 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--source-sha")
+    parser.add_argument("--test-timeout-seconds", type=int)
     arguments = parser.parse_args(argv)
+    if arguments.test_timeout_seconds is not None and (
+        arguments.test_timeout_seconds <= 0
+        or arguments.tier != "fast"
+        or arguments.list
+    ):
+        parser.error(
+            "--test-timeout-seconds requires fast execution and a positive integer"
+        )
     root = Path(__file__).resolve().parents[1]
     if arguments.tier is None:
         if not arguments.list:
@@ -1172,7 +1209,12 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 0
         else:
-            passed = run_cohort(root, arguments.tier)
+            if arguments.test_timeout_seconds is None:
+                passed = run_cohort(root, arguments.tier)
+            else:
+                passed = run_cohort(
+                    root, arguments.tier, arguments.test_timeout_seconds
+                )
     except RuntimeError as error:
         print(
             json.dumps(

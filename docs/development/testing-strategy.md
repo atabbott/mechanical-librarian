@@ -139,6 +139,53 @@ The same source job runs the frontend on the exact pinned Node and npm
 toolchain; [what merging proves](../../CONTRIBUTING.md#what-merging-proves)
 lists those commands against the workflow that runs them.
 
+## Local Linux fast checks
+
+For platform, permission, locking or runner changes, run the fast tier on Linux
+before publication, or record why it was omitted and the actual replacement
+coverage. Ordinary changes keep the existing qualification path. From a clean
+committed candidate, with Docker or OrbStack running:
+
+```bash
+python3 scripts/run_linux_fast.py \
+  --source-sha "$(git rev-parse HEAD)" \
+  --cache-directory "${TMPDIR:-/tmp}/mechanical-librarian-linux-cache"
+```
+
+The helper refuses dirty tracked or untracked files and a mismatched SHA. It
+creates a disposable standalone clone, verifies the source import and exact
+revision, and runs only `fast` as the host's non-root UID/GID in native Linux.
+The image reuses the candidate Dockerfile's digest-pinned Python, Node and uv;
+its content identity includes the recipe and UID/GID. A real passwd home and
+writable workspace parent support the distribution test's frontend build.
+Setup can download pinned images and locked packages. Only the disposable
+workspace and the selected package cache are mounted; never select a home,
+media, credential or production-data directory as the cache. The cache and
+reusable image remain for reruns; the container and clone are removed on exit.
+
+The default per-test deadline is 180 seconds from setup through teardown;
+`--test-timeout-seconds` changes it. The outer `--job-timeout-seconds` default
+of 1800 bounds setup and the whole run. Failures exit nonzero; correct the cause
+and rerun manually. Source drift during execution invalidates the evidence.
+This is bounded snapshot verification, not protection against malicious
+same-authority source or perpetual filesystem atomicity. Native architecture,
+SQLite build and resource differences mean this is not exact hosted parity.
+
+The underlying runner accepts `fast --test-timeout-seconds <positive-integer>`
+only for execution. Existing callers have no deadline by default. On expiry it
+writes one `test-tier-timeout-v1` diagnostic to standard error with `tier`, safe
+dotted `test_id` and `timeout_seconds`, then terminates the process nonzero even
+if a test catches `BaseException`. It emits no completed result for that run.
+A deadline is a deadlock backstop, not a performance measurement.
+
+For test authors: directory `fcntl.flock` semantics differ between macOS and
+Linux. Opening two repositories in one parent historically could hang Linux
+when both took blocking exclusive directory locks, despite passing on macOS.
+Current `open_repository` uses `LOCK_EX | LOCK_NB` and promptly refuses a second
+same-parent repository. Use separate directories or close the first repository
+before opening another. The watchdog regression deliberately takes a real
+blocking lock; it does not reproduce a current production locking defect.
+
 ## What the gate proves
 
 Every pull-request candidate runs independent required `fast-source`,
@@ -216,7 +263,7 @@ are documented at their definitions in `scripts/run_test_tier.py` and
   narrative account beside the record, on standard output, with every
   constructed-environment value replaced by its variable's name where the
   variable is secret-named or the value is long and is not a path. The
-  machine-readable `test-tier-result-v1` and `test-tier-stall-v1` lines keep
+  machine-readable `test-tier-result-v1`, `test-tier-stall-v1` and `test-tier-timeout-v1` lines keep
   standard error to themselves.
 
 ## Runner invariants

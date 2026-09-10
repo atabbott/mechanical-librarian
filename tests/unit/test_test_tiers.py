@@ -1352,3 +1352,126 @@ def test_oversized_parameters_stay_bounded_and_distinct() -> None:
     # The two differ only past the truncation point, so a bound that merely
     # truncated would collapse them and refuse a legitimate cohort.
     assert len(set(identifiers)) == 2
+
+
+@pytest.mark.parametrize("phase", ["setup", "call", "teardown", "flock", "swallow"])
+def test_fast_deadline_hard_exits_real_hangs(tmp_path: Path, phase: str) -> None:
+    import subprocess
+
+    hang = "time.sleep(60)"
+    if phase == "flock":
+        hang = "a=os.open('.', os.O_RDONLY); b=os.open('.', os.O_RDONLY); fcntl.flock(a, fcntl.LOCK_EX); fcntl.flock(b, fcntl.LOCK_EX)"
+    if phase == "swallow":
+        hang = "\n    while True:\n        try: time.sleep(60)\n        except BaseException: pass"
+    if phase == "flock" and sys.platform != "linux":
+        pytest.skip("Linux directory flock semantics")
+    body = "import time, os, fcntl, pytest\n"
+    if phase in ("setup", "teardown"):
+        body += "@pytest.fixture(autouse=True)\ndef fixture():\n"
+        body += (
+            "    time.sleep(60)\n    yield\n"
+            if phase == "setup"
+            else "    yield\n    time.sleep(60)\n"
+        )
+        body += "def test_hang(): pass\n"
+    else:
+        body += "def test_hang():\n    " + hang + "\n"
+    targets = _module(tmp_path, body)
+    driver = (
+        "from pathlib import Path\nfrom unittest.mock import patch\n"
+        "from scripts.run_test_tier import run_cohort\n"
+        "if __name__ == '__main__':\n"
+        f"    with patch('scripts.run_test_tier.cohort_targets', return_value={targets!r}):\n"
+        "        run_cohort(Path.cwd(), 'fast', 1)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", driver], capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 1
+    diagnostics = [json.loads(line) for line in result.stderr.splitlines()]
+    assert len(diagnostics) == 1
+    assert diagnostics[0]["schema"] == "test-tier-timeout-v1"
+    assert diagnostics[0]["tier"] == "fast"
+    assert diagnostics[0]["timeout_seconds"] == 1
+    assert _SAFE_TEST_ID.fullmatch(diagnostics[0]["test_id"])
+    assert diagnostics[0]["test_id"].endswith("test_hang")
+    assert "test-tier-result-v1" not in result.stdout + result.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["fast", "--test-timeout-seconds", "0"],
+        ["fast", "--test-timeout-seconds", "-1"],
+        ["fast", "--test-timeout-seconds", "x"],
+        ["fast", "--list", "--test-timeout-seconds", "1"],
+        ["--list", "--test-timeout-seconds", "1"],
+        ["complete", "--test-timeout-seconds", "1"],
+        ["slow", "--test-timeout-seconds", "1"],
+        ["browser", "--test-timeout-seconds", "1"],
+        ["required-installed", "--test-timeout-seconds", "1"],
+    ],
+)
+def test_deadline_option_refuses_nonexecution_and_invalid_values(
+    args: list[str],
+) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 2
+
+
+def test_deadline_ignores_finished_state_and_resets_start() -> None:
+    import threading
+
+    from scripts.run_test_tier import _report_stalled_test
+
+    session = _CohortSession()
+    with patch("scripts.run_test_tier.time.monotonic", return_value=1):
+        session.pytest_runtest_logstart("first.test", None)
+        session.pytest_runtest_logfinish("first.test", None)
+    stopped = threading.Event()
+    with (
+        patch.object(stopped, "wait", side_effect=[False, True]),
+        patch("scripts.run_test_tier.os._exit") as terminate,
+    ):
+        _report_stalled_test(session, stopped, 1)
+        terminate.assert_not_called()
+    with patch("scripts.run_test_tier.time.monotonic", return_value=100):
+        session.pytest_runtest_logstart("second.test", None)
+        with (
+            patch.object(stopped, "wait", side_effect=[False, True]),
+            patch("scripts.run_test_tier.os._exit") as terminate,
+        ):
+            _report_stalled_test(session, stopped, 1)
+            terminate.assert_not_called()
+
+
+def test_deadline_exits_even_when_diagnostic_write_fails() -> None:
+    import subprocess
+
+    driver = """
+import threading
+from unittest.mock import patch
+from scripts.run_test_tier import _CohortSession, _report_stalled_test
+class Broken:
+    def write(self, value): raise RuntimeError('write failed')
+session = _CohortSession()
+session.pytest_runtest_logstart('safe.test', None)
+session._current_started_at = 0
+with patch('scripts.run_test_tier.sys.__stderr__', Broken()):
+    _report_stalled_test(session, threading.Event(), 1)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", driver], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 1
+    assert not result.stdout and not result.stderr
+
+
+@pytest.mark.parametrize("deadline", [None, 1])
+def test_passing_cohort_with_optional_deadline(
+    tmp_path: Path, deadline: int | None
+) -> None:
+    targets = _module(tmp_path, "def test_pass(): pass\n")
+    with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+        assert run_cohort(Path.cwd(), "fast", deadline)

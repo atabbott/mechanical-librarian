@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Add an exact-candidate local Linux fast check and an opt-in per-test
+  deadlock deadline, with conditional platform-sensitive qualification (#777).
+
 - Restore manual mutant generation, test-selection statistics, and audit execution
   with the pinned mutation engine (#901).
 
