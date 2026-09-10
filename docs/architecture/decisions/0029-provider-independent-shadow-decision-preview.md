@@ -55,6 +55,21 @@ remain atomic: a partial or incompatible combination makes every constrained
 proposal manual. Keep-current remains evidence-positive and is never inferred
 from absent evidence.
 
+## Later evolution
+
+Policy v5 and its validation figures below are historical. Current publication
+admission does not accept local-only dates: both candidate formation and the
+publication preview require local evidence plus two independent provider
+correlations at the selected precision. Publication is one canonical
+`publishedDate` decision, with `publishedYear` retained as derived context.
+Packet closure, event and precision checks, and target-year consistency still
+apply. Candidate existence does not establish Ask-mode owner-action reachability
+or automatic persistence/write authority. See
+[current publication sufficiency](../../operations/proposal-set.md#publication-candidate-sufficiency)
+for the delivered behavior and the bounded #1003 investigation. The alternative
+rejected here and these historical results do not qualify a current quorum
+relaxation.
+
 ## Consequences
 
 ### Positive
