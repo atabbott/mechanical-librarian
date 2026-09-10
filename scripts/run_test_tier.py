@@ -1048,25 +1048,36 @@ def _report_stalled_test(
                     >= test_timeout_seconds
                 ):
                     try:
-                        os.write(
-                            2,
-                            (
-                                json.dumps(
-                                    {
-                                        "schema": "test-tier-timeout-v1",
-                                        "tier": "fast",
-                                        "test_id": session._current_test_id,
-                                        "timeout_seconds": test_timeout_seconds,
-                                    },
-                                    sort_keys=True,
-                                    separators=(",", ":"),
-                                )
-                                + "\n"
-                            ).encode("ascii"),
-                        )
+                        payload = (
+                            json.dumps(
+                                {
+                                    "schema": "test-tier-timeout-v1",
+                                    "tier": "fast",
+                                    "test_id": session._current_test_id,
+                                    "timeout_seconds": test_timeout_seconds,
+                                },
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            )
+                            + "\n"
+                        ).encode("ascii")
+
+                        def write_timeout(record: bytes = payload) -> None:
+                            # One terminal attempt can block in the OS, but it
+                            # must never hold up termination or take this lock.
+                            try:
+                                os.write(2, record)
+                            except OSError:
+                                pass
+
+                        writer = threading.Thread(target=write_timeout, daemon=True)
+                        writer.start()
+                        writer.join(timeout=0.1)
                     finally:
                         # Exception handlers in the test cannot absorb this.
                         os._exit(1)
+            # Timeout mode has no early writes that could block its watchdog.
+            continue
         identifier = session.stalled_test(time.monotonic())
         if identifier is None or identifier == reported:
             continue
@@ -1079,14 +1090,7 @@ def _report_stalled_test(
             sort_keys=True,
             separators=(",", ":"),
         )
-        if test_timeout_seconds is None:
-            print(diagnostic, file=sys.__stderr__, flush=True)
-        else:
-            try:
-                os.write(2, (diagnostic + "\n").encode("ascii"))
-            except OSError:
-                # A failed early diagnostic must not retire the watchdog.
-                pass
+        print(diagnostic, file=sys.__stderr__, flush=True)
         reported = identifier
 
 

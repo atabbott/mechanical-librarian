@@ -172,11 +172,16 @@ same-authority source or perpetual filesystem atomicity. Native architecture,
 SQLite build and resource differences mean this is not exact hosted parity.
 
 The underlying runner accepts `fast --test-timeout-seconds <positive-integer>`
-only for execution. Existing callers have no deadline by default. On expiry it
-writes one `test-tier-timeout-v1` diagnostic to standard error with `tier`, safe
-dotted `test_id` and `timeout_seconds`, then terminates the process nonzero even
-if a test catches `BaseException`. It emits no completed result for that run.
-A deadline is a deadlock backstop, not a performance measurement.
+only for execution. Existing callers have no deadline by default and retain
+early stall diagnostics. Timeout mode omits early stall output. On expiry it
+attempts one `test-tier-timeout-v1` diagnostic to standard error with `tier`,
+safe dotted `test_id` and `timeout_seconds`, allowing at most 100 milliseconds
+for delivery before terminating nonzero. Writable standard error receives the
+named record; backpressure may prevent delivery but cannot prevent termination.
+The deadline can overrun by the one-second polling interval and this diagnostic
+allowance. A test catching `BaseException` cannot absorb termination, and the
+runner emits no completed result. This is a deadlock backstop, not a performance
+measurement.
 
 For test authors: directory `fcntl.flock` semantics differ between macOS and
 Linux. The private-binding adapter imports `fcntl` only on Linux and sets it
