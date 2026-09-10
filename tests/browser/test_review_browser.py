@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -152,7 +153,7 @@ def _report():
 
 _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v3",
+        "schema_version": "owner-settings-v4",
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
@@ -270,6 +271,21 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    description_fixture: Literal[
+        "ready",
+        "needs_review",
+        "failed",
+        "automatic",
+        "no_change",
+        "no_alternatives",
+        "missing_prices",
+        "unavailable_model",
+        "retry_requested",
+        "retry_running",
+        "retry_failed",
+        "retry_succeeded",
+    ]
+    | None = None,
     provider_recovery: bool = False,
     retained_decoration: tuple[str, bool] | None = None,
     retained_component_text: str | None = None,
@@ -283,6 +299,21 @@ def _server(
     on_app: Callable[[Any], None] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
+    if (
+        description_fixture in {"automatic", "no_change"}
+        and settings_document is not None
+    ):
+        from mechanical_librarian.domain.description_advice import (
+            DescriptionAdviceSettings,
+        )
+
+        settings_document = settings_document.model_copy(
+            update={
+                "description_advice": DescriptionAdviceSettings(
+                    automatic_application=True
+                )
+            }
+        )
     settings = None
     if settings_document is not None:
         connection = sqlite3.connect(database)
@@ -397,7 +428,9 @@ def _server(
         )
     else:
         report = _report()
-    if provider_recovery:
+    if description_fixture is not None:
+        case_id = ""  # The real description producer below owns case admission.
+    elif provider_recovery:
         from tests.support.provider_recovery_rail import publish_provider_failure_case
 
         case_id, report, _, proposal_set = publish_provider_failure_case(repository)
@@ -565,8 +598,8 @@ def _server(
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
     )
-    reviewer_access = Mock(spec=ReviewerAccessOperations)
-    reviewer_access.read.return_value = ReviewerAccessView(
+    unconfigured_reviewer = Mock(spec=ReviewerAccessOperations)
+    unconfigured_reviewer.read.return_value = ReviewerAccessView(
         revision=1,
         mapping=None,
         openrouter_key_configured=False,
@@ -578,6 +611,267 @@ def _server(
         ),
         openrouter=ReviewerEngineStatus(engine="openrouter", state="unconfigured"),
     )
+    reviewer_access: ReviewerAccessOperations | Mock = unconfigured_reviewer
+    if description_fixture is not None:
+        from types import SimpleNamespace
+
+        from mechanical_librarian.application.contained_reviewer_contract import (
+            ContainedReviewRequest,
+            canonical_json,
+        )
+        from mechanical_librarian.application.description_advice import (
+            DescriptionAdviceService,
+        )
+        from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+        from mechanical_librarian.domain.description_advice import (
+            DescriptionAdviceBinding,
+            description_digest,
+        )
+        from tests.support.automatic_decisions import _automatic_decisions
+        from tests.support.automatic_no_change import _automatic_no_change_inputs
+        from tests.unit.test_reviewer_access_application import _Auth, _OpenRouter
+
+        report, category, option, _ = _automatic_no_change_inputs(
+            "description_preserved"
+        )
+        if description_fixture == "no_alternatives":
+            report = MetadataReport.create(
+                target=report.target,
+                file=report.file,
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=tuple(
+                    replace(
+                        provider,
+                        candidates=tuple(
+                            replace(
+                                candidate,
+                                claims=tuple(
+                                    claim
+                                    for claim in candidate.claims
+                                    if claim.kind is not ClaimKind.DESCRIPTION
+                                ),
+                            )
+                            for candidate in provider.candidates
+                        ),
+                    )
+                    for provider in report.providers
+                ),
+                cover_sources=report.cover_sources,
+            )
+        decisions = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+        deterministic = next(
+            value for value in decisions if value.destination == "description"
+        )
+        case_id = deterministic.review_case_id
+        description_profile = b"synthetic-contained-description-profile"
+        description_calls = []
+        unavailable = False
+
+        class DescriptionOpenRouter(_OpenRouter):
+            def run_description(self, *args):
+                pytest.fail("browser metadata fixture dispatched an OpenRouter model")
+
+            def probe_description(self):
+                from mechanical_librarian.application.reviewer_contracts import (
+                    OpenRouterReviewerError,
+                )
+
+                if unavailable and description_fixture == "unavailable_model":
+                    raise OpenRouterReviewerError("model_unavailable")
+                result = super().probe_description()
+                return replace(result, prompt_price=None) if unavailable else result
+
+        def description_runner(profile_bytes, instruction, inputs, schema, images):
+            description_calls.append("dispatch")
+            assert profile_bytes == description_profile and images == ()
+            request = ContainedReviewRequest(
+                instruction.decode(), inputs.decode(), schema.decode()
+            )
+            if description_fixture == "failed":
+                return "invalid synthetic output"
+            if description_fixture == "retry_failed" and len(description_calls) > 1:
+                from mechanical_librarian.application.contained_reviewer_contract import (
+                    ContainedReviewerError,
+                )
+
+                raise ContainedReviewerError("setup")
+            text = (
+                "Existing description."
+                if description_fixture == "no_change"
+                else "A synthetic reader explores an old library.\nIts stories bring distant communities together. <strong>Authored text stays text.</strong>"
+            )
+            if len(description_calls) > 1:
+                text = "A new authored description from the explicit retry."
+            return canonical_json(
+                {
+                    "request_sha256": request.digest,
+                    "result": {
+                        "description": text,
+                        "disposition": "needs_review"
+                        if description_fixture == "needs_review"
+                        else "ready",
+                    },
+                }
+            )
+
+        reviewer_access = ReviewerAccessOperations(
+            repository.reviewer_access_store(),
+            codex_auth=_Auth("usable"),
+            codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+            codex_identity=lambda: ("synthetic-contained-model", description_profile),
+            codex_binding=lambda: (
+                "synthetic-contained-model",
+                description_profile,
+                description_runner,
+            ),
+            codex_description_binding=lambda: (
+                "synthetic-contained-model",
+                description_profile,
+                description_runner,
+            ),
+            openrouter_factory=lambda key, model: DescriptionOpenRouter(key, model, []),
+        )
+        if description_fixture in {"missing_prices", "unavailable_model"}:
+            cover_access = reviewer_access.configure_openrouter(
+                expected_revision=1, api_key="synthetic-key", model="synthetic/cover-a"
+            )
+            description_access = reviewer_access.configure_openrouter(
+                expected_revision=cover_access.revision,
+                api_key="",
+                model="synthetic/description-b",
+                task="description_rewrite",
+            )
+            unavailable = True
+            unavailable_access = reviewer_access.refresh_openrouter(
+                "description_rewrite"
+            )
+            assert unavailable_access.description is not None
+            assert unavailable_access.description.state == "model_unavailable"
+            assert unavailable_access.description.reason == "model_unavailable"
+            assert unavailable_access.description_metadata is None
+            assert unavailable_access.mapping == cover_access.mapping
+            assert unavailable_access.revision == description_access.revision + 1
+            unavailable = (
+                False  # Only a subsequent explicit refresh can recover metadata.
+            )
+        else:
+            reviewer_access.select_codex(
+                expected_revision=1, task="description_rewrite"
+            )
+        store = repository.description_advice_store()
+        store.bind_identity(
+            lambda engine, _model: (
+                (
+                    "synthetic-contained-model",
+                    hashlib.sha256(description_profile).hexdigest(),
+                )
+                if engine == "codex"
+                else None
+            )
+        )
+        preferences = store.current_settings()
+        binding = DescriptionAdviceBinding(
+            review_case_id=case_id,
+            report_id=report.report_id,
+            proposal_set_id=deterministic.proposal_set_id,
+            target_fingerprint=report.target.fingerprint,
+            policy_generation=repository._connection.execute(
+                "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()[0],
+            access_revision=reviewer_access.read().revision,
+            preferences_digest=description_digest(preferences.model_dump()),
+        )
+        candidate = DescriptionAdviceService(
+            store, reviewer_access, store.current_settings, lambda: 1000
+        ).prepare(report, binding, lambda: store.binding_is_current(binding))
+        if description_fixture in {
+            "no_alternatives",
+            "missing_prices",
+            "unavailable_model",
+        }:
+            assert candidate is None and description_calls == []
+            assert repository._connection.execute(
+                "SELECT count(*) FROM description_advice_candidates"
+            ).fetchone() == (0,)
+            assert repository._connection.execute(
+                "SELECT count(*) FROM description_decisions"
+            ).fetchone() == (0,)
+        if candidate is not None and description_fixture.startswith("retry_"):
+            selected = store.admit(
+                candidate.candidate_id, binding, "human", "a" * 64, 1001
+            )
+            if description_fixture in {"retry_requested", "retry_running"}:
+                attempt = store.begin_attempt(
+                    candidate.request_identity,
+                    binding,
+                    candidate.engine,
+                    candidate.model,
+                    1002,
+                    lambda: store.binding_is_current(binding),
+                    retry=True,
+                )
+                assert attempt is not None
+                if description_fixture == "retry_running":
+                    assert store.start(
+                        attempt[0], 1003, lambda: store.binding_is_current(binding)
+                    )
+            else:
+                DescriptionAdviceService(
+                    store, reviewer_access, store.current_settings, lambda: 1002
+                ).prepare(
+                    report,
+                    binding,
+                    lambda: store.binding_is_current(binding),
+                    retry=True,
+                )
+            retained = store.read(case_id)
+            assert retained["selection"]["decision_id"] == selected.decision_id
+            assert (
+                retained["selected_advice"]["candidate"]["candidate_id"]
+                == candidate.candidate_id
+            )
+            assert retained["state"] == description_fixture.removeprefix("retry_")
+        if candidate is not None and description_fixture in {"automatic", "no_change"}:
+            selected = store.admit(
+                candidate.candidate_id, binding, "automatic_policy", "e" * 64, 1000
+            )
+            if description_fixture == "no_change":
+                assert repository.record_current_field_effect_no_change(selected, 1001)
+            else:
+                from mechanical_librarian.adapters.field_effect_authority import (
+                    PersistedFieldEffectAuthority,
+                )
+                from tests.support.description_advice import _guarded_application
+
+                authority = PersistedFieldEffectAuthority(repository)
+                snapshot = authority.resolve(selected)
+                service, target = _guarded_application(
+                    repository, database.parent, authority
+                )
+                operation = service.plan(
+                    selected,
+                    connection=snapshot.connection,
+                    library=snapshot.library,
+                    work_id=snapshot.work_id,
+                    destination=snapshot.destination,
+                    pre_value=snapshot.pre_value,
+                    desired_value=snapshot.decision_value,
+                    target_fingerprint=snapshot.target_fingerprint,
+                    target_version=snapshot.target_version,
+                    dependency_digests=snapshot.dependency_digests,
+                    capability_digest="c" * 64,
+                )
+                assert operation is not None
+                target.seed(operation.plan)
+                assert service.apply(operation.plan.plan_id).state == "verified"
+                assert target.read(operation.plan).value == candidate.output.description
     app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(
@@ -3958,7 +4252,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
         certificate, key = _certificate(root)
         settings = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v3",
+                "schema_version": "owner-settings-v4",
                 "revision": 1,
                 "connections": [
                     {
@@ -5005,4 +5299,404 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                     page.get_by_role("heading", name="Evidence", exact=True)
                 ).to_be_visible()
                 expect(page.get_by_text(reason)).to_have_count(0)
+            browser.close()
+
+
+@pytest.mark.parametrize(
+    "state", ("ready", "needs_review", "failed", "automatic", "no_change")
+)
+def test_description_advice_displays_real_persisted_outcomes(state):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1280, "height": 800},
+                reduced_motion="reduce",
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture=state,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field=description"
+                )
+                chooser = page.locator("section.direct-choice")
+                expect(chooser).to_be_visible()
+                expect(
+                    page.get_by_role("article", name="Advised description")
+                ).to_have_count(0)
+                current = chooser.get_by_role(
+                    "button", name="Choose current value: Existing description."
+                )
+                provider = chooser.get_by_role(
+                    "button", name="Choose proposed value: A qualified description."
+                )
+                expect(current).to_be_enabled()
+                expect(provider).to_be_enabled()
+                select = chooser.get_by_role(
+                    "button", name=re.compile("^Choose advised value:")
+                )
+                if state == "failed":
+                    expect(chooser.get_by_role("status")).to_contain_text(
+                        "The adviser returned an invalid response. No new description was produced."
+                    )
+                    expect(select).to_have_count(0)
+                else:
+                    expect(select).to_be_visible()
+                    expect(select).to_contain_text("Advised · Authored content")
+                    expect(select).to_contain_text("codex · synthetic-contained-model")
+                    if state in {"automatic", "no_change"}:
+                        expect(select).to_have_attribute("aria-pressed", "true")
+                        expect(current).to_have_attribute("aria-pressed", "false")
+                        expect(select).to_contain_text(
+                            "Applied and verified"
+                            if state == "automatic"
+                            else "No change needed"
+                        )
+                        if state == "automatic":
+                            expect(select).to_be_disabled()
+                    else:
+                        expect(select).to_be_enabled()
+                        expect(select).to_contain_text(
+                            "<strong>Authored text stays text.</strong>"
+                        )
+                        expect(select.locator("strong strong")).to_have_count(0)
+                        if state == "needs_review":
+                            expect(select).to_contain_text("cannot apply automatically")
+                        selection_requests = []
+                        page.on(
+                            "request",
+                            lambda request: (
+                                selection_requests.append(request.post_data_json)
+                                if request.method == "POST"
+                                and request.url.endswith(
+                                    "/description-advice/selection"
+                                )
+                                else None
+                            ),
+                        )
+                        select.focus()
+                        with page.expect_response(
+                            lambda response: (
+                                response.request.method == "POST"
+                                and response.url.endswith(
+                                    "/description-advice/selection"
+                                )
+                            )
+                        ) as selection_response:
+                            select.press("Enter")
+                        assert selection_response.value.ok
+                        page.wait_for_url(
+                            lambda url: (
+                                "field=" in url and "field=description" not in url
+                            )
+                        )
+                        page.get_by_role(
+                            "button", name=re.compile("^Description ")
+                        ).click()
+                        expect(select).to_have_attribute("aria-pressed", "true")
+                        assert len(selection_requests) == 1
+                        assert set(selection_requests[0]) == {"candidate_id", "binding"}
+                        assert (
+                            selection_requests[0]["binding"]["review_case_id"]
+                            == case_id
+                        )
+                presentations: tuple[tuple[int, Literal["light", "dark"]], ...] = (
+                    (1280, "light"),
+                    (390, "dark"),
+                )
+                for width, theme in presentations:
+                    page.set_viewport_size({"width": width, "height": 800})
+                    page.emulate_media(
+                        color_scheme="dark" if theme == "dark" else "light"
+                    )
+                    expect(chooser).to_be_visible()
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                chooser.get_by_role("button", name="Retry description advice").click()
+                expect(
+                    chooser.get_by_role("status").filter(
+                        has_text="Description preparation requested"
+                    )
+                ).to_be_visible()
+                page.get_by_role("link", name="History", exact=True).click()
+                expect(
+                    page.get_by_role("heading", name="History", exact=True)
+                ).to_be_visible()
+                expect(
+                    page.get_by_role(
+                        "button", name=re.compile("Choose advised|Retry description")
+                    )
+                ).to_have_count(0)
+                expect(
+                    page.get_by_role(
+                        "heading", name="Advised description · Authored content"
+                    ).first
+                ).to_be_visible()
+                if state == "automatic":
+                    expect(
+                        page.get_by_text(
+                            "Applied and verified in the library.", exact=False
+                        )
+                    ).to_be_visible()
+                if state == "no_change":
+                    expect(
+                        page.get_by_text(
+                            "No change needed; the library already had this text.",
+                            exact=False,
+                        )
+                    ).to_be_visible()
+                page.get_by_role("link", name="Evidence", exact=True).click()
+                expect(
+                    page.get_by_role("heading", name="Evidence", exact=True)
+                ).to_be_visible()
+                expect(
+                    page.get_by_role(
+                        "button", name=re.compile("Choose advised|Retry description")
+                    )
+                ).to_have_count(0)
+                expect(
+                    page.get_by_text(
+                        "<strong>Authored text stays text.</strong>", exact=False
+                    )
+                ).to_have_count(0)
+            browser.close()
+
+
+@pytest.mark.parametrize(
+    "state", ("no_alternatives", "missing_prices", "unavailable_model")
+)
+def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 390, "height": 844}
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture=state,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field=description"
+                )
+                if state == "no_alternatives":
+                    retained = page.get_by_role(
+                        "region", name="Description recorded outcome"
+                    )
+                    expect(retained).to_contain_text("Resolved automatically")
+                    expect(retained).to_contain_text("Existing description.")
+                else:
+                    expect(
+                        page.get_by_role(
+                            "button", name="Choose current value: Existing description."
+                        )
+                    ).to_be_enabled()
+                expect(
+                    page.get_by_role(
+                        "button", name=re.compile("^Choose advised value:")
+                    )
+                ).to_have_count(0)
+                if state == "no_alternatives":
+                    expect(
+                        page.get_by_role(
+                            "button", name=re.compile("^Choose proposed value:")
+                        )
+                    ).to_have_count(0)
+                    expect(
+                        page.get_by_role("button", name="Retry description advice")
+                    ).to_have_count(0)
+                else:
+                    expect(
+                        page.get_by_role(
+                            "button",
+                            name="Choose proposed value: A qualified description.",
+                        )
+                    ).to_be_enabled()
+                page.goto(f"{origin}/settings?group=reviewer")
+                adviser = page.get_by_role(
+                    "region", name="Optional description adviser", exact=True
+                )
+                if state == "no_alternatives":
+                    expect(adviser).to_contain_text("contained Codex")
+                else:
+                    expect(adviser).to_contain_text("model_unavailable")
+                    expect(adviser).to_contain_text(
+                        "Price and text capability metadata must be available"
+                    )
+                    with page.expect_response(
+                        lambda response: urlparse(response.url).path.endswith(
+                            "/api/v1/reviewer-access/openrouter/refresh"
+                        )
+                    ) as refreshed:
+                        adviser.get_by_role(
+                            "button", name="Refresh description model status and prices"
+                        ).click()
+                    assert refreshed.value.status == 200
+                    expect(adviser).to_contain_text("synthetic/description-b. usable.")
+                    prices = adviser.locator("dt").filter(
+                        has_text=re.compile(r"^Prices in USD$")
+                    )
+                    expect(prices).to_have_count(1)
+                    price_value = prices.locator("..").locator("dd")
+                    expect(price_value).to_have_count(1)
+                    expect(price_value).to_have_text(
+                        "0.000001 per input token, 0.000002 per output token, 0 per request."
+                    )
+                    expect(
+                        page.get_by_role("textbox", name="Model ID", exact=True)
+                    ).to_have_attribute("placeholder", "synthetic/cover-a")
+                    with page.expect_response(
+                        lambda response: response.url.endswith(
+                            "/api/v1/reviewer-access/selection"
+                        )
+                    ) as removed:
+                        adviser.get_by_role(
+                            "button", name="Continue without description advice"
+                        ).click()
+                    assert removed.value.status == 200
+                    expect(adviser).to_contain_text("No description adviser selected.")
+                    expect(
+                        page.get_by_role("textbox", name="Model ID", exact=True)
+                    ).to_have_attribute("placeholder", "synthetic/cover-a")
+            browser.close()
+
+
+@pytest.mark.parametrize(
+    "state", ("retry_requested", "retry_running", "retry_failed", "retry_succeeded")
+)
+def test_description_retry_retains_real_selected_choice(state):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1280, "height": 800}
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture=state,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                url = f"{origin}/library?lens=all&preview={case_id}&field=description"
+                page.goto(url)
+                for width, theme in ((1280, "light"), (390, "dark")):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.emulate_media(
+                        color_scheme="dark" if theme == "dark" else "light"
+                    )
+                    choices = page.get_by_role(
+                        "button", name=re.compile("^Choose advised value:")
+                    )
+                    expect(choices).to_have_count(
+                        2 if state == "retry_succeeded" else 1
+                    )
+                    expect(choices.first).to_have_attribute("aria-pressed", "true")
+                    expect(choices.first).to_be_disabled()
+                    expect(
+                        page.get_by_text("Choice recorded.", exact=True)
+                    ).to_be_visible()
+                    expect(
+                        page.get_by_text(
+                            "Advised · Authored content · Recorded choice", exact=True
+                        )
+                    ).to_be_visible()
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= innerWidth"
+                    )
+                    if state in {"retry_requested", "retry_running"}:
+                        expect(
+                            page.get_by_text(re.compile("Preparing description advice"))
+                        ).to_be_visible()
+                    elif state == "retry_failed":
+                        expect(
+                            page.get_by_text(
+                                re.compile("Description adviser unavailable")
+                            )
+                        ).to_be_visible()
+                    for view in ("Evidence", "History"):
+                        page.get_by_role("link", name=view, exact=True).click()
+                        expect(
+                            page.get_by_role("heading", name=view, exact=True)
+                        ).to_be_visible()
+                        page.get_by_role(
+                            "link", name="Back to work", exact=True
+                        ).click()
+                        expect(
+                            page.get_by_text("Choice recorded.", exact=True)
+                        ).to_be_visible()
+                    page.reload()
+                    expect(
+                        page.get_by_text("Choice recorded.", exact=True)
+                    ).to_be_visible()
+                if state == "retry_succeeded":
+                    latest = page.get_by_role(
+                        "button",
+                        name="Choose advised value: A new authored description from the explicit retry.",
+                    )
+                    expect(latest).to_have_attribute("aria-pressed", "false")
+                    latest.focus()
+                    with page.expect_response(
+                        lambda response: (
+                            response.request.method == "POST"
+                            and response.url.endswith("/description-advice/selection")
+                        )
+                    ) as response:
+                        latest.press("Enter")
+                    assert response.value.ok
+                    page.goto(url)
+                    expect(latest).to_have_attribute("aria-pressed", "true")
+                    expect(
+                        page.get_by_role(
+                            "button", name=re.compile("^Choose advised value:")
+                        )
+                    ).to_have_count(1)
             browser.close()

@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from threading import RLock
 
+from mechanical_librarian.adapters.persistence.description_advice import (
+    request_description_preparation,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.reviewer_access import (
@@ -141,6 +145,11 @@ class ReviewerAccessStore(ConnectionScoped):
                     "ON CONFLICT(field_id) DO UPDATE SET value=excluded.value",
                     (_OPENROUTER_SECRET, openrouter_key),
                 )
+            if (
+                current.description_rewrite is not None
+                or document.description_rewrite is not None
+            ):
+                request_description_preparation(self._connection, int(time.time()))
             configured = self._configured()
             transaction.commit()
             return document, configured
@@ -181,7 +190,7 @@ class ReviewerAccessStore(ConnectionScoped):
                     raise ReviewerAccessStoreError("reviewer access is unavailable")
                 return (
                     ReviewerAccessDocument(
-                        schema_version="reviewer-access-v1", revision=1
+                        schema_version="reviewer-access-v2", revision=1
                     ),
                     None,
                 )

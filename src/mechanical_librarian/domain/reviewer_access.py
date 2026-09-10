@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
 
-ReviewerTask = Literal["cover_observation"]
+ReviewerTask = Literal["cover_observation", "description_rewrite"]
 ReviewerEngine = Literal["codex", "openrouter"]
 _OPENROUTER_MODEL_ID = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/"
@@ -43,12 +44,36 @@ ReviewerTaskSelection = Annotated[
 ]
 
 
-class ReviewerAccessDocument(_Closed):
-    """The one-task exact-current application authority for reviewer access."""
+class DescriptionModelMetadata(_Closed):
+    model: OpenRouterModelId
+    observed_at: Annotated[StrictInt, Field(ge=0)]
+    prompt_price: Annotated[StrictStr, Field(min_length=1, max_length=40)]
+    completion_price: Annotated[StrictStr, Field(min_length=1, max_length=40)]
+    request_price: Annotated[StrictStr, Field(min_length=1, max_length=40)]
+    text_input: Literal[True] = True
+    text_output: Literal[True] = True
+    structured_outputs: Literal[True] = True
 
-    schema_version: Literal["reviewer-access-v1"]
+    @field_validator("prompt_price", "completion_price", "request_price")
+    @classmethod
+    def bounded_price(cls, value: str) -> str:
+        try:
+            price = Decimal(value)
+        except InvalidOperation as error:
+            raise ValueError("invalid model price") from error
+        if not price.is_finite() or not 0 <= price <= 1_000_000:
+            raise ValueError("invalid model price")
+        return value
+
+
+class ReviewerAccessDocument(_Closed):
+    """The task-scoped exact-current application authority for reviewer access."""
+
+    schema_version: Literal["reviewer-access-v2"]
     revision: Annotated[StrictInt, Field(ge=1)]
     cover_observation: ReviewerTaskSelection | None = None
+    description_rewrite: ReviewerTaskSelection | None = None
+    description_metadata: DescriptionModelMetadata | None = None
 
 
 __all__ = [

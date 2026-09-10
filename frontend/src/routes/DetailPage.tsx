@@ -7,6 +7,31 @@ import { fieldLabel, labelWords } from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
+  if (item.category === 'description')
+    return (
+      <article className="diagnostic-entry">
+        <h3>Advised description · Authored content</h3>
+        <p>
+          {item.engine} · {item.model}.{' '}
+          {item.outcome === 'description_application'
+            ? item.state === 'verified'
+              ? 'Applied and verified in the library.'
+              : item.state === 'no_change_required'
+                ? 'No change needed; the library already had this text.'
+                : `Guarded application: ${labelWords(item.state)}.`
+            : item.selected
+              ? item.state === 'superseded'
+                ? 'This authored selection was superseded by a later decision.'
+                : 'Selected under the existing write requirements.'
+              : `Preparation ${item.state}.`}
+        </p>
+        {item.candidate ? (
+          <p className="description-advice-text">{item.candidate.output.description}</p>
+        ) : (
+          <p>No authored candidate was produced.</p>
+        )}
+      </article>
+    )
   if (item.category === 'owner' || item.category === 'automatic') {
     const action =
       item.category === 'owner'

@@ -147,6 +147,10 @@ derive hashes, or accept environment overrides.
     "cover_avoid_promotional_text": false,
     "cover_avoid_tie_in_branding": false,
     "cover_prefer_minimal_composition": false,
+    "description_remove_marketing": true,
+    "description_remove_sales_boasts": true,
+    "description_remove_praise": true,
+    "description_automatic_application": false,
     "trusted_proxy_ips": []
   }
 }
@@ -409,3 +413,55 @@ clean rebuild required for these configuration documents. This transport change
 does not change database or `owner-settings-v3` schemas, adopt old documents,
 or rewrite fingerprints. See [deployment](../operations/deployment.md) for
 network exposure and browser trust.
+
+
+## Description advice
+
+`review.description_remove_marketing`, `description_remove_sales_boasts`, and
+`description_remove_praise` default to `true`. They remove marketing material,
+sales figures and bestseller boasts, and pull quotes and author praise,
+respectively. `review.description_automatic_application` defaults to `false`.
+These fields remain in `config-v9`; bootstrap remains `review-bootstrap-v2`.
+Store-managed equivalents live in `owner-settings-v4.description_advice` as
+`remove_marketing`, `remove_sales_boasts`, `remove_praise`, and
+`automatic_application`. Policy → Curation saves them separately from its
+metadata-policy draft. File-managed preferences are read-only in the browser.
+
+`reviewer-access-v2` has independent optional `cover_observation` and
+`description_rewrite` mappings. Each selects contained Codex or one OpenRouter
+model; the latter share one secret while retaining independent availability.
+Settings → Reviewer discloses the exact model and destination before selection.
+OpenRouter description selection requires observed text/structured-output
+capabilities and bounded prompt, completion and request prices. Refresh is
+explicit; unavailable metadata does not disable the cover task. Contained
+usage identifies the exact profile/model and consumes its plan allowance;
+per-request monetary quantification is unavailable.
+
+A description request contains only canonical deduplicated provider-backed
+alternatives and the three cleanup choices, with pinned instruction/schema.
+It carries 1–256 alternatives, at most 16,384 characters each, within the
+contained request's 1 MiB limit. Oversize composition is rejected, not truncated.
+Owner choices, target-only text, titles, identifiers, paths and credentials
+are excluded. Output is exactly a bounded description and `ready` or
+`needs_review`. Every candidate is permanently `authored_content` and `advised`.
+
+Automatic OFF retains ordinary deterministic description fill authority.
+Automatic ON admits a current ready result through existing policy and write
+requirements, including replacement of a populated field. Owner-final choices
+win; in-flight effects are not raced. Same text produces a no-change record,
+not a PATCH or Attention item. Explicit owner selection references an immutable
+candidate and expected binding; arbitrary replacement text is not a command.
+Existing description choices and keep-current provide guarded reversal.
+
+Attempts persist before dispatch. Exact successful requests can reuse immutable
+text only with a fresh validated case binding. Failed or interrupted attempts
+never dispatch again silently; the owner can request bounded retry. New intent
+while preparation is paused remains pending until resume. Work accepted before
+pause retains the existing completion behavior.
+
+**Clean rebuild required:** the application database adds description attempts,
+candidates, bindings, selections and pending intent. Ordinary startup accepts
+only absent or exact-current schema; it does not adopt old owner/reviewer state.
+This F39 database change is separate from the earlier transport-only change.
+The qualification bridge remains a derived-report operation and leaves every
+new description table empty; it is not canonical-state adoption.

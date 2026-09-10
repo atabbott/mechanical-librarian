@@ -54,6 +54,7 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
+from tests.support.description_advice import _description_candidate
 from tests.support.proposal_evidence import (
     _claim,
     _exact_edition_cover,
@@ -74,6 +75,11 @@ from tests.support.provider_recovery_rail import (
     _series_provider,
 )
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
+
+_QUALIFIED_DESCRIPTION = (
+    "This complete provider description contains enough specific words to clear "
+    "the conservative quality floor while remaining ordinary readable book prose."
+)
 
 
 def _preview_field(report, field, option):
@@ -382,37 +388,6 @@ def _target_work_preview(report: MetadataReport):
         field: next(value for value in preview.fields if value.field == field)
         for field in ("description_fill", "series", "genres", "tags")
     }
-
-
-def _description_candidate(
-    provider: str,
-    identity: str,
-    work_identity: str,
-    description: str,
-) -> ProviderCandidate:
-    candidate = _target_work_candidate(provider, identity, work_identity)
-    return replace(
-        candidate,
-        claims=tuple(
-            _claim(
-                provider,
-                identity,
-                ClaimKind.DESCRIPTION,
-                description,
-                scope=ClaimScope.WORK,
-                order=claim.raw_order,
-            )
-            if claim.kind is ClaimKind.DESCRIPTION
-            else claim
-            for claim in candidate.claims
-        ),
-    )
-
-
-_QUALIFIED_DESCRIPTION = (
-    "This complete provider description contains enough specific words to clear "
-    "the conservative quality floor while remaining ordinary readable book prose."
-)
 
 
 def _description_result(proposal: ProposalSet) -> ProposalResult:

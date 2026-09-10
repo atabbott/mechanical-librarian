@@ -72,6 +72,9 @@ class _ReviewerAccess:
     def current_cover_observation_identity(self):
         return None
 
+    def current_description_rewrite_identity(self):
+        return None
+
     def revision_is_current(self, _revision: int) -> bool:
         return True
 

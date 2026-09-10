@@ -58,6 +58,7 @@ from mechanical_librarian.adapters.persistence.transactions import ConnectionSco
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
+from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
     FIELD_EFFECT_FAILURES,
     EffectConsent,
@@ -85,7 +86,12 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         record_field_effect_event: Callable[[FieldEffectOperation, str, int], None],
         field_effect_consent_envelope_identity: Callable[[str], str],
         field_effect_authority_source: Callable[
-            [HumanDecision | AutomaticDecision | CoverAutomaticDecision],
+            [
+                HumanDecision
+                | AutomaticDecision
+                | CoverAutomaticDecision
+                | AuthoredDescriptionDecision
+            ],
             dict[str, object],
         ],
         retire_stale_cover_consideration: Callable[
@@ -104,12 +110,12 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
 
     def record_current_field_effect_no_change(
         self,
-        decision: AutomaticDecision,
+        decision: AutomaticDecision | AuthoredDescriptionDecision,
         occurred_at: int,
     ) -> bool:
         """Atomically persist an equal automatic candidate without write authority."""
         if (
-            type(decision) is not AutomaticDecision
+            type(decision) not in (AutomaticDecision, AuthoredDescriptionDecision)
             or type(occurred_at) is not int
             or occurred_at < 0
         ):
@@ -143,6 +149,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 target_fingerprint=decision.target_fingerprint,
                 target_version=cast(str, source["target_version"]),
                 occurred_at=occurred_at,
+                origin=decision.origin
+                if type(decision) is AuthoredDescriptionDecision
+                else "automatic_policy",
             )
             inserted = self._connection.execute(
                 "INSERT OR IGNORE INTO field_effect_no_changes(decision_id,review_case_id,report_id,connection_name,library_name,work_id,destination,target_fingerprint,target_version,origin,occurred_at,event_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
@@ -179,6 +188,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     target_fingerprint=row[6],
                     target_version=row[7],
                     occurred_at=row[9],
+                    origin=row[8],
                 )
                 if (
                     row[8] != existing.origin

@@ -1351,3 +1351,41 @@ rejected, with Uvicorn proxy handling disabled. Setup uses the same boundary.
 Cookie creation/deletion and HSTS follow the canonical browser scheme, including
 body limits and other early failures. All other authentication, CSRF, request
 bounds, build checks and shutdown controls are unchanged.
+
+
+## Authored description advice
+
+F39 adds a closed description-only request to the existing contained and fixed
+OpenRouter transports. Provider text is untrusted data, never instructions or
+write authority. Projection omits owner decisions, target-only text, titles,
+identifiers, file paths and credentials; bounded canonical alternatives, three
+cleanup booleans, and pinned instruction/schema are the entire input. The
+response is bounded, duplicate-free structured JSON with one description and
+one closed disposition. There is no additional semantic classifier or model
+confidence authority. OpenRouter uses the exact selected model with
+`require_parameters:true` and `allow_fallbacks:false`; upstream data practices
+vary and are not verified by the application.
+
+An attempt is durable before transport starts, and transport holds no SQLite
+write transaction. Access revision, exact model/profile and request identity
+are distinct from case/report/proposal/target/policy/preferences admission
+identity. Publication, owner selection, automatic admission and guarded apply
+recheck currentness. A passive composition-owned bounded profile read checks
+the live contained model/profile without auth, transport or a second database.
+A verified changing Description effect retires only its original case binding;
+durable application history remains truthful after that binding becomes stale.
+Crash recovery interrupts ambiguous running attempts;
+only explicit bounded retry can request another call. Immutable candidates and
+decisions retain authored/advised provenance through stale and no-change states.
+Raw provider errors and streams never enter failure history.
+
+The default-OFF automatic preference does not suppress deterministic fill.
+Ready automatic advice still requires current policy, absence of owner-final
+choice, consent, backup, concurrency, read-back and audit. Pending competing
+authority is revoked transactionally; existing replacement blocking prevents
+racing an in-flight effect. Owner reversal uses ordinary field decisions and
+manual holds. Same-value selections use the existing no-change terminal path.
+Schema creation, exact object inventory, immutable triggers and cross-row
+validation enforce the clean-rebuild boundary. See the
+[configuration contract](../reference/configuration.md) and
+[reviewer-access decision](decisions/0062-owner-managed-reviewer-access.md).

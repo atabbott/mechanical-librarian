@@ -285,3 +285,86 @@ def test_an_audiobook_decision_applies_through_the_guarded_path():
             assert "verified" == service.apply(plan.plan_id).state
         assert settled == len(requests)
         repository.close()
+
+
+def test_description_advice_uses_real_persisted_admission_and_guarded_installed_lifecycle():
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from tests.support.description_advice import _guarded_application, _prepared
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        repository, store, binding, candidate, _ = _prepared(root)
+        decision = store.admit(
+            candidate.candidate_id, binding, "automatic_policy", "e" * 64, 11
+        )
+        attempt = store.begin_attempt(
+            candidate.request_identity,
+            binding,
+            candidate.engine,
+            candidate.model,
+            12,
+            lambda: store.binding_is_current(binding),
+            retry=True,
+        )
+        assert attempt is not None
+        assert store.start(attempt[0], 13, lambda: store.binding_is_current(binding))
+        assert (
+            store.read(binding.review_case_id)["selected_advice"]["candidate"][
+                "candidate_id"
+            ]
+            == candidate.candidate_id
+        )
+        authority = PersistedFieldEffectAuthority(repository)
+        snapshot = authority.resolve(decision)
+        service, target = _guarded_application(repository, root, authority)
+        operation = service.plan(
+            decision,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=snapshot.destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest="c" * 64,
+        )
+        assert operation is not None
+        target.seed(operation.plan)
+        result = service.apply(operation.plan.plan_id)
+        assert result.state == "verified"
+        assert target.read(operation.plan).value == candidate.output.description
+        assert service.apply(operation.plan.plan_id) == result
+        activity = repository.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=25
+        )
+        assert any(
+            event["state"] == "verified" and event["record"].get("advised") is True
+            for event in activity["events"]
+        )
+        assert (
+            store.finish(
+                attempt[0],
+                None,
+                14,
+                lambda: store.binding_is_current(binding),
+                failure="unavailable",
+            )
+            is False
+        )
+        assert store.read(binding.review_case_id)["application_outcome"] == "verified"
+        repository.close()
+        reopened = open_repository(root / "reports.sqlite", create=False)
+        advice = reopened.description_advice_store().read(binding.review_case_id)
+        assert advice["candidate"] is None
+        assert (
+            advice["selected_advice"]["candidate"]["candidate_id"]
+            == candidate.candidate_id
+        )
+        assert advice["application_outcome"] == "verified"
+        assert advice["failure"] == "unavailable"
+        assert advice["selection"]["decision_id"] == decision.decision_id
+        reopened.close()

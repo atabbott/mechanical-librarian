@@ -30,6 +30,9 @@ from mechanical_librarian.adapters.persistence.cover_considerations import (
 from mechanical_librarian.adapters.persistence.decisions import (
     SQLiteDecisionRepository,
 )
+from mechanical_librarian.adapters.persistence.description_advice import (
+    SQLiteDescriptionAdviceRepository,
+)
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     SQLiteFieldEffectActivityRepository,
 )
@@ -107,6 +110,10 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticSafetyState,
 )
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
+from mechanical_librarian.domain.description_advice import (
+    AuthoredDescriptionDecision,
+    DescriptionAdviceBinding,
+)
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -224,6 +231,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
         self._reviewer_access = ReviewerAccessStore(
             connection, self._setup_serialization_lock
+        )
+        self._description_advice = SQLiteDescriptionAdviceRepository(
+            connection,
+            lambda decision_id, at: self._revoke_field_effect_authority_in_transaction(
+                decision_id, at, required=False
+            ),
+            lambda case_id, destination, at, decision_id: (
+                self._set_field_effect_manual_hold(
+                    case_id, destination, at, decision_id
+                )
+            ),
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
@@ -343,6 +361,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_policy_reference=(lambda: self._current_cover_authority[0]),
             current_cover_replay_reference=(lambda: self._current_cover_authority[1]),
+            description_authority_value=self._description_advice.authority_value,
         )
         self._decisions = SQLiteDecisionRepository(
             connection,
@@ -410,6 +429,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     review_case_id, limit
                 )
             ),
+            description_advice=self._description_advice.read,
             current_cover_consideration_document=(
                 lambda review_case_id: self.current_cover_consideration_document(
                     review_case_id
@@ -497,13 +517,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._connection.create_function("ml_cover_consideration_current", 2, current)
 
     def field_effect_authority_source(
-        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
     ) -> dict[str, object]:
         return self._field_effect_activity.field_effect_authority_source(decision)
 
     def record_current_field_effect_no_change(
         self,
-        decision: AutomaticDecision,
+        decision: AutomaticDecision | AuthoredDescriptionDecision,
         occurred_at: int,
     ) -> bool:
         return self._field_effects.record_current_field_effect_no_change(
@@ -1229,6 +1253,14 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def get_review_case(self, review_case_id: str) -> str:
         return self._review_cases.get_review_case(review_case_id)
 
+    def description_advice_store(self) -> SQLiteDescriptionAdviceRepository:
+        return self._description_advice
+
+    def read_staged_description_preparation(
+        self, action: PipelineAction
+    ) -> tuple[str, str]:
+        return self._review_projections.read_staged_description_preparation(action)
+
     def read_staged_cover_preparation(
         self, action: PipelineAction
     ) -> tuple[str, str, bool] | None:
@@ -1774,6 +1806,22 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._cover_considerations.cover_consideration_history(
             review_case_id, limit
         )
+
+    def request_description_retry(
+        self, review_case_id: str, now: int
+    ) -> tuple[str, str]:
+        return self._description_advice.request_retry(review_case_id, now)
+
+    def record_authored_description_decision(
+        self,
+        candidate_id: str,
+        binding: DescriptionAdviceBinding,
+        idempotency_digest: str,
+        now: int,
+    ) -> str:
+        return self._description_advice.admit(
+            candidate_id, binding, "human", idempotency_digest, now
+        ).to_json()
 
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         return self._decisions.find_human_decision(idempotency_digest)

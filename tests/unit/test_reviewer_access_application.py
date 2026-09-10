@@ -23,6 +23,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterReviewerError,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+from mechanical_librarian.domain.reviewer_access import OpenRouterTaskSelection
 
 
 class _Auth:
@@ -97,6 +98,20 @@ class _OpenRouter:
             raise RuntimeError("typed provider failure")
         return "{}"
 
+    def probe_description(self):
+        from dataclasses import replace
+
+        return replace(
+            self.probe(),
+            observed_at=1,
+            prompt_price="0.000001",
+            completion_price="0.000002",
+            request_price="0",
+        )
+
+    def run_description(self, *args):
+        return self.run(*args)
+
     def close(self):
         self.calls.append(("close", self.model))
 
@@ -105,12 +120,9 @@ def _operations(
     *, auth_state: DeviceAuthStatus = "ready", openrouter_fail: bool = False
 ) -> tuple[ReviewerAccessOperations, _Auth, list[tuple[str, str]], list[str]]:
     connection = sqlite3.connect(":memory:", isolation_level=None)
-    connection.execute(
-        "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY CHECK(singleton=1),revision INTEGER NOT NULL,document TEXT NOT NULL)"
-    )
-    connection.execute(
-        "CREATE TABLE reviewer_access_secrets (field_id TEXT PRIMARY KEY,value TEXT NOT NULL)"
-    )
+    from mechanical_librarian.adapters.persistence.schema import _create_schema
+
+    _create_schema(connection)
     auth = _Auth(auth_state)
     openrouter_calls: list[tuple[str, str]] = []
     codex_calls: list[str] = []
@@ -438,3 +450,180 @@ def test_runner_construction_failure_preserves_selected_identity() -> None:
     assert caught.value.identity is not None
     assert caught.value.identity[:3] == (2, "openrouter", "example/model")
     assert "private provider detail" not in str(caught.value)
+
+
+def test_contained_description_disclosure_is_explicit_and_has_no_dispatch():
+    import hashlib
+
+    operations, auth, openrouter, codex = _operations()
+    disclosure = operations.describe_contained_description()
+    assert disclosure.model == "gpt-5.4"
+    assert disclosure.profile_sha256 == hashlib.sha256(b"codex-profile").hexdigest()
+    assert operations.read().description_mapping is None
+    assert auth.current_calls == 0
+    assert openrouter == []
+    assert codex == []
+
+
+def test_description_and_cover_models_preserve_siblings_and_reject_old_shared_snapshot():
+    operations, _, calls, _ = _operations()
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="first-secret", model="example/cover-a"
+    )
+    disclosed = operations.test_description_model("first-secret", "example/text-b")
+    assert disclosed.model == "example/text-b"
+    assert operations.read().revision == cover.revision
+    both = operations.configure_openrouter(
+        expected_revision=cover.revision,
+        api_key="first-secret",
+        model="example/text-b",
+        task="description_rewrite",
+    )
+    assert isinstance(both.mapping, OpenRouterTaskSelection)
+    assert both.mapping.model == "example/cover-a"
+    assert isinstance(both.description_mapping, OpenRouterTaskSelection)
+    assert both.description_mapping.model == "example/text-b"
+    original = operations.current_description_rewrite_identity()
+    assert original is not None
+    dispatch = operations.dispatch_description_rewrite()
+    assert dispatch.model == "example/text-b"
+    dispatch.close()
+    changed = operations.configure_openrouter(
+        expected_revision=both.revision,
+        api_key="replacement-secret",
+        model="example/cover-c",
+    )
+    assert changed.description_mapping == both.description_mapping
+    assert changed.description_metadata == both.description_metadata
+    assert operations.current_description_rewrite_identity() != original
+    assert not operations._repository.revision_is_current(original[0])
+    restored = operations.configure_openrouter(
+        expected_revision=changed.revision,
+        api_key="first-secret",
+        model="example/cover-a",
+    )
+    assert restored.description_mapping == both.description_mapping
+    assert operations.current_description_rewrite_identity() != original
+    cleared = operations.clear_openrouter(expected_revision=restored.revision)
+    assert cleared.mapping is None
+    assert cleared.description_mapping is None
+    assert cleared.description_metadata is None
+    assert not any(kind == "run" for kind, _ in calls)
+
+
+@pytest.mark.parametrize("next_engine", [None, "codex"])
+def test_description_deselection_discards_prices_but_preserves_cover(next_engine):
+    operations, _, _, _ = _operations(auth_state="usable")
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="secret", model="example/a"
+    )
+    both = operations.configure_openrouter(
+        expected_revision=cover.revision,
+        api_key="secret",
+        model="example/b",
+        task="description_rewrite",
+    )
+    saved = (
+        operations.select_none(
+            expected_revision=both.revision, task="description_rewrite"
+        )
+        if next_engine is None
+        else operations.select_codex(
+            expected_revision=both.revision, task="description_rewrite"
+        )
+    )
+    assert saved.mapping == cover.mapping
+    assert saved.description_metadata is None
+    cleared = operations.clear_openrouter(expected_revision=saved.revision)
+    assert cleared.mapping is None
+    assert cleared.description_mapping == saved.description_mapping
+    assert cleared.description_metadata is None
+
+
+def test_missing_description_prices_do_not_disable_cover_and_refresh_recovers():
+    from dataclasses import replace
+
+    operations, _, calls, _ = _operations()
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="secret", model="example/a"
+    )
+    both = operations.configure_openrouter(
+        expected_revision=cover.revision,
+        api_key="secret",
+        model="example/b",
+        task="description_rewrite",
+    )
+    factory = operations._openrouter_factory
+
+    class MissingPrices(_OpenRouter):
+        def probe_description(self):
+            return replace(super().probe_description(), prompt_price=None)
+
+    operations._openrouter_factory = lambda key, model: MissingPrices(key, model, calls)
+    unavailable = operations.refresh_openrouter("description_rewrite")
+    assert unavailable.mapping == both.mapping
+    assert unavailable.description_mapping == both.description_mapping
+    assert unavailable.description_metadata is None
+    assert unavailable.description is not None
+    assert unavailable.description.state == "model_unavailable"
+    assert unavailable.model_dump()["description"]["reason"] == "model_unavailable"
+    current = operations.read()
+    assert current.description is not None
+    assert current.description.state == "model_unavailable"
+    assert current.model_dump()["description"]["reason"] == "model_unavailable"
+    with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
+        operations.dispatch_description_rewrite()
+    cover_dispatch = operations.dispatch_cover_observation()
+    assert cover_dispatch.model == "example/a"
+    cover_dispatch.close()
+    operations._openrouter_factory = factory
+    recovered = operations.refresh_openrouter("description_rewrite")
+    assert recovered.description is not None
+    assert recovered.description.state == "usable"
+    assert recovered.description_metadata is not None
+    assert recovered.description_metadata.model == "example/b"
+    assert recovered.mapping == both.mapping
+    assert not any(kind == "run" for kind, _ in calls)
+
+
+def test_description_setup_can_reuse_saved_shared_key_without_resubmitting_it():
+    operations, _, _, _ = _operations()
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="saved-secret", model="example/a"
+    )
+    assert operations.test_description_model("", "example/b").model == "example/b"
+    both = operations.configure_openrouter(
+        expected_revision=cover.revision,
+        api_key="",
+        model="example/b",
+        task="description_rewrite",
+    )
+    assert both.mapping == cover.mapping
+    assert isinstance(both.description_mapping, OpenRouterTaskSelection)
+    assert both.description_mapping.model == "example/b"
+    assert operations._repository.openrouter_key() == "saved-secret"
+
+
+def test_description_pending_cancellation_preserves_configured_cover_task(tmp_path):
+    from tests.support.description_advice import _prepared
+
+    captured = []
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repository, _report, _decision, access, calls: (
+            captured.append((access, calls))
+        ),
+    )
+    access, calls = captured[0]
+    cover = access.select_codex(expected_revision=2, task="cover_observation")
+    disabled = access.select_none(
+        expected_revision=cover.revision, task="description_rewrite"
+    )
+    assert disabled.mapping == cover.mapping
+    store.consume_pending_if_unconfigured(binding.review_case_id)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_preparation_pending"
+    ).fetchone() == (0,)
+    assert access.read().mapping == cover.mapping
+    assert len(calls) == 1
+    repository.close()

@@ -24,6 +24,7 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     EffectConsent,
@@ -470,7 +471,10 @@ class ContinuousGuardedApplication:
 
     def _advance_schedule_cursor(
         self,
-        decision: AutomaticDecision | CoverAutomaticDecision | HumanDecision,
+        decision: AutomaticDecision
+        | CoverAutomaticDecision
+        | HumanDecision
+        | AuthoredDescriptionDecision,
         generation: int,
     ) -> None:
         with self._schedule_lock:
@@ -752,7 +756,7 @@ class ContinuousGuardedApplication:
             )
             try:
                 if (
-                    type(decision) is AutomaticDecision
+                    type(decision) in (AutomaticDecision, AuthoredDescriptionDecision)
                     and no_change is not None
                     and no_change(decision, self._clock())
                 ):
@@ -1577,10 +1581,17 @@ class ContinuousGuardedApplication:
     @staticmethod
     def _decision(
         document: str,
-    ) -> HumanDecision | AutomaticDecision | CoverAutomaticDecision:
+    ) -> (
+        HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision
+    ):
         raw = json.loads(document)
         if type(raw) is not dict:
             raise FieldEffectError("authority_binding")
+        if raw.get("schema_version") == "authored-description-decision-v1":
+            return AuthoredDescriptionDecision.from_json(document)
         if raw.get("schema_version") == "human-decision-v2":
             return HumanDecision.from_json(document)
         if raw.get("schema_version") == "automatic-decision-v1":

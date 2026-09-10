@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Configure optional description advice independently of cover review, with
+  editable cleanup preferences and automatic application off by default.
+  Authored text keeps its advised provenance through review, guarded writes,
+  reversal and history. Existing application state requires a clean rebuild
+  (#892).
+
 - A provider that restates one candidate identity with claims that disagree now
   fails closed as an ambiguous identity rather than a malformed response, and a
   provider cover whose work is unresolved is used only when its edition is one

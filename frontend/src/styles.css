@@ -1014,3 +1014,51 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .library-provider-group p { margin: 0.35rem 0 0; font-size: 0.72rem; line-height: 1.5; color: var(--soft); }
 .library-provider-summary { display: block; font-size: 0.7rem; line-height: 1.5; overflow-wrap: anywhere; color: var(--soft); }
 .automatic-withheld-reason { font-size: 0.78rem; line-height: 1.55; overflow-wrap: anywhere; }
+
+.description-advice-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.55; max-height:28rem; overflow:auto; }
+
+.description-advice-settings {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.description-advice-settings h3 {
+  margin: 0;
+  scroll-margin-top: 6rem;
+}
+.description-advice-settings p {
+  max-width: 75ch;
+  margin: 0.5rem 0;
+}
+.description-advice-settings fieldset {
+  display: grid;
+  gap: 0.25rem;
+  max-width: 48rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+}
+.description-advice-settings .settings-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 44px;
+  margin: 0;
+}
+.description-advice-settings input[type='checkbox'] {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+}
+
+.settings-reviewer h3 { margin:0; font-size:1.05rem; line-height:1.35; }
+.settings-reviewer h4 { margin:0; font-size:.9rem; line-height:1.4; }
+.settings-reviewer-actions,.settings-reviewer-suggestions,.settings-reviewer-suggestions li { display:grid; gap:.5rem; min-width:0; }
+.settings-reviewer-suggestions { margin:.75rem 0; padding:0; list-style:none; gap:1rem; }
+.settings-reviewer-suggestions button { justify-self:start; max-width:100%; overflow-wrap:anywhere; }
+.settings-reviewer-facts { display:grid; gap:.75rem; min-width:0; margin:.5rem 0; font-size:.8rem; line-height:1.5; }
+.settings-reviewer-facts dt { font-weight:650; }
+.settings-reviewer-facts dd { margin:.15rem 0 0; color:var(--soft); overflow-wrap:anywhere; }
+.settings-reviewer .settings-field-control { gap:.65rem; }

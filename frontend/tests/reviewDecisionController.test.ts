@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { AmbiguousMutationError, ApiError } from '../src/api/http'
+import { AmbiguousMutationError, ApiError, mapCaseDetail } from '../src/api/http'
 import {
   actionable,
   choiceAvailable,
@@ -8,6 +8,7 @@ import {
   retryableDecisionFailure,
 } from '../src/reviewDecisionController'
 import { detail } from './fixtures'
+import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 
 describe('review decision failure contract', () => {
   it('retries only the closed transient server outcomes', () => {
@@ -50,4 +51,21 @@ describe('review decision failure contract', () => {
     expect(choiceAvailable({ ...field, needsAttention: false })).toBe(true)
     expect(choiceAvailable({ ...field, editable: false, needsAttention: false })).toBe(false)
   })
+})
+
+it('keeps a current authored choice available without treating it as a provider action', () => {
+  const field = mapCaseDetail(descriptionAdviceFixture).fields.find(
+    (item) => item.destination === 'description',
+  )
+  if (!field?.descriptionAdvice) throw new Error('description fixture requires advice')
+  const authored = { ...field, decisionActions: [], needsAttention: false }
+  expect(choiceAvailable(authored)).toBe(true)
+  expect(actionable(authored)).toBe(false)
+  expect(
+    choiceAvailable({
+      ...authored,
+      descriptionAdvice: { ...field.descriptionAdvice, current: false },
+    }),
+  ).toBe(false)
+  expect(choiceAvailable({ ...authored, editable: false })).toBe(false)
 })

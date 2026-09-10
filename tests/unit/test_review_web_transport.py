@@ -110,7 +110,7 @@ def test_settings_file_authority_transport_is_private_and_locked(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v3",
+            "schema_version": "owner-settings-v4",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -182,7 +182,7 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
 ) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v3",
+            "schema_version": "owner-settings-v4",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}
@@ -1756,6 +1756,10 @@ def test_openapi_is_deterministic_and_secret_free(
         if operation.get("security") == [{"OwnerSession": []}]
     }
     assert protected_operations == {
+        ("post", "/api/v1/reviewer-access/description-model/contained"),
+        ("post", "/api/v1/reviewer-access/description-model/test"),
+        ("post", "/api/v1/review-cases/{review_case_id}/description-advice/retry"),
+        ("post", "/api/v1/review-cases/{review_case_id}/description-advice/selection"),
         ("get", "/api/v1/appearance"),
         ("get", "/api/v1/reviewer-access"),
         ("delete", "/api/v1/reviewer-access/codex"),
@@ -2440,3 +2444,48 @@ def test_raw_proxy_admission_is_exact(
         )
         is expected
     )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing-selection",
+        "missing-snapshot",
+        "binding",
+        "candidate",
+        "extra",
+        "outcome",
+    ],
+)
+def test_description_response_rejects_mixed_selected_snapshot(tmp_path, fault):
+    from copy import deepcopy
+
+    from pydantic import ValidationError
+
+    from mechanical_librarian.interfaces.web.app import _DescriptionAdviceResponse
+    from tests.support.description_advice import _prepared
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+    advice = store.read(binding.review_case_id)
+    assert _DescriptionAdviceResponse.model_validate(advice).selected_advice is not None
+    changed = deepcopy(advice)
+    if fault == "missing-selection":
+        changed["selection"] = None
+    elif fault == "missing-snapshot":
+        changed["selected_advice"] = None
+    elif fault == "binding":
+        changed["selected_advice"]["binding"]["access_revision"] += 1
+    elif fault == "candidate":
+        changed["selected_advice"]["candidate"]["candidate_id"] = (
+            "description_candidate_" + "f" * 64
+        )
+    elif fault == "extra":
+        changed["selected_advice"]["extra"] = True
+    else:
+        changed.update(
+            selection=None, selected_advice=None, application_outcome="verified"
+        )
+    with pytest.raises(ValidationError):
+        _DescriptionAdviceResponse.model_validate(changed)
+    repository.close()

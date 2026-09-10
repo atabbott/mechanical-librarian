@@ -17,6 +17,7 @@ import type {
   PolicyTransitionView,
   ShadowPostureView,
 } from '../api/http'
+import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
 import { Dropdown } from '../components/Dropdown'
 import { fieldLabel } from '../labels'
 import { policyRoute, useReviewContext } from '../router'
@@ -159,7 +160,7 @@ const fields: readonly FieldDefinition[] = [
     key: 'description_fill',
     label: 'Description',
     meaning:
-      'Use one applicable plain-text description without combining provider text; compare competing values by quality.',
+      'Deterministic selection uses one provider description. Optional description advice can separately rewrite or combine text.',
     options: ['safe_plain_text', 'google_visible_text'],
     optionLabels: {
       safe_plain_text: 'Safe plain text',
@@ -932,9 +933,15 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     : undefined
 
   useEffect(() => {
-    const frame = requestAnimationFrame(() =>
-      document.getElementById(`policy-${activeChapter}`)?.focus({ preventScroll: true }),
-    )
+    const frame = requestAnimationFrame(() => {
+      const descriptionLink =
+        activeChapter === 'curation' && window.location.hash === '#description-advice'
+      const target = document.getElementById(
+        descriptionLink ? 'description-advice-heading' : `policy-${activeChapter}`,
+      )
+      target?.focus({ preventScroll: true })
+      if (descriptionLink) target?.scrollIntoView({ block: 'start' })
+    })
     return () => cancelAnimationFrame(frame)
   }, [activeChapter])
 
@@ -1136,11 +1143,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               const qualified = automaticQualified(field, option, data.state.rich_qualification)
               const automaticAvailable = qualified && automaticAllowed
               const changed = fieldChanged(field)
-              return (
+              return [
                 <section
+                  key={field.key}
                   className={`cm-policy-field ${changed ? 'is-changed' : ''}`}
                   aria-label={field.label}
-                  key={field.key}
                 >
                   <header>
                     <span>
@@ -1271,8 +1278,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       </label>
                     </>
                   )}
-                </section>
-              )
+                </section>,
+                field.key === 'cover_order' ? (
+                  <DescriptionAdviceSettings key="description-advice" http={http} />
+                ) : null,
+              ]
             })}
           </div>
         </section>

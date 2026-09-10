@@ -97,7 +97,7 @@ def file_settings_projection(
     review = configuration.review
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v3",
+            "schema_version": "owner-settings-v4",
             "revision": 1,
             "connections": [
                 {"name": value.name, "endpoint": value.endpoint}
@@ -145,6 +145,12 @@ def file_settings_projection(
                 "library_polling_interval_seconds": review.library_polling_interval_seconds,
                 "graceful_shutdown_seconds": review.graceful_shutdown_seconds,
                 "diagnostic_timings_enabled": review.diagnostic_timings_enabled,
+            },
+            "description_advice": {
+                "remove_marketing": review.description_remove_marketing,
+                "remove_sales_boasts": review.description_remove_sales_boasts,
+                "remove_praise": review.description_remove_praise,
+                "automatic_application": review.description_automatic_application,
             },
             "cover_preferences": {
                 "avoid_promotional_text": review.cover_avoid_promotional_text,

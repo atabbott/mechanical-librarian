@@ -2,12 +2,12 @@
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The reviewer-access authority, `setup-state-v3`, `owner-settings-v3`,
+The reviewer-access authority, `setup-state-v3`, `owner-settings-v4`,
 `cover-consideration-v4`, `metadata-report-v39`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, #956, #965, #896, #888, #1000, #999, or #957.
+#749, #956, #965, #896, #888, #1000, #999, #957, or #892.
 
 The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed

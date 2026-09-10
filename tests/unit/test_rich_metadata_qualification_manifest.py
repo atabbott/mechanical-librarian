@@ -53,12 +53,14 @@ V21_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v21
 TRANSPORT_V21_MANIFEST = MANIFEST.with_name(
     "f20-rich-metadata-qualification-candidate-v21-local-transport.json"
 )
+V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v22.json"
+    "f20-rich-metadata-qualification-candidate-v23.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
+V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1541,7 +1543,7 @@ def test_provider_contract_rotation_binds_complete_sources_without_rescoring():
 
 def test_review_projection_successors_bind_current_sources_without_rescoring():
     rich = json.loads(V21_MANIFEST.read_text())
-    title = json.loads(LATEST_F19A_MANIFEST.read_text())
+    title = json.loads(V8_F19A_MANIFEST.read_text())
     prior_rich = json.loads(V20_MANIFEST.read_text())
     prior_title = json.loads(V7_F19A_MANIFEST.read_text())
     assert (
@@ -1549,8 +1551,8 @@ def test_review_projection_successors_bind_current_sources_without_rescoring():
         == "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff"
     )
     assert (
-        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
-        == F19A_QUALIFICATION_MANIFEST_SHA256
+        hashlib.sha256(V8_F19A_MANIFEST.read_bytes()).hexdigest()
+        == "77fd7323b01446306577865ebdb4b47f4fb34748021a89ffdca3fa4d51017335"
     )
     assert rich["schema"] == "f20-rich-metadata-qualification-candidate-v21"
     assert (
@@ -1740,7 +1742,7 @@ def test_v21_binds_transport_sources_without_rescoring_or_new_authority() -> Non
 def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure() -> (
     None
 ):
-    current = json.loads(LATEST_MANIFEST.read_bytes())
+    current = json.loads(V22_MANIFEST.read_bytes())
     primary = json.loads(V21_MANIFEST.read_bytes())
     transport = json.loads(TRANSPORT_V21_MANIFEST.read_bytes())
     assert current["schema"] == "f20-rich-metadata-qualification-candidate-v22"
@@ -1827,17 +1829,116 @@ def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure()
                 "current_byte_bindings"
             ][name]
         )
-    for bindings in (
-        sources,
-        provider["behavior_sources"],
-        projection["behavior_sources"],
-        additional,
-    ):
+    history = rotation["historical_reader_delta"]
+    assert history["measured_sha256"] == primary_sources[history["identity"]]
+    assert history["current_sha256"] == sources[history["identity"]]
+
+
+def test_f39_successors_preserve_history_and_exhaustive_live_source_closure() -> None:
+    prior = json.loads(V22_MANIFEST.read_bytes())
+    current = json.loads(LATEST_MANIFEST.read_bytes())
+    title_prior = json.loads(V8_F19A_MANIFEST.read_bytes())
+    title = json.loads(LATEST_F19A_MANIFEST.read_bytes())
+    assert (
+        hashlib.sha256(V22_MANIFEST.read_bytes()).hexdigest()
+        == "aacb6e2ebce0490f58b86c8069963445dcb470ffdd70283b5558dde082449103"
+    )
+    assert (
+        hashlib.sha256(V8_F19A_MANIFEST.read_bytes()).hexdigest()
+        == "77fd7323b01446306577865ebdb4b47f4fb34748021a89ffdca3fa4d51017335"
+    )
+    assert (
+        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
+        == F19A_QUALIFICATION_MANIFEST_SHA256
+    )
+    assert (
+        hashlib.sha256(LATEST_MANIFEST.read_bytes()).hexdigest()
+        == F20_QUALIFICATION_CANDIDATE_SHA256
+    )
+    assert (
+        title["prior_manifest_sha256"]
+        == hashlib.sha256(V8_F19A_MANIFEST.read_bytes()).hexdigest()
+    )
+    assert (
+        current["authority_rotation"]["prior_manifest_sha256"]
+        == hashlib.sha256(V22_MANIFEST.read_bytes()).hexdigest()
+    )
+    alias = V22_MANIFEST.with_name(
+        "f20-rich-metadata-qualification-candidate-v22-before-identity-diagnostics.json"
+    )
+    assert hashlib.sha256(alias.read_bytes()).hexdigest() == (
+        "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee"
+    )
+    assert current["authority_rotation"]["additional_prior_manifest_sha256"] == (
+        hashlib.sha256(alias.read_bytes()).hexdigest()
+    )
+    assert current["authority_rotation"]["additional_prior_manifest_path"] == (
+        "docs/reference/" + alias.name
+    )
+    assert (
+        json.loads(alias.read_bytes())["passing_automatic_options"]
+        == prior["passing_automatic_options"]
+    )
+    assert current["schema"] == "f20-rich-metadata-qualification-candidate-v23"
+    for key in set(title_prior) - {
+        "prior_manifest_sha256",
+        "review_projection_source_closure",
+    }:
+        assert title[key] == title_prior[key]
+    for key in set(prior) - {
+        "schema",
+        "authority_rotation",
+        "frozen_contract",
+        "review_projection_source_closure",
+    }:
+        assert current[key] == prior[key]
+    for key in set(prior["frozen_contract"]) - {"behavior_sources"}:
+        assert current["frozen_contract"][key] == prior["frozen_contract"][key]
+    assert (
+        current["review_projection_source_closure"]
+        == title["review_projection_source_closure"]
+    )
+    closure = current["authority_rotation"]["source_closure"]
+    assert closure["f20_option_outcomes_changed"] is False
+    assert closure["f20_scoring_inputs_changed"] is False
+    groups = (
+        (
+            current["frozen_contract"]["behavior_sources"],
+            prior["frozen_contract"]["behavior_sources"],
+            36,
+        ),
+        (
+            current["provider_contract_source_closure"]["behavior_sources"],
+            prior["provider_contract_source_closure"]["behavior_sources"],
+            15,
+        ),
+        (
+            current["review_projection_source_closure"]["behavior_sources"],
+            prior["review_projection_source_closure"]["behavior_sources"],
+            6,
+        ),
+        (
+            closure["current_byte_bindings"],
+            prior["authority_rotation"]["source_closure"]["current_byte_bindings"],
+            3,
+        ),
+    )
+    for bindings, predecessor, count in groups:
+        assert len(bindings) == count
+        assert set(bindings) == set(predecessor)
         for name, digest in bindings.items():
             assert (
                 hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
                 == digest
             )
-    history = rotation["historical_reader_delta"]
-    assert history["measured_sha256"] == primary_sources[history["identity"]]
-    assert history["current_sha256"] == sources[history["identity"]]
+    sources, predecessor, _ = groups[0]
+    assert closure["bound_source_classification"] == {
+        name: "unchanged"
+        if digest == predecessor[name]
+        else "authored_description_integration"
+        for name, digest in sources.items()
+    }
+    for manifest in (current, title):
+        projection = manifest["review_projection_source_closure"]
+        assert projection["fresh_scoring_run"] is False
+        assert projection["fresh_holdout_claim"] is False

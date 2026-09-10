@@ -77,6 +77,10 @@ class ReviewWebConfiguration:
     cover_avoid_promotional_text: bool = False
     cover_avoid_tie_in_branding: bool = False
     cover_prefer_minimal_composition: bool = False
+    description_remove_marketing: bool = True
+    description_remove_sales_boasts: bool = True
+    description_remove_praise: bool = True
+    description_automatic_application: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -120,6 +124,10 @@ class ReviewWebConfiguration:
                     self.cover_avoid_promotional_text,
                     self.cover_avoid_tie_in_branding,
                     self.cover_prefer_minimal_composition,
+                    self.description_remove_marketing,
+                    self.description_remove_sales_boasts,
+                    self.description_remove_praise,
+                    self.description_automatic_application,
                 )
             )
         ):

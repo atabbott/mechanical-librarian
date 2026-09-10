@@ -11,6 +11,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
+from mechanical_librarian.adapters.persistence.owner_settings import _settings_view
+from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
 )
@@ -1433,6 +1435,25 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     parsed = urlsplit(target)
     path = parsed.path
     query = parse_qs(parsed.query)
+    if path == "/api/v1/settings":
+        document = OwnerSettingsDocument.model_validate(
+            {
+                "schema_version": "owner-settings-v4",
+                "revision": 1,
+                "connections": [
+                    {"name": "primary", "endpoint": "https://library.invalid"}
+                ],
+                "libraries": [
+                    {
+                        "name": "ebooks",
+                        "connection": "primary",
+                        "library_id": "library",
+                        "media_kind": "ebook",
+                    }
+                ],
+            }
+        )
+        return _settings_view(document, {}).model_dump(mode="json")
     if path == "/api/v1/review-preparation":
         return {
             "schema_version": "review-preparation-v2",

@@ -118,6 +118,10 @@ def store_runtime_configuration(
         cover_avoid_promotional_text=document.cover_preferences.avoid_promotional_text,
         cover_avoid_tie_in_branding=document.cover_preferences.avoid_tie_in_branding,
         cover_prefer_minimal_composition=document.cover_preferences.prefer_minimal_composition,
+        description_remove_marketing=document.description_advice.remove_marketing,
+        description_remove_sales_boasts=document.description_advice.remove_sales_boasts,
+        description_remove_praise=document.description_advice.remove_praise,
+        description_automatic_application=document.description_advice.automatic_application,
     )
     return ApplicationConfiguration(
         connections=tuple(

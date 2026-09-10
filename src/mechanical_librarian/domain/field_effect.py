@@ -213,11 +213,14 @@ class FieldEffectNoChange:
         target_fingerprint: str,
         target_version: str,
         occurred_at: int,
+        origin: Literal["human", "automatic_policy"] = "automatic_policy",
     ) -> Self:
+        prefix = "human_decision_" if origin == "human" else "automatic_decision_"
         if (
-            type(decision_id) is not str
-            or not decision_id.startswith("automatic_decision_")
-            or _HEX.fullmatch(decision_id.removeprefix("automatic_decision_")) is None
+            origin not in {"human", "automatic_policy"}
+            or type(decision_id) is not str
+            or not decision_id.startswith(prefix)
+            or _HEX.fullmatch(decision_id.removeprefix(prefix)) is None
             or type(review_case_id) is not str
             or not review_case_id.startswith("review_case_")
             or _HEX.fullmatch(review_case_id.removeprefix("review_case_")) is None
@@ -243,7 +246,7 @@ class FieldEffectNoChange:
             "decision_id": decision_id,
             "destination": destination,
             "library": library,
-            "origin": "automatic_policy",
+            "origin": origin,
             "report_id": report_id,
             "review_case_id": review_case_id,
             "target_fingerprint": target_fingerprint,

@@ -5,17 +5,27 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import time
+from decimal import Decimal, InvalidOperation
 
 import httpx
 
 from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewRequest,
     admit_cover_review_request,
     canonical_json,
+    unique_json_object,
 )
 from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterAccountStatus,
     OpenRouterReviewerError,
     openrouter_profile,
+)
+from mechanical_librarian.domain.description_advice import (
+    DESCRIPTION_INSTRUCTION,
+    DESCRIPTION_OUTPUT_SCHEMA,
+    DescriptionAdviceInput,
+    DescriptionAdviceOutput,
 )
 from mechanical_librarian.domain.reviewer_access import OpenRouterTaskSelection
 
@@ -60,7 +70,12 @@ class OpenRouterReviewer:
         status, _reasoning_supported = self._probe_capabilities()
         return status
 
-    def _probe_capabilities(self) -> tuple[OpenRouterAccountStatus, bool]:
+    def probe_description(self) -> OpenRouterAccountStatus:
+        return self._probe_capabilities(description=True)[0]
+
+    def _probe_capabilities(
+        self, *, description: bool = False
+    ) -> tuple[OpenRouterAccountStatus, bool]:
         key = self._json_request("GET", _KEY_PATH, _MAX_KEY_RESPONSE)
         data = key.get("data")
         if type(data) is not dict or type(data.get("is_free_tier")) is not bool:
@@ -85,10 +100,27 @@ class OpenRouterReviewer:
             raise OpenRouterReviewerError("malformed_response")
         inputs = tuple(architecture["input_modalities"])
         outputs = tuple(architecture["output_modalities"])
-        if "image" not in inputs or "text" not in outputs:
+        if ("text" if description else "image") not in inputs or "text" not in outputs:
             raise OpenRouterReviewerError("model_text_only")
         if "structured_outputs" not in parameters:
             raise OpenRouterReviewerError("model_unavailable")
+        prices: list[str | None] = [None, None, None]
+        if description:
+            pricing = model.get("pricing")
+            if type(pricing) is not dict:
+                raise OpenRouterReviewerError("model_unavailable")
+            prices = []
+            for name in ("prompt", "completion", "request"):
+                value = pricing.get(name)
+                try:
+                    if type(value) is not str or not 1 <= len(value) <= 40:
+                        raise ValueError
+                    number = Decimal(value)
+                    if not number.is_finite() or not 0 <= number <= 1_000_000:
+                        raise ValueError
+                except (ValueError, InvalidOperation):
+                    raise OpenRouterReviewerError("model_unavailable") from None
+                prices.append(value)
         return (
             OpenRouterAccountStatus(
                 tier="free" if data["is_free_tier"] else "paid",
@@ -96,6 +128,10 @@ class OpenRouterReviewer:
                 input_modalities=inputs,
                 output_modalities=outputs,
                 structured_outputs=True,
+                observed_at=int(time.time()) if description else None,
+                prompt_price=prices[0],
+                completion_price=prices[1],
+                request_price=prices[2],
             ),
             "reasoning" in parameters,
         )
@@ -219,6 +255,72 @@ class OpenRouterReviewer:
             "status": "completed",
         }
         return canonical_json(envelope)
+
+    def run_description(
+        self, profile: bytes, instruction: bytes, packet: bytes, schema: bytes
+    ) -> str:
+        if profile != openrouter_profile(self._model):
+            raise OpenRouterReviewerError("profile_mismatch")
+        try:
+            request = ContainedReviewRequest(
+                instruction.decode("utf-8"),
+                packet.decode("utf-8"),
+                schema.decode("utf-8"),
+            )
+            if (
+                request.instruction != DESCRIPTION_INSTRUCTION
+                or request.output_schema != DESCRIPTION_OUTPUT_SCHEMA
+            ):
+                raise ValueError
+            DescriptionAdviceInput.model_validate_json(request.input_document)
+        except (ValueError, UnicodeError):
+            raise OpenRouterReviewerError("malformed_request") from None
+        self.probe_description()
+        response = self._json_request(
+            "POST",
+            _CHAT_PATH,
+            _MAX_CHAT_RESPONSE,
+            json_body={
+                "model": self._model,
+                "max_tokens": 8192,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": request.instruction
+                        + "\nSealed descriptions:\n"
+                        + request.input_document,
+                    }
+                ],
+                "provider": {"require_parameters": True, "allow_fallbacks": False},
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "description_rewrite",
+                        "strict": True,
+                        "schema": json.loads(request.output_schema),
+                    },
+                },
+            },
+        )
+        try:
+            choices = response["choices"]
+            if (
+                response.get("model") != self._model
+                or type(choices) is not list
+                or len(choices) != 1
+            ):
+                raise ValueError
+            content = choices[0]["message"]["content"]
+            if type(content) is not str or len(content.encode("utf-8")) > 65_536:
+                raise ValueError
+            result = DescriptionAdviceOutput.model_validate(
+                json.loads(content, object_pairs_hook=unique_json_object)
+            )
+        except (ValueError, TypeError, KeyError, IndexError):
+            raise OpenRouterReviewerError("malformed_response") from None
+        return canonical_json(
+            {"request_sha256": request.digest, "result": result.model_dump()}
+        )
 
     def _current_model(self) -> dict[str, object]:
         response = self._json_request("GET", _MODELS_PATH, _MAX_MODELS_RESPONSE)

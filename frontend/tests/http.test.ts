@@ -30,6 +30,9 @@ const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
   schema_version: 'reviewer-access-view-v1',
   revision: 3,
   mapping: null,
+  description_mapping: null,
+  description_metadata: null,
+  description: null,
   openrouter_key_configured: false,
   codex: {
     engine: 'codex',
@@ -2121,4 +2124,160 @@ describe('PageCsrfTokenStore', () => {
     await expect(store.renew()).resolves.toBe(renewedToken)
     expect(store.current()).toBe(renewedToken)
   })
+})
+
+it('maps an actual persisted authored description separately from provider alternatives', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const mapped = mapCaseDetail(payload)
+  const description = mapped.fields.find((field) => field.destination === 'description')
+  if (!description) throw new Error('description fixture requires its field')
+  expect(description.descriptionAdvice?.candidate?.provenance).toBe('authored_content')
+  expect(description.descriptionAdvice?.candidate?.advised).toBe(true)
+  expect(description.descriptionAdvice?.candidate?.output.description).toBe(
+    'Authored synthetic description.',
+  )
+  expect(description.descriptionAdvice?.current).toBe(true)
+})
+
+it('sends an ordinary chooser authored command only to the bound authored selection endpoint', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const field = mapCaseDetail(payload).fields.find((item) => item.destination === 'description')
+  if (!field?.descriptionAdvice?.candidate)
+    throw new Error('description fixture requires its candidate')
+  const advice = field.descriptionAdvice
+  const candidate = field.descriptionAdvice.candidate
+  const fetchMock = vi.fn<typeof fetch>(async () =>
+    Response.json({
+      schema_version: 'description-selection-ack-v1',
+      decision_id: 'human_decision_' + 'a'.repeat(64),
+      advised: true,
+      invalidation_sequences: [],
+    }),
+  )
+  const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+  await client.recordDecision('case-1', {
+    destination: 'description',
+    outcome: 'accept',
+    proposalId: field.proposalId,
+    targetFingerprint: field.targetFingerprint,
+    selectedValue: { kind: 'text', value: candidate.output.description },
+    idempotencyKey: 'owner-choice-idempotency',
+    authoredDescription: { candidateId: candidate.candidate_id, binding: advice.binding },
+  })
+  const call = fetchMock.mock.calls[0]
+  if (!call?.[1]) throw new Error('description request was not sent')
+  const [url, options] = call
+  expect(url).toBe('/api/v1/review-cases/case-1/description-advice/selection')
+  expect(JSON.parse(options.body as string)).toEqual({
+    candidate_id: candidate.candidate_id,
+    binding: advice.binding,
+  })
+  expect(new Headers(options.headers).get('idempotency-key')).toBe('owner-choice-idempotency')
+})
+
+it.each([undefined, 'applying', 'verified'])(
+  'rejects an unbound or invalid description application outcome %s',
+  async (outcome) => {
+    const { default: payload } = await import('./descriptionAdviceFixture.json')
+    const changed = {
+      ...payload,
+      fields: payload.fields.map((field) =>
+        field.destination === 'description'
+          ? {
+              ...field,
+              description_advice: { ...field.description_advice, application_outcome: outcome },
+            }
+          : field,
+      ),
+    }
+    expect(() => mapCaseDetail(changed)).toThrow(ApiError)
+  },
+)
+
+it.each([
+  { failure: ['invalid_output'] },
+  { failure: { failure: 'invalid_output' } },
+  { failure: 1 },
+])('rejects non-string description failure values without coercion: %j', async ({ failure }) => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const changed = {
+    ...payload,
+    fields: payload.fields.map((field) =>
+      field.destination === 'description'
+        ? { ...field, description_advice: { ...field.description_advice, failure } }
+        : field,
+    ),
+  }
+  expect(() => mapCaseDetail(changed)).toThrow(ApiError)
+})
+
+it.each(['selected', 'requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)(
+  'parses actual serialized retained selection during %s advice',
+  async (state) => {
+    const { default: base } = await import('./descriptionAdviceFixture.json')
+    const { default: retries } = await import('./descriptionAdviceRetryFixture.json')
+    const payload = {
+      ...base,
+      fields: base.fields.map((field) =>
+        field.destination === 'description'
+          ? { ...field, description_advice: retries[state] }
+          : field,
+      ),
+    }
+    const advice = mapCaseDetail(payload).fields.find(
+      (field) => field.destination === 'description',
+    )?.descriptionAdvice
+    expect(advice?.selection?.candidate_id).toBe(retries.selected.candidate.candidate_id)
+    expect(advice?.selected_advice?.current).toBe(true)
+    expect(advice?.state).toBe(retries[state].state)
+    if (state === 'succeeded')
+      expect(advice?.candidate?.candidate_id).not.toBe(advice?.selection?.candidate_id)
+  },
+)
+
+it.each([
+  'missing-snapshot',
+  'missing-selection',
+  'candidate',
+  'binding',
+  'shape',
+  'current',
+  'outcome',
+] as const)('rejects incoherent selected advice %s', async (fault) => {
+  const { default: base } = await import('./descriptionAdviceFixture.json')
+  const { default: retries } = await import('./descriptionAdviceRetryFixture.json')
+  const original = retries.requested
+  const selected = original.selected_advice
+  const advice = {
+    ...original,
+    ...(fault === 'missing-snapshot' ? { selected_advice: null } : {}),
+    ...(fault === 'missing-selection' ? { selection: null } : {}),
+    ...(fault === 'candidate'
+      ? {
+          selected_advice: {
+            ...selected,
+            candidate: {
+              ...selected.candidate,
+              candidate_id: `description_candidate_${'f'.repeat(64)}`,
+            },
+          },
+        }
+      : {}),
+    ...(fault === 'binding'
+      ? { selected_advice: { ...selected, binding: { ...selected.binding, access_revision: 99 } } }
+      : {}),
+    ...(fault === 'shape' ? { selected_advice: { ...selected, extra: true } } : {}),
+    ...(fault === 'current' ? { selected_advice: { ...selected, current: 'true' } } : {}),
+    ...(fault === 'outcome'
+      ? { selection: null, selected_advice: null, application_outcome: 'verified' }
+      : {}),
+  }
+  expect(() =>
+    mapCaseDetail({
+      ...base,
+      fields: base.fields.map((field) =>
+        field.destination === 'description' ? { ...field, description_advice: advice } : field,
+      ),
+    }),
+  ).toThrow(ApiError)
 })

@@ -53,10 +53,15 @@ export interface ReviewerEngineStatus {
   tier: 'free' | 'paid' | null
   host_headroom_bytes: number | null
 }
+export type DescriptionModelMetadata = Schema<'DescriptionModelMetadata'>
+export type ReviewerTask = 'cover_observation' | 'description_rewrite'
 export interface ReviewerAccessView {
   schema_version: 'reviewer-access-view-v1'
   revision: number
   mapping: { engine: 'codex' } | { engine: 'openrouter'; model: string } | null
+  description_mapping: ReviewerAccessView['mapping']
+  description_metadata: DescriptionModelMetadata | null
+  description: ReviewerEngineStatus | null
   openrouter_key_configured: boolean
   codex: ReviewerEngineStatus
   openrouter: ReviewerEngineStatus
@@ -315,6 +320,7 @@ export interface ChoiceContextView {
   recommendationReason: string
   selection: 'current' | 'proposed'
 }
+export type DescriptionAdviceView = Schema<'_DescriptionAdviceResponse'>
 export interface ReviewFieldView {
   classification: string
   classificationReason: string
@@ -342,6 +348,7 @@ export interface ReviewFieldView {
   provenance: readonly string[]
   preservationOnly: boolean
   corroborationSources: readonly string[]
+  descriptionAdvice?: DescriptionAdviceView | null
   coverConsideration?: CoverConsiderationView | null
 }
 export interface CoverObservationView {
@@ -438,6 +445,15 @@ export interface HistoryValueView {
   value: string | boolean | readonly string[] | readonly { name: string; sequence: string | null }[]
 }
 export type HistoryItemView =
+  | {
+      category: 'description'
+      outcome: string
+      state: string
+      model: string
+      engine: string
+      candidate: Schema<'DescriptionAdviceCandidate'> | null
+      selected: boolean
+    }
   | {
       category: 'owner'
       // What the recorded decision may go on to do. A decision retained from
@@ -706,6 +722,7 @@ export interface DecisionCommand {
   targetFingerprint: string
   idempotencyKey: string
   considerationId?: string
+  authoredDescription?: { candidateId: string; binding: Schema<'DescriptionAdviceBinding'> }
 }
 
 export interface ReviewHttp {
@@ -713,16 +730,22 @@ export interface ReviewHttp {
   getSettings(signal?: AbortSignal): Promise<SettingsView>
   writeSettings(value: SettingsWrite, signal?: AbortSignal): Promise<SettingsView>
   getReviewerAccess(signal?: AbortSignal): Promise<ReviewerAccessView>
-  refreshOpenRouter(signal?: AbortSignal): Promise<ReviewerAccessView>
+  refreshOpenRouter(signal?: AbortSignal, task?: ReviewerTask): Promise<ReviewerAccessView>
   configureOpenRouter(
-    value: { expected_revision: number; api_key: string; model: string },
+    value: { expected_revision: number; api_key: string; model: string; task?: ReviewerTask },
     signal?: AbortSignal,
   ): Promise<ReviewerAccessView>
+  describeContainedDescription(): Promise<{ model: string; profile_sha256: string }>
+  testDescriptionModel(
+    value: { expected_revision: number; api_key: string; model: string },
+    signal?: AbortSignal,
+  ): Promise<DescriptionModelMetadata>
   clearOpenRouter(expectedRevision: number, signal?: AbortSignal): Promise<ReviewerAccessView>
   selectReviewer(
     engine: 'codex' | null,
     expectedRevision: number,
     signal?: AbortSignal,
+    task?: ReviewerTask,
   ): Promise<ReviewerAccessView>
   startCodexDevice(expectedRevision: number, signal?: AbortSignal): Promise<CodexDeviceStartResult>
   getCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
@@ -750,7 +773,8 @@ export interface ReviewHttp {
     reviewCaseId: string,
     command: DecisionCommand,
     signal?: AbortSignal,
-  ): Promise<Schema<'_DecisionAcknowledgement'>>
+  ): Promise<Schema<'_DecisionAcknowledgement'> | Schema<'_DescriptionSelectionAcknowledgement'>>
+  retryDescriptionAdvice(reviewCaseId: string, signal?: AbortSignal): Promise<void>
   returnToAutomatic(reviewCaseId: string, destination: string, signal?: AbortSignal): Promise<void>
   getPolicyState(signal?: AbortSignal): Promise<PolicyStateView>
   getShadowPosture(signal?: AbortSignal): Promise<ShadowPostureView>
@@ -891,17 +915,42 @@ export class ReviewApiClient implements ReviewHttp {
   async getReviewerAccess(signal?: AbortSignal) {
     return mapReviewerAccess(await this.read('/api/v1/reviewer-access', signal))
   }
-  async refreshOpenRouter(signal?: AbortSignal) {
+  async refreshOpenRouter(signal?: AbortSignal, task?: ReviewerTask) {
     return mapReviewerAccess(
-      await this.mutate('/api/v1/reviewer-access/openrouter/refresh', {}, signal),
+      await this.mutate(
+        `/api/v1/reviewer-access/openrouter/refresh?task=${task ?? 'cover_observation'}`,
+        {},
+        signal,
+      ),
     )
   }
   async configureOpenRouter(
-    value: { expected_revision: number; api_key: string; model: string },
+    value: { expected_revision: number; api_key: string; model: string; task?: ReviewerTask },
     signal?: AbortSignal,
   ) {
     return mapReviewerAccess(
       await this.mutate('/api/v1/reviewer-access/openrouter', value, signal, undefined, 'PUT'),
+    )
+  }
+  async describeContainedDescription() {
+    const value = await this.mutate('/api/v1/reviewer-access/description-model/contained', {})
+    if (
+      !record(value) ||
+      typeof value.model !== 'string' ||
+      !value.model ||
+      typeof value.profile_sha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(value.profile_sha256)
+    ) {
+      throw new Error('Invalid contained description disclosure')
+    }
+    return { model: value.model, profile_sha256: value.profile_sha256 }
+  }
+  async testDescriptionModel(
+    value: { expected_revision: number; api_key: string; model: string },
+    signal?: AbortSignal,
+  ) {
+    return mapDescriptionMetadata(
+      await this.mutate('/api/v1/reviewer-access/description-model/test', value, signal),
     )
   }
   async clearOpenRouter(expectedRevision: number, signal?: AbortSignal) {
@@ -915,11 +964,16 @@ export class ReviewApiClient implements ReviewHttp {
       ),
     )
   }
-  async selectReviewer(engine: 'codex' | null, expectedRevision: number, signal?: AbortSignal) {
+  async selectReviewer(
+    engine: 'codex' | null,
+    expectedRevision: number,
+    signal?: AbortSignal,
+    task?: ReviewerTask,
+  ) {
     return mapReviewerAccess(
       await this.mutate(
         '/api/v1/reviewer-access/selection',
-        { engine, expected_revision: expectedRevision },
+        { engine, expected_revision: expectedRevision, ...(task ? { task } : {}) },
         signal,
         undefined,
         'PUT',
@@ -1017,6 +1071,20 @@ export class ReviewApiClient implements ReviewHttp {
     )
   }
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
+    if (command.authoredDescription) {
+      return schemaVersionOnly<Schema<'_DescriptionSelectionAcknowledgement'>>(
+        await this.mutate(
+          `/api/v1/review-cases/${encodeURIComponent(id)}/description-advice/selection`,
+          {
+            candidate_id: command.authoredDescription.candidateId,
+            binding: command.authoredDescription.binding,
+          },
+          signal,
+          { 'idempotency-key': command.idempotencyKey },
+        ),
+        'description_selection',
+      )
+    }
     const {
       idempotencyKey,
       proposalId,
@@ -1042,6 +1110,15 @@ export class ReviewApiClient implements ReviewHttp {
       ),
       'decision',
     )
+  }
+  async retryDescriptionAdvice(id: string, signal?: AbortSignal) {
+    const result = await this.mutate(
+      `/api/v1/review-cases/${encodeURIComponent(id)}/description-advice/retry`,
+      {},
+      signal,
+    )
+    if (!record(result) || result.queued !== true)
+      throw new ApiError(502, 'invalid_description_retry')
   }
   async returnToAutomatic(id: string, destination: string, signal?: AbortSignal) {
     await this.mutate(
@@ -1361,6 +1438,40 @@ const reviewerStatus = (value: unknown, engine: 'codex' | 'openrouter') => {
   )
 }
 
+const mapDescriptionMetadata = (value: unknown): DescriptionModelMetadata => {
+  if (
+    !record(value) ||
+    !exactKeys(value, [
+      'model',
+      'observed_at',
+      'prompt_price',
+      'completion_price',
+      'request_price',
+      'text_input',
+      'text_output',
+      'structured_outputs',
+    ]) ||
+    typeof value.model !== 'string' ||
+    !openRouterModel.test(value.model) ||
+    value.text_input !== true ||
+    value.text_output !== true ||
+    value.structured_outputs !== true ||
+    !Number.isSafeInteger(value.observed_at) ||
+    Number(value.observed_at) < 0 ||
+    !['prompt_price', 'completion_price', 'request_price'].every(
+      (key) =>
+        typeof value[key] === 'string' &&
+        value[key].length <= 40 &&
+        value[key].trim() !== '' &&
+        Number.isFinite(Number(value[key])) &&
+        Number(value[key]) >= 0 &&
+        Number(value[key]) <= 1000000,
+    )
+  )
+    throw new ApiError(502, 'invalid_description_metadata')
+  return value as unknown as DescriptionModelMetadata
+}
+
 export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
   if (
     !record(value) ||
@@ -1368,6 +1479,9 @@ export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
       'schema_version',
       'revision',
       'mapping',
+      'description_mapping',
+      'description_metadata',
+      'description',
       'openrouter_key_configured',
       'codex',
       'openrouter',
@@ -1422,6 +1536,27 @@ export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
     typeof value.data_use_caveat !== 'string'
   )
     throw new ApiError(502, 'invalid_reviewer_access_response')
+  if (
+    value.description !== null &&
+    (!record(value.description) ||
+      !reviewerStatus(
+        value.description,
+        value.description.engine === 'codex' ? 'codex' : 'openrouter',
+      ))
+  )
+    throw new ApiError(502, 'invalid_description_reviewer')
+  if (value.description_metadata !== null) mapDescriptionMetadata(value.description_metadata)
+  const mapping = value.description_mapping
+  if (!(
+    mapping === null ||
+    (record(mapping) &&
+      ((mapping.engine === 'codex' && exactKeys(mapping, ['engine'])) ||
+        (mapping.engine === 'openrouter' &&
+          exactKeys(mapping, ['engine', 'model']) &&
+          typeof mapping.model === 'string' &&
+          openRouterModel.test(mapping.model))))
+  ))
+    throw new ApiError(502, 'invalid_description_mapping')
   return value as unknown as ReviewerAccessView
 }
 
@@ -1509,7 +1644,15 @@ export const mapSettings = (value: unknown): SettingsView => {
     !record(value) ||
     (value.authority !== 'file' && value.authority !== 'store') ||
     !record(value.document) ||
-    value.document.schema_version !== 'owner-settings-v3' ||
+    value.document.schema_version !== 'owner-settings-v4' ||
+    !record(value.document.description_advice) ||
+    !exactKeys(value.document.description_advice, [
+      'remove_marketing',
+      'remove_sales_boasts',
+      'remove_praise',
+      'automatic_application',
+    ]) ||
+    !Object.values(value.document.description_advice).every((item) => typeof item === 'boolean') ||
     !Array.isArray(value.document.connections) ||
     !Array.isArray(value.document.providers) ||
     !Array.isArray(value.document.libraries) ||
@@ -2295,6 +2438,207 @@ export const mapAttention = (value: unknown): AttentionView => {
   }
 }
 
+const mapDescriptionCandidate = (value: unknown): Schema<'DescriptionAdviceCandidate'> | null => {
+  if (value === null) return null
+  if (
+    !record(value) ||
+    !exactKeys(value, [
+      'schema_version',
+      'candidate_id',
+      'attempt_id',
+      'request_identity',
+      'request_digest',
+      'instruction_digest',
+      'schema_digest',
+      'preferences_digest',
+      'profile_digest',
+      'engine',
+      'model',
+      'access_revision',
+      'output',
+      'provenance',
+      'advised',
+      'created_at',
+    ]) ||
+    value.schema_version !== 'description-advice-candidate-v1' ||
+    value.provenance !== 'authored_content' ||
+    value.advised !== true ||
+    typeof value.candidate_id !== 'string' ||
+    !/^description_candidate_[0-9a-f]{64}$/.test(value.candidate_id) ||
+    typeof value.attempt_id !== 'string' ||
+    !/^description_attempt_[0-9a-f]{32}$/.test(value.attempt_id) ||
+    !record(value.output) ||
+    !exactKeys(value.output, ['description', 'disposition']) ||
+    !['ready', 'needs_review'].includes(String(value.output.disposition)) ||
+    !['codex', 'openrouter'].includes(String(value.engine))
+  )
+    throw new ApiError(502, 'invalid_description_candidate')
+  boundedStringValue(value.output.description, 'description_text', 16384)
+  if (!String(value.output.description).trim()) throw new ApiError(502, 'invalid_description_text')
+  boundedStringValue(value.model, 'description_model', 256)
+  integerValue(value.created_at, 'description_created_at')
+  integerValue(value.access_revision, 'description_access_revision')
+  for (const name of [
+    'request_identity',
+    'request_digest',
+    'instruction_digest',
+    'schema_digest',
+    'preferences_digest',
+    'profile_digest',
+  ])
+    if (typeof value[name] !== 'string' || !/^[0-9a-f]{64}$/.test(value[name]))
+      throw new ApiError(502, 'invalid_description_digest')
+  return value as unknown as Schema<'DescriptionAdviceCandidate'>
+}
+const mapDescriptionBinding = (value: unknown): Schema<'DescriptionAdviceBinding'> => {
+  if (
+    !record(value) ||
+    !exactKeys(value, [
+      'review_case_id',
+      'report_id',
+      'proposal_set_id',
+      'target_fingerprint',
+      'policy_generation',
+      'access_revision',
+      'preferences_digest',
+    ])
+  )
+    throw new ApiError(502, 'invalid_description_binding')
+  for (const [name, prefix] of [
+    ['review_case_id', 'review_case_'],
+    ['report_id', 'report_'],
+    ['proposal_set_id', 'proposal_set_'],
+    ['target_fingerprint', ''],
+    ['preferences_digest', ''],
+  ] as const)
+    if (typeof value[name] !== 'string' || !new RegExp(`^${prefix}[0-9a-f]{64}$`).test(value[name]))
+      throw new ApiError(502, 'invalid_description_binding')
+  for (const name of ['policy_generation', 'access_revision'])
+    if (!Number.isSafeInteger(value[name]) || Number(value[name]) < 1)
+      throw new ApiError(502, 'invalid_description_binding')
+  return value as unknown as Schema<'DescriptionAdviceBinding'>
+}
+const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
+  if (value === null || value === undefined) return null
+  if (
+    !record(value) ||
+    !exactKeys(value, [
+      'state',
+      'failure',
+      'engine',
+      'model',
+      'attempt_id',
+      'current',
+      'candidate',
+      'binding',
+      'selection',
+      'selected_advice',
+      'application_outcome',
+    ]) ||
+    !['requested', 'running', 'succeeded', 'failed', 'interrupted'].includes(String(value.state)) ||
+    !(
+      value.failure === null ||
+      (typeof value.failure === 'string' &&
+        ['unavailable', 'invalid_output', 'interrupted'].includes(value.failure))
+    ) ||
+    !['codex', 'openrouter'].includes(String(value.engine)) ||
+    !record(value.binding)
+  )
+    throw new ApiError(502, 'invalid_description_advice')
+  if (
+    value.application_outcome !== null &&
+    (typeof value.application_outcome !== 'string' ||
+      !['verified', 'no_change_required'].includes(value.application_outcome) ||
+      value.selection === null)
+  )
+    throw new ApiError(502, 'invalid_description_application_outcome')
+  booleanValue(value.current, 'description_current')
+  boundedStringValue(value.model, 'description_model', 256)
+  if (
+    typeof value.attempt_id !== 'string' ||
+    !/^description_attempt_[0-9a-f]{32}$/.test(value.attempt_id)
+  )
+    throw new ApiError(502, 'invalid_description_attempt')
+  mapDescriptionBinding(value.binding)
+  const candidate = mapDescriptionCandidate(value.candidate)
+  if (
+    candidate &&
+    (candidate.attempt_id !== value.attempt_id ||
+      candidate.engine !== value.engine ||
+      candidate.model !== value.model)
+  )
+    throw new ApiError(502, 'invalid_description_candidate_binding')
+  if (
+    value.selection !== null &&
+    (!record(value.selection) ||
+      !exactKeys(value.selection, [
+        'schema_version',
+        'decision_id',
+        'candidate_id',
+        'binding',
+        'origin',
+        'resolved_policy_id',
+        'qualification_manifest_sha256',
+        'idempotency_digest',
+        'occurred_at',
+        'destination',
+        'outcome',
+        'application',
+      ]) ||
+      value.selection.schema_version !== 'authored-description-decision-v1' ||
+      !['human', 'automatic_policy'].includes(String(value.selection.origin)) ||
+      value.selection.destination !== 'description' ||
+      value.selection.outcome !== 'accept' ||
+      value.selection.application !== 'guarded')
+  )
+    throw new ApiError(502, 'invalid_description_selection')
+  if ((value.selection === null) !== (value.selected_advice === null))
+    throw new ApiError(502, 'invalid_description_selection')
+  let selectedCandidate: ReturnType<typeof mapDescriptionCandidate> = null
+  let selectedAdviceBinding: ReturnType<typeof mapDescriptionBinding> | null = null
+  if (value.selected_advice !== null) {
+    if (
+      !record(value.selected_advice) ||
+      !exactKeys(value.selected_advice, ['candidate', 'binding', 'current'])
+    )
+      throw new ApiError(502, 'invalid_description_selection')
+    booleanValue(value.selected_advice.current, 'description_selected_current')
+    selectedCandidate = mapDescriptionCandidate(value.selected_advice.candidate)
+    if (!selectedCandidate) throw new ApiError(502, 'invalid_description_selection')
+    selectedAdviceBinding = mapDescriptionBinding(value.selected_advice.binding)
+  }
+  if (record(value.selection)) {
+    const selection = value.selection
+    const selectedBinding = mapDescriptionBinding(selection.binding)
+    if (
+      typeof selection.decision_id !== 'string' ||
+      !new RegExp(
+        `^${selection.origin === 'human' ? 'human' : 'automatic'}_decision_[0-9a-f]{64}$`,
+      ).test(selection.decision_id) ||
+      typeof selection.candidate_id !== 'string' ||
+      !/^description_candidate_[0-9a-f]{64}$/.test(selection.candidate_id) ||
+      selection.candidate_id !== selectedCandidate?.candidate_id ||
+      selectedAdviceBinding === null ||
+      Object.keys(selectedBinding).some(
+        (key) =>
+          selectedBinding[key as keyof typeof selectedBinding] !==
+          selectedAdviceBinding[key as keyof typeof selectedBinding],
+      )
+    )
+      throw new ApiError(502, 'invalid_description_selection')
+    for (const name of ['qualification_manifest_sha256', 'idempotency_digest'])
+      if (typeof selection[name] !== 'string' || !/^[0-9a-f]{64}$/.test(selection[name]))
+        throw new ApiError(502, 'invalid_description_selection')
+    if (
+      typeof selection.resolved_policy_id !== 'string' ||
+      !/^resolved_policy_[0-9a-f]{64}$/.test(selection.resolved_policy_id)
+    )
+      throw new ApiError(502, 'invalid_description_selection')
+    integerValue(selection.occurred_at, 'description_selection_time')
+  }
+  return value as unknown as DescriptionAdviceView
+}
+
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (
     !record(value) ||
@@ -2382,6 +2726,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
         // `record(field)` above widens the entry to a string-keyed record, which
         // is how this reads a field the generated DTO does not declare;
         // mapCoverConsideration then validates the value in full.
+        descriptionAdvice: mapDescriptionAdvice(field.description_advice),
         coverConsideration: mapCoverConsideration(field.cover_consideration),
       }
     }),
@@ -2487,6 +2832,22 @@ export const mapHistory = (value: unknown): HistoryView => {
     items: value.items.map((item, index): HistoryItemView => {
       if (!record(item)) throw new ApiError(502, `invalid_history_item_${String(index)}`)
       const kind = stringValue(item.kind, `history_item_${String(index)}_kind`)
+      if (
+        kind === 'description_advice_recorded' ||
+        kind === 'description_selected' ||
+        kind === 'description_application'
+      ) {
+        integerValue(item.occurred_at, 'description_history_at')
+        return {
+          category: 'description',
+          outcome: kind,
+          state: boundedStringValue(item.state, 'description_state', 32),
+          model: boundedStringValue(item.model, 'description_model', 256),
+          engine: boundedStringValue(item.engine, 'description_engine', 32),
+          candidate: mapDescriptionCandidate(item.candidate),
+          selected: kind === 'description_selected',
+        }
+      }
       if (kind === 'human_decision_recorded' || kind === 'automatic_decision_recorded') {
         integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
         const outcome = stringValue(item.outcome, `history_item_${String(index)}_outcome`)

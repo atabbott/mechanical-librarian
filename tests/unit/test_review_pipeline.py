@@ -134,7 +134,7 @@ class _UnsizedFingerprint:
 def _install_settings_authority(repository: object) -> None:
     document = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v3",
+            "schema_version": "owner-settings-v4",
             "revision": 1,
             "connections": [
                 {"name": "primary", "endpoint": "https://library.example.invalid"}

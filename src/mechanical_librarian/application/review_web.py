@@ -24,6 +24,10 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.description_advice import (
+    AuthoredDescriptionDecision,
+    DescriptionAdviceBinding,
+)
 from mechanical_librarian.domain.field_effect import decision_value_kind
 from mechanical_librarian.domain.human_decision import (
     RECORDED_ONLY_REASON,
@@ -115,6 +119,7 @@ class CurrentReviewCaseSnapshot:
     cover_history: tuple[dict[str, object], ...] = ()
     current_cover_automatic_decision_id: str | None = None
     resolved_policy_document: str | None = None
+    description_advice: dict[str, object] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +198,18 @@ class ReviewLibraryStore(Protocol):
 
 
 class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
+    def request_description_retry(
+        self, review_case_id: str, now: int
+    ) -> tuple[str, str]: ...
+
+    def record_authored_description_decision(
+        self,
+        candidate_id: str,
+        binding: DescriptionAdviceBinding,
+        idempotency_digest: str,
+        now: int,
+    ) -> str: ...
+
     def find_human_decision(self, idempotency_digest: str) -> str | None: ...
     def record_human_decision(
         self,
@@ -367,6 +384,12 @@ class InspectCurrentReviewCase:
             # per-field projection later looks one up and may find none.
             decision: HumanDecision | None
             for document in snapshot.decision_documents:
+                if (
+                    json.loads(document).get("schema_version")
+                    == "authored-description-decision-v1"
+                ):
+                    AuthoredDescriptionDecision.from_json(document)
+                    continue
                 projected = _automatic_decision_projection(document)
                 if projected is None:
                     decision = HumanDecision.from_json(document)
@@ -498,6 +521,21 @@ class InspectCurrentReviewCase:
                 automatic_decision,
                 evidence,
             )
+            selected_advice = (
+                snapshot.description_advice.get("selected_advice")
+                if snapshot.description_advice is not None
+                else None
+            )
+            authored_selection = (
+                snapshot.description_advice.get("selection")
+                if destination == "description"
+                and snapshot.description_advice is not None
+                and isinstance(selected_advice, dict)
+                and selected_advice.get("current") is True
+                else None
+            )
+            if authored_selection is not None:
+                automatic_decision = None
             classification = classify_review_field(
                 attention_candidate=(
                     (
@@ -526,7 +564,9 @@ class InspectCurrentReviewCase:
                     )
                 ),
                 automatic_outcome=(
-                    "abstention"
+                    "candidate"
+                    if authored_selection is not None
+                    else "abstention"
                     if destination in snapshot.shadow_abstention_destinations
                     else None
                     if automatic_decision is None
@@ -535,7 +575,11 @@ class InspectCurrentReviewCase:
                 override_available=(
                     destination not in snapshot.override_blocked_destinations
                 ),
-                has_human_decision=decision is not None,
+                has_human_decision=decision is not None
+                or (
+                    type(authored_selection) is dict
+                    and authored_selection.get("origin") == "human"
+                ),
                 suspended=destination in snapshot.suspended_destinations,
                 cause=(
                     "automatic_safety_suspended"
@@ -617,6 +661,8 @@ class InspectCurrentReviewCase:
             }
             if destination == "cover" and self._cover_considerations is not None:
                 field["cover_consideration"] = current_cover_consideration
+            if destination == "description":
+                field["description_advice"] = snapshot.description_advice
             fields.append(field)
         fields.sort(key=lambda value: not value["needs_attention"])
         return (
@@ -766,55 +812,87 @@ class InspectCurrentReviewCase:
         }
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
-        detail, _, snapshot = self._read(review_case_id, limit)
+        _detail, report, snapshot = self._read(review_case_id, limit)
+        case = ReviewCase.create_from_data(json.loads(snapshot.case_document)["case"])
+        target_fields = canonical_target_fields(report.target.fields)
+        automatic_values: dict[
+            str, tuple[dict[str, object] | None, dict[str, object] | None]
+        ] = {}
         decisions: dict[str, dict[str, object]] = {}
         for document in snapshot.decision_documents:
+            if (
+                json.loads(document).get("schema_version")
+                == "authored-description-decision-v1"
+            ):
+                AuthoredDescriptionDecision.from_json(document)
+                continue
             automatic = _automatic_decision_projection(document)
             if automatic is not None:
                 decision_id = automatic["decision_id"]
                 destination = automatic["destination"]
-                if type(decision_id) is str and destination == "cover":
-                    decisions[decision_id] = automatic
+                assert type(decision_id) is str
+                decisions[decision_id] = automatic
+                if destination == "cover":
+                    continue
+                historical_decision = parse_automatic_authority(document)
+                if (
+                    historical_decision.review_case_id != case.review_case_id
+                    or historical_decision.report_id != case.report_id
+                    or historical_decision.report_id != report.report_id
+                    or historical_decision.proposal_set_id != case.proposal_set_id
+                    or historical_decision.target_fingerprint != case.target_fingerprint
+                    or historical_decision.target_fingerprint
+                    != report.target.fingerprint
+                ):
+                    continue
+                proposal = next(
+                    (
+                        value
+                        for value in case.proposals
+                        if value["proposal_id"] == historical_decision.proposal_id
+                        and value["destination"] == historical_decision.destination
+                    ),
+                    None,
+                )
+                if proposal is None:
+                    continue
+                current = target_fields[
+                    TargetDestination(historical_decision.destination)
+                ].to_data()
+                previous = (
+                    {
+                        "kind": decision_value_kind(historical_decision.destination),
+                        "value": current["value"],
+                    }
+                    if current["state"] == "value"
+                    else None
+                )
+                result = proposal["result"]
+                assert type(result) is dict
+                selected = (
+                    next(
+                        (
+                            value["value"]
+                            for value in result["alternatives"]
+                            if value["alternative_id"]
+                            == historical_decision.candidate_id
+                        ),
+                        None,
+                    )
+                    if historical_decision.outcome == "candidate"
+                    else previous
+                    if historical_decision.outcome == "keep_current"
+                    else None
+                )
+                if historical_decision.outcome == "candidate" and selected is None:
+                    continue
+                automatic_values[decision_id] = (previous, selected)
                 continue
             try:
                 decision = HumanDecision.from_json(document)
             except HumanDecisionError:
                 continue
             decisions[decision.decision_id] = _decision_projection(decision)
-        automatic_values: dict[
-            str, tuple[dict[str, object] | None, dict[str, object] | None]
-        ] = {}
-        fields = detail["fields"]
-        assert type(fields) is list
-        for field in fields:
-            assert type(field) is dict
-            automatic = field["automatic_decision"]
-            current = field["current"]
-            destination = field["destination"]
-            automatic_decision_id = (
-                automatic.get("decision_id") if type(automatic) is dict else None
-            )
-            if (
-                type(automatic) is not dict
-                or type(automatic_decision_id) is not str
-                or type(current) is not dict
-                or type(destination) is not str
-            ):
-                continue
-            value_kind = decision_value_kind(destination)
-            previous = (
-                {"kind": value_kind, "value": current["value"]}
-                if current.get("state") == "value"
-                else None
-            )
-            selected = (
-                cast(dict[str, object], automatic.get("selected_value"))
-                if automatic.get("outcome") == "candidate"
-                else previous
-                if automatic.get("outcome") == "keep_current"
-                else None
-            )
-            automatic_values[automatic_decision_id] = (previous, selected)
         history_items = []
         for raw in snapshot.history:
             item = dict(raw)
@@ -839,6 +917,9 @@ class InspectCurrentReviewCase:
                 joined = (
                     automatic_values.get(decision_id)
                     if type(decision_id) is str
+                    and item.get("review_case_id") == case.review_case_id
+                    and item.get("destination")
+                    == decisions.get(decision_id, {}).get("destination")
                     else None
                 )
                 item["previous_value"], item["selected_value"] = joined or (
@@ -901,6 +982,37 @@ class RecordHumanDecision:
         self._repository = repository
         self._clock = clock
         self._timing = timing or StageTimer(None)
+
+    def retry_description(self, review_case_id: str) -> tuple[str, str]:
+        try:
+            return self._repository.request_description_retry(
+                review_case_id, self._clock()
+            )
+        except ValueError as error:
+            raise ReviewWebError("stale") from error
+        except Exception as error:
+            raise ReviewWebError("persistence") from error
+
+    def select_description(
+        self,
+        review_case_id: str,
+        candidate_id: str,
+        binding: DescriptionAdviceBinding,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        if binding.review_case_id != review_case_id:
+            raise ReviewWebError("stale")
+        digest = HumanDecision.idempotency_digest_for(idempotency_key)
+        try:
+            document = self._repository.record_authored_description_decision(
+                candidate_id, binding, digest, self._clock()
+            )
+        except ValueError as error:
+            raise ReviewWebError("stale") from error
+        except Exception as error:
+            raise ReviewWebError("persistence") from error
+        decision = AuthoredDescriptionDecision.from_json(document)
+        return {"decision_id": decision.decision_id, "advised": True}
 
     def run(
         self,
@@ -2277,9 +2389,17 @@ def _library_item(
         case = None
     else:
         case, report = _case_and_report(case_document, report_document)
-    decisions = set()
+    decisions: set[str] = set()
     automatic_outcomes: dict[str, str] = {}
     for document in decision_documents:
+        if (
+            json.loads(document).get("schema_version")
+            == "authored-description-decision-v1"
+        ):
+            authored = AuthoredDescriptionDecision.from_json(document)
+            decisions.add(authored.destination)
+            automatic_outcomes[authored.destination] = "candidate"
+            continue
         automatic = _automatic_decision_projection(document)
         if automatic is None:
             decision = HumanDecision.from_json(document)

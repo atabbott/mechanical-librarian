@@ -18,6 +18,7 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
+from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -161,11 +162,15 @@ class FakeAuthorityCurrentness:
     def __init__(self) -> None:
         self.revoked: set[str] = set()
         self.automatic_values: dict[str, object] = {}
+        self.authored_values: dict[str, object] = {}
         self.bindings: dict[str, AuthoritySnapshot] = {}
 
     def bind(
         self,
-        decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
         *,
         connection: str,
         library: str,
@@ -175,6 +180,8 @@ class FakeAuthorityCurrentness:
     ) -> None:
         if type(decision) is HumanDecision and decision.outcome == "accept":
             value: object = decision.selected_value
+        elif type(decision) is AuthoredDescriptionDecision:
+            value = self.authored_values[decision.decision_id]
         elif (
             type(decision)
             in (
@@ -199,7 +206,11 @@ class FakeAuthorityCurrentness:
         )
 
     def resolve(
-        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
     ) -> AuthoritySnapshot:
         return self.bindings[decision.decision_id]
 

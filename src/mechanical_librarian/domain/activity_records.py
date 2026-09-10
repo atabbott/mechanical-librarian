@@ -329,6 +329,48 @@ def readable_activity_event(
         change, facts = _write_facts(record, destination, origin, state, failure)
     elif source_kind == "human_decision":
         change, facts = _decision_facts(record, destination, state, report)
+    elif source_kind == "description_preparation":
+        description = {
+            "requested": "Description advice requested",
+            "running": "Preparing description advice",
+            "succeeded": "Description advice prepared for review",
+            "failed": "Description advice could not be prepared",
+            "interrupted": "Description advice preparation interrupted",
+        }.get(state, "Description advice recorded")
+        change = ReadableChange(description, description)
+        facts = [
+            {
+                "label": "Application",
+                "value": "Preparation grants no write authority. Review current Description choices in Library.",
+            }
+        ]
+        if state in {"failed", "interrupted"}:
+            facts.append(
+                {
+                    "label": "Retry",
+                    "value": "Request another attempt from Description in Library; no automatic retry.",
+                }
+            )
+    elif source_kind == "description_decision":
+        change = ReadableChange(
+            "Advised description selected",
+            "Advised description queued under existing write requirements",
+        )
+        selected = record.get("selected_value")
+        facts = [
+            {
+                "label": "Selected description",
+                "value": value_text(
+                    "description",
+                    selected.get("value") if type(selected) is dict else None,
+                ),
+            },
+            {"label": "Chosen by", "value": chooser_label(origin)},
+            {
+                "label": "Application",
+                "value": "Queued under existing write requirements; no write is implied by this selection",
+            },
+        ]
     elif source_kind == "automatic_decision":
         change, facts = _automatic_facts(record, destination, report)
     elif source_kind == "field_effect_no_change":
@@ -386,6 +428,16 @@ def readable_activity_event(
     else:
         change = ReadableChange("Recorded", "Recorded")
         facts = [{"label": "Chosen by", "value": chooser_label(origin)}]
+    if record.get("advised") is True:
+        facts.extend(
+            [
+                {"label": "Provenance", "value": "Advised · Authored content"},
+                {
+                    "label": "Adviser",
+                    "value": f"{record.get('engine')} · {record.get('model')}",
+                },
+            ]
+        )
     event["category"] = _CATEGORIES.get(
         cast(str, event.get("event_type", "unknown")), "recovery"
     )

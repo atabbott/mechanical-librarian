@@ -2,7 +2,8 @@ import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiError } from '../src/api/http'
+import { ApiError, mapCaseDetail } from '../src/api/http'
+import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { normalizeDetailSearch } from '../src/router'
 import type { AttentionView, CaseDetailView, ReviewHttp } from '../src/api/http'
 import { createHttp, detail, renderRoute } from './fixtures'
@@ -922,3 +923,69 @@ describe('bounded diagnostic return context', () => {
     }
   })
 })
+
+it.each(['evidence', 'history'])(
+  'keeps %s diagnostic-only while retaining authored history',
+  async (subview) => {
+    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const candidate = authored.fields.find((field) => field.destination === 'description')
+      ?.descriptionAdvice?.candidate
+    if (!candidate) throw new Error('description fixture requires its candidate')
+    const http = createHttp()
+    http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
+    http.getHistory = vi.fn(async () => ({
+      items: [
+        {
+          category: 'description' as const,
+          outcome: 'description_advice_recorded',
+          state: 'succeeded',
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate,
+          selected: false,
+        },
+        {
+          category: 'description' as const,
+          outcome: 'description_selected',
+          state: 'superseded',
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate,
+          selected: true,
+        },
+        {
+          category: 'description' as const,
+          outcome: 'description_application',
+          state: 'verified',
+          engine: candidate.engine,
+          model: candidate.model,
+          candidate,
+          selected: false,
+        },
+      ],
+    }))
+    renderRoute(`/review/case-1?field=description&subview=${subview}`, http)
+    expect(await screen.findByRole('heading', { level: 1, name: authored.title })).toBeVisible()
+    expect(
+      screen.queryByRole('button', { name: /Choose advised|Retry description|Use advised/ }),
+    ).toBeNull()
+    expect(screen.queryByRole('article', { name: 'Advised description' })).toBeNull()
+    if (subview === 'history') {
+      expect(
+        await screen.findByText('Applied and verified in the library.', { exact: false }),
+      ).toBeVisible()
+      expect(
+        screen.getByText('This authored selection was superseded by a later decision.', {
+          exact: false,
+        }),
+      ).toBeVisible()
+      expect(
+        screen.getAllByRole('heading', { name: 'Advised description · Authored content' }),
+      ).toHaveLength(3)
+    } else {
+      await waitFor(() => expect(http.getEvidence).toHaveBeenCalled())
+      expect(screen.queryByText(candidate.output.description)).toBeNull()
+      expect(http.getHistory).not.toHaveBeenCalled()
+    }
+  },
+)

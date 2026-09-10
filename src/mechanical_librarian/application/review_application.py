@@ -51,6 +51,7 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import (
@@ -422,9 +423,18 @@ class ReviewApplication:
         self._reviewer_access = reviewer_access
         if reviewer_access is not None:
             reviewer_access.attach_serialization(self.serialized)
+            reviewer_access.attach_changes(self._reviewer_changed)
         self._settings_activation = settings_activation
         self._first_boot = first_boot
         self._acknowledge_first_boot = acknowledge_first_boot
+
+    def _reviewer_changed(self) -> None:
+        if self._preparation is not None:
+            for connection, library, *_ in self._preparation.libraries:
+                self._preparation.request(connection, library)
+        self._updates.publish("preparation")
+        self._updates.publish("case")
+        self._updates.publish("library")
 
     @property
     def updates(self) -> LiveUpdateChannel:
@@ -827,6 +837,38 @@ class ReviewApplication:
         # could not finish, another tab's decision -- reaches it unchanged.
         # This is a correlation token on the command's own response, not state
         # on the stream: the frame contract stays sequence, topic and subject.
+        return {
+            **result,
+            "invalidation_sequences": [
+                self._updates.publish("case", review_case_id),
+                self._updates.publish("library", review_case_id),
+                self._updates.publish("activity"),
+            ],
+        }
+
+    def retry_description_advice(self, review_case_id: str) -> dict[str, object]:
+        connection, library = self.serialized(
+            lambda: self._decisions.retry_description(review_case_id)
+        )
+        if self._preparation is not None:
+            self._preparation.request(connection, library)
+        self._updates.publish("case", review_case_id)
+        return {"queued": True}
+
+    def select_description_advice(
+        self,
+        review_case_id: str,
+        candidate_id: str,
+        binding: DescriptionAdviceBinding,
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        result = self.serialized(
+            lambda: self._decisions.select_description(
+                review_case_id, candidate_id, binding, idempotency_key
+            )
+        )
+        if isinstance(self._field_application, ContinuousGuardedApplication):
+            self._field_application.wake()
         return {
             **result,
             "invalidation_sequences": [

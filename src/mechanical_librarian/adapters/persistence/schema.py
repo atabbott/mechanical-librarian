@@ -29,6 +29,9 @@ from urllib.parse import quote
 from mechanical_librarian.adapters.persistence.binding import (
     _validate_connection_binding,
 )
+from mechanical_librarian.adapters.persistence.description_advice import (
+    validate_description_history,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _validate_field_effect_state,
@@ -530,10 +533,10 @@ _FIELD_EFFECTS_SQL = (
 )
 _FIELD_EFFECT_NO_CHANGES_SQL = (
     "CREATE TABLE field_effect_no_changes ("
-    "decision_id TEXT PRIMARY KEY NOT NULL REFERENCES automatic_decisions(decision_id), "
+    "decision_id TEXT PRIMARY KEY NOT NULL, "
     "review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, work_id TEXT NOT NULL, destination TEXT NOT NULL, "
-    "target_fingerprint TEXT NOT NULL, target_version TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin='automatic_policy'), "
+    "target_fingerprint TEXT NOT NULL, target_version TEXT NOT NULL, origin TEXT NOT NULL CHECK(origin IN ('human','automatic_policy')), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), event_id TEXT NOT NULL UNIQUE) WITHOUT ROWID"
 )
 _FIELD_EFFECT_ACTIONS_SQL = (
@@ -673,7 +676,27 @@ _SETUP_AUTOMATIC_SAFETY_ROW = (1, 0, None, "[]", 0)
 _SETUP_FIELD_EFFECT_CONTROL_ROW = (1, 0, 0)
 
 
+_DESCRIPTION_ADVICE_TABLES = {
+    "description_advice_attempts": "CREATE TABLE description_advice_attempts (attempt_id TEXT PRIMARY KEY NOT NULL, request_identity TEXT NOT NULL CHECK(length(request_identity)=64), binding_document TEXT NOT NULL CHECK(length(CAST(binding_document AS BLOB)) BETWEEN 2 AND 4096), engine TEXT NOT NULL CHECK(engine IN ('codex','openrouter')), model TEXT NOT NULL CHECK(length(model) BETWEEN 1 AND 256), state TEXT NOT NULL CHECK(state IN ('requested','running','succeeded','failed','interrupted')), failure TEXT CHECK(failure IN ('unavailable','invalid_output','interrupted')), created_at INTEGER NOT NULL CHECK(created_at>=0), updated_at INTEGER NOT NULL CHECK(updated_at>=created_at))",
+    "description_advice_candidates": "CREATE TABLE description_advice_candidates (candidate_id TEXT PRIMARY KEY NOT NULL, attempt_id TEXT NOT NULL REFERENCES description_advice_attempts(attempt_id), request_identity TEXT NOT NULL CHECK(length(request_identity)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))",
+    "current_description_advice": "CREATE TABLE current_description_advice (review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), attempt_id TEXT NOT NULL REFERENCES description_advice_attempts(attempt_id), candidate_id TEXT REFERENCES description_advice_candidates(candidate_id), binding_document TEXT NOT NULL CHECK(length(CAST(binding_document AS BLOB)) BETWEEN 2 AND 4096))",
+    "description_decisions": "CREATE TABLE description_decisions (decision_id TEXT PRIMARY KEY NOT NULL, review_case_id TEXT NOT NULL REFERENCES review_cases(review_case_id), candidate_id TEXT NOT NULL REFERENCES description_advice_candidates(candidate_id), idempotency_digest TEXT NOT NULL UNIQUE CHECK(length(idempotency_digest)=64), document TEXT NOT NULL CHECK(length(CAST(document AS BLOB)) BETWEEN 2 AND 16384))",
+    "current_description_decisions": "CREATE TABLE current_description_decisions (review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), decision_id TEXT NOT NULL REFERENCES description_decisions(decision_id))",
+    "description_preparation_pending": "CREATE TABLE description_preparation_pending (review_case_id TEXT PRIMARY KEY NOT NULL REFERENCES review_cases(review_case_id), retry INTEGER NOT NULL CHECK(retry IN (0,1)), requested_at INTEGER NOT NULL CHECK(requested_at>=0))",
+}
+_DESCRIPTION_ADVICE_TRIGGERS = {
+    f"{table}_no_{operation}": f"CREATE TRIGGER {table}_no_{operation} BEFORE {operation.upper()} ON {table} BEGIN SELECT RAISE(ABORT, 'description history is immutable'); END"
+    for table in ("description_advice_candidates", "description_decisions")
+    for operation in ("update", "delete")
+}
+
+
 def _create_schema(connection: sqlite3.Connection) -> None:
+    for statement in (
+        *_DESCRIPTION_ADVICE_TABLES.values(),
+        *_DESCRIPTION_ADVICE_TRIGGERS.values(),
+    ):
+        connection.execute(statement)
     """Build the exact schema and seed its singleton rows.
 
     The statement order below is load-bearing. `sqlite_master` row order
@@ -830,6 +853,19 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
     """Return the one exact-current SQLite object contract."""
     return sorted(
         (
+            *(
+                ("table", name, statement)
+                for name, statement in _DESCRIPTION_ADVICE_TABLES.items()
+            ),
+            *(
+                ("index", f"sqlite_autoindex_{name}_1", None)
+                for name in _DESCRIPTION_ADVICE_TABLES
+            ),
+            ("index", "sqlite_autoindex_description_decisions_2", None),
+            *(
+                ("trigger", name, statement)
+                for name, statement in _DESCRIPTION_ADVICE_TRIGGERS.items()
+            ),
             ("index", "sqlite_autoindex_current_metadata_reports_1", None),
             ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
             ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
@@ -1198,6 +1234,10 @@ def _validate_schema_contents_without_review_field_facts(
         "PRAGMA integrity_check"
     ).fetchone() != ("ok",):
         raise MetadataReportError("database is unavailable or incompatible")
+    try:
+        validate_description_history(connection)
+    except ValueError as error:
+        raise MetadataReportError("database is unavailable or incompatible") from error
     _validate_metadata_policy_documents(connection)
     _validate_cover_selection_authorities(connection)
     _validate_field_effect_state(connection)

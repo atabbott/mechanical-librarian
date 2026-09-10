@@ -92,3 +92,49 @@ def _invoke_cover(
 
 
 __all__ = ["run_cover_packet_reviewer"]
+
+
+def run_description_reviewer(
+    profile_payload: bytes,
+    instruction_payload: bytes,
+    packet_payload: bytes,
+    schema_payload: bytes,
+    image_payloads: tuple[tuple[str, str, bytes], ...],
+) -> str:
+    """Use the contained engine's existing image-free port for the closed task."""
+    from mechanical_librarian.application.contained_reviewer_contract import (
+        ContainedReviewRequest,
+    )
+    from mechanical_librarian.domain.description_advice import (
+        DESCRIPTION_INSTRUCTION,
+        DESCRIPTION_OUTPUT_SCHEMA,
+        DescriptionAdviceInput,
+    )
+
+    request = ContainedReviewRequest(
+        instruction_payload.decode("utf-8"),
+        packet_payload.decode("utf-8"),
+        schema_payload.decode("utf-8"),
+    )
+    if (
+        image_payloads
+        or request.instruction != DESCRIPTION_INSTRUCTION
+        or request.output_schema != DESCRIPTION_OUTPUT_SCHEMA
+    ):
+        raise ValueError("invalid description request")
+    DescriptionAdviceInput.model_validate_json(request.input_document)
+    reviewer = ContainedReviewerAdapter(
+        load_contained_reviewer_profile_bytes(profile_payload)
+    )
+    dispatched = False
+
+    def record_dispatch(_pid: int, _pgid: int, _start_token: str) -> None:
+        nonlocal dispatched
+        dispatched = True
+
+    result = reviewer.run(request, record_dispatch)
+    if not dispatched:
+        raise RuntimeError("contained reviewer did not record dispatch")
+    return canonical_json(
+        {"request_sha256": request.digest, "result": json.loads(result.document)}
+    )

@@ -83,6 +83,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         get_review_case_report: Callable[[str], str],
         get_review_case_decisions: Callable[[str], tuple[str, ...]],
         get_review_case_history: Callable[[str, int], tuple[dict[str, object], ...]],
+        description_advice: Callable[[str], dict[str, object] | None],
         current_cover_consideration_document: Callable[[str], str | None],
         cover_consideration_history: Callable[
             [str, int], tuple[dict[str, object], ...]
@@ -108,6 +109,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self._require_staged_shadow_projection_current = (
             require_staged_shadow_projection_current
         )
+        self.description_advice = description_advice
         self.get_review_case = get_review_case
         self.get_review_case_report = get_review_case_report
         self.get_review_case_decisions = get_review_case_decisions
@@ -142,6 +144,20 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         except Exception as error:
             transaction.rollback()
             raise MetadataReportError("review snapshot is unavailable") from error
+
+    def read_staged_description_preparation(
+        self, action: PipelineAction
+    ) -> tuple[str, str]:
+        if action.review_case_id is None:
+            raise MetadataReportError("review case is unavailable")
+        self._require_staged_shadow_projection_current(action.review_case_id, action)
+        row = self._connection.execute(
+            "SELECT c.document,r.document FROM review_cases c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.review_case_id=? AND c.report_id=?",
+            (action.review_case_id, action.report_id),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("review case is unavailable")
+        return str(row[0]), str(row[1])
 
     def read_staged_cover_preparation(
         self, action: PipelineAction
@@ -206,6 +222,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             report = MetadataReport.from_json(report_document)
             policy = self.current_resolved_metadata_policy(report.target.library)
             snapshot = CurrentReviewCaseSnapshot(
+                description_advice=self.description_advice(review_case_id),
                 case_document=case_document,
                 report_document=report_document,
                 resolved_policy_document=None

@@ -6,7 +6,13 @@ export const ownerChoiceCount = (field: ReviewField) => {
   const accepts = field.decisionActions.includes('accept')
   const keeps = field.decisionActions.includes('keep_current')
   if (field.destination !== 'cover')
-    return (keeps ? 1 : 0) + (accepts ? field.proposedValues.length : 0)
+    return (
+      (keeps ? 1 : 0) +
+      (accepts ? field.proposedValues.length : 0) +
+      (field.editable && field.descriptionAdvice?.current && field.descriptionAdvice.candidate
+        ? 1
+        : 0)
+    )
   const consideration = field.coverConsideration
   if (!consideration) return keeps ? 1 : 0
   const candidates = consideration.candidates.filter(

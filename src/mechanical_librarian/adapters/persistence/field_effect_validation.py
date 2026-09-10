@@ -21,6 +21,10 @@ from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.description_advice import (
+    AuthoredDescriptionDecision,
+    DescriptionAdviceCandidate,
+)
 from mechanical_librarian.domain.field_effect import (
     FIELD_EFFECT_FAILURES,
     TERMINAL_STATES,
@@ -420,9 +424,47 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 target_fingerprint=row[7],
                 target_version=row[8],
                 occurred_at=row[10],
+                origin=row[9],
             )
             if row[9] != record.origin or row[11] != record.event_id:
                 raise FieldEffectError("persistence")
+            authored_row = connection.execute(
+                "SELECT d.document,c.document,r.document FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id JOIN metadata_reports r ON r.report_id=? WHERE d.decision_id=?",
+                (record.report_id, record.decision_id),
+            ).fetchone()
+            if authored_row is not None:
+                authored = AuthoredDescriptionDecision.from_json(authored_row[0])
+                candidate = DescriptionAdviceCandidate.from_json(authored_row[1])
+                authored_report = MetadataReport.from_json(authored_row[2])
+                authored_target = next(
+                    field
+                    for field in authored_report.target.fields
+                    if field.destination is TargetDestination.DESCRIPTION
+                )
+                before = (
+                    authored_target.value
+                    if authored_target.state.value == "value"
+                    else None
+                )
+                if (
+                    authored.review_case_id != record.review_case_id
+                    or authored.report_id != record.report_id
+                    or authored.target_fingerprint != record.target_fingerprint
+                    or authored.origin != record.origin
+                    or authored_report.target.connection != record.connection
+                    or authored_report.target.library != record.library
+                    or authored_report.target.item != record.work_id
+                    or record.destination != "description"
+                    or not values_match(
+                        TargetDestination.DESCRIPTION,
+                        before,
+                        candidate.output.description,
+                    )
+                    or record.target_version
+                    != field_value_version("description", before)
+                ):
+                    raise FieldEffectError("persistence")
+                continue
             decision_row = connection.execute(
                 "SELECT document FROM automatic_decisions WHERE decision_id=? "
                 "UNION ALL SELECT json_extract(document,'$.decision_document') "
