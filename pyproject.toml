@@ -63,7 +63,7 @@ dev = [
 ]
 
 [tool.mutmut]
-paths_to_mutate = [
+source_paths = [
   "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
   "src/mechanical_librarian/application/review_web.py",
   "src/mechanical_librarian/bootstrap/composition.py",
@@ -94,7 +94,7 @@ also_copy = [
   "setup.py",
   "uv.lock",
 ]
-tests_dir = [
+pytest_add_cli_args_test_selection = [
   "tests/unit",
   "tests/integration",
   # Three modules qualify the build, the installed console script, or the
