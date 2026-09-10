@@ -2,12 +2,29 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
+import { AmbiguousMutationError, ApiError, BuildMismatchError, mapActivity } from '../src/api/http'
 import type { ActivitySearch, ActivityView, ReviewHttp } from '../src/api/http'
+import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
 import { activityRoute } from '../src/router'
 import { activity, createHttp, openActivityAuthority, renderRoute } from './fixtures'
 
 describe('Activity route', () => {
+  it('labels real description preparation results without relabeling policy records', async () => {
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(mapActivity(descriptionAdviceActivityFixture))
+    renderRoute('/activity', http)
+    const failed = await screen.findByText('Description advice could not be prepared')
+    const failedRow = failed.closest('article')
+    const completedRow = screen
+      .getByText('Description advice prepared for review')
+      .closest('article')
+    if (!failedRow || !completedRow) throw new Error('Expected preparation rows')
+    expect(within(failedRow).getByText('Description advice failed safely')).toBeVisible()
+    expect(within(completedRow).getByText('Description advice completed')).toBeVisible()
+    expect(screen.getAllByText('Cover advice completed')).toHaveLength(2)
+    expect(screen.queryByText('Cover advice failed safely')).toBeNull()
+  })
+
   it('retains authored preparation provenance without offering another choice interface', async () => {
     const user = userEvent.setup()
     const http = createHttp()
