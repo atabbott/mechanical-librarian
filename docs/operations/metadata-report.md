@@ -158,8 +158,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v38`. Every earlier report discriminator,
-including immediate prior `metadata-report-v37`, remains offline and requires a
+discriminator is `metadata-report-v39`. Every earlier report discriminator,
+including immediate prior `metadata-report-v38`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with 1 to 512 audio files in
@@ -524,7 +524,16 @@ diagnostics. Reopen uses the stored aggregate without recounting it, provider
 construction, or egress. Provider names, record values, attempt ordinals,
 delays, timings, headers, bodies, exception text, credentials, and rejected raw
 members are not diagnostic fields. Counts saturate at the fixed diagnostic
-bound, and provider status retains its existing neutral meaning.
+bound, and provider status retains its existing neutral meaning. One provider
+restating one candidate identity with claims or evidence that disagree is
+`malformed` with an `identity/provider/identity` diagnostic on every candidate
+lane and on the observation. The status-derived
+`malformed_over_bound_response` is withheld only when the observation itself
+carries that identity diagnostic and every one of its lanes reporting
+`malformed`, `oversized`, or `candidate_limit_exceeded` carries it too, and at
+least one such lane exists. A lane holding any of those three statuses for its
+own reason therefore keeps `malformed_over_bound_response` alongside the
+identity diagnostic.
 
 Provider results are neutral. Zero rows are `no_match`; every valid non-empty
 bounded set is `candidates`; all candidates survive in provider-identity order
@@ -647,8 +656,13 @@ publication place, publisher, publication date, and format context. Each
 source records absence, timeout, rejection, unavailability, or a validated
 artifact with media type, dimensions, original/preview digests, and safe
 artifact references. Identical bytes share content-addressed storage while all
-source provenance remains in the report. Per-provider and aggregate truncation
-are explicit terminal rows. Optional Open Library cover context that exceeds
+source provenance remains in the report. A provider cover is admitted only
+against that same provider's observed candidates: by work identity, or, when
+the provider resolved no work and states the unresolved placeholder, by an
+edition identity it actually observed. A different or absent edition is refused
+before any fetch and records no source row, so a refusal is counted from
+provider capture rather than read from the report. Per-provider and aggregate
+truncation are explicit terminal rows. Optional Open Library cover context that exceeds
 its fixed provenance bounds preserves valid metadata and records that cover as
 `oversized`; it neither widens the bound nor makes the provider observation
 `malformed`. Raw cover URLs and private paths are never

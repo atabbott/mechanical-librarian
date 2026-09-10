@@ -196,7 +196,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v38",
+                "metadata-report-v39",
                 "fixed-conservative-v6",
             ),
         ),
@@ -330,7 +330,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v3",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v38",
+                "metadata-report-v39",
                 "fixed-conservative-v3",
             ),
         ),
@@ -338,7 +338,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v38",
+                "metadata-report-v39",
                 "fixed-conservative-v4",
             ),
         ),
@@ -346,7 +346,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v38",
+                "metadata-report-v39",
                 "fixed-conservative-v5",
             ),
         ),
@@ -354,7 +354,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v38",
+                "metadata-report-v39",
                 "fixed-conservative-v7",
             ),
         ),
@@ -499,7 +499,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v38",)
+        assert schema_version == ("metadata-report-v39",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -1797,6 +1797,6 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
         restored = MetadataReport.from_json(reopened.get(report.report_id))
         assert restored == report
         assert restored.cover_sources == (source,)
-        assert restored.schema_version == "metadata-report-v38"
+        assert restored.schema_version == "metadata-report-v39"
     finally:
         reopened.close()

@@ -1348,6 +1348,11 @@ def _open_audio_sidecars(
     return opened
 
 
+# Every metadata adapter states this one literal when the provider named an
+# edition but no work, so two descriptors carrying it name nothing in common.
+_UNRESOLVED_WORK_IDENTITY = "unresolved"
+
+
 class _CoverEvidenceObserver:
     """Acquire the one declared ABS cover inside the slice's bounded envelope.
 
@@ -1482,25 +1487,43 @@ class _CoverEvidenceObserver:
         dict[str, tuple[ProviderCoverDescriptor, ...]],
         tuple[CoverSource, ...],
     ]:
-        works = {
-            observation.provider: {
+        works: dict[str, set[str]] = {}
+        editions: dict[str, set[str]] = {}
+        for observation in observations:
+            if observation.status is not ProviderStatus.CANDIDATES:
+                continue
+            works[observation.provider] = {
                 candidate.work_identity for candidate in observation.candidates
             }
-            for observation in observations
-            if observation.status is ProviderStatus.CANDIDATES
-        }
+            editions[observation.provider] = {
+                candidate.identity for candidate in observation.candidates
+            }
         values: dict[str, list[ProviderCoverDescriptor]] = {}
         seen_ids: set[str] = set()
         for descriptor in descriptors:
             configuration = self._providers.get(descriptor.provider)
+            provenance = descriptor.provenance
             if (
                 configuration is None
                 or not configuration.cover_enabled
-                or descriptor.provenance is None
-                or descriptor.provenance.provider != descriptor.provider
-                or descriptor.provenance.work_identity
-                not in works.get(descriptor.provider, set())
+                or provenance is None
+                or provenance.provider != descriptor.provider
             ):
+                continue
+            if provenance.work_identity == _UNRESOLVED_WORK_IDENTITY:
+                # `docs/architecture/security.md`, "Provider cover admission",
+                # is the authority for this branch. An unresolved sentinel
+                # equals every other unresolved sentinel, so it is no evidence
+                # at all. Such a descriptor is this provider's cover only when
+                # the edition it names is one the same provider actually
+                # observed. A descriptor naming no edition holds no identity
+                # either, and the same membership test refuses it. Both are
+                # refused here, before any request is constructed.
+                if provenance.edition_identity not in editions.get(
+                    descriptor.provider, set()
+                ):
+                    continue
+            elif provenance.work_identity not in works.get(descriptor.provider, set()):
                 continue
             if descriptor.source_id in seen_ids:
                 raise MetadataReportError("provider cover result is invalid")

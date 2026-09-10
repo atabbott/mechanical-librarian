@@ -4,12 +4,23 @@ from dataclasses import dataclass
 
 import pytest
 
+from mechanical_librarian.application import failure_diagnostics
 from mechanical_librarian.application.failure_diagnostics import (
     FailureCategory,
     FailureComponent,
     FailureDiagnostic,
     FailureStage,
     provider_attempt_diagnostics,
+    provider_result_diagnostics,
+)
+from mechanical_librarian.application.provider_evidence import (
+    ProviderOperationalEvidence,
+)
+from mechanical_librarian.domain.metadata_report import (
+    ProviderLaneObservation,
+    ProviderObservation,
+    ProviderQueryKind,
+    ProviderStatus,
 )
 
 
@@ -277,6 +288,142 @@ def test_incomplete_causes_fail_closed_when_absent_or_malformed(
         (), status="incomplete", incomplete_causes=causes
     )
     assert (FailureCategory.UNKNOWN,) == tuple(value.category for value in diagnostics)
+
+
+def test_sole_identity_conflict_reserves_the_malformed_response_category() -> None:
+    """An identity conflict is not a malformed or over-bound response."""
+    suppressed = provider_attempt_diagnostics(
+        (), status="malformed", identity_conflict_only=True
+    )
+    assert () == suppressed
+
+    unobserved = provider_attempt_diagnostics((), status="malformed")
+    assert (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,) == tuple(
+        value.category for value in unobserved
+    )
+
+    oversized = provider_attempt_diagnostics(
+        (), status="oversized", identity_conflict_only=True
+    )
+    assert (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,) == tuple(
+        value.category for value in oversized
+    )
+
+
+_LOCAL_REFERENCE = "local_" + "e" * 64
+
+
+def _failed_lane(
+    suffix: str,
+    diagnostics: tuple[FailureDiagnostic, ...],
+    status: ProviderStatus = ProviderStatus.MALFORMED,
+) -> ProviderLaneObservation:
+    return ProviderLaneObservation(
+        "lane_" + suffix * 64,
+        ProviderQueryKind.WORK,
+        status,
+        (_LOCAL_REFERENCE,),
+        None,
+        (),
+        diagnostics,
+    )
+
+
+def _over_bound_observation(
+    lanes: tuple[ProviderLaneObservation, ...],
+    diagnostics: tuple[FailureDiagnostic, ...],
+) -> ProviderObservation:
+    return ProviderObservation(
+        "hardcover",
+        ProviderStatus.MALFORMED,
+        (_LOCAL_REFERENCE,),
+        (),
+        ProviderQueryKind.WORK if len(lanes) == 1 else ProviderQueryKind.DISCOVERY,
+        None,
+        lanes,
+        (),
+        None,
+        diagnostics,
+    )
+
+
+_IDENTITY_DIAGNOSTIC = FailureDiagnostic(
+    FailureCategory.IDENTITY,
+    FailureComponent.PROVIDER,
+    FailureStage.IDENTITY,
+    retryable=False,
+)
+_MALFORMED_DIAGNOSTIC = FailureDiagnostic(
+    FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+    FailureComponent.PROVIDER,
+    FailureStage.RESPONSE,
+    retryable=False,
+)
+_IDENTITY_LANE = _failed_lane("a", (_IDENTITY_DIAGNOSTIC,))
+_INDEPENDENT_LANE = _failed_lane("b", (_MALFORMED_DIAGNOSTIC,))
+# A candidate-limited lane is over-bound for its own reason and never carries
+# the identity diagnostic, so it must defeat the suppression on its own.
+_OVER_BOUND_LANE = _failed_lane("c", (), ProviderStatus.CANDIDATE_LIMIT_EXCEEDED)
+
+
+@pytest.mark.parametrize(
+    ("lanes", "diagnostics", "expected"),
+    (
+        pytest.param(
+            (_IDENTITY_LANE,),
+            (_IDENTITY_DIAGNOSTIC,),
+            (FailureCategory.IDENTITY,),
+            id="conflict_only",
+        ),
+        pytest.param(
+            (_IDENTITY_LANE, _INDEPENDENT_LANE),
+            (_IDENTITY_DIAGNOSTIC,),
+            (
+                FailureCategory.IDENTITY,
+                FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+            ),
+            id="conflict_with_independent_malformed_lane",
+        ),
+        pytest.param(
+            (_IDENTITY_LANE, _OVER_BOUND_LANE),
+            (_IDENTITY_DIAGNOSTIC,),
+            (
+                FailureCategory.IDENTITY,
+                FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,
+            ),
+            id="conflict_with_independent_over_bound_lane",
+        ),
+        pytest.param(
+            (_INDEPENDENT_LANE,),
+            (),
+            (FailureCategory.MALFORMED_OVER_BOUND_RESPONSE,),
+            id="malformed_only",
+        ),
+    ),
+)
+def test_independent_malformed_lane_keeps_the_response_category(
+    lanes: tuple[ProviderLaneObservation, ...],
+    diagnostics: tuple[FailureDiagnostic, ...],
+    expected: tuple[FailureCategory, ...],
+) -> None:
+    """Suppression needs every over-bound lane to state the identity conflict."""
+    observed = provider_result_diagnostics(
+        _over_bound_observation(lanes, diagnostics), ProviderOperationalEvidence()
+    )
+    assert expected == tuple(value.category for value in observed)
+
+
+def test_over_bound_statuses_match_the_status_mapping() -> None:
+    """Every status that yields the over-bound category must defeat suppression."""
+    mapped = frozenset(
+        status
+        for status in ProviderStatus
+        if any(
+            value.category is FailureCategory.MALFORMED_OVER_BOUND_RESPONSE
+            for value in provider_attempt_diagnostics((), status=status.value)
+        )
+    )
+    assert mapped == failure_diagnostics._OVER_BOUND_STATUSES
 
 
 def test_provider_signal_mappings_cover_every_declared_signal() -> None:

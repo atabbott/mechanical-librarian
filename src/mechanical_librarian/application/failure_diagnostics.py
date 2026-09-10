@@ -15,7 +15,10 @@ from mechanical_librarian.domain.failure_diagnostics import (
     FailureStage,
     diagnostics_are_canonical,
 )
-from mechanical_librarian.domain.metadata_report import ProviderObservation
+from mechanical_librarian.domain.metadata_report import (
+    ProviderObservation,
+    ProviderStatus,
+)
 
 
 def provider_attempt_diagnostics(
@@ -23,6 +26,7 @@ def provider_attempt_diagnostics(
     *,
     status: str | None = None,
     incomplete_causes: object = (),
+    identity_conflict_only: bool = False,
 ) -> tuple[FailureDiagnostic, ...]:
     """Discard attempt payload details and return deterministic bounded aggregates."""
 
@@ -170,6 +174,15 @@ def provider_attempt_diagnostics(
                 for category, _, _ in counts
             )
         )
+        and not (
+            # An ambiguous provider identity is already stated on every lane the
+            # conflict failed, and it is not a malformed or over-bound
+            # response. The caller resolves that from the lanes, so a lane that
+            # was malformed, over-bound, or candidate-limited for its own reason
+            # still keeps the status-derived aggregate alongside the identity
+            # diagnostic.
+            status == "malformed" and identity_conflict_only
+        )
         and not any(category is required[0] for category, _, _ in counts)
     ):
         counts[required] = 1
@@ -271,6 +284,38 @@ __all__ = [
 ]
 
 
+# Every provider status this module routes to MALFORMED_OVER_BOUND_RESPONSE.
+# Only a lane the identity conflict itself failed carries the identity
+# diagnostic, so a lane holding any of these for its own reason -- an
+# independently unparsable page, an over-bound payload, or a candidate limit --
+# keeps the aggregate. ``test_over_bound_statuses_match_the_status_mapping``
+# fails if a status joins that category without joining this set.
+_OVER_BOUND_STATUSES = frozenset(
+    {
+        ProviderStatus.MALFORMED,
+        ProviderStatus.OVERSIZED,
+        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+    }
+)
+
+
+def _identity_conflict_is_the_only_over_bound_reason(
+    observation: ProviderObservation,
+) -> bool:
+    """Report whether an ambiguous identity is the whole of this over-bound status."""
+    if not any(
+        value.category is FailureCategory.IDENTITY for value in observation.diagnostics
+    ):
+        return False
+    over_bound = tuple(
+        lane for lane in observation.lanes if lane.status in _OVER_BOUND_STATUSES
+    )
+    return bool(over_bound) and all(
+        any(value.category is FailureCategory.IDENTITY for value in lane.diagnostics)
+        for lane in over_bound
+    )
+
+
 def provider_result_diagnostics(
     observation: ProviderObservation, evidence: ProviderOperationalEvidence
 ) -> tuple[FailureDiagnostic, ...]:
@@ -281,5 +326,8 @@ def provider_result_diagnostics(
             evidence.attempt_records,
             status=observation.status.value,
             incomplete_causes=evidence.incomplete_causes,
+            identity_conflict_only=_identity_conflict_is_the_only_over_bound_reason(
+                observation
+            ),
         ),
     )

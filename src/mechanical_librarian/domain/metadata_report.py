@@ -77,7 +77,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v38"
+REPORT_SCHEMA = "metadata-report-v39"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -2305,6 +2305,7 @@ _PROVIDER_DIAGNOSTIC_STAGES = {
     FailureCategory.DAILY_QUOTA_EXHAUSTED: FailureStage.RESPONSE,
     FailureCategory.EMPTY_NO_MATCH: FailureStage.RESPONSE,
     FailureCategory.HTTP_NON_SUCCESS: FailureStage.RESPONSE,
+    FailureCategory.IDENTITY: FailureStage.IDENTITY,
     FailureCategory.LOOKUP_CONSTRUCTION: FailureStage.LOOKUP,
     FailureCategory.MALFORMED_OVER_BOUND_RESPONSE: FailureStage.RESPONSE,
     FailureCategory.PROVIDER_DECLARED_ERROR: FailureStage.RESPONSE,

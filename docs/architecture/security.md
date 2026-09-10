@@ -709,7 +709,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v38`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v39`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -763,8 +763,14 @@ Inventaire cover requests use that same no-redirect transport and decoder
 boundary, accept only fixed-origin `/img/entities/` paths with a 40-character
 lowercase hexadecimal identity, and share the observation's one-second pacer.
 Provider cover admission is limited to four sources per provider and eight
-overall. Only descriptors bound to a qualified provider-local work are
-admitted. Reports retain safe allowlisted provenance and explicit truncation,
+overall. A descriptor is admitted only against a candidate the same provider
+observed in the same observation: by a qualified provider-local work identity,
+or, when that provider resolved no work and states the unresolved placeholder,
+by an edition identity equal to one of that provider's own candidate editions.
+Two unresolved placeholders comparing equal never admit anything, and a
+descriptor naming no edition holds no identity to match. A refused descriptor
+is dropped before any request is constructed, so it produces no egress and no
+source row. Reports retain safe allowlisted provenance and explicit truncation,
 never the remote URL.
 
 ## Output and persistence
