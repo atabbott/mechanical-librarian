@@ -106,6 +106,19 @@ SQLite publication, proposal, admission, projection, and foreground
 serialization boundaries for all 2,000 works. One fixture-owned title proposal
 differs from its current value so persistent Chromium proves early availability,
 a bounded report-only choice at peak, and durable Activity/case readback late.
+The idle-load replay installs the browser clock at a fixed UTC midnight before
+application execution, waits for the Library heading and initial network
+settlement, then pauses at 01:00 UTC. That hour exceeds the bounded startup
+navigation/action waits (30 seconds each) and heading readiness wait (5 seconds),
+so pausing does not race a sampled browser time against protocol latency.
+Owner activity establishes the ten-second idle boundary
+before counters reset; any catch-up requests from the pause jump must finish
+before counting starts. Only replay steps advance the clock; real HTTP completion
+waits leave it paused. The measured 2,520,000-ms window must contain exactly
+20 preparation reads, zero Library reads, zero attention reads, and 20 total
+requests. An elapsed browser-time assertion prevents wall-time waits from
+extending that window, and `finally` resumes the clock before foreground latency
+qualification. The shell regression also pins twenty reads spaced 126,000 ms apart.
 The independent direct 2,000-work control remains the clean completed/zero-
 blocked proof for fairness, provider recovery, and full-stage throughput. The
 installed path controls foreground response budgets and RSS; the retained CLI
