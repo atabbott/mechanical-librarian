@@ -1109,6 +1109,8 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 assert (
                     page.evaluate("() => document.documentElement.scrollWidth") <= 1440
                 )
+                page.locator(".library-work-row").click()
+                page.wait_for_url(f"**/library?*preview={case_id}*")
                 page.set_viewport_size({"width": 390, "height": 844})
                 brand_box = page.locator(".brand").bounding_box()
                 actions_box = page.locator(".shell-actions").bounding_box()
