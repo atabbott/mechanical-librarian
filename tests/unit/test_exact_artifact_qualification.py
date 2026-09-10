@@ -21,12 +21,52 @@ from scripts.qualify_exact_artifact import (
     _decode_stdout,
     _qualification_environment,
     _qualify_runtime_console,
+    _required_executable,
     _run,
     _runtime_help_is_closed,
     _validate_wheel,
     _verify_installed_payload,
     qualify_exact_artifact,
 )
+
+
+@pytest.mark.parametrize("shim", [False, True], ids=["ordinary", "symlink-shim"])
+def test_required_executable_preserves_dispatch_identity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, shim: bool
+) -> None:
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    executable = tools / ("manager" if shim else "uv")
+    executable.write_text(
+        '#!/bin/sh\ncase "$0" in */uv) printf "uv-dispatched\\n";; *) exit 42;; esac\n'
+    )
+    executable.chmod(0o700)
+    if shim:
+        (tools / "uv").symlink_to(executable)
+    monkeypatch.chdir(tmp_path)
+    selected = _required_executable("uv", {"PATH": "tools"})
+    # Qualification changes directories after selection; dispatch must stay absolute.
+    result = subprocess.run(
+        [selected, "--version"], cwd=tools, capture_output=True, check=False
+    )
+    assert result.returncode == 0
+    assert result.stdout == b"uv-dispatched\n"
+
+
+@pytest.mark.parametrize("kind", ["missing", "directory", "non-executable", "dangling"])
+def test_required_executable_rejects_unavailable_tools(
+    tmp_path: Path, kind: str
+) -> None:
+    executable = tmp_path / "uv"
+    if kind == "directory":
+        executable.mkdir()
+    elif kind == "non-executable":
+        executable.write_text("not executable")
+        executable.chmod(0o600)
+    elif kind == "dangling":
+        executable.symlink_to(tmp_path / "missing")
+    with pytest.raises(QualificationFailure, match="^qualification_tool_unavailable$"):
+        _required_executable("uv", {"PATH": str(tmp_path)})
 
 
 def test_runtime_probe_requires_packaged_react_assets_for_product() -> None:
