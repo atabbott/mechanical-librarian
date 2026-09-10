@@ -140,7 +140,10 @@ def test_clone_and_failure_cleanup_preserve_source(
             cleaned.append(True)
         return subprocess.CompletedProcess(command, 0)
 
-    with patch("scripts.run_linux_fast.subprocess.run", side_effect=invoke):
+    with (
+        patch("scripts.run_linux_fast.os.getuid", return_value=501),
+        patch("scripts.run_linux_fast.subprocess.run", side_effect=invoke),
+    ):
         if failure:
             with pytest.raises(subprocess.CalledProcessError):
                 run(root, sha, tmp_path / "cache", 180, 30)
@@ -178,6 +181,7 @@ def test_job_deadline_bounds_initial_subprocesses(
         with pytest.raises(subprocess.TimeoutExpired):
             if operation == "docker":
                 with (
+                    patch("scripts.run_linux_fast.os.getuid", return_value=501),
                     patch("scripts.run_linux_fast.verify_source"),
                     patch("scripts.run_linux_fast.image_recipe", return_value="recipe"),
                 ):
@@ -186,3 +190,17 @@ def test_job_deadline_bounds_initial_subprocesses(
             else:
                 verify_source(tmp_path, "0" * 40, started + 0.2)
     assert time.monotonic() - started < 4
+
+
+@pytest.mark.parametrize("uid", [33, 501])
+def test_recipe_reuses_existing_uid_or_creates_fresh_home(uid: int) -> None:
+    text = (Path(__file__).resolve().parents[2] / "Dockerfile").read_text()
+    recipe = image_recipe(text, uid, 20)
+    assert f'if account="$(getent passwd {uid})"; then' in recipe
+    assert 'usermod --home /home/qualifier --gid qualifier "${account%%:*}"' in recipe
+    assert f"install -d -o {uid} -g 20 -m 0700 /home/qualifier" in recipe
+    assert (
+        f"else useradd --uid {uid} --gid qualifier --create-home qualifier; fi"
+        in recipe
+    )
+    assert f"USER {uid}:20" in recipe

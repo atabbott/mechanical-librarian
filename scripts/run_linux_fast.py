@@ -67,7 +67,11 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from={match[1]} /uv /usr/local/bin/uv
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && apt-get update && apt-get install -y --no-install-recommends git openssl && rm -rf /var/lib/apt/lists/*
-RUN groupadd --non-unique --gid {gid} qualifier && useradd --uid {uid} --gid qualifier --create-home qualifier
+RUN groupadd --non-unique --gid {gid} qualifier && \
+    if account="$(getent passwd {uid})"; then \
+        usermod --home /home/qualifier --gid qualifier "${{account%%:*}}" && \
+        install -d -o {uid} -g {gid} -m 0700 /home/qualifier; \
+    else useradd --uid {uid} --gid qualifier --create-home qualifier; fi
 USER {uid}:{gid}
 ENV HOME=/home/qualifier UV_LINK_MODE=copy UV_CACHE_DIR=/cache UV_PROJECT_ENVIRONMENT=/workspace/venv
 ENV PATH=/workspace/venv/bin:/usr/local/bin:/usr/bin:/bin
