@@ -206,7 +206,7 @@ def test_container_definition_keeps_one_non_root_process_volume_and_port() -> No
         and rule.get("comment", "").startswith("Admit mount-namespace")
         for rule in seccomp["syscalls"]
     )
-    assert compose.count("8443:8443") == 1
+    assert compose.count("127.0.0.1:8080:8443") == 1
     assert compose.count("mechanical-librarian-data:/data") == 1
     assert "stop_grace_period: 610s" in compose
 

@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Automatic rich-metadata decisions now bind the local-transport qualification.
+  Earlier qualification decisions remain readable but cannot authorize new
+  effects; qualified options and scoring are unchanged (#844).
+
 - Preparation totals retain completed libraries while another library finishes,
   keeping multi-library workspaces valid across restart (#844).
 

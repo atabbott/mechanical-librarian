@@ -351,3 +351,14 @@ failure classification. It
 retains v19's measurements, evaluators, policy v23 and all 13 passing options;
 this is neither rescoring nor a fresh holdout claim. V19 remains byte-frozen and
 readable as history, but grants no current effect authority. F19a v7 is unchanged.
+
+
+The [v21 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v21.json)
+rotates the exact source closure for explicit local transport (#844). Shared
+validation adds strict HTTP/HTTPS origin admission; existing validation functions,
+provider sources, proposal/election behavior, policy v23 and all 13 passing options
+are unchanged. The supported Audiobookshelf qualifier now uses current configuration,
+a dedicated Activity reader and serialized live repository observations. V20 and
+all historical measurements remain byte-frozen; no rescoring or fresh holdout is
+claimed. V20 decisions remain readable history but are stale for new effects;
+only the current qualification can authorize newly prepared automatic effects.
