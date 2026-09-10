@@ -1070,19 +1070,23 @@ def _report_stalled_test(
         identifier = session.stalled_test(time.monotonic())
         if identifier is None or identifier == reported:
             continue
-        print(
-            json.dumps(
-                {
-                    "schema": "test-tier-stall-v1",
-                    "status": "running",
-                    "test_id": identifier,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            ),
-            file=sys.__stderr__,
-            flush=True,
+        diagnostic = json.dumps(
+            {
+                "schema": "test-tier-stall-v1",
+                "status": "running",
+                "test_id": identifier,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
         )
+        if test_timeout_seconds is None:
+            print(diagnostic, file=sys.__stderr__, flush=True)
+        else:
+            try:
+                os.write(2, (diagnostic + "\n").encode("ascii"))
+            except OSError:
+                # A failed early diagnostic must not retire the watchdog.
+                pass
         reported = identifier
 
 

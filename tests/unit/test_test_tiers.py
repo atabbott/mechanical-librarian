@@ -1475,7 +1475,8 @@ def test_passing_cohort_with_optional_deadline(
         assert run_cohort(Path.cwd(), "fast", deadline)
 
 
-def test_deadline_bypasses_blocked_python_stderr() -> None:
+@pytest.mark.parametrize("early_stall", [False, True])
+def test_deadline_bypasses_blocked_python_stderr(early_stall: bool) -> None:
     import subprocess
 
     driver = """
@@ -1491,15 +1492,53 @@ session._current_started_at = 0
 with patch('scripts.run_test_tier.sys.__stderr__', Blocked()):
     _report_stalled_test(session, threading.Event(), 1)
 """
+    if early_stall:
+        driver = driver.replace(
+            "session._current_started_at = 0",
+            "session.stalled_test = lambda now: 'safe.test'",
+        )
+        driver = driver.replace("threading.Event(), 1", "threading.Event(), 3")
     result = subprocess.run(
         [sys.executable, "-c", driver], capture_output=True, text=True, timeout=10
     )
     assert result.returncode == 1
-    diagnostic = json.loads(result.stderr)
+    diagnostics = [json.loads(line) for line in result.stderr.splitlines()]
+    if early_stall:
+        assert diagnostics.pop(0) == {
+            "schema": "test-tier-stall-v1",
+            "status": "running",
+            "test_id": "safe.test",
+        }
+    assert len(diagnostics) == 1
+    diagnostic = diagnostics[0]
     assert diagnostic == {
         "schema": "test-tier-timeout-v1",
         "tier": "fast",
         "test_id": "safe.test",
-        "timeout_seconds": 1,
+        "timeout_seconds": 3 if early_stall else 1,
     }
     assert not result.stdout
+
+
+def test_failed_early_stall_write_does_not_retire_deadline() -> None:
+    import subprocess
+
+    driver = """
+import threading
+from unittest.mock import patch
+from scripts.run_test_tier import _CohortSession, _report_stalled_test
+session = _CohortSession()
+session.pytest_runtest_logstart('safe.test', None)
+session.stalled_test = lambda now: 'safe.test'
+def failed_write(fd, payload):
+    print('write-attempt', flush=True)
+    raise OSError('write failed')
+with patch('scripts.run_test_tier.os.write', failed_write):
+    _report_stalled_test(session, threading.Event(), 3)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", driver], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 1
+    assert result.stdout.splitlines() == ["write-attempt", "write-attempt"]
+    assert not result.stderr

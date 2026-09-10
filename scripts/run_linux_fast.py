@@ -17,15 +17,20 @@ from pathlib import Path
 from uuid import uuid4
 
 
-def verify_source(root: Path, sha: str) -> None:
+def verify_source(root: Path, sha: str, deadline: float | None = None) -> None:
+    if deadline is None:
+        deadline = time.monotonic() + 30
     if re.fullmatch(r"[0-9a-f]{40}", sha) is None:
         raise RuntimeError("source_identity_invalid")
     head = subprocess.check_output(
-        ["git", "-C", str(root), "rev-parse", "HEAD"], text=True
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        text=True,
+        timeout=max(0.001, deadline - time.monotonic()),
     ).strip()
     dirty = subprocess.check_output(
         ["git", "-C", str(root), "status", "--porcelain=v1", "--untracked-files=all"],
         text=True,
+        timeout=max(0.001, deadline - time.monotonic()),
     )
     if head != sha or dirty:
         raise RuntimeError("source_identity_mismatch_or_dirty")
@@ -98,20 +103,22 @@ print(json.dumps(dict(source_sha=subprocess.check_output(['git','rev-parse','HEA
 def run(root: Path, sha: str, cache: Path, timeout: int, job_timeout: int) -> None:
     if os.getuid() == 0:
         raise RuntimeError("linux_fast_requires_nonroot_host")
-    verify_source(root, sha)
+    deadline = time.monotonic() + job_timeout
+    verify_source(root, sha, deadline)
     recipe = image_recipe((root / "Dockerfile").read_text(), os.getuid(), os.getgid())
     image = (
         "mechanical-librarian-linux-fast:" + hashlib.sha256(recipe.encode()).hexdigest()
     )
     architecture = subprocess.check_output(
-        ["docker", "info", "--format", "{{.Architecture}}"], text=True, timeout=30
+        ["docker", "info", "--format", "{{.Architecture}}"],
+        text=True,
+        timeout=max(0.001, deadline - time.monotonic()),
     ).strip()
     architecture = {"aarch64": "arm64", "x86_64": "amd64"}.get(
         architecture, architecture
     )
     if architecture not in {"arm64", "amd64"}:
         raise RuntimeError("unsupported_native_linux_architecture")
-    deadline = time.monotonic() + job_timeout
 
     def execute(command: list[str]) -> None:
         subprocess.run(
@@ -128,7 +135,7 @@ def run(root: Path, sha: str, cache: Path, timeout: int, job_timeout: int) -> No
                 ["git", "clone", "--local", "--no-hardlinks", str(root), str(source)]
             )
             execute(["git", "-C", str(source), "checkout", "--detach", sha])
-            verify_source(source, sha)
+            verify_source(source, sha, deadline)
             if (
                 not (source / ".git").is_dir()
                 or (source / ".git/objects/info/alternates").exists()
@@ -174,7 +181,7 @@ def run(root: Path, sha: str, cache: Path, timeout: int, job_timeout: int) -> No
                     command,
                 ]
             )
-            verify_source(source, sha)
+            verify_source(source, sha, deadline)
         finally:
             subprocess.run(
                 ["docker", "rm", "--force", name],
@@ -183,7 +190,7 @@ def run(root: Path, sha: str, cache: Path, timeout: int, job_timeout: int) -> No
                 stderr=subprocess.DEVNULL,
                 timeout=30,
             )
-            verify_source(root, sha)
+            verify_source(root, sha, deadline)
 
 
 def main(argv: list[str] | None = None) -> int:

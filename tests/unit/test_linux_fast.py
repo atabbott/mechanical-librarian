@@ -149,3 +149,40 @@ def test_clone_and_failure_cleanup_preserve_source(
     assert cleaned == [True]
     assert clones and all(not clone.exists() for clone in clones)
     verify_source(root, sha)
+
+
+@pytest.mark.parametrize("operation", ["identity", "status", "docker"])
+def test_job_deadline_bounds_initial_subprocesses(
+    tmp_path: Path, operation: str
+) -> None:
+    import os
+    import sys
+    import time
+
+    # A real stalled executable proves the timeout reaches process execution,
+    # including the second Git identity operation and pre-test Docker setup.
+    executable = tmp_path / ("docker" if operation == "docker" else "git")
+    executable.write_text(
+        f"#!{sys.executable}\nimport sys, time\n"
+        + (
+            "print('0' * 40) if 'rev-parse' in sys.argv else time.sleep(60)\n"
+            if operation == "status"
+            else "time.sleep(60)\n"
+        )
+    )
+    executable.chmod(0o700)
+    started = time.monotonic()
+    with patch.dict(
+        os.environ, {"PATH": str(tmp_path) + os.pathsep + os.environ["PATH"]}
+    ):
+        with pytest.raises(subprocess.TimeoutExpired):
+            if operation == "docker":
+                with (
+                    patch("scripts.run_linux_fast.verify_source"),
+                    patch("scripts.run_linux_fast.image_recipe", return_value="recipe"),
+                ):
+                    (tmp_path / "Dockerfile").write_text("fixture")
+                    run(tmp_path, "0" * 40, tmp_path / "cache", 1, 1)
+            else:
+                verify_source(tmp_path, "0" * 40, started + 0.2)
+    assert time.monotonic() - started < 4

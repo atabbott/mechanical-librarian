@@ -179,9 +179,9 @@ if a test catches `BaseException`. It emits no completed result for that run.
 A deadline is a deadlock backstop, not a performance measurement.
 
 For test authors: directory `fcntl.flock` semantics differ between macOS and
-Linux. The project sets `fcntl=None` where it is unavailable; Linux-only lock
-and permission sentinels skip on non-Linux hosts, so those skips provide no
-Linux coverage. Opening two repositories in one parent historically could hang Linux
+Linux. The private-binding adapter imports `fcntl` only on Linux and sets it
+to `None` on other hosts, including macOS. Linux-only lock and permission
+sentinels skip on non-Linux hosts, so those skips provide no Linux coverage. Opening two repositories in one parent historically could hang Linux
 when both took blocking exclusive directory locks, despite passing on macOS.
 Current `open_repository` uses `LOCK_EX | LOCK_NB` and promptly refuses a second
 same-parent repository. Use separate directories or close the first repository
