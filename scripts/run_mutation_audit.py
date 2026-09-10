@@ -155,8 +155,6 @@ def main() -> int:
     work: list[tuple[str, str, list[str]]] = []
     for path in sorted((mutants_root / "src").rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        if "MUTANT_UNDER_TEST" not in source:
-            continue
         module = module_dotted(path, root)
         if arguments.only and arguments.only not in module:
             continue
