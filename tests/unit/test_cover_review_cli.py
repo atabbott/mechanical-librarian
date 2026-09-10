@@ -10,7 +10,10 @@ from unittest.mock import Mock, patch
 import pytest
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
-from mechanical_librarian.application.configuration import ConfigurationError
+from mechanical_librarian.application.configuration import (
+    ConfigurationError,
+    ReviewWebConfiguration,
+)
 from mechanical_librarian.bootstrap.composition import (
     open_field_effect_activity_projection,
     run_cover_review,
@@ -89,7 +92,11 @@ def test_activity_composition_does_not_change_installed_state() -> None:
         repository.close()
         configuration = SimpleNamespace(
             libraries=(SimpleNamespace(connection="abs", name="books"),),
-            review=SimpleNamespace(graceful_shutdown_seconds=5),
+            review=ReviewWebConfiguration(
+                canonical_origin="http://127.0.0.1:8080",
+                owner_password_hash_file=str(root / "owner.hash"),
+                graceful_shutdown_seconds=5,
+            ),
             select=Mock(side_effect=AssertionError("target configuration used")),
         )
         before_bytes = database.read_bytes()
