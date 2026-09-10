@@ -4578,6 +4578,7 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
         hash_path.write_text(PasswordHasher().hash(_PASSWORD))
         hash_path.chmod(0o600)
         certificate, key = _certificate(root)
+        authorities: list[object] = []
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(
@@ -4593,6 +4594,9 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                     port=port,
                     provider_recovery=True,
                     cohort=30,
+                    on_app=lambda app: authorities.append(
+                        app.state.review_application._state_owner.authority
+                    ),
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
@@ -4713,25 +4717,28 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 ).to_have_count(0)
                 from tests.support.provider_recovery_rail import provider_failure_report
 
-                writer = open_repository(root / "review.sqlite")
-                original_report = provider_failure_report()
-                recovered = provider_failure_report(contributing=False)
-                policy = writer.current_resolved_metadata_policy(
-                    recovered.target.library
-                )
-                assert policy is not None
-                writer.publish(
-                    recovered, lambda: True, expected_current=original_report.report_id
-                )
-                successor = evaluate_report(
-                    recovered, policy.resolved_id, dict(policy.destinations)
-                )
-                writer.publish_proposal(successor)
-                successor_id = json.loads(writer.admit_review_case(successor))[
-                    "review_case_id"
-                ]
-                writer.persist_shadow_outcome(successor_id, 4)
-                writer.close()
+                with closing(
+                    open_repository(root / "review.sqlite", authority=authorities[0])
+                ) as writer:
+                    original_report = provider_failure_report()
+                    recovered = provider_failure_report(contributing=False)
+                    policy = writer.current_resolved_metadata_policy(
+                        recovered.target.library
+                    )
+                    assert policy is not None
+                    writer.publish(
+                        recovered,
+                        lambda: True,
+                        expected_current=original_report.report_id,
+                    )
+                    successor = evaluate_report(
+                        recovered, policy.resolved_id, dict(policy.destinations)
+                    )
+                    writer.publish_proposal(successor)
+                    successor_id = json.loads(writer.admit_review_case(successor))[
+                        "review_case_id"
+                    ]
+                    writer.persist_shadow_outcome(successor_id, 4)
                 page.reload()
                 expect(page.get_by_text(reason)).to_have_count(0)
                 page.goto(f"{origin}/review/{successor_id}?subview=evidence")
