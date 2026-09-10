@@ -521,11 +521,17 @@ class InspectCurrentReviewCase:
                 automatic_decision,
                 evidence,
             )
+            selected_advice = (
+                snapshot.description_advice.get("selected_advice")
+                if snapshot.description_advice is not None
+                else None
+            )
             authored_selection = (
                 snapshot.description_advice.get("selection")
                 if destination == "description"
                 and snapshot.description_advice is not None
-                and snapshot.description_advice.get("current") is True
+                and isinstance(selected_advice, dict)
+                and selected_advice.get("current") is True
                 else None
             )
             if authored_selection is not None:

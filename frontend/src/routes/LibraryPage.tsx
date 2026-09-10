@@ -38,7 +38,10 @@ import { advancePresentationSettled } from '../reviewAdvancePresentation'
 type ReviewField = CaseDetailView['fields'][number]
 const authoredOwnerRecorded = (field: ReviewField) =>
   field.descriptionAdvice?.selection?.origin === 'human' &&
-  Boolean(field.descriptionAdvice.current || field.descriptionAdvice.application_outcome)
+  Boolean(
+    field.descriptionAdvice.selected_advice?.current === true ||
+    field.descriptionAdvice.application_outcome,
+  )
 const searchNavigationDelay = 150
 // Live Library invalidation batches the documented fifty-work burst for 120 ms.
 // Keep each distinct subject from that bounded batch long enough to compare it
@@ -395,7 +398,7 @@ const effectSummary = (field: ReviewField) => {
         detail:
           'The library already held the selected description. This authored choice is retained in History.',
       }
-    if (!advice.current)
+    if (!advice.selected_advice?.current)
       return {
         state: 'Earlier choice retained',
         detail:
@@ -470,7 +473,8 @@ const recordedSelected = (
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
   field.descriptionAdvice &&
-  (field.descriptionAdvice.current || field.descriptionAdvice.application_outcome !== null) &&
+  (field.descriptionAdvice.selected_advice?.current === true ||
+    field.descriptionAdvice.application_outcome !== null) &&
   field.descriptionAdvice.selection
     ? false
     : field.humanDecision !== null
@@ -816,6 +820,7 @@ const decisionQuestion = (destination: string) =>
 
 function MetadataChoice({
   advice,
+  retainedAdvice = false,
   context,
   current,
   disabled,
@@ -829,6 +834,7 @@ function MetadataChoice({
   value,
 }: {
   advice?: ReviewField['descriptionAdvice']
+  retainedAdvice?: boolean
   context: ChoiceContextView | undefined
   current: boolean
   disabled: boolean
@@ -841,6 +847,8 @@ function MetadataChoice({
   toggle: () => void
   value: string
 }) {
+  const adviceSource =
+    retainedAdvice && advice?.selected_advice ? advice.selected_advice.candidate : advice
   const evidenceId = `choice-evidence-${current ? 'current' : (context?.alternativeId ?? 'alternative')}`
   const evidenceLabel = `Evidence for ${label}: ${value}`
   const hasEvidence = Boolean(context && (context.evidence.length || context.limitations.length))
@@ -862,15 +870,15 @@ function MetadataChoice({
         </small>
         <strong>{longDescription ? `${value.slice(0, 240)}…` : value}</strong>
         <span>
-          {advice
-            ? `${advice.engine} · ${advice.model}`
+          {adviceSource
+            ? `${adviceSource.engine} · ${adviceSource.model}`
             : (context?.rationale ?? 'Retained for this owner comparison.')}
         </span>
         <span className="choice-recommendation">
           {recording
             ? 'Recording…'
             : advice
-              ? descriptionAdviceStatus(advice)
+              ? descriptionAdviceStatus(advice, retainedAdvice)
               : context?.recommendation === 'recommended'
                 ? context.recommendationReason
                 : 'No recommendation retained'}
@@ -2661,7 +2669,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       selected.automaticDecision !== null ||
       Boolean(
         selected.descriptionAdvice &&
-        (selected.descriptionAdvice.current ||
+        (selected.descriptionAdvice.selected_advice?.current === true ||
           selected.descriptionAdvice.application_outcome !== null) &&
         selected.descriptionAdvice.selection,
       ))
@@ -3433,9 +3441,40 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                   />
                                 )
                               })}
+                              {selectedAdvice?.selected_advice &&
+                              selectedAdvice.selected_advice.candidate.candidate_id !==
+                                selectedAdvice.candidate?.candidate_id ? (
+                                <MetadataChoice
+                                  advice={selectedAdvice}
+                                  retainedAdvice
+                                  context={undefined}
+                                  current={false}
+                                  disabled
+                                  expanded={false}
+                                  label="Advised · Authored content · Recorded choice"
+                                  longDescription={isLongDescription(
+                                    'description',
+                                    selectedAdvice.selected_advice.candidate.output.description,
+                                  )}
+                                  onChoose={() => undefined}
+                                  recording={false}
+                                  selected={Boolean(
+                                    selectedAdvice.selected_advice.current ||
+                                    selectedAdvice.application_outcome,
+                                  )}
+                                  toggle={() => undefined}
+                                  value={
+                                    selectedAdvice.selected_advice.candidate.output.description
+                                  }
+                                />
+                              ) : null}
                               {selectedAdvice?.candidate ? (
                                 <MetadataChoice
                                   advice={selectedAdvice}
+                                  retainedAdvice={
+                                    selectedAdvice.selection?.candidate_id ===
+                                    selectedAdvice.candidate.candidate_id
+                                  }
                                   context={undefined}
                                   current={false}
                                   disabled={
@@ -3481,7 +3520,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                       ? selectedProgress.command.authoredDescription
                                           ?.candidateId === selectedAdvice.candidate.candidate_id
                                       : Boolean(
-                                          (selectedAdvice.current ||
+                                          (selectedAdvice.selected_advice?.current === true ||
                                             selectedAdvice.application_outcome) &&
                                           selectedAdvice.selection?.candidate_id ===
                                             selectedAdvice.candidate.candidate_id,

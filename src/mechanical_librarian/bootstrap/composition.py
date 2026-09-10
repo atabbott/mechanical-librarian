@@ -2609,10 +2609,13 @@ def create_review_pipeline(
     ) -> None:
         if action.review_case_id is None:
             return
+        repository = cast("SQLiteMetadataReportRepository", pipeline_repository)
         identity = reviewer_access.current_description_rewrite_identity()
         if identity is None:
+            repository.description_advice_store().consume_pending_if_unconfigured(
+                action.review_case_id
+            )
             return
-        repository = cast("SQLiteMetadataReportRepository", pipeline_repository)
         snapshot = repository.read_staged_description_preparation(action)
         case = ReviewCase.from_json(snapshot[0])
         report = MetadataReport.from_json(snapshot[1])

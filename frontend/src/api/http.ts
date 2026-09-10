@@ -2532,6 +2532,7 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
       'candidate',
       'binding',
       'selection',
+      'selected_advice',
       'application_outcome',
     ]) ||
     !['requested', 'running', 'succeeded', 'failed', 'interrupted'].includes(String(value.state)) ||
@@ -2558,7 +2559,7 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
     !/^description_attempt_[0-9a-f]{32}$/.test(value.attempt_id)
   )
     throw new ApiError(502, 'invalid_description_attempt')
-  const binding = mapDescriptionBinding(value.binding)
+  mapDescriptionBinding(value.binding)
   const candidate = mapDescriptionCandidate(value.candidate)
   if (
     candidate &&
@@ -2591,6 +2592,21 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
       value.selection.application !== 'guarded')
   )
     throw new ApiError(502, 'invalid_description_selection')
+  if ((value.selection === null) !== (value.selected_advice === null))
+    throw new ApiError(502, 'invalid_description_selection')
+  let selectedCandidate: ReturnType<typeof mapDescriptionCandidate> = null
+  let selectedAdviceBinding: ReturnType<typeof mapDescriptionBinding> | null = null
+  if (value.selected_advice !== null) {
+    if (
+      !record(value.selected_advice) ||
+      !exactKeys(value.selected_advice, ['candidate', 'binding', 'current'])
+    )
+      throw new ApiError(502, 'invalid_description_selection')
+    booleanValue(value.selected_advice.current, 'description_selected_current')
+    selectedCandidate = mapDescriptionCandidate(value.selected_advice.candidate)
+    if (!selectedCandidate) throw new ApiError(502, 'invalid_description_selection')
+    selectedAdviceBinding = mapDescriptionBinding(value.selected_advice.binding)
+  }
   if (record(value.selection)) {
     const selection = value.selection
     const selectedBinding = mapDescriptionBinding(selection.binding)
@@ -2601,10 +2617,12 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
       ).test(selection.decision_id) ||
       typeof selection.candidate_id !== 'string' ||
       !/^description_candidate_[0-9a-f]{64}$/.test(selection.candidate_id) ||
-      selection.candidate_id !== candidate?.candidate_id ||
-      Object.keys(binding).some(
+      selection.candidate_id !== selectedCandidate?.candidate_id ||
+      selectedAdviceBinding === null ||
+      Object.keys(selectedBinding).some(
         (key) =>
-          selectedBinding[key as keyof typeof binding] !== binding[key as keyof typeof binding],
+          selectedBinding[key as keyof typeof selectedBinding] !==
+          selectedAdviceBinding[key as keyof typeof selectedBinding],
       )
     )
       throw new ApiError(502, 'invalid_description_selection')

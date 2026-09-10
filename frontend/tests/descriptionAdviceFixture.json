@@ -480,7 +480,7 @@
     {
       "automatic_decision": {
         "candidate_id": null,
-        "decision_id": "automatic_decision_171207c35b392ee0e4857346d4b041803a71aa9a969ae202d12bb1690e3d68a7",
+        "decision_id": "automatic_decision_637cd0d45282184996d9386cf1173646ee40585d73df78b2a75ea3e9dcfb2347",
         "destination": "description",
         "occurred_at": 4,
         "outcome": "keep_current",
@@ -534,7 +534,7 @@
       "decision_actions": ["keep_current", "accept"],
       "description_advice": {
         "application_outcome": null,
-        "attempt_id": "description_attempt_53ad231ef8764396aa46e665e1b28a8b",
+        "attempt_id": "description_attempt_eb0c90d745274cf88bd299634eb45c10",
         "binding": {
           "access_revision": 2,
           "policy_generation": 2,
@@ -547,8 +547,8 @@
         "candidate": {
           "access_revision": 2,
           "advised": true,
-          "attempt_id": "description_attempt_53ad231ef8764396aa46e665e1b28a8b",
-          "candidate_id": "description_candidate_894051b8f647c5abac3c5aacf673ee4143c747553bc027a33394031ebc421fd2",
+          "attempt_id": "description_attempt_eb0c90d745274cf88bd299634eb45c10",
+          "candidate_id": "description_candidate_50a77b2377149465e283e5b16bb7a8102ddb424eeeb0e2ee47c899cd4767baad",
           "created_at": 10,
           "engine": "codex",
           "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
@@ -569,6 +569,7 @@
         "engine": "codex",
         "failure": null,
         "model": "synthetic-model",
+        "selected_advice": null,
         "selection": null,
         "state": "succeeded"
       },

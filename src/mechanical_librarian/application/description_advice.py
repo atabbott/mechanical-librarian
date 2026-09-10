@@ -5,13 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from typing import Protocol
+from typing import Literal, Protocol
 
 from mechanical_librarian.application.contained_reviewer_contract import (
+    ContainedReviewerError,
     ContainedReviewRequest,
     ContainedReviewResult,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_contracts import OpenRouterReviewerError
 from mechanical_librarian.domain.description_advice import (
     DESCRIPTION_INSTRUCTION,
     DESCRIPTION_OUTPUT_SCHEMA,
@@ -55,7 +57,11 @@ class DescriptionAdviceRepository(Protocol):
         candidate: DescriptionAdviceCandidate | None,
         now: int,
         case_current: Callable[[], bool],
+        *,
+        failure: Literal["unavailable", "invalid_output"] | None = None,
     ) -> bool: ...
+
+    def consume_pending_if_unconfigured(self, review_case_id: str) -> None: ...
 
 
 class DescriptionAdviceService:
@@ -81,6 +87,7 @@ class DescriptionAdviceService:
     ) -> DescriptionAdviceCandidate | None:
         identity = self._access.current_description_rewrite_identity()
         if identity is None:
+            self._repository.consume_pending_if_unconfigured(binding.review_case_id)
             return None
         settings = self._settings()
         preferences = settings.cleanup()
@@ -121,6 +128,7 @@ class DescriptionAdviceService:
         if not self._repository.start(attempt_id, self._clock(), case_current):
             return None
         candidate = None
+        failure: Literal["unavailable", "invalid_output"] | None = "unavailable"
         try:
             dispatch = self._access.dispatch_description_rewrite()
             try:
@@ -140,6 +148,7 @@ class DescriptionAdviceService:
                 )
             finally:
                 dispatch.close()
+            failure = "invalid_output"
             if type(document) is not str or len(document.encode("utf-8")) > 65536:
                 raise ValueError("description result too large")
             result = ContainedReviewResult(
@@ -171,11 +180,23 @@ class DescriptionAdviceService:
                 output=output,
                 created_at=self._clock(),
             )
+            failure = None
+        except ContainedReviewerError as error:
+            failure = (
+                "invalid_output"
+                if error.code in {"malformed_output", "response_format"}
+                else "unavailable"
+            )
+        except OpenRouterReviewerError as error:
+            failure = (
+                "invalid_output"
+                if error.code == "malformed_response"
+                else "unavailable"
+            )
         except Exception:
-            # Failure records retain only the bounded engine provenance captured
-            # before dispatch; raw provider/model errors never enter history.
+            # Only the bounded phase/error identity enters history, never raw errors.
             candidate = None
         admitted = self._repository.finish(
-            attempt_id, candidate, self._clock(), case_current
+            attempt_id, candidate, self._clock(), case_current, failure=failure
         )
         return candidate if admitted else None

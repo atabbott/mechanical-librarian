@@ -43,6 +43,7 @@ from pydantic import (
     StrictInt,
     StrictStr,
     TypeAdapter,
+    model_validator,
 )
 from starlette.types import Message, Receive, Scope, Send
 
@@ -416,6 +417,12 @@ class _CoverConsiderationResponse(_ClosedModel):
     target_fingerprint: str
 
 
+class _SelectedDescriptionAdvice(_ClosedModel):
+    candidate: DescriptionAdviceCandidate
+    binding: DescriptionAdviceBinding
+    current: bool
+
+
 class _DescriptionAdviceResponse(_ClosedModel):
     state: Literal["requested", "running", "succeeded", "failed", "interrupted"]
     failure: Literal["unavailable", "invalid_output", "interrupted"] | None
@@ -426,7 +433,32 @@ class _DescriptionAdviceResponse(_ClosedModel):
     candidate: DescriptionAdviceCandidate | None
     binding: DescriptionAdviceBinding
     selection: AuthoredDescriptionDecision | None
+    selected_advice: _SelectedDescriptionAdvice | None
     application_outcome: Literal["verified", "no_change_required"] | None
+
+    @model_validator(mode="after")
+    def coherent_advice(self) -> _DescriptionAdviceResponse:
+        if (self.selection is None) != (self.selected_advice is None):
+            raise ValueError("description selection snapshot mismatch")
+        if (
+            self.selection is not None
+            and self.selected_advice is not None
+            and (
+                self.selection.candidate_id
+                != self.selected_advice.candidate.candidate_id
+                or self.selection.binding != self.selected_advice.binding
+            )
+        ):
+            raise ValueError("description selection snapshot mismatch")
+        if self.application_outcome is not None and self.selection is None:
+            raise ValueError("description outcome requires selection")
+        if self.candidate is not None and (
+            self.candidate.attempt_id != self.attempt_id
+            or self.candidate.engine != self.engine
+            or self.candidate.model != self.model
+        ):
+            raise ValueError("description candidate attempt mismatch")
+        return self
 
 
 class _DescriptionSelectionRequest(_ClosedModel):

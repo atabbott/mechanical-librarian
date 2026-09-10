@@ -7429,6 +7429,11 @@ it.each(['verified', 'no_change_required'] as const)(
       ...advice,
       current: outcome === 'no_change_required',
       application_outcome: outcome,
+      selected_advice: {
+        candidate: advice.candidate,
+        binding: advice.binding,
+        current: outcome === 'no_change_required',
+      },
       selection: {
         schema_version: 'authored-description-decision-v1',
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
@@ -7482,6 +7487,7 @@ it.each([
       ...advice,
       current,
       application_outcome: outcome,
+      selected_advice: { candidate: advice.candidate, binding: advice.binding, current },
       selection: {
         schema_version: 'authored-description-decision-v1',
         decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
@@ -7587,6 +7593,11 @@ it.each(['human', 'automatic_policy'] as const)(
         ...advice,
         current: scenario.current,
         application_outcome: scenario.outcome,
+        selected_advice: {
+          candidate: field.descriptionAdvice.candidate,
+          binding: advice.binding,
+          current: scenario.current,
+        },
         selection: {
           schema_version: 'authored-description-decision-v1',
           decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
@@ -7646,5 +7657,52 @@ it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
     expect(panel).toHaveTextContent('Activity shows any prepared changes.')
     expect(panel).not.toHaveTextContent('Choice recorded')
     expect(panel).not.toHaveTextContent('Applied and verified')
+  },
+)
+
+it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)(
+  'retains the recorded authored choice across %s retry and fresh route load',
+  async (state) => {
+    const { default: retries } = await import('./descriptionAdviceRetryFixture.json')
+    const payload = {
+      ...descriptionAdviceFixture,
+      fields: descriptionAdviceFixture.fields.map((field) =>
+        field.destination === 'description'
+          ? { ...field, description_advice: retries[state] }
+          : field,
+      ),
+    }
+    const authored = mapCaseDetail(payload)
+    const field = authored.fields.find((item) => item.destination === 'description')
+    if (!field?.descriptionAdvice?.selected_advice)
+      throw new Error('selected retry fixture required')
+    const http = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+    }
+    for (let load = 0; load < 2; load++) {
+      renderRoute('/library?lens=all&preview=case-1&field=description', http)
+      const choices = await screen.findAllByRole('button', { name: /^Choose advised value:/ })
+      expect(choices).toHaveLength(state === 'succeeded' ? 2 : 1)
+      expect(choices[0]).toHaveAttribute('aria-pressed', 'true')
+      expect(choices[0]).toBeDisabled()
+      expect(screen.getByText('Choice recorded.')).toBeVisible()
+      expect(field.effectCapability).toBe('unavailable')
+      expect(screen.getByLabelText('External update status')).toHaveTextContent(
+        'Choice recorded · External update unavailable',
+      )
+      expect(screen.getByLabelText('External update status')).toHaveTextContent(
+        'Activity shows any recorded application progress.',
+      )
+      if (state === 'requested' || state === 'running')
+        expect(screen.getByText(/Preparing description advice/)).toBeVisible()
+      if (state === 'failed')
+        expect(screen.getByText(/Description adviser unavailable/)).toBeVisible()
+      if (state === 'succeeded') {
+        expect(choices[1]).toBeEnabled()
+        expect(choices[1]).toHaveAttribute('aria-pressed', 'false')
+      }
+      cleanup()
+    }
   },
 )

@@ -4149,6 +4149,16 @@
             "title": "Model",
             "type": "string"
           },
+          "selected_advice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_SelectedDescriptionAdvice"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "selection": {
             "anyOf": [
               {
@@ -4181,6 +4191,7 @@
           "candidate",
           "binding",
           "selection",
+          "selected_advice",
           "application_outcome"
         ],
         "title": "_DescriptionAdviceResponse",
@@ -7375,6 +7386,28 @@
           "target_state"
         ],
         "title": "_RichFieldPreviewResponse",
+        "type": "object"
+      },
+      "_SelectedDescriptionAdvice": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/DescriptionAdviceBinding"
+          },
+          "candidate": {
+            "$ref": "#/components/schemas/DescriptionAdviceCandidate"
+          },
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "candidate",
+          "binding",
+          "current"
+        ],
+        "title": "_SelectedDescriptionAdvice",
         "type": "object"
       },
       "_SeriesQualification": {

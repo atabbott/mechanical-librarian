@@ -4,7 +4,7 @@
     "additional_prior_manifest_sha256": "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee",
     "historical_reader_delta": {
       "change": "Preserve F19a v8 and both historical F20 v22 identities as readable history; current deterministic authority binds F19a v9 and F20 v23.",
-      "current_sha256": "e8c9a0e20d2e3531e5233da4a315fbe535a47a33be2342f3012d19de29cd57cd",
+      "current_sha256": "c8ae0269db5ad554a73b72c0a4153288bccf7a8d9d71865f7f0e852de82a6853",
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
       "measured_sha256": "1914319545f5e5b038296f7615e0d9f40b0d53802a34f3ac400c3ca6eeff2315"
     },
@@ -51,7 +51,7 @@
         "src/mechanical_librarian/domain/work_identity.py": "unchanged"
       },
       "current_byte_bindings": {
-        "frontend/src/api/http.ts": "4c98e557f48c590a7703c9ca10be1f845533996df0acdcee1dc7da2dba06d07f",
+        "frontend/src/api/http.ts": "447ec267ec90b53c3319df0a166773adf4c2bccffd4009f21e5fe55f9f215cc7",
         "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
         "src/mechanical_librarian/domain/human_decision.py": "949761de7fc75c5635da9c75c3c4e435564a5a9ca26479583a731da5c432353a"
       },
@@ -165,7 +165,7 @@
       "src/mechanical_librarian/application/field_effects.py": "d9f85df089e54b583d2f97487be54525b1325f5ff41a0d9805c3cdbf7db7164f",
       "src/mechanical_librarian/application/metadata_policy.py": "7003d6f98a8b733aeef600e8eb1fdd033b541280f80463c814bde52fb4748047",
       "src/mechanical_librarian/domain/audio_inspection.py": "10eb3766b9b609053f85ed354fedc3fcbd3a32d2ec1b055ce2ee82cc51f9f28f",
-      "src/mechanical_librarian/domain/automatic_decision.py": "e8c9a0e20d2e3531e5233da4a315fbe535a47a33be2342f3012d19de29cd57cd",
+      "src/mechanical_librarian/domain/automatic_decision.py": "c8ae0269db5ad554a73b72c0a4153288bccf7a8d9d71865f7f0e852de82a6853",
       "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
       "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
       "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
@@ -493,7 +493,7 @@
       "src/mechanical_librarian/adapters/persistence/review_cases.py": "7b4a1a19dfd3e7cfc861351d3143d2de5fc631d3dc17ac88b336b59520bdbb79",
       "src/mechanical_librarian/adapters/persistence/review_projections.py": "2ef1a06397309216f3e5ebb8899116f495f86735cc2b36508d7b16074482bda4",
       "src/mechanical_librarian/adapters/persistence/review_sql.py": "239a1a71befe44e9eb5a71b5514ec1ef27cee5b938b5a89705803320c015f937",
-      "src/mechanical_librarian/application/review_web.py": "305a0c4b24a0ef0cac1e31cef433fc105cd69e32b524c3ca39d428ca3dccccb0"
+      "src/mechanical_librarian/application/review_web.py": "d4be3676554b7d9888f15205c61fe24f1812c9f1f6b774d42c5a42ba57713ceb"
     },
     "fresh_holdout_claim": false,
     "fresh_scoring_run": false,

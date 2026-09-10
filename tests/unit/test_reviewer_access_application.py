@@ -602,3 +602,28 @@ def test_description_setup_can_reuse_saved_shared_key_without_resubmitting_it():
     assert isinstance(both.description_mapping, OpenRouterTaskSelection)
     assert both.description_mapping.model == "example/b"
     assert operations._repository.openrouter_key() == "saved-secret"
+
+
+def test_description_pending_cancellation_preserves_configured_cover_task(tmp_path):
+    from tests.support.description_advice import _prepared
+
+    captured = []
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repository, _report, _decision, access, calls: (
+            captured.append((access, calls))
+        ),
+    )
+    access, calls = captured[0]
+    cover = access.select_codex(expected_revision=2, task="cover_observation")
+    disabled = access.select_none(
+        expected_revision=cover.revision, task="description_rewrite"
+    )
+    assert disabled.mapping == cover.mapping
+    store.consume_pending_if_unconfigured(binding.review_case_id)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_preparation_pending"
+    ).fetchone() == (0,)
+    assert access.read().mapping == cover.mapping
+    assert len(calls) == 1
+    repository.close()

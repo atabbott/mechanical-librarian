@@ -8,6 +8,7 @@ import re
 import sqlite3
 import uuid
 from collections.abc import Callable
+from typing import Literal
 
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.domain.description_advice import (
@@ -564,7 +565,15 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         candidate: DescriptionAdviceCandidate | None,
         now: int,
         case_current: Callable[[], bool],
+        *,
+        failure: Literal["unavailable", "invalid_output"] | None = None,
     ) -> bool:
+        if (candidate is None) != (failure is not None) or failure not in {
+            None,
+            "unavailable",
+            "invalid_output",
+        }:
+            raise ValueError("description result failure mismatch")
         transaction = self._transaction("description_finish")
         try:
             transaction.begin()
@@ -602,7 +611,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 "UPDATE description_advice_attempts SET state=?,failure=?,updated_at=? WHERE attempt_id=?",
                 (
                     "succeeded" if candidate is not None else "failed",
-                    None if candidate is not None else "invalid_output",
+                    failure,
                     now,
                     attempt_id,
                 ),
@@ -620,13 +629,17 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                         row[1],
                     ),
                 )
-            for (case_id,) in self._connection.execute(
-                "SELECT review_case_id FROM current_description_advice WHERE attempt_id=? AND candidate_id IS NULL AND binding_document<>?",
-                (attempt_id, row[1]),
-            ).fetchall():
-                request_description_preparation(
-                    self._connection, now, review_case_id=case_id, preserve_pending=True
-                )
+            if self._task_configured():
+                for (case_id,) in self._connection.execute(
+                    "SELECT review_case_id FROM current_description_advice WHERE attempt_id=? AND candidate_id IS NULL AND binding_document<>?",
+                    (attempt_id, row[1]),
+                ).fetchall():
+                    request_description_preparation(
+                        self._connection,
+                        now,
+                        review_case_id=case_id,
+                        preserve_pending=True,
+                    )
             transaction.commit()
             return admitted
         except BaseException:
@@ -645,13 +658,36 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 "SELECT 1 FROM description_advice_attempts WHERE json_extract(binding_document,'$.review_case_id')=? AND state IN ('requested','running') LIMIT 1",
                 (review_case_id,),
             ).fetchone()
-            if lineage is None or active is not None:
+            if lineage is None or active is not None or not self._task_configured():
                 raise ValueError("description retry unavailable")
             request_description_preparation(
                 self._connection, now, review_case_id=review_case_id, retry=True
             )
             transaction.commit()
             return str(lineage[0]), str(lineage[1])
+        except BaseException:
+            transaction.rollback()
+            raise
+
+    def _task_configured(self) -> bool:
+        from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
+
+        row = self._connection.execute(
+            "SELECT document FROM reviewer_access WHERE singleton=1"
+        ).fetchone()
+        return (
+            row is not None
+            and ReviewerAccessDocument.model_validate_json(row[0]).description_rewrite
+            is not None
+        )
+
+    def consume_pending_if_unconfigured(self, review_case_id: str) -> None:
+        transaction = self._transaction("cancel_description_preparation")
+        try:
+            transaction.begin()
+            if not self._task_configured():
+                self.consume_pending(review_case_id)
+            transaction.commit()
         except BaseException:
             transaction.rollback()
             raise
@@ -687,7 +723,10 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             return None
         binding = DescriptionAdviceBinding.model_validate_json(row[6])
         selected = self._connection.execute(
-            "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",
+            "SELECT d.document,c.document FROM current_description_decisions p "
+            "JOIN description_decisions d ON d.decision_id=p.decision_id "
+            "JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id "
+            "WHERE p.review_case_id=?",
             (review_case_id,),
         ).fetchone()
         selection = (
@@ -698,12 +737,17 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         candidate = (
             None if row[5] is None else DescriptionAdviceCandidate.from_json(row[5])
         )
-        if selection is not None and (
-            selection.binding != binding
-            or candidate is None
-            or selection.candidate_id != candidate.candidate_id
-        ):
-            selection = None
+        selected_advice = None
+        if selection is not None:
+            assert selected is not None
+            selected_candidate = DescriptionAdviceCandidate.from_json(selected[1])
+            selected_advice = {
+                "candidate": selected_candidate.model_dump(),
+                "binding": selection.binding.model_dump(),
+                "current": self._candidate_is_current(
+                    selected_candidate, selection.binding
+                ),
+            }
         application_outcome = None
         if selection is not None:
             applied = self._connection.execute(
@@ -719,6 +763,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             else row[7] == candidate.candidate_id
             and self._candidate_is_current(candidate, binding),
             "selection": None if selection is None else selection.model_dump(),
+            "selected_advice": selected_advice,
             "application_outcome": application_outcome,
             "state": row[0],
             "failure": row[1],

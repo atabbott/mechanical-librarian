@@ -299,6 +299,23 @@ def test_description_advice_uses_real_persisted_admission_and_guarded_installed_
         decision = store.admit(
             candidate.candidate_id, binding, "automatic_policy", "e" * 64, 11
         )
+        attempt = store.begin_attempt(
+            candidate.request_identity,
+            binding,
+            candidate.engine,
+            candidate.model,
+            12,
+            lambda: store.binding_is_current(binding),
+            retry=True,
+        )
+        assert attempt is not None
+        assert store.start(attempt[0], 13, lambda: store.binding_is_current(binding))
+        assert (
+            store.read(binding.review_case_id)["selected_advice"]["candidate"][
+                "candidate_id"
+            ]
+            == candidate.candidate_id
+        )
         authority = PersistedFieldEffectAuthority(repository)
         snapshot = authority.resolve(decision)
         service, target = _guarded_application(repository, root, authority)
@@ -328,9 +345,26 @@ def test_description_advice_uses_real_persisted_admission_and_guarded_installed_
             event["state"] == "verified" and event["record"].get("advised") is True
             for event in activity["events"]
         )
+        assert (
+            store.finish(
+                attempt[0],
+                None,
+                14,
+                lambda: store.binding_is_current(binding),
+                failure="unavailable",
+            )
+            is False
+        )
+        assert store.read(binding.review_case_id)["application_outcome"] == "verified"
         repository.close()
         reopened = open_repository(root / "reports.sqlite", create=False)
         advice = reopened.description_advice_store().read(binding.review_case_id)
-        assert advice["candidate"]["candidate_id"] == candidate.candidate_id
+        assert advice["candidate"] is None
+        assert (
+            advice["selected_advice"]["candidate"]["candidate_id"]
+            == candidate.candidate_id
+        )
+        assert advice["application_outcome"] == "verified"
+        assert advice["failure"] == "unavailable"
         assert advice["selection"]["decision_id"] == decision.decision_id
         reopened.close()

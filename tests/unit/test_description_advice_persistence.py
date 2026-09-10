@@ -194,7 +194,16 @@ def test_coalesced_retry_is_consumed_and_terminal_continuation_does_not_retry(
             if outcome == "success"
             else None
         )
-        assert store.finish(attempt[0], candidate, 16, lambda: False) is False
+        assert (
+            store.finish(
+                attempt[0],
+                candidate,
+                16,
+                lambda: False,
+                failure="invalid_output" if candidate is None else None,
+            )
+            is False
+        )
     before = store.read(fresh.review_case_id)
     assert before["current"] is (candidate is None)
     assert (before["candidate"] is not None) is (candidate is not None)
@@ -380,7 +389,11 @@ def test_terminal_attempt_requires_persisted_or_explicit_retry(
         assert store.start(attempt[0], 12, lambda: store.binding_is_current(binding))
         if terminal == "failed":
             assert store.finish(
-                attempt[0], None, 13, lambda: store.binding_is_current(binding)
+                attempt[0],
+                None,
+                13,
+                lambda: store.binding_is_current(binding),
+                failure="invalid_output",
             )
         else:
             store.interrupt_recovered(13)
@@ -419,4 +432,229 @@ def test_terminal_attempt_requires_persisted_or_explicit_retry(
         == candidate
     )
     assert len(calls) == (2 if pending else 1)
+    repository.close()
+
+
+@pytest.mark.parametrize("origin", ["human", "automatic_policy"])
+@pytest.mark.parametrize(
+    "state", ["requested", "running", "failed", "interrupted", "succeeded"]
+)
+def test_selected_advice_survives_retry(tmp_path, origin, state):
+    from tests.support.description_advice import _prepared
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    decision = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+    assert decision is not None
+    attempt = store.begin_attempt(
+        candidate.request_identity,
+        binding,
+        candidate.engine,
+        candidate.model,
+        12,
+        lambda: store.binding_is_current(binding),
+        retry=True,
+    )
+    assert attempt is not None
+    latest = None
+    if state != "requested":
+        assert store.start(attempt[0], 13, lambda: store.binding_is_current(binding))
+    if state == "failed":
+        assert store.finish(
+            attempt[0],
+            None,
+            14,
+            lambda: store.binding_is_current(binding),
+            failure="unavailable",
+        )
+    elif state == "interrupted":
+        store.interrupt_recovered(14)
+    elif state == "succeeded":
+        latest = DescriptionAdviceCandidate.create(
+            **{
+                **candidate.model_dump(exclude={"candidate_id"}),
+                "attempt_id": attempt[0],
+                "created_at": 14,
+            }
+        )
+        assert store.finish(
+            attempt[0], latest, 14, lambda: store.binding_is_current(binding)
+        )
+    advice = store.read(binding.review_case_id)
+    assert advice["state"] == state
+    assert advice["candidate"] == (None if latest is None else latest.model_dump())
+    assert advice["selection"]["decision_id"] == decision.decision_id
+    assert (
+        advice["selected_advice"]["candidate"]["candidate_id"] == candidate.candidate_id
+    )
+    assert advice["selected_advice"]["current"] is True
+    assert store.authority_value(decision) is not None
+    if latest is not None and origin == "human":
+        with pytest.raises(ValueError, match="automatic admission unavailable"):
+            store.admit(latest.candidate_id, binding, "automatic_policy", "b" * 64, 15)
+        replacement = store.admit(latest.candidate_id, binding, "human", "c" * 64, 15)
+        assert replacement.candidate_id == latest.candidate_id
+    repository.close()
+    reopened = open_repository(tmp_path / "reports.sqlite", create=False)
+    retained = reopened.description_advice_store().read(binding.review_case_id)
+    assert retained["selection"]["decision_id"] == (
+        replacement.decision_id
+        if latest is not None and origin == "human"
+        else decision.decision_id
+    )
+    assert (
+        retained["selected_advice"]["candidate"]["candidate_id"]
+        == retained["selection"]["candidate_id"]
+    )
+    reopened.close()
+
+
+@pytest.mark.parametrize("reselect", ["before", "after", "never"])
+def test_disabled_task_cancellation_preserves_reselection_intent(tmp_path, reselect):
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from tests.support.description_advice import _prepared
+
+    captured = []
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repo, report, _decision, access, calls: captured.append(
+            (report, access, calls)
+        ),
+    )
+    report, access, calls = captured[0]
+    store.request_retry(binding.review_case_id, 20)
+    access.select_none(expected_revision=2, task="description_rewrite")
+    with pytest.raises(ValueError, match="retry unavailable"):
+        store.request_retry(binding.review_case_id, 21)
+    if reselect == "before":
+        access.select_codex(expected_revision=3, task="description_rewrite")
+    service = DescriptionAdviceService(
+        store, access, store.current_settings, lambda: 22
+    )
+    assert (
+        service.prepare(report, binding, lambda: store.binding_is_current(binding))
+        is None
+    )
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_preparation_pending"
+    ).fetchone() == ((1,) if reselect == "before" else (0,))
+    if reselect == "after":
+        access.select_codex(expected_revision=3, task="description_rewrite")
+        assert repository._connection.execute(
+            "SELECT count(*) FROM description_preparation_pending"
+        ).fetchone() == (1,)
+    assert len(calls) == 1
+    repository.close()
+
+
+def test_configured_unavailable_identity_keeps_pending_intent(tmp_path, monkeypatch):
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from tests.support.description_advice import _prepared
+
+    captured = []
+    repository, store, binding, _, _ = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repo, report, _decision, access, calls: captured.append(
+            (report, access, calls)
+        ),
+    )
+    report, access, calls = captured[0]
+    store.request_retry(binding.review_case_id, 20)
+    monkeypatch.setattr(access, "current_description_rewrite_identity", lambda: None)
+    assert (
+        DescriptionAdviceService(
+            store, access, store.current_settings, lambda: 21
+        ).prepare(report, binding, lambda: True)
+        is None
+    )
+    assert store.pending_retry(binding.review_case_id)
+    assert len(calls) == 1
+    repository.close()
+
+
+def test_disabled_late_success_keeps_history_without_resurrecting_continuation(
+    tmp_path,
+):
+    from tests.support.description_advice import _prepared
+
+    captured = []
+    repository, store, binding, original, _ = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repo, _report, _decision, access, _calls: (
+            captured.append(access)
+        ),
+    )
+    attempt = store.begin_attempt(
+        original.request_identity,
+        binding,
+        original.engine,
+        original.model,
+        12,
+        lambda: store.binding_is_current(binding),
+        retry=True,
+    )
+    assert attempt is not None
+    assert store.start(attempt[0], 13, lambda: store.binding_is_current(binding))
+    _, fresh = _publish_successor(repository, binding)
+    assert (
+        store.begin_attempt(
+            original.request_identity,
+            fresh,
+            original.engine,
+            original.model,
+            14,
+            lambda: store.binding_is_current(fresh),
+        )
+        is None
+    )
+    captured[0].select_none(expected_revision=2, task="description_rewrite")
+    store.consume_pending_if_unconfigured(fresh.review_case_id)
+    candidate = DescriptionAdviceCandidate.create(
+        **{
+            **original.model_dump(exclude={"candidate_id"}),
+            "attempt_id": attempt[0],
+            "created_at": 15,
+        }
+    )
+    assert store.finish(attempt[0], candidate, 15, lambda: False) is False
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_preparation_pending"
+    ).fetchone() == (0,)
+    assert (
+        store.read(fresh.review_case_id)["candidate"]["candidate_id"]
+        == candidate.candidate_id
+    )
+    assert store.read(fresh.review_case_id)["current"] is False
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "candidate_present,failure",
+    [
+        (False, None),
+        (True, "unavailable"),
+        (True, "invalid_output"),
+        (False, "unknown"),
+    ],
+)
+def test_finish_rejects_inconsistent_success_failure_without_mutation(
+    tmp_path, candidate_present, failure
+):
+    from tests.support.description_advice import _prepared
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    before = repository._connection.total_changes
+    with pytest.raises(ValueError, match="failure mismatch"):
+        store.finish(
+            candidate.attempt_id,
+            candidate if candidate_present else None,
+            12,
+            lambda: True,
+            failure=failure,
+        )
+    assert repository._connection.total_changes == before
+    assert store.read(binding.review_case_id)["state"] == "succeeded"
     repository.close()

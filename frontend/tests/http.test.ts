@@ -2210,3 +2210,74 @@ it.each([
   }
   expect(() => mapCaseDetail(changed)).toThrow(ApiError)
 })
+
+it.each(['selected', 'requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)(
+  'parses actual serialized retained selection during %s advice',
+  async (state) => {
+    const { default: base } = await import('./descriptionAdviceFixture.json')
+    const { default: retries } = await import('./descriptionAdviceRetryFixture.json')
+    const payload = {
+      ...base,
+      fields: base.fields.map((field) =>
+        field.destination === 'description'
+          ? { ...field, description_advice: retries[state] }
+          : field,
+      ),
+    }
+    const advice = mapCaseDetail(payload).fields.find(
+      (field) => field.destination === 'description',
+    )?.descriptionAdvice
+    expect(advice?.selection?.candidate_id).toBe(retries.selected.candidate.candidate_id)
+    expect(advice?.selected_advice?.current).toBe(true)
+    expect(advice?.state).toBe(retries[state].state)
+    if (state === 'succeeded')
+      expect(advice?.candidate?.candidate_id).not.toBe(advice?.selection?.candidate_id)
+  },
+)
+
+it.each([
+  'missing-snapshot',
+  'missing-selection',
+  'candidate',
+  'binding',
+  'shape',
+  'current',
+  'outcome',
+] as const)('rejects incoherent selected advice %s', async (fault) => {
+  const { default: base } = await import('./descriptionAdviceFixture.json')
+  const { default: retries } = await import('./descriptionAdviceRetryFixture.json')
+  const original = retries.requested
+  const selected = original.selected_advice
+  const advice = {
+    ...original,
+    ...(fault === 'missing-snapshot' ? { selected_advice: null } : {}),
+    ...(fault === 'missing-selection' ? { selection: null } : {}),
+    ...(fault === 'candidate'
+      ? {
+          selected_advice: {
+            ...selected,
+            candidate: {
+              ...selected.candidate,
+              candidate_id: `description_candidate_${'f'.repeat(64)}`,
+            },
+          },
+        }
+      : {}),
+    ...(fault === 'binding'
+      ? { selected_advice: { ...selected, binding: { ...selected.binding, access_revision: 99 } } }
+      : {}),
+    ...(fault === 'shape' ? { selected_advice: { ...selected, extra: true } } : {}),
+    ...(fault === 'current' ? { selected_advice: { ...selected, current: 'true' } } : {}),
+    ...(fault === 'outcome'
+      ? { selection: null, selected_advice: null, application_outcome: 'verified' }
+      : {}),
+  }
+  expect(() =>
+    mapCaseDetail({
+      ...base,
+      fields: base.fields.map((field) =>
+        field.destination === 'description' ? { ...field, description_advice: advice } : field,
+      ),
+    }),
+  ).toThrow(ApiError)
+})

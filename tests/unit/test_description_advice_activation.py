@@ -2246,3 +2246,291 @@ def test_automatic_history_values_survive_authored_selection_reversal_and_reopen
     reopened = open_repository(tmp_path / "reports.sqlite", create=False)
     assert event(reopened) == before
     reopened.close()
+
+
+@pytest.mark.parametrize(
+    "kind,code,expected",
+    [
+        *[
+            (
+                "contained",
+                code,
+                "invalid_output"
+                if code in {"malformed_output", "response_format"}
+                else "unavailable",
+            )
+            for code in (
+                "auth",
+                "cancel",
+                "local_cli_abort",
+                "malformed_output",
+                "profile",
+                "profile_contract_mismatch",
+                "response_format",
+                "runtime",
+                "setup",
+                "spawn",
+                "timeout",
+            )
+        ],
+        ("openrouter", "malformed_response", "invalid_output"),
+        *[
+            ("openrouter", code, "unavailable")
+            for code in (
+                "invalid_key",
+                "quota_exhausted",
+                "rate_limited",
+                "model_unavailable",
+                "model_text_only",
+                "unreachable",
+                "transport",
+                "profile_mismatch",
+                "malformed_request",
+            )
+        ],
+        ("access", "host_unsupported", "unavailable"),
+        ("unexpected", "private failure canary", "unavailable"),
+    ],
+)
+def test_description_failure_phase_is_bounded_and_not_retried(
+    tmp_path, kind, code, expected
+):
+    from mechanical_librarian.application.contained_reviewer_contract import (
+        ContainedReviewerError,
+    )
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessApplicationError,
+    )
+    from mechanical_librarian.application.reviewer_contracts import (
+        OpenRouterReviewerError,
+    )
+
+    def fail(_response):
+        if kind == "contained":
+            raise ContainedReviewerError(code)
+        if kind == "openrouter":
+            raise OpenRouterReviewerError(code)
+        if kind == "access":
+            raise ReviewerAccessApplicationError(code)
+        raise RuntimeError(code)
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, output_transform=fail
+    )
+    assert candidate is None
+    advice = store.read(binding.review_case_id)
+    assert (advice["state"], advice["failure"]) == ("failed", expected)
+    assert "private failure canary" not in str(advice)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_advice_attempts"
+    ).fetchone() == (1,)
+    history = repository.get_review_case_history(binding.review_case_id, 50)
+    assert any(
+        event["kind"] == "description_advice_recorded" and event["state"] == "failed"
+        for event in history
+    )
+    repository.close()
+    reopened = open_repository(tmp_path / "reports.sqlite", create=False)
+    assert (
+        reopened.description_advice_store().read(binding.review_case_id)["failure"]
+        == expected
+    )
+    reopened.close()
+
+
+def test_real_projection_consumes_disabled_description_intent_once(tmp_path):
+    from dataclasses import replace
+
+    from mechanical_librarian.bootstrap import composition
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+    from tests.support.description_advice import _contained_profile
+    from tests.unit.test_shadow_outcome_persistence import (
+        _pipeline_configuration,
+        _run_qualified_cover_pipeline,
+    )
+
+    profile = _contained_profile(tmp_path)
+    captured = []
+    repository, store, binding, _, deterministic = _prepared(
+        tmp_path,
+        contained_identity=lambda: ("synthetic-model", profile.read_bytes()),
+        pipeline_probe=lambda _repo, report, _decision, access, calls: captured.append(
+            (report, access, calls)
+        ),
+    )
+    report, access, calls = captured[0]
+    configuration = _pipeline_configuration()
+    assert configuration.review is not None
+    configuration = replace(
+        configuration,
+        review=replace(configuration.review, cover_reviewer_profile_file=str(profile)),
+    )
+    recovery = composition.SQLiteProviderRecoveryStore.open(
+        tmp_path / "provider-recovery.sqlite"
+    )
+    supervisor = composition.create_review_pipeline(
+        configuration,
+        tmp_path / "reports.sqlite",
+        tmp_path / "catalogue.sqlite",
+        tmp_path / "artifacts",
+        access,
+        database_authority=repository.authority,
+        provider_recovery=recovery,
+    )
+    proposal = ProposalSet.from_json(
+        repository._connection.execute(
+            "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+            (deterministic.proposal_set_id,),
+        ).fetchone()[0]
+    )
+    pipeline = _run_qualified_cover_pipeline(
+        repository,
+        tmp_path,
+        report,
+        proposal,
+        supervisor,
+        repository_factory=supervisor._pipeline._repository_factory,
+    )
+    try:
+        for _ in range(64):
+            if not pipeline.run_next(1):
+                break
+        else:
+            pytest.fail("initial pipeline did not settle")
+        before_calls = len(calls)
+        access.select_none(expected_revision=2, task="description_rewrite")
+        assert repository._connection.execute(
+            "SELECT count(*) FROM description_preparation_pending"
+        ).fetchone() == (1,)
+        for name in ("_extract", "_providers", "_propose", "_admit"):
+            setattr(
+                pipeline,
+                name,
+                lambda *_: pytest.fail("disabled advice repeated upstream work"),
+            )
+        requested_at = repository._connection.execute(
+            "SELECT max(requested_at) FROM review_preparation_scans"
+        ).fetchone()[0]
+        pipeline._clock = lambda: requested_at
+        for _ in range(64):
+            if not pipeline.run_next(1):
+                break
+        else:
+            pytest.fail("disabled advice projection did not settle")
+        assert repository._connection.execute(
+            "SELECT count(*) FROM description_preparation_pending"
+        ).fetchone() == (0,)
+        assert len(calls) == before_calls
+        assert pipeline.run_next(1) is False
+        assert repository._connection.execute(
+            "SELECT stage,state,failure_code FROM review_preparation_work WHERE item_id='item-1'"
+        ).fetchone() == ("complete", "complete", None)
+    finally:
+        supervisor.stop()
+        recovery.close()
+        repository.close()
+
+
+@pytest.mark.parametrize("same_current", [False, True])
+@pytest.mark.parametrize("origin", ["human", "automatic_policy"])
+def test_selected_effect_outcome_survives_new_attempt_and_reopen(
+    tmp_path, same_current, origin
+):
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.description_advice import (
+        DescriptionAdviceCandidate,
+    )
+    from tests.unit.test_field_effects import CAPABILITY
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, same_current=same_current
+    )
+    decision = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(decision)
+    attempt = store.begin_attempt(
+        candidate.request_identity,
+        binding,
+        candidate.engine,
+        candidate.model,
+        12,
+        lambda: store.binding_is_current(binding),
+        retry=True,
+    )
+    assert attempt is not None
+    assert store.start(attempt[0], 13, lambda: store.binding_is_current(binding))
+    application, target = _guarded_application(repository, tmp_path, authority)
+    operation = application.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    if same_current:
+        assert operation is None
+        assert repository.record_current_field_effect_no_change(decision, 14)
+        outcome = "no_change_required"
+    else:
+        assert operation is not None
+        target.seed(operation.plan)
+        assert application.apply(operation.plan.plan_id).state == "verified"
+        outcome = "verified"
+    for stage in ("running", "succeeded"):
+        if stage == "succeeded":
+            latest = DescriptionAdviceCandidate.create(
+                **{
+                    **candidate.model_dump(exclude={"candidate_id"}),
+                    "attempt_id": attempt[0],
+                    "created_at": 14,
+                }
+            )
+            assert (
+                store.finish(
+                    attempt[0], latest, 14, lambda: store.binding_is_current(binding)
+                )
+                is same_current
+            )
+        advice = store.read(binding.review_case_id)
+        assert advice["state"] == stage
+        assert advice["selection"]["decision_id"] == decision.decision_id
+        assert (
+            advice["selected_advice"]["candidate"]["candidate_id"]
+            == candidate.candidate_id
+        )
+        assert advice["application_outcome"] == outcome
+        assert advice["selected_advice"]["current"] is same_current
+        field = next(
+            field
+            for field in InspectCurrentReviewCase(repository).run(
+                binding.review_case_id
+            )["fields"]
+            if field["destination"] == "description"
+        )
+        assert field["needs_attention"] is False
+        history = repository.get_review_case_history(binding.review_case_id, 50)
+        assert any(
+            event["kind"] == "description_application" and event["state"] == outcome
+            for event in history
+        )
+        activity = repository.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=25
+        )
+        assert any(
+            event["state"] == outcome and event["record"].get("advised") is True
+            for event in activity["events"]
+        )
+    repository.close()
+    reopened = open_repository(tmp_path / "reports.sqlite", create=False)
+    advice = reopened.description_advice_store().read(binding.review_case_id)
+    assert advice["application_outcome"] == outcome
+    assert (
+        advice["selected_advice"]["candidate"]["candidate_id"] == candidate.candidate_id
+    )
+    reopened.close()
