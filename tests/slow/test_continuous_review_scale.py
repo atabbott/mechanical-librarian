@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -107,6 +108,7 @@ class _WorkspaceProbe:
 
     def _settle_idle_requests(self, page: Page) -> None:
         deadline = time.monotonic() + 5
+        page.evaluate("0")
         while self._idle_inflight:
             page.evaluate("0")
             if time.monotonic() >= deadline:
@@ -131,10 +133,22 @@ class _WorkspaceProbe:
                 ),
             )
         )
-        page.clock.install()
-        elapsed = 0
-        self._record_idle_requests = True
+        expect(page.get_by_role("heading", level=2, name="Works")).to_be_visible()
+        page.wait_for_load_state("networkidle")
+        page.clock.pause_at(
+            datetime.fromtimestamp(
+                (page.evaluate("Date.now()") + 100) / 1_000, timezone.utc
+            )
+        )
         try:
+            page.evaluate("document.dispatchEvent(new PointerEvent('pointerdown'))")
+            page.clock.run_for(10_000)
+            self._settle_idle_requests(page)
+            self._idle_requests.clear()
+            self._idle_inflight.clear()
+            started = page.evaluate("Date.now()")
+            elapsed = 0
+            self._record_idle_requests = True
             for sequence, (at, topic) in enumerate(frames, start=1):
                 page.clock.run_for(max(0, at - elapsed))
                 elapsed = max(elapsed, at)
@@ -148,6 +162,7 @@ class _WorkspaceProbe:
                 self._settle_idle_requests(page)
             page.clock.run_for(max(0, _IDLE_PROBE_MILLISECONDS - elapsed))
             self._settle_idle_requests(page)
+            assert page.evaluate("Date.now()") - started == _IDLE_PROBE_MILLISECONDS
         finally:
             self._record_idle_requests = False
             page.clock.resume()
@@ -156,9 +171,12 @@ class _WorkspaceProbe:
             path: self._idle_requests.count(path) for path in sorted(_IDLE_DATA_PATHS)
         }
         self.idle_request_evidence["total"] = len(self._idle_requests)
-        assert self.idle_request_evidence["total"] <= 237 // 10, (
-            self.idle_request_evidence
-        )
+        assert self.idle_request_evidence == {
+            "/api/v1/review-preparation": 20,
+            "/api/v1/library": 0,
+            "/api/v1/attention": 0,
+            "total": 20,
+        }
 
     def _activity_api_evidence(self, page: Page) -> dict[str, object]:
         """Read only bounded decision/activity facts through authenticated APIs."""
@@ -245,6 +263,7 @@ class _WorkspaceProbe:
                 ignore_https_errors=True, viewport={"width": 1280, "height": 800}
             )
             self._page = self._context.new_page()
+            self._page.clock.install()
             self._page.add_init_script(_LIVE_REPLAY_SCRIPT)
             self._page.on("pageerror", lambda error: self.errors.append(str(error)))
             self._page.on(
@@ -415,7 +434,12 @@ def test_installed_pipeline_reconciles_two_thousand_then_restarts_completed_coho
             phase_observer=workspace,
         )
         assert workspace.idle_request_evidence is not None
-        assert workspace.idle_request_evidence["total"] <= 237 // 10
+        assert workspace.idle_request_evidence == {
+            "/api/v1/review-preparation": 20,
+            "/api/v1/library": 0,
+            "/api/v1/attention": 0,
+            "total": 20,
+        }
     finally:
         workspace.close()
 
