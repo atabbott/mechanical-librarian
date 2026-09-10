@@ -3384,7 +3384,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           ) : null}
                           {(selected.decisionActions.includes('accept') &&
                             !selected.preservationOnly) ||
-                          selectedAdvice?.candidate ? (
+                          selectedAdvice?.candidate ||
+                          selectedAdvice?.selected_advice ? (
                             <div
                               className={`proposed-choice-list${selected.proposedValues.length + (selectedAdvice?.candidate ? 1 : 0) === 1 ? ' has-one-choice' : ''}`}
                             >

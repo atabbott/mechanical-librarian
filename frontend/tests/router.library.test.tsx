@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError, mapCaseDetail } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
+import { ownerChoiceCount } from '../src/reviewChoiceCounts'
 import { reconciliationKey } from '../src/reviewDecisionController'
 import { sourceStatusLabel } from '../src/routes/LibraryPage'
 import { advancePresentationSettled } from '../src/reviewAdvancePresentation'
@@ -7706,3 +7707,35 @@ it.each(['requested', 'running', 'failed', 'interrupted', 'succeeded'] as const)
     }
   },
 )
+
+it('shows retained automatic advice during preservation-only retry without adding owner actions', async () => {
+  const { default: payload } = await import('./descriptionAdvicePreservationFixture.json')
+  const authored = mapCaseDetail(payload)
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field?.descriptionAdvice?.selected_advice)
+    throw new Error('Selected preservation fixture required')
+  expect(field.preservationOnly).toBe(true)
+  expect(field.editable).toBe(false)
+  expect(field.decisionActions).toEqual([])
+  expect(field.proposedValues).toEqual([])
+  expect(ownerChoiceCount(field)).toBe(0)
+  expect(field.descriptionAdvice.selection?.origin).toBe('automatic_policy')
+  expect(field.descriptionAdvice.candidate).toBeNull()
+  expect(field.descriptionAdvice.application_outcome).toBeNull()
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+  })
+  const retained = await screen.findByRole('button', {
+    name: 'Choose advised value: Authored synthetic description.',
+  })
+  expect(retained).toBeDisabled()
+  expect(retained).toHaveAttribute('aria-pressed', 'true')
+  expect(retained).toHaveTextContent('Advised · Authored content · Recorded choice')
+  expect(screen.getByText(/Preparing description advice/)).toBeVisible()
+  expect(screen.queryByText('Choice recorded.')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Description Decision recorded' })).toBeNull()
+  expect(screen.getByLabelText('External update status')).toHaveTextContent(
+    'Activity shows any recorded application progress.',
+  )
+})
