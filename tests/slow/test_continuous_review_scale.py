@@ -135,20 +135,17 @@ class _WorkspaceProbe:
         )
         expect(page.get_by_role("heading", level=2, name="Works")).to_be_visible()
         page.wait_for_load_state("networkidle")
-        page.clock.pause_at(
-            datetime.fromtimestamp(
-                (page.evaluate("Date.now()") + 100) / 1_000, timezone.utc
-            )
-        )
+        self._record_idle_requests = True
         try:
+            # The fixed hour exceeds the bounded startup waits without racing a
+            # Date.now() read against the next protocol call.
+            page.clock.pause_at(datetime(2024, 1, 1, 1, tzinfo=timezone.utc))
             page.evaluate("document.dispatchEvent(new PointerEvent('pointerdown'))")
             page.clock.run_for(10_000)
             self._settle_idle_requests(page)
             self._idle_requests.clear()
-            self._idle_inflight.clear()
             started = page.evaluate("Date.now()")
             elapsed = 0
-            self._record_idle_requests = True
             for sequence, (at, topic) in enumerate(frames, start=1):
                 page.clock.run_for(max(0, at - elapsed))
                 elapsed = max(elapsed, at)
@@ -263,7 +260,7 @@ class _WorkspaceProbe:
                 ignore_https_errors=True, viewport={"width": 1280, "height": 800}
             )
             self._page = self._context.new_page()
-            self._page.clock.install()
+            self._page.clock.install(time=datetime(2024, 1, 1, tzinfo=timezone.utc))
             self._page.add_init_script(_LIVE_REPLAY_SCRIPT)
             self._page.on("pageerror", lambda error: self.errors.append(str(error)))
             self._page.on(
