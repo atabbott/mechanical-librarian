@@ -163,7 +163,6 @@ def test_coalesced_retry_is_consumed_and_terminal_continuation_does_not_retry(
             original.model,
             15,
             lambda: store.binding_is_current(fresh),
-            retry=True,
         )
         is None
     )
@@ -297,4 +296,123 @@ def test_late_completion_preserves_replaced_pointer_and_newer_retry(
         "SELECT retry,requested_at FROM description_preparation_pending WHERE review_case_id=?",
         (fresh.review_case_id,),
     ).fetchone() == (1, 16)
+    repository.close()
+
+
+def test_retry_arriving_during_public_identity_read_is_consumed_as_retry(tmp_path):
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from tests.support.description_advice import _prepared
+
+    captured = []
+    repository, store, binding, original, _ = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repository, report, _decision, access, calls: (
+            captured.append((report, access, calls))
+        ),
+    )
+    report, access, calls = captured[0]
+    identity = access.current_description_rewrite_identity
+    captured_retry = store.pending_retry(binding.review_case_id)
+    assert captured_retry is False
+
+    def arriving_retry():
+        store.request_retry(binding.review_case_id, 11)
+        return identity()
+
+    access.current_description_rewrite_identity = arriving_retry
+    service = DescriptionAdviceService(
+        store, access, store.current_settings, lambda: 12
+    )
+    candidate = service.prepare(
+        report, binding, lambda: store.binding_is_current(binding), retry=captured_retry
+    )
+    access.current_description_rewrite_identity = identity
+    assert candidate is not None and candidate.candidate_id != original.candidate_id
+    assert len(calls) == 2
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_advice_attempts"
+    ).fetchone() == (2,)
+    assert not store.pending_retry(binding.review_case_id)
+    assert (
+        service.prepare(report, binding, lambda: store.binding_is_current(binding))
+        == candidate
+    )
+    assert len(calls) == 2
+    repository.close()
+
+
+@pytest.mark.parametrize("terminal", ["succeeded", "failed", "interrupted"])
+@pytest.mark.parametrize("pending", [False, True])
+def test_terminal_attempt_requires_persisted_or_explicit_retry(
+    tmp_path, terminal, pending
+):
+    from mechanical_librarian.application.description_advice import (
+        DescriptionAdviceService,
+    )
+    from tests.support.description_advice import _prepared
+
+    captured = []
+    repository, store, binding, original, _ = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repository, report, _decision, access, calls: (
+            captured.append((report, access, calls))
+        ),
+    )
+    report, access, calls = captured[0]
+    prior_count = 1
+    if terminal != "succeeded":
+        attempt = store.begin_attempt(
+            original.request_identity,
+            binding,
+            original.engine,
+            original.model,
+            11,
+            lambda: store.binding_is_current(binding),
+            retry=True,
+        )
+        assert attempt is not None
+        assert store.start(attempt[0], 12, lambda: store.binding_is_current(binding))
+        if terminal == "failed":
+            assert store.finish(
+                attempt[0], None, 13, lambda: store.binding_is_current(binding)
+            )
+        else:
+            store.interrupt_recovered(13)
+        prior_count = 2
+    if pending:
+        store.request_retry(binding.review_case_id, 14)
+        assert (
+            store.begin_attempt(
+                original.request_identity,
+                binding,
+                original.engine,
+                original.model,
+                15,
+                lambda: False,
+            )
+            is None
+        )
+        assert store.pending_retry(binding.review_case_id)
+    service = DescriptionAdviceService(
+        store, access, store.current_settings, lambda: 16
+    )
+    candidate = service.prepare(
+        report, binding, lambda: store.binding_is_current(binding)
+    )
+    if pending:
+        assert candidate is not None and candidate.candidate_id != original.candidate_id
+    else:
+        assert candidate == (original if terminal == "succeeded" else None)
+    assert len(calls) == (2 if pending else 1)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_advice_attempts"
+    ).fetchone() == (prior_count + int(pending),)
+    assert not store.pending_retry(binding.review_case_id)
+    assert (
+        service.prepare(report, binding, lambda: store.binding_is_current(binding))
+        == candidate
+    )
+    assert len(calls) == (2 if pending else 1)
     repository.close()

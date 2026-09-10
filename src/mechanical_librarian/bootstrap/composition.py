@@ -2628,9 +2628,6 @@ def create_review_pipeline(
             report,
             binding,
             current,
-            retry=repository.description_advice_store().pending_retry(
-                case.review_case_id
-            ),
         )
 
     def admit_description(

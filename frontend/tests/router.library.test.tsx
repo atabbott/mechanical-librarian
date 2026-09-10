@@ -7384,7 +7384,12 @@ it('retries an advised selection through the ordinary controller with the same a
   if (!advice?.candidate) throw new Error('description fixture requires its candidate')
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  let release: (() => void) | undefined
+  const pending = new Promise<void>((resolve) => {
+    release = resolve
+  })
   http.recordDecision = vi.fn(async () => {
+    await pending
     throw new ApiError(503, 'persistence')
   })
   renderRoute('/library?lens=all&preview=case-1&field=description', http)
@@ -7394,7 +7399,15 @@ it('retries an advised selection through the ordinary controller with the same a
   })
   option.focus()
   await user.keyboard('{Enter}')
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(1))
+  expect(screen.getByLabelText('External update status')).not.toHaveTextContent('Choice recorded')
+  expect(screen.getByLabelText('External update status')).not.toHaveTextContent(
+    'Applied and verified',
+  )
+  if (!release) throw new Error('pending decision fixture requires release')
+  release()
   const retry = await screen.findByRole('button', { name: 'Try the same decision again' })
+  expect(screen.getByLabelText('External update status')).not.toHaveTextContent('Choice recorded')
   await user.click(retry)
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(2))
   const calls = vi.mocked(http.recordDecision).mock.calls
@@ -7514,5 +7527,124 @@ it.each([
     expect(fresh.queryClient).not.toBe(first.queryClient)
     await screen.findByRole('button', { name: /^Choose advised value:/ })
     expect(Boolean(screen.queryByText('Choice recorded.'))).toBe(recorded)
+  },
+)
+
+it.each(['human', 'automatic_policy'] as const)(
+  'describes persisted authored external outcomes truthfully for %s',
+  async (origin) => {
+    for (const scenario of [
+      {
+        current: true,
+        outcome: null,
+        capability: 'allowed',
+        heading: 'Choice recorded',
+        detail: 'Activity shows the current status of this description change.',
+      },
+      {
+        current: true,
+        outcome: null,
+        capability: 'unavailable',
+        heading: 'Choice recorded · External update unavailable',
+        detail: 'No external update capability is configured.',
+      },
+      {
+        current: true,
+        outcome: null,
+        capability: 'backup_required',
+        heading: 'Choice recorded · External update guarded',
+        detail: 'currently prevents an external update.',
+      },
+      {
+        current: false,
+        outcome: null,
+        capability: 'allowed',
+        heading: 'Earlier choice retained',
+        detail: 'This choice is no longer current.',
+      },
+      {
+        current: false,
+        outcome: 'verified',
+        capability: 'unavailable',
+        heading: 'Applied and verified',
+        detail: 'This authored description was applied and verified in the library.',
+      },
+      {
+        current: false,
+        outcome: 'no_change_required',
+        capability: 'backup_required',
+        heading: 'No change needed',
+        detail: 'The library already held the selected description.',
+      },
+    ] as const) {
+      const authored = mapCaseDetail(descriptionAdviceFixture)
+      const field = authored.fields.find((item) => item.destination === 'description')
+      if (!field?.descriptionAdvice?.candidate)
+        throw new Error('description fixture requires candidate')
+      const advice = field.descriptionAdvice
+      field.effectCapability = scenario.capability
+      field.descriptionAdvice = {
+        ...advice,
+        current: scenario.current,
+        application_outcome: scenario.outcome,
+        selection: {
+          schema_version: 'authored-description-decision-v1',
+          decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
+          candidate_id: field.descriptionAdvice.candidate.candidate_id,
+          binding: advice.binding,
+          origin,
+          resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+          qualification_manifest_sha256: 'c'.repeat(64),
+          idempotency_digest: 'd'.repeat(64),
+          occurred_at: 10,
+          destination: 'description',
+          outcome: 'accept',
+          application: 'guarded',
+        },
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=description', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+      })
+      const panel = await screen.findByLabelText('External update status')
+      expect(panel).toHaveTextContent(scenario.heading)
+      expect(panel).toHaveTextContent(scenario.detail)
+      expect(panel).not.toHaveTextContent('queues nothing')
+      cleanup()
+    }
+  },
+)
+
+it.each(['ready', 'needs_review', 'stale', 'absent'] as const)(
+  'does not infer external application from unselected %s advice',
+  async (state) => {
+    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const field = authored.fields.find((item) => item.destination === 'description')
+    if (!field?.descriptionAdvice?.candidate)
+      throw new Error('description fixture requires candidate')
+    field.effectCapability = 'allowed'
+    if (state === 'absent') field.descriptionAdvice = null
+    else
+      field.descriptionAdvice = {
+        ...field.descriptionAdvice,
+        current: state !== 'stale',
+        selection: null,
+        candidate: {
+          ...field.descriptionAdvice.candidate,
+          output: {
+            ...field.descriptionAdvice.candidate.output,
+            disposition: state === 'needs_review' ? 'needs_review' : 'ready',
+          },
+        },
+      }
+    renderRoute('/library?lens=all&preview=case-1&field=description', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+    })
+    const panel = await screen.findByLabelText('External update status')
+    expect(panel).toHaveTextContent('Eligible for guarded planning')
+    expect(panel).toHaveTextContent('Activity shows any prepared changes.')
+    expect(panel).not.toHaveTextContent('Choice recorded')
+    expect(panel).not.toHaveTextContent('Applied and verified')
   },
 )

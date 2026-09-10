@@ -457,6 +457,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ):
                 transaction.commit()
                 return None
+            retry = retry or self.pending_retry(binding.review_case_id)
             self.consume_pending(binding.review_case_id)
             prior = self._connection.execute(
                 "SELECT attempt_id,state,binding_document FROM description_advice_attempts WHERE request_identity=? ORDER BY rowid DESC LIMIT 1",

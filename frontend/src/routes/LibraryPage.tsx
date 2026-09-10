@@ -380,12 +380,49 @@ const fieldReason = (field: ReviewField) =>
             : 'No eligible owner decision is available.',
     'Retained reviewer notice',
   )
-const effectSummary = (field: ReviewField) =>
-  field.effectCapability === 'allowed'
+const effectSummary = (field: ReviewField) => {
+  const advice = field.destination === 'description' ? field.descriptionAdvice : null
+  if (advice?.selection) {
+    if (advice.application_outcome === 'verified')
+      return {
+        state: 'Applied and verified',
+        detail:
+          'This authored description was applied and verified in the library. Its record is retained in History.',
+      }
+    if (advice.application_outcome === 'no_change_required')
+      return {
+        state: 'No change needed',
+        detail:
+          'The library already held the selected description. This authored choice is retained in History.',
+      }
+    if (!advice.current)
+      return {
+        state: 'Earlier choice retained',
+        detail:
+          'This choice is no longer current. History retains the choice; Activity shows any recorded application progress.',
+      }
+    return field.effectCapability === 'allowed'
+      ? {
+          state: 'Choice recorded',
+          detail:
+            'Activity shows the current status of this description change. Backup, currentness, validation and read-back checks remain required for an external update.',
+        }
+      : field.effectCapability === 'unavailable'
+        ? {
+            state: 'Choice recorded · External update unavailable',
+            detail:
+              'No external update capability is configured. Activity shows any recorded application progress.',
+          }
+        : {
+            state: 'Choice recorded · External update guarded',
+            detail: `${fieldLabel(field.effectCapability)} currently prevents an external update. Activity shows any recorded application progress.`,
+          }
+  }
+  return field.effectCapability === 'allowed'
     ? {
         state: 'Eligible for guarded planning',
         detail:
-          'This decision queues nothing. Backup, currentness, validation and read-back checks remain separate gates.',
+          'External updates require backup, currentness, validation and read-back checks. Activity shows any prepared changes.',
       }
     : field.effectCapability === 'unavailable'
       ? {
@@ -397,6 +434,7 @@ const effectSummary = (field: ReviewField) =>
           state: 'Guarded from external update',
           detail: `${fieldLabel(field.effectCapability)} currently prevents an external update.`,
         }
+}
 const completionOutcome = (field: ReviewField) =>
   field.humanDecision?.outcome === 'reject'
     ? 'No action recorded'
