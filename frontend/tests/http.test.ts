@@ -30,6 +30,9 @@ const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
   schema_version: 'reviewer-access-view-v1',
   revision: 3,
   mapping: null,
+  description_mapping: null,
+  description_metadata: null,
+  description: null,
   openrouter_key_configured: false,
   codex: {
     engine: 'codex',
@@ -2121,4 +2124,16 @@ describe('PageCsrfTokenStore', () => {
     await expect(store.renew()).resolves.toBe(renewedToken)
     expect(store.current()).toBe(renewedToken)
   })
+})
+
+it('maps an actual persisted authored description separately from provider alternatives', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const mapped = mapCaseDetail(payload)
+  const description = mapped.fields.find((field) => field.destination === 'description')!
+  expect(description.descriptionAdvice?.candidate?.provenance).toBe('authored_content')
+  expect(description.descriptionAdvice?.candidate?.advised).toBe(true)
+  expect(description.descriptionAdvice?.candidate?.output.description).toBe(
+    'Authored synthetic description.',
+  )
+  expect(description.descriptionAdvice?.current).toBe(true)
 })

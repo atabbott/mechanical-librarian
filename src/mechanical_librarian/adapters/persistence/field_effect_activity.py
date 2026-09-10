@@ -46,9 +46,10 @@ from collections import deque
 from collections.abc import Callable
 from contextlib import closing
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from threading import RLock
-from typing import Any, TypeVar, cast
+from typing import Any, Literal, TypeVar, cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
@@ -73,6 +74,10 @@ from mechanical_librarian.domain.automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
+)
+from mechanical_librarian.domain.description_advice import (
+    AuthoredDescriptionDecision,
+    DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
     FIELD_EFFECT_FAILURES,
@@ -157,7 +162,9 @@ _CORRECTIVE_KEEP_CURRENT_SQL = (
     "earlier.review_case_id=human.review_case_id AND earlier.destination=human.destination "
     "AND earlier.ordinal<human.ordinal UNION ALL SELECT decision_id,-1 FROM "
     "automatic_decisions earlier WHERE earlier.review_case_id=human.review_case_id "
-    "AND earlier.destination=human.destination) recorded ON recorded.decision_id=prior.decision_id "
+    "AND earlier.destination=human.destination UNION ALL SELECT decision_id,-1 FROM "
+    "description_decisions earlier WHERE earlier.review_case_id=human.review_case_id "
+    "AND human.destination='description') recorded ON recorded.decision_id=prior.decision_id "
     "WHERE prior.state='verified'))"
 )
 
@@ -271,6 +278,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         field_effect_event_documents: Callable[[str], tuple[str, ...]],
         current_cover_policy_reference: Callable[[], str | None],
         current_cover_replay_reference: Callable[[], str | None],
+        description_authority_value: Callable[[AuthoredDescriptionDecision], object],
     ) -> None:
         super().__init__(connection, binding)
         self._review_case_accepts_authority = review_case_accepts_authority
@@ -284,6 +292,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._field_effect_event_documents = field_effect_event_documents
         self._cover_policy_reference = current_cover_policy_reference
         self._cover_replay_reference = current_cover_replay_reference
+        self._description_authority_value = description_authority_value
         # Activity's page is immutable at one SQLite data revision.  The
         # bounded reader-local cache prevents repeated foreground refreshes
         # from re-running its expensive union while preparation is between
@@ -331,7 +340,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         return self._cover_replay_reference()
 
     def field_effect_authority_source(
-        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
     ) -> dict[str, object]:
         """Resolve one exact persisted decision against its current case lineage."""
         try:
@@ -349,11 +362,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
 
     def _authority_source(
-        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
     ) -> dict[str, object]:
         if not self._review_case_accepts_authority(decision.review_case_id):
             raise FieldEffectError("authority_binding")
-        if type(decision) is CoverAutomaticDecision:
+        if type(decision) is AuthoredDescriptionDecision:
+            row = self._connection.execute(
+                "SELECT document FROM description_decisions WHERE decision_id=?",
+                (decision.decision_id,),
+            ).fetchone()
+        elif type(decision) is CoverAutomaticDecision:
             row = self._connection.execute(
                 "SELECT json_extract(selection.document,'$.decision_document') "
                 "FROM current_cover_selection_authorities current "
@@ -385,7 +407,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # ``value`` carries either a human selection envelope or the projected
         # automatic envelope, so it is declared at the widest of the two.
         value: object
-        if type(decision) is HumanDecision:
+        if type(decision) is AuthoredDescriptionDecision:
+            value = self._description_authority_value(decision)
+        elif type(decision) is HumanDecision:
             decision.validate_for(case)
             value = decision.selected_value
         else:
@@ -493,6 +517,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     decision.destination,
                 ),
             ).fetchone()
+            if decision.destination == "description":
+                authored_predecessor = self._connection.execute(
+                    "SELECT effect.document FROM field_effects effect "
+                    "JOIN description_decisions authored ON authored.decision_id=effect.decision_id "
+                    "WHERE authored.review_case_id=? AND effect.state='verified' "
+                    "ORDER BY effect.updated_at DESC,effect.rowid DESC LIMIT 1",
+                    (decision.review_case_id,),
+                ).fetchone()
+                if authored_predecessor is not None and (
+                    predecessor is None
+                    or FieldEffectOperation.from_json(
+                        authored_predecessor[0]
+                    ).updated_at
+                    > FieldEffectOperation.from_json(predecessor[0]).updated_at
+                ):
+                    predecessor = authored_predecessor
         if predecessor is not None:
             try:
                 previous = FieldEffectOperation.from_json(predecessor[0])
@@ -607,6 +647,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             == (1,)
             and self._review_case_accepts_authority(authority.review_case_id)
         )
+        description = self._connection.execute(
+            "SELECT document FROM description_decisions WHERE decision_id=?",
+            (authority.decision_id,),
+        ).fetchone()
+        if description is not None:
+            if not current:
+                return False
+            try:
+                from mechanical_librarian.application.field_effects import (
+                    authority_from_decision,
+                )
+
+                authored = AuthoredDescriptionDecision.from_json(description[0])
+                projected = authority_from_decision(authored)
+                self._description_authority_value(authored)
+                return (
+                    projected is not None
+                    and replace(projected, source="persisted_review_case") == authority
+                )
+            except (ValueError, FieldEffectError):
+                return False
         if not current or authority.origin != "automatic_policy":
             return current
         cover_selection = self._connection.execute(
@@ -734,7 +795,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             rows = self._connection.execute(
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
-                "FROM human_decisions human WHERE (human.outcome='accept' OR ("
+                "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
+                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome='accept' OR ("
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
@@ -754,7 +816,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "returned.review_case_id=human.review_case_id AND "
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
-                "FROM automatic_decisions automatic WHERE "
+                "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
                 "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
                 "current_review_packages package ON package.connection_name=lineage.connection_name "
                 "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
@@ -783,6 +845,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
                 "WHERE selection.kind='automatic'"
+                " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
                 ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
                 "WHERE effect.decision_id=pending.decision_id AND "
                 "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
@@ -812,7 +875,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             rows = self._connection.execute(
                 "WITH pending AS ("
                 "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
-                "FROM human_decisions human WHERE (human.outcome='accept' OR ("
+                "FROM human_decisions human WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored "
+                "WHERE authored.review_case_id=human.review_case_id AND human.destination='description') AND (human.outcome='accept' OR ("
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
@@ -825,7 +889,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "returned.review_case_id=human.review_case_id AND "
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.review_case_id,automatic.destination,'automatic' origin "
-                "FROM automatic_decisions automatic WHERE "
+                "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
                 "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
                 "current_review_packages package ON package.connection_name=lineage.connection_name "
                 "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
@@ -852,7 +916,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON current_consideration.consideration_id=consideration.consideration_id "
                 "JOIN current_review_case_lineages lineage "
                 "ON lineage.review_case_id=consideration.review_case_id "
-                "WHERE selection.kind='automatic') "
+                "WHERE selection.kind='automatic' UNION ALL SELECT d.decision_id,d.review_case_id,'description',CASE json_extract(d.document,'$.origin') WHEN 'human' THEN 'human' ELSE 'automatic' END FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id) "
                 "SELECT lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination,count(*) "
                 "FROM pending JOIN current_review_case_lineages lineage "
@@ -1460,8 +1524,29 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # the page and let the per-event projection below emit the
             # bounded degraded row; do not turn it into a whole-ledger
             # storage failure (#786).
+        authored_ids = sorted({row[17] for row in rows if type(row[17]) is str})
+        authored_records: dict[
+            str, tuple[AuthoredDescriptionDecision, DescriptionAdviceCandidate]
+        ] = {}
+        if authored_ids:
+            for document, candidate_document in self._connection.execute(
+                "SELECT d.document,c.document FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.decision_id IN ("
+                + ",".join("?" for _ in authored_ids)
+                + ")",
+                authored_ids,
+            ):
+                authored = AuthoredDescriptionDecision.from_json(document)
+                candidate = DescriptionAdviceCandidate.from_json(candidate_document)
+                if candidate.candidate_id != authored.candidate_id:
+                    raise FieldEffectError("persistence")
+                authored_records[authored.decision_id] = authored, candidate
         projected_events: list[dict[str, object]] = []
-        decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+        decision: (
+            HumanDecision
+            | AutomaticDecision
+            | CoverAutomaticDecision
+            | AuthoredDescriptionDecision
+        )
         for (
             event_id,
             connection,
@@ -1525,6 +1610,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "field_effect",
                 "field_effect_no_change",
                 "human_decision",
+                "description_decision",
                 "automatic_decision",
                 "cover_safeguard",
                 "policy_transition",
@@ -1609,11 +1695,29 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             (source_identity,),
                         ).fetchone()[0],
                         occurred_at=occurred_at,
+                        origin=cast("Literal['human', 'automatic_policy']", origin),
                     )
                     if (
                         state != "no_change_required"
                         or origin != record.origin
                         or event_id != record.event_id
+                    ):
+                        raise FieldEffectError("persistence")
+                elif source_kind == "description_decision":
+                    authored_record = authored_records.get(source_identity)
+                    if authored_record is None:
+                        raise FieldEffectError("persistence")
+                    authored, candidate = authored_record
+                    if (
+                        authored.to_json() != document
+                        or authored.decision_id != event_id
+                        or authored.review_case_id != source_parent_id
+                        or authored.report_id != report_id
+                        or authored.origin != origin
+                        or authored.occurred_at != occurred_at
+                        or destination != "description"
+                        or state != "recorded"
+                        or candidate.to_json() != source_document
                     ):
                         raise FieldEffectError("persistence")
                 elif source_kind == "human_decision":
@@ -1769,6 +1873,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # private carrier the application consumes and removes, the
             # same way ``connection`` and ``report_id`` are consumed there.
             durable: dict[str, object] = {"source_kind": source_kind}
+            if source_identity in authored_records:
+                authored, candidate = authored_records[source_identity]
+                durable["advised"] = True
+                durable["engine"] = candidate.engine
+                durable["model"] = candidate.model
+                durable["target_fingerprint"] = authored.target_fingerprint
+                if source_kind == "description_decision":
+                    durable["selected_value"] = {
+                        "kind": "text",
+                        "value": candidate.output.description,
+                    }
             if source_kind == "field_effect":
                 durable["pre_value"] = raw["pre_value"]
                 durable["desired_value"] = raw["desired_value"]
@@ -2165,7 +2280,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             SELECT event.event_id, effect.connection_name, effect.destination,
                    effect.library_name, event.occurred_at,
                    COALESCE(CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END, 'unknown'),
-                   COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id), event.kind, effect.work_id, event.document,
+                   COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id), event.kind, effect.work_id, event.document,
                    CASE WHEN event.kind IN ('retryable','stale','superseded','abandoned')
                              OR CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.failure') END IS NOT NULL
                         THEN 'safety'
@@ -2183,7 +2298,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
          LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic'
          LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id
          LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id
-         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id)
+         LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id
+         LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id
+         LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id)
             UNION ALL
             SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, event.destination,
                    CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, event.occurred_at, 'human', review.report_id,
@@ -2199,6 +2316,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    'recorded', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, decision.document, 'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
                    CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END
               FROM automatic_decisions decision
+              JOIN review_cases review ON review.review_case_id=decision.review_case_id
+              JOIN metadata_reports report ON report.report_id=review.report_id
+            UNION ALL
+            SELECT decision.decision_id, json_extract(report.document,'$.target.connection'), 'description',
+                   json_extract(report.document,'$.target.library'), json_extract(decision.document,'$.occurred_at'), json_extract(decision.document,'$.origin'), review.report_id,
+                   'recorded', json_extract(report.document,'$.target.item'), decision.document,
+                   CASE json_extract(decision.document,'$.origin') WHEN 'human' THEN 'review' ELSE 'metadata' END,
+                   json_extract(report.document,'$.target.fields[0].value'), NULL, 'description_decision', candidate.document, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
+                   CASE WHEN length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 16384 AND json_valid(decision.document) THEN 1 ELSE 0 END
+              FROM description_decisions decision
+              JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
             UNION ALL
@@ -2430,7 +2558,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 }
             waiting = self._connection.execute(
                 "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
-                "COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id) FROM field_effects effect "
+                "COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id) FROM field_effects effect "
                 "LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id "
                 "LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id "
                 "LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id "
@@ -2438,6 +2566,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic' "
                 "LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id "
                 "LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id "
+                "LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id "
+                "LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id "
                 "WHERE effect.state IN ('planned','claimed','applying','reconciling','retryable') "
                 "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
             ).fetchone()
@@ -2651,65 +2781,87 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     )
                 ):
                     raise FieldEffectError("authority")
-                if authority.origin == "human":
-                    decision = self._connection.execute(
-                        "SELECT document FROM human_decisions WHERE decision_id=? "
-                        "AND review_case_id=? AND destination=?",
-                        (
-                            authority.decision_id,
-                            authority.review_case_id,
-                            persisted.plan.destination,
-                        ),
-                    ).fetchone()
-                else:
-                    decision = self._connection.execute(
-                        "SELECT document FROM automatic_decisions WHERE decision_id=? "
-                        "AND review_case_id=? AND destination=? UNION ALL "
-                        "SELECT json_extract(selection.document,'$.decision_document') "
-                        "FROM current_cover_selection_authorities current "
-                        "JOIN cover_selection_authorities selection "
-                        "ON selection.selection_id=current.selection_id "
-                        "WHERE selection.decision_id=? AND selection.kind='automatic' "
-                        "AND ?='cover'",
-                        (
-                            authority.decision_id,
-                            authority.review_case_id,
-                            persisted.plan.destination,
-                            authority.decision_id,
-                            persisted.plan.destination,
-                        ),
-                    ).fetchone()
-                if (
-                    decision is None
-                    or json.loads(decision[0]).get("target_fingerprint")
-                    != authority.target_fingerprint
-                ):
-                    raise FieldEffectError("authority")
-                if authority.origin == "automatic_policy":
-                    automatic = json.loads(decision[0])
-                    safety = self._connection.execute(
-                        "SELECT paused,global_suspension,category_suspensions_document "
-                        "FROM automatic_safety_state WHERE singleton=1"
-                    ).fetchone()
-                    suspended = {} if safety is None else dict(json.loads(safety[2]))
+                authored_row = self._connection.execute(
+                    "SELECT document FROM description_decisions WHERE decision_id=?",
+                    (authority.decision_id,),
+                ).fetchone()
+                if authored_row is not None:
+                    from mechanical_librarian.application.field_effects import (
+                        authority_from_decision,
+                    )
+
+                    authored = AuthoredDescriptionDecision.from_json(authored_row[0])
+                    projected = authority_from_decision(authored)
+                    source = self._authority_source(authored)
                     if (
-                        safety is None
-                        or safety[0] != 0
-                        or safety[1] is not None
-                        or automatic_safety_category(
-                            automatic["policy_category"], automatic["policy_option"]
-                        )
-                        in suspended
-                        or (
-                            persisted.plan.destination != "cover"
-                            and not qualification_manifest_is_current(
-                                automatic["policy_category"],
-                                automatic["policy_option"],
-                                automatic["qualification_manifest_sha256"],
-                            )
-                        )
+                        projected is None
+                        or source["source"] != "persisted_review_case"
+                        or replace(projected, source="persisted_review_case")
+                        != authority
                     ):
                         raise FieldEffectError("authority")
+                else:
+                    if authority.origin == "human":
+                        decision = self._connection.execute(
+                            "SELECT document FROM human_decisions WHERE decision_id=? "
+                            "AND review_case_id=? AND destination=?",
+                            (
+                                authority.decision_id,
+                                authority.review_case_id,
+                                persisted.plan.destination,
+                            ),
+                        ).fetchone()
+                    else:
+                        decision = self._connection.execute(
+                            "SELECT document FROM automatic_decisions WHERE decision_id=? "
+                            "AND review_case_id=? AND destination=? UNION ALL "
+                            "SELECT json_extract(selection.document,'$.decision_document') "
+                            "FROM current_cover_selection_authorities current "
+                            "JOIN cover_selection_authorities selection "
+                            "ON selection.selection_id=current.selection_id "
+                            "WHERE selection.decision_id=? AND selection.kind='automatic' "
+                            "AND ?='cover'",
+                            (
+                                authority.decision_id,
+                                authority.review_case_id,
+                                persisted.plan.destination,
+                                authority.decision_id,
+                                persisted.plan.destination,
+                            ),
+                        ).fetchone()
+                    if (
+                        decision is None
+                        or json.loads(decision[0]).get("target_fingerprint")
+                        != authority.target_fingerprint
+                    ):
+                        raise FieldEffectError("authority")
+                    if authority.origin == "automatic_policy":
+                        automatic = json.loads(decision[0])
+                        safety = self._connection.execute(
+                            "SELECT paused,global_suspension,category_suspensions_document "
+                            "FROM automatic_safety_state WHERE singleton=1"
+                        ).fetchone()
+                        suspended = (
+                            {} if safety is None else dict(json.loads(safety[2]))
+                        )
+                        if (
+                            safety is None
+                            or safety[0] != 0
+                            or safety[1] is not None
+                            or automatic_safety_category(
+                                automatic["policy_category"], automatic["policy_option"]
+                            )
+                            in suspended
+                            or (
+                                persisted.plan.destination != "cover"
+                                and not qualification_manifest_is_current(
+                                    automatic["policy_category"],
+                                    automatic["policy_option"],
+                                    automatic["qualification_manifest_sha256"],
+                                )
+                            )
+                        ):
+                            raise FieldEffectError("authority")
             operation = persisted.transition(
                 "claimed", at=claimed_at, claim_token=claim_token
             )

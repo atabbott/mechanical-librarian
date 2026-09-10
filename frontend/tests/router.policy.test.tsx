@@ -6,6 +6,7 @@ import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api
 import type { PolicyStateView, ReviewHttp } from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, renderRoute } from './fixtures'
+import { view } from './settingsFixtures'
 
 describe('Policy route', () => {
   it('explains empty-series filling, all three representations and provider numbering limits', async () => {
@@ -789,4 +790,62 @@ describe('Policy route', () => {
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Review activation' })).toBeVisible()
   })
+})
+
+it('saves description preferences independently next to Cover guidance and keeps automatic off by default', async () => {
+  const http = createHttp()
+  const initial = view()
+  http.getSettings = vi.fn(async () => initial)
+  http.writeSettings = vi.fn(async (write) => ({ ...initial, document: write.document }))
+  renderRoute('/policy?section=curation', http)
+  const region = await screen.findByRole('region', { name: 'Description advice' })
+  const marketing = await within(region).findByRole('checkbox', {
+    name: 'Remove marketing material',
+  })
+  expect(marketing).toBeChecked()
+  expect(
+    within(region).getByRole('checkbox', { name: 'Remove sales figures and bestseller boasts' }),
+  ).toBeChecked()
+  expect(
+    within(region).getByRole('checkbox', { name: 'Remove pull quotes and author praise' }),
+  ).toBeChecked()
+  expect(
+    within(region).getByRole('checkbox', { name: 'Automatically apply ready description advice' }),
+  ).not.toBeChecked()
+  expect(
+    screen.getByRole('region', { name: 'Cover' }).compareDocumentPosition(region) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy()
+  await userEvent.setup().click(marketing)
+  expect(within(region).getByRole('status')).toHaveTextContent(
+    'Policy draft changes are saved separately',
+  )
+  await userEvent
+    .setup()
+    .click(within(region).getByRole('button', { name: 'Save description preferences' }))
+  await waitFor(() =>
+    expect(within(region).getByRole('status')).toHaveTextContent('Description preferences saved.'),
+  )
+  expect(http.writeSettings).toHaveBeenCalledWith({
+    expected_revision: 3,
+    secrets: [],
+    document: {
+      ...initial.document,
+      revision: 4,
+      description_advice: { ...initial.document.description_advice, remove_marketing: false },
+    },
+  })
+  expect(within(region).getByRole('link')).toHaveAttribute('href', '/settings?group=reviewer')
+})
+
+it('shows locked description cleanup preferences without enabling edits', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view('file'))
+  renderRoute('/policy?section=curation', http)
+  const marketing = await screen.findByRole('checkbox', { name: 'Remove marketing material' })
+  expect(marketing).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Save description preferences' })).toBeDisabled()
+  expect(
+    screen.getByText('These preferences are managed by deployment configuration.'),
+  ).toBeVisible()
 })

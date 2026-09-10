@@ -349,6 +349,10 @@ class ReviewInput(_Closed):
     cover_avoid_promotional_text: StrictBool = False
     cover_avoid_tie_in_branding: StrictBool = False
     cover_prefer_minimal_composition: StrictBool = False
+    description_remove_marketing: StrictBool = True
+    description_remove_sales_boasts: StrictBool = True
+    description_remove_praise: StrictBool = True
+    description_automatic_application: StrictBool = False
 
     @model_validator(mode="after")
     def validate_transport(self) -> ReviewInput:
@@ -444,6 +448,10 @@ def load_configuration_document(payload: bytes) -> ApplicationConfiguration:
                 cover_avoid_promotional_text=value.review.cover_avoid_promotional_text,
                 cover_avoid_tie_in_branding=value.review.cover_avoid_tie_in_branding,
                 cover_prefer_minimal_composition=value.review.cover_prefer_minimal_composition,
+                description_remove_marketing=value.review.description_remove_marketing,
+                description_remove_sales_boasts=value.review.description_remove_sales_boasts,
+                description_remove_praise=value.review.description_remove_praise,
+                description_automatic_application=value.review.description_automatic_application,
             ),
         )
     except ConfigurationError:

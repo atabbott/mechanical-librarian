@@ -47,6 +47,10 @@ from mechanical_librarian.domain.automatic_decision import (
 from mechanical_librarian.domain.cover_automatic_decision import (
     parse_automatic_authority,
 )
+from mechanical_librarian.domain.description_advice import (
+    AuthoredDescriptionDecision,
+    DescriptionAdviceCandidate,
+)
 from mechanical_librarian.domain.field_effect import (
     FieldEffectOperation,
     decision_value_kind,
@@ -334,6 +338,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
             documents.extend(
                 _automatic_decision_documents(self._connection, review_case_id)
             )
+            for row in self._connection.execute(
+                "SELECT d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id WHERE p.review_case_id=?",
+                (review_case_id,),
+            ):
+                authored = AuthoredDescriptionDecision.from_json(row[0])
+                if (
+                    authored.review_case_id != case.review_case_id
+                    or authored.target_fingerprint != case.target_fingerprint
+                ):
+                    raise MetadataReportError("authored decision is invalid")
+                documents.append(authored.to_json())
             return tuple(documents)
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
@@ -431,6 +446,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "WHERE review_case_id=? AND destination=? ORDER BY ordinal DESC LIMIT 1",
                 (decision.review_case_id, decision.destination),
             ).fetchone()
+            authored = None
+            if decision.destination == "description":
+                authored = self._connection.execute(
+                    "SELECT decision_id,'authored' FROM current_description_decisions WHERE review_case_id=?",
+                    (decision.review_case_id,),
+                ).fetchone()
+                if authored is not None:
+                    previous = authored
             if previous is None and cover_automatic is not None:
                 previous = cover_automatic
             if previous is None:
@@ -521,6 +544,17 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     self._revoke_field_effect_authority_in_transaction(
                         automatic[0], decision.occurred_at, required=False
                     )
+                self._set_field_effect_manual_hold(
+                    decision.review_case_id,
+                    decision.destination,
+                    decision.occurred_at,
+                    decision.decision_id,
+                )
+            if authored is not None:
+                self._connection.execute(
+                    "DELETE FROM current_description_decisions WHERE review_case_id=?",
+                    (decision.review_case_id,),
+                )
                 self._set_field_effect_manual_hold(
                     decision.review_case_id,
                     decision.destination,
@@ -955,6 +989,63 @@ class SQLiteDecisionRepository(ConnectionScoped):
                             "outcome": value["outcome"],
                             "review_case_id": review_case_id,
                             "schema_version": "automatic-decision-history-event-v1",
+                        },
+                    )
+                )
+            for (
+                attempt_id,
+                state,
+                engine,
+                model,
+                at,
+                candidate_document,
+            ) in self._connection.execute(
+                "SELECT a.attempt_id,a.state,a.engine,a.model,a.updated_at,c.document FROM description_advice_attempts a LEFT JOIN description_advice_candidates c ON c.attempt_id=a.attempt_id WHERE json_extract(a.binding_document,'$.review_case_id')=? ORDER BY a.updated_at DESC LIMIT ?",
+                (review_case_id, limit),
+            ):
+                events.append(
+                    (
+                        at,
+                        0,
+                        attempt_id,
+                        {
+                            "schema_version": "description-advice-history-v1",
+                            "kind": "description_advice_recorded",
+                            "occurred_at": at,
+                            "review_case_id": review_case_id,
+                            "state": state,
+                            "engine": engine,
+                            "model": model,
+                            "candidate": None
+                            if candidate_document is None
+                            else DescriptionAdviceCandidate.from_json(
+                                candidate_document
+                            ).model_dump(),
+                            "decision": None,
+                        },
+                    )
+                )
+            for document, candidate_document in self._connection.execute(
+                "SELECT d.document,c.document FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC LIMIT ?",
+                (review_case_id, limit),
+            ):
+                authored = AuthoredDescriptionDecision.from_json(document)
+                candidate = DescriptionAdviceCandidate.from_json(candidate_document)
+                events.append(
+                    (
+                        authored.occurred_at,
+                        1,
+                        authored.decision_id,
+                        {
+                            "schema_version": "description-advice-history-v1",
+                            "kind": "description_selected",
+                            "occurred_at": authored.occurred_at,
+                            "review_case_id": review_case_id,
+                            "state": "succeeded",
+                            "engine": candidate.engine,
+                            "model": candidate.model,
+                            "candidate": candidate.model_dump(),
+                            "decision": authored.model_dump(),
                         },
                     )
                 )

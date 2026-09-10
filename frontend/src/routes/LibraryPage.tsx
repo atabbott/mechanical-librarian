@@ -1,3 +1,4 @@
+import { DescriptionAdviceCard } from '../components/DescriptionAdviceCard'
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -3239,6 +3240,32 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </dl>
                     ) : null}
                   </header>
+                  {selected.destination === 'description' ? (
+                    <DescriptionAdviceCard
+                      advice={selected.descriptionAdvice}
+                      reviewCaseId={selectedReviewCaseId}
+                      disabled={controller.recording || controller.reloadRequired}
+                      onSelect={() => {
+                        const advice = selected.descriptionAdvice
+                        if (!advice?.candidate) return
+                        controller.submit({
+                          destination: 'description',
+                          outcome: 'accept',
+                          proposalId: selected.proposalId,
+                          targetFingerprint: selected.targetFingerprint,
+                          idempotencyKey: requestKey(),
+                          selectedValue: {
+                            kind: 'text',
+                            value: advice.candidate.output.description,
+                          },
+                          authoredDescription: {
+                            candidateId: advice.candidate.candidate_id,
+                            binding: advice.binding,
+                          },
+                        })
+                      }}
+                    />
+                  ) : null}
                   {(selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired ? (
                     selected.destination === 'cover' ? (
                       <LibraryCoverChoices

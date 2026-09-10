@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
+import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
 import { ApiError } from '../api/http'
 import type {
   CodexDeviceAuthState,
@@ -487,6 +488,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       {mutation.isError && mutation.variables.kind === 'without' ? (
         <p role="alert">{mutationFailure}</p>
       ) : null}
+      <DescriptionReviewerSettings http={http} view={view} />
     </section>
   )
 }

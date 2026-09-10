@@ -182,6 +182,12 @@ export const createHttp = (): ReviewHttp => ({
   refreshOpenRouter: vi.fn(async () => {
     throw new Error('not configured')
   }),
+  describeContainedDescription: vi.fn(async () => {
+    throw new Error('unavailable')
+  }),
+  testDescriptionModel: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
   configureOpenRouter: vi.fn(async () => {
     throw new Error('not configured')
   }),
@@ -254,6 +260,9 @@ export const createHttp = (): ReviewHttp => ({
     selected_value: null,
     target_fingerprint: 'fingerprint-1',
   })),
+  retryDescriptionAdvice: vi.fn(async () => {
+    throw new Error('not configured')
+  }),
   returnToAutomatic: vi.fn(async () => undefined),
   getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
     schema_version: 'metadata-policy-notebook-v1',

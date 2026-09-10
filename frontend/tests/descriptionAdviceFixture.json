@@ -1,0 +1,862 @@
+{
+  "comparison_notices": [],
+  "current": true,
+  "fields": [
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        },
+        {
+          "alternative_id": "alternative_1eefb174ae59e4445606ec7d8ab8cc8b3d1d66f84b61a78c9d8722d90605a9f7",
+          "evidence": [
+            {
+              "observation": "Metadata: 3",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            },
+            {
+              "observation": "Series membership: Slough House",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "This alternative fills an empty local value using work-level evidence with retained supporting evidence.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+          "selection": "proposed"
+        }
+      ],
+      "classification": "needs_attention",
+      "classification_reason": "This field needs your review.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "series",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [
+        "keep_current",
+        "accept"
+      ],
+      "destination": "series",
+      "deterministic_disposition": "propose_change",
+      "editable": true,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "attention",
+      "needs_attention": true,
+      "notices": [
+        "unique_typed_candidate"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_7fdb58ff9a95267e42b7ad0d885bec867bbfcce564e2c1e12360002580811ee3",
+      "proposed_values": [
+        {
+          "kind": "series",
+          "value": [
+            {
+              "name": "Slough House",
+              "sequence": "3"
+            }
+          ]
+        }
+      ],
+      "provenance": [
+        "provider_e2dae467c54051b9202c0203e936cb26f016c7f6742db7bd73a51434fd94137c",
+        "provider_fe07db53652cff3a2705227b53c1ec256664f7588a807f6d14c11b2d76c2a827"
+      ],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        },
+        {
+          "alternative_id": "alternative_2eb8a4c331fe3a2c14d7d9b7833f40f59a0abeb32210f325f2f9d2d54d5383ae",
+          "evidence": [
+            {
+              "observation": "Metadata observation retained.",
+              "role": "local_presence",
+              "source": "Local library record"
+            },
+            {
+              "observation": "Metadata observation retained.",
+              "role": "local_presence",
+              "source": "Local library record"
+            },
+            {
+              "observation": "Metadata observation retained.",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "This alternative fills an empty local value using edition-specific evidence with retained supporting evidence.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+          "selection": "proposed"
+        }
+      ],
+      "classification": "needs_attention",
+      "classification_reason": "This field needs your review.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "isbn",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [
+        "keep_current",
+        "accept"
+      ],
+      "destination": "isbn",
+      "deterministic_disposition": "unresolved_choice",
+      "editable": true,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "attention",
+      "needs_attention": true,
+      "notices": [
+        "manifestation_verification_required"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_c88b049af1fc3dca2ab1d649550e14d8a3151f82af1c19a42936f7a992cd7e0b",
+      "proposed_values": [
+        {
+          "kind": "text",
+          "value": "9780306406157"
+        }
+      ],
+      "provenance": [
+        "local_3d1c7058db31193c8f2190306d5eb55a803d4e252bdc0f02f65131fd7821e6d1",
+        "local_8a043456a2b2863fbbc99c0da87486b328687c1da4522147eda80d0210de19a6",
+        "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
+      ],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": [
+        "manifestation_verification_required"
+      ]
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [
+            {
+              "observation": "This value is currently present in the local library.",
+              "role": "local_presence",
+              "source": "Local library record"
+            },
+            {
+              "observation": "Title: Real Tigers",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "Keep the value currently held by the local library.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        },
+        {
+          "alternative_id": "alternative_34ae580e00a343c1c8d75942faa76e827587bfbd550b76cb501d636324aca54b",
+          "evidence": [
+            {
+              "observation": "Title: Real Tigers",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "This alternative preserves the local value using work-level evidence with retained supporting evidence.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+          "selection": "proposed"
+        }
+      ],
+      "classification": "needs_attention",
+      "classification_reason": "This field needs your review.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "title",
+        "state": "value",
+        "value": "Real Tigers"
+      },
+      "decision_actions": [],
+      "destination": "title",
+      "deterministic_disposition": "keep",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "attention",
+      "needs_attention": false,
+      "notices": [
+        "positive_preservation_evidence"
+      ],
+      "preservation_only": true,
+      "proposal_id": "review_proposal_de44916f8c0502978ebe2fd2c00d7dca94bca6e3ff393e55bc1c214b9f533724",
+      "proposed_values": [],
+      "provenance": [
+        "provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"
+      ],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        }
+      ],
+      "classification": "needs_attention",
+      "classification_reason": "This field needs your review.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "subtitle",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [],
+      "destination": "subtitle",
+      "deterministic_disposition": "ineligible",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "attention",
+      "needs_attention": false,
+      "notices": [
+        "no_supported_evidence"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_3d9e00b8e74302e71b10d3c136c0d2882a2cb74596424de059a1caecbdcff977",
+      "proposed_values": [],
+      "provenance": [],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [
+            {
+              "observation": "This value is currently present in the local library.",
+              "role": "local_presence",
+              "source": "Local library record"
+            },
+            {
+              "observation": "Metadata: Mick Herron",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "Keep the value currently held by the local library.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        },
+        {
+          "alternative_id": "alternative_e4f80543aa92d81848e85b7df46baf25e3aa25f4c26463161be08e11540e75f9",
+          "evidence": [
+            {
+              "observation": "Metadata: Mick Herron",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "This alternative preserves the local value using work-level evidence with retained supporting evidence.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+          "selection": "proposed"
+        }
+      ],
+      "classification": "unsupported",
+      "classification_reason": "There is no owner decision available for this field.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "authors",
+        "state": "value",
+        "value": [
+          "Mick Herron"
+        ]
+      },
+      "decision_actions": [],
+      "destination": "authors",
+      "deterministic_disposition": "keep",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "positive_preservation_evidence"
+      ],
+      "preservation_only": true,
+      "proposal_id": "review_proposal_c867bb7c86e9fabf7b6526ada135305b18f6bcd1f9f1c4e565b395f5afc332dd",
+      "proposed_values": [],
+      "provenance": [
+        "provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"
+      ],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        },
+        {
+          "alternative_id": "alternative_e60dad4dce063390296b837737177625a2fd7143ffc557307666e08cd3b774af",
+          "evidence": [
+            {
+              "observation": "Metadata: Mystery",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "This alternative fills an empty local value using work-level evidence with retained supporting evidence.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+          "selection": "proposed"
+        }
+      ],
+      "classification": "unsupported",
+      "classification_reason": "There is no owner decision available for this field.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "genres",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [
+        "keep_current",
+        "accept"
+      ],
+      "destination": "genres",
+      "deterministic_disposition": "propose_change",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "unique_typed_candidate"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_a0c24072c7c6a179baa6abae4f29cf160a30473faebf4e69af0d99c69d7d7f3d",
+      "proposed_values": [
+        {
+          "kind": "list",
+          "value": [
+            "Mystery"
+          ]
+        }
+      ],
+      "provenance": [
+        "provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"
+      ],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        }
+      ],
+      "classification": "unsupported",
+      "classification_reason": "There is no owner decision available for this field.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "publishedDate",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [],
+      "destination": "publishedDate",
+      "deterministic_disposition": "ineligible",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "contextual",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "no_supported_evidence"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_fb76f177c33f9fbe317e50c70e15ec363f00f82ed109a2553f73557fd8fd36cf",
+      "proposed_values": [],
+      "provenance": [],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        }
+      ],
+      "classification": "unsupported",
+      "classification_reason": "There is no owner decision available for this field.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "publisher",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [],
+      "destination": "publisher",
+      "deterministic_disposition": "ineligible",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "contextual",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "no_supported_evidence"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_9e088621b1e7e3847acf4b8a5c861101b3bf5dbca5b8c2fc0fde182c8c2fa0bd",
+      "proposed_values": [],
+      "provenance": [],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": {
+        "candidate_id": null,
+        "decision_id": "automatic_decision_2a024906ca9e91d9da970b2a210f55ed578d8341eae412c85a1e0fb8cdb8de4b",
+        "destination": "description",
+        "occurred_at": 4,
+        "outcome": "keep_current",
+        "proposal_id": "review_proposal_6e8506bbf5c284073e85dc86630fc97e5665ea8015c18d34846714bde1f62821",
+        "review_case_id": "review_case_156fbb2f707d198142c074b7e782ccf4e843121fb63bfc66a1bea44104438d6c",
+        "selected_value": null,
+        "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+      },
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [
+            {
+              "observation": "This value is currently present in the local library.",
+              "role": "local_presence",
+              "source": "Local library record"
+            }
+          ],
+          "limitations": [],
+          "rationale": "Deterministic policy retained the local value.",
+          "recommendation": "recommended",
+          "recommendation_reason": "Deterministic policy retained the local value.",
+          "selection": "current"
+        },
+        {
+          "alternative_id": "alternative_fb3c646d64076432433b3798fc56e0705e58fbdb1760152f7943021cdd428b86",
+          "evidence": [
+            {
+              "observation": "Description: A qualified description.",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [
+            "populated_subjective_field"
+          ],
+          "rationale": "This alternative replaces the local value using work-level evidence with retained supporting evidence.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+          "selection": "proposed"
+        }
+      ],
+      "classification": "automatic_recorded",
+      "classification_reason": "Automatic handling recorded this field; you may inspect or override it.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "description",
+        "state": "value",
+        "value": "Existing description."
+      },
+      "decision_actions": [
+        "keep_current",
+        "accept"
+      ],
+      "description_advice": {
+        "attempt_id": "description_attempt_1630c2fc956d434c87bd3c68d3210e23",
+        "binding": {
+          "access_revision": 2,
+          "policy_generation": 2,
+          "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
+          "proposal_set_id": "proposal_set_f6ca7e8cd4838689eea6395125a5e79a58fbc19c22c207616268da54471d46ee",
+          "report_id": "report_7a143a237d2175f0ed69350ad0359a587fc000124dcfce99c0c6692c9b22b22b",
+          "review_case_id": "review_case_156fbb2f707d198142c074b7e782ccf4e843121fb63bfc66a1bea44104438d6c",
+          "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
+        },
+        "candidate": {
+          "access_revision": 2,
+          "advised": true,
+          "attempt_id": "description_attempt_1630c2fc956d434c87bd3c68d3210e23",
+          "candidate_id": "description_candidate_cd8e735b28ddc4d1f51a7676c76e83bb3c86c0ed145a54944f0e207ba23e17da",
+          "created_at": 10,
+          "engine": "codex",
+          "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
+          "model": "synthetic-model",
+          "output": {
+            "description": "Authored synthetic description.",
+            "disposition": "ready"
+          },
+          "preferences_digest": "72ca24e1eed317916e8e77dfd0144473763f12e3d4adcdc597e7ab1e19569c78",
+          "profile_digest": "e849aca7862780d18aa8b3cff7eb2fb72f06aae881c36012d87ab6935fe371e0",
+          "provenance": "authored_content",
+          "request_digest": "69714795d0ccb99e4555ddbf9ec989dd4e2b7479404cff51a64aaea173cbfc72",
+          "request_identity": "b401312dffcbb6356f7cda6af791863efe3af972ba8bad7ad51a88a46c2badbe",
+          "schema_digest": "6f06e5b17f958c51313fdf7e0d63a79281808b0c5ad2f674a605f53d40c568c6",
+          "schema_version": "description-advice-candidate-v1"
+        },
+        "current": true,
+        "engine": "codex",
+        "failure": null,
+        "model": "synthetic-model",
+        "selection": null,
+        "state": "succeeded"
+      },
+      "destination": "description",
+      "deterministic_disposition": "unresolved_choice",
+      "editable": true,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "populated_subjective_field"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_6e8506bbf5c284073e85dc86630fc97e5665ea8015c18d34846714bde1f62821",
+      "proposed_values": [
+        {
+          "kind": "text",
+          "value": "A qualified description."
+        }
+      ],
+      "provenance": [
+        "provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"
+      ],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": [
+        "populated_subjective_field"
+      ]
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        }
+      ],
+      "classification": "unsupported",
+      "classification_reason": "There is no owner decision available for this field.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "asin",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [],
+      "destination": "asin",
+      "deterministic_disposition": "ineligible",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "contextual",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "no_supported_evidence"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_7e44d69ce3475a9cfecf3a15379ee034cc2b39a194a35bd49de512caa63ca3f0",
+      "proposed_values": [],
+      "provenance": [],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        }
+      ],
+      "classification": "unsupported",
+      "classification_reason": "There is no owner decision available for this field.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "language",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [],
+      "destination": "language",
+      "deterministic_disposition": "ineligible",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "contextual",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "no_supported_evidence"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_28b5c353ff7d502ee233a397d2d84da80837ad46696554dccd97b0708d7cfa75",
+      "proposed_values": [],
+      "provenance": [],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        },
+        {
+          "alternative_id": "alternative_ac56de9cfdac126ab8f6347f1e34942d28fcb775cf5d2fd93938cc414246dbe8",
+          "evidence": [
+            {
+              "observation": "Metadata: Espionage",
+              "role": "external_corroboration",
+              "source": "Hardcover"
+            }
+          ],
+          "limitations": [],
+          "rationale": "This alternative fills an empty local value using work-level evidence with retained supporting evidence.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+          "selection": "proposed"
+        }
+      ],
+      "classification": "unsupported",
+      "classification_reason": "There is no owner decision available for this field.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "tags",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [
+        "keep_current",
+        "accept"
+      ],
+      "destination": "tags",
+      "deterministic_disposition": "propose_change",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "primary",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "unique_typed_candidate"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_b949f26983426265ef3d233541a45be702a28432e40c95bbd32275182b108ab9",
+      "proposed_values": [
+        {
+          "kind": "list",
+          "value": [
+            "Espionage"
+          ]
+        }
+      ],
+      "provenance": [
+        "provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"
+      ],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    },
+    {
+      "automatic_decision": null,
+      "automatic_selection_sources": [],
+      "automatic_withheld_reason": null,
+      "choice_contexts": [
+        {
+          "alternative_id": null,
+          "evidence": [],
+          "limitations": [],
+          "rationale": "The local library has no retained value for this field.",
+          "recommendation": "no_recommendation",
+          "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+          "selection": "current"
+        }
+      ],
+      "classification": "unsupported",
+      "classification_reason": "There is no owner decision available for this field.",
+      "corroboration_sources": [],
+      "current": {
+        "destination": "cover",
+        "state": "missing",
+        "value": null
+      },
+      "decision_actions": [],
+      "destination": "cover",
+      "deterministic_disposition": "ineligible",
+      "editable": false,
+      "effect_capability": "unavailable",
+      "human_decision": null,
+      "inventory_role": "contextual",
+      "manual_hold": false,
+      "manual_required": false,
+      "navigation_role": "inspect",
+      "needs_attention": false,
+      "notices": [
+        "no_supported_evidence"
+      ],
+      "preservation_only": false,
+      "proposal_id": "review_proposal_65a9674dc70727864a6215b823134e5a782530426453dad429b96a7971970085",
+      "proposed_values": [],
+      "provenance": [],
+      "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
+      "uncertainty": []
+    }
+  ],
+  "review_case_id": "review_case_156fbb2f707d198142c074b7e782ccf4e843121fb63bfc66a1bea44104438d6c",
+  "schema_version": "review-case-detail-v2",
+  "target": {
+    "authors": [
+      "Mick Herron"
+    ],
+    "connection": "primary",
+    "item": "item-1",
+    "library": "ebooks",
+    "media_kind": "epub",
+    "title": "Real Tigers"
+  },
+  "writes_consented": false
+}

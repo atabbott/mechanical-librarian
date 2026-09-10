@@ -693,7 +693,7 @@ def test_first_preparation_marker_survives_settings_edit_and_repository_reopen(
     assert not repository.has_first_boot_preparation()
     settings = OwnerSettingsDocument.model_validate(
         {
-            "schema_version": "owner-settings-v3",
+            "schema_version": "owner-settings-v4",
             "revision": 1,
             "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
             "providers": [],

@@ -162,12 +162,12 @@ class ContainedReviewRequest:
         try:
             input_value = json.loads(
                 self.input_document,
-                object_pairs_hook=_unique_object,
+                object_pairs_hook=unique_json_object,
                 parse_constant=_reject_json_constant,
             )
             schema_value = json.loads(
                 self.output_schema,
-                object_pairs_hook=_unique_object,
+                object_pairs_hook=unique_json_object,
                 parse_constant=_reject_json_constant,
             )
             if (
@@ -280,7 +280,7 @@ class ContainedReviewResult:
 
     def __post_init__(self) -> None:
         try:
-            value = json.loads(self.document, object_pairs_hook=_unique_object)
+            value = json.loads(self.document, object_pairs_hook=unique_json_object)
             if (
                 type(value) is not dict
                 or canonical_json(value) != self.document
@@ -328,7 +328,7 @@ class ContainedReviewer(Protocol):
     ) -> ContainedReviewResult: ...
 
 
-def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+def unique_json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     result: dict[str, object] = {}
     for key, value in pairs:
         if key in result:

@@ -190,10 +190,12 @@ class _ReviewerRevisionRequest(BaseModel):
 
 
 class _ReviewerSelectionRequest(_ReviewerRevisionRequest):
+    task: Literal["cover_observation", "description_rewrite"] = "cover_observation"
     engine: Literal["codex"] | None
 
 
 class _OpenRouterWriteRequest(_ReviewerRevisionRequest):
+    task: Literal["cover_observation", "description_rewrite"] = "cover_observation"
     api_key: SecretStr = Field(json_schema_extra={"writeOnly": True})
     model: OpenRouterModelId
 
@@ -658,6 +660,7 @@ def create_setup_app(
                     expected_revision=request.expected_revision,
                     api_key=request.api_key.get_secret_value(),
                     model=request.model,
+                    task=request.task,
                 )
             except (
                 ReviewerAccessApplicationError,

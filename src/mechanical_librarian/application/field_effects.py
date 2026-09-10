@@ -13,6 +13,7 @@ from mechanical_librarian.domain.automatic_decision import (
     qualification_manifest_is_current,
 )
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
+from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -197,7 +198,11 @@ class CapabilityObserver(Protocol):
 
 class AuthorityCurrentness(Protocol):
     def resolve(
-        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
     ) -> AuthoritySnapshot: ...
     def current(self, authority: EffectAuthority) -> bool: ...
 
@@ -227,11 +232,29 @@ class ForwardReevaluation(Protocol):
 
 
 def authority_from_decision(
-    decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
+    decision: HumanDecision
+    | AutomaticDecision
+    | CoverAutomaticDecision
+    | AuthoredDescriptionDecision,
     *,
     allow_corrective_keep_current: bool = False,
 ) -> EffectAuthority | None:
     """Project only exact existing authoritative decisions; advice cannot enter."""
+    if type(decision) is AuthoredDescriptionDecision:
+        return EffectAuthority(
+            decision.decision_id,
+            decision.review_case_id,
+            decision.target_fingerprint,
+            "fake_service",
+            decision.origin,
+            "candidate",
+            decision.resolved_policy_id
+            if decision.origin == "automatic_policy"
+            else None,
+            decision.qualification_manifest_sha256
+            if decision.origin == "automatic_policy"
+            else None,
+        )
     if type(decision) is HumanDecision:
         if decision.application == "recorded_only":
             # A decision retained from before audiobook writes existed is
@@ -336,7 +359,10 @@ class GuardedFieldApplication:
 
     def plan(
         self,
-        decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
         *,
         connection: str,
         library: str,

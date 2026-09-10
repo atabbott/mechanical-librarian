@@ -268,3 +268,32 @@ verification, with bounded search over the owner-readable values composed from
 each event's named immutable authority, type and date filters. It never offers
 queue administration, blind retries, telemetry, exports, or extra write
 authority; recovery and consent remain the existing server-validated actions.
+
+
+## Optional description advice
+
+Before enabling an adviser, open Policy → Curation → Description advice. Review
+the three cleanup choices, which start on, and save them with **Save description
+preferences**. Automatic application starts off and has its own switch; saving
+a metadata-policy draft does not save these preferences. File-managed installs
+edit the documented `review.description_*` configuration fields instead.
+
+Follow the link to Settings → Reviewer. Inspect the contained profile/model or
+test the exact OpenRouter description model and prices before selecting it.
+A saved OpenRouter key can serve different cover and description models.
+Selection enables advice preparation; it does not enable automatic application.
+Missing model/price information is recoverable through explicit test/refresh.
+
+Review authored cards in Library separately from provider alternatives. Select
+an immutable current candidate, or keep/select an ordinary description choice.
+Activity distinguishes queued work from verified application; History retains
+advised provenance. Stale advice cannot be selected against its old binding.
+Failed or interrupted work needs explicit retry and never silently spends again.
+New requests while paused remain pending until resume; pausing does not promise
+to interrupt work already accepted. All existing write gates still apply.
+
+Upgrading to this F39 schema requires a clean application-state rebuild under
+[ADR-0013](../architecture/decisions/0013-pre-release-clean-schema.md).
+Retain any needed historical state separately; ordinary startup does not migrate
+it. See [configuration](../reference/configuration.md) for exact versions and
+bounds. Media and target-service libraries remain outside this rebuild.

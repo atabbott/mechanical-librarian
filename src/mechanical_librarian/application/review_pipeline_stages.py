@@ -137,9 +137,15 @@ class ReviewPipelineStages:
         drain_outbox: Callable[[ReviewPipelineRepository], None],
         discovery_lock: threading.Lock,
         clock: Callable[[], int],
+        admit_description: Callable[[ReviewPipelineRepository, PipelineAction], None]
+        | None = None,
+        prepare_description: Callable[[ReviewPipelineRepository, PipelineAction], None]
+        | None = None,
         observation_repository_factory: Callable[[], ReviewPipelineRepository]
         | None = None,
     ) -> None:
+        self._prepare_description = prepare_description
+        self._admit_description = admit_description
         self._configuration = configuration
         self._catalogue = catalogue
         self._catalogue_reader = catalogue_reader
@@ -193,7 +199,7 @@ class ReviewPipelineStages:
             admit=self.admit,
             first_boot=first_boot,
             project=self.project,
-            before_projection=self.prepare_cover,
+            before_projection=self.prepare_advice,
             after_advance=self.after_advance,
             check_connection=self.check_connection,
             timing=timing,
@@ -399,6 +405,13 @@ class ReviewPipelineStages:
             # this layer cannot name.
             raise ReviewPipelineError("projection") from error
 
+    def prepare_advice(
+        self, repository: ReviewPipelineRepository, action: PipelineAction
+    ) -> None:
+        self.prepare_cover(repository, action)
+        if self._prepare_description is not None:
+            self._prepare_description(repository, action)
+
     def prepare_cover(
         self, pipeline_repository: ReviewPipelineRepository, action: PipelineAction
     ) -> None:
@@ -466,6 +479,8 @@ class ReviewPipelineStages:
         ):
             return
         self._drain_outbox(pipeline_repository)
+        if self._admit_description is not None:
+            self._admit_description(pipeline_repository, action)
 
     def check_connection(self, connection: str) -> None:
         if connection not in self._connections:

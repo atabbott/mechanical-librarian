@@ -1109,6 +1109,26 @@
           "default": null,
           "title": "Cover Reviewer Profile File"
         },
+        "description_automatic_application": {
+          "default": false,
+          "title": "Description Automatic Application",
+          "type": "boolean"
+        },
+        "description_remove_marketing": {
+          "default": true,
+          "title": "Description Remove Marketing",
+          "type": "boolean"
+        },
+        "description_remove_praise": {
+          "default": true,
+          "title": "Description Remove Praise",
+          "type": "boolean"
+        },
+        "description_remove_sales_boasts": {
+          "default": true,
+          "title": "Description Remove Sales Boasts",
+          "type": "boolean"
+        },
         "diagnostic_timings_enabled": {
           "default": false,
           "title": "Diagnostic Timings Enabled",

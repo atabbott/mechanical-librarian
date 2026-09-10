@@ -210,3 +210,129 @@ def test_one_run_shapes_reasoning_from_one_immediate_probe_then_one_chat_call(
         "/api/v1/models",
         "/api/v1/chat/completions",
     ]
+
+
+@pytest.mark.parametrize("pricing_available", [True, False])
+@pytest.mark.parametrize("response_kind", ["valid", "wrong_model", "duplicate"])
+def test_description_text_model_needs_pricing_without_changing_cover_capability(
+    pricing_available: bool,
+    response_kind: str,
+) -> None:
+    from mechanical_librarian.application.contained_reviewer_contract import (
+        ContainedReviewRequest,
+    )
+    from mechanical_librarian.domain.description_advice import (
+        DESCRIPTION_INSTRUCTION,
+        DESCRIPTION_OUTPUT_SCHEMA,
+        DescriptionAdviceInput,
+        DescriptionPreferences,
+        description_document,
+    )
+
+    packet = description_document(
+        DescriptionAdviceInput(
+            descriptions=("One synthetic provider description.",),
+            preferences=DescriptionPreferences(),
+        ).model_dump()
+    )
+    request_contract = ContainedReviewRequest(
+        DESCRIPTION_INSTRUCTION, packet, DESCRIPTION_OUTPUT_SCHEMA
+    )
+    posted: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/key":
+            return httpx.Response(200, json=_key())
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "example/text",
+                            "architecture": {
+                                "input_modalities": ["text"],
+                                "output_modalities": ["text"],
+                            },
+                            "supported_parameters": ["structured_outputs"],
+                            **(
+                                {
+                                    "pricing": {
+                                        "prompt": "0.000001",
+                                        "completion": "0.000002",
+                                        "request": "0",
+                                    }
+                                }
+                                if pricing_available
+                                else {}
+                            ),
+                        }
+                    ]
+                },
+            )
+        posted.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "other/model"
+                if response_kind == "wrong_model"
+                else "example/text",
+                "choices": [
+                    {
+                        "message": {
+                            "content": (
+                                '{"description":"First","description":"Rewritten text.","disposition":"ready"}'
+                                if response_kind == "duplicate"
+                                else '{"description":"Rewritten text.","disposition":"ready"}'
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    reviewer = OpenRouterReviewer(
+        "synthetic-secret", "example/text", transport=httpx.MockTransport(handler)
+    )
+    try:
+        with pytest.raises(OpenRouterReviewerError, match="model_text_only"):
+            reviewer.probe()
+        if not pricing_available:
+            with pytest.raises(OpenRouterReviewerError, match="model_unavailable"):
+                reviewer.probe_description()
+            assert posted == []
+            return
+        status = reviewer.probe_description()
+        assert status.prompt_price == "0.000001" and status.observed_at is not None
+        if response_kind != "valid":
+            with pytest.raises(OpenRouterReviewerError, match="malformed_response"):
+                reviewer.run_description(
+                    openrouter_profile("example/text"),
+                    DESCRIPTION_INSTRUCTION.encode(),
+                    packet.encode(),
+                    DESCRIPTION_OUTPUT_SCHEMA.encode(),
+                )
+            assert len(posted) == 1
+            return
+        result = json.loads(
+            reviewer.run_description(
+                openrouter_profile("example/text"),
+                DESCRIPTION_INSTRUCTION.encode(),
+                packet.encode(),
+                DESCRIPTION_OUTPUT_SCHEMA.encode(),
+            )
+        )
+        assert result["request_sha256"] == request_contract.digest
+        assert result["result"] == {
+            "description": "Rewritten text.",
+            "disposition": "ready",
+        }
+        assert posted[0]["provider"] == {
+            "require_parameters": True,
+            "allow_fallbacks": False,
+        }
+        assert posted[0]["model"] == "example/text"
+        assert "image_url" not in json.dumps(posted)
+        assert "synthetic-secret" not in json.dumps(posted)
+    finally:
+        reviewer.close()

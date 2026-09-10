@@ -238,6 +238,15 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     assert report.schema_version == "metadata-report-v38"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
+    for table in (
+        "description_advice_attempts",
+        "description_advice_candidates",
+        "current_description_advice",
+        "description_decisions",
+        "current_description_decisions",
+        "description_preparation_pending",
+    ):
+        assert connection.execute(f'SELECT count(*) FROM "{table}"').fetchone() == (0,)
     assert connection.execute(
         "SELECT outcome FROM current_review_packages"
     ).fetchall() == [("report_only",)]
@@ -246,7 +255,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
 
 def test_target_schema_binding_is_the_exact_installed_contract() -> None:
     assert bridge._TARGET_SCHEMA_OBJECTS_SHA256 == (
-        "1faba21f99d464fbdd0b5948a64fc8b2abd51137a7f09f968b443f58f013d36e"
+        "6d3db2cf020d9adc5d3f606fd92b2903f9115f726e6bd63671102d6e08a24bf7"
     )
     assert (
         bridge._expected_schema_objects_digest() == bridge._TARGET_SCHEMA_OBJECTS_SHA256
@@ -371,7 +380,35 @@ def test_prior_v22_output_is_rejected_without_mutating_any_file(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
     with sqlite3.connect(output) as connection:
+        # Preserve the actual predecessor object inventory. Merely changing its
+        # proposal marker in a current F39 database would invent a hybrid schema.
+        predecessor = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "support/automatic_decision_predecessors/base-schema-before-f39.json"
+            ).read_text()
+        )
+        old_names = {name for _kind, name, _sql in predecessor}
+        extra = [
+            (kind, name, statement)
+            for kind, name, statement in bridge._expected_schema_objects()
+            if name not in old_names
+        ]
+        for removal_kind in ("trigger", "index", "table"):
+            for kind, name, statement in extra:
+                if kind == removal_kind and statement is not None:
+                    connection.execute(f'DROP {kind.upper()} "{name}"')
         connection.execute("PRAGMA writable_schema=ON")
+        for kind, name, statement in predecessor:
+            if statement is not None:
+                connection.execute(
+                    "UPDATE sqlite_master SET sql=? WHERE type=? AND name=?",
+                    (statement, kind, name),
+                )
+        assert (
+            bridge._schema_objects_digest(connection)
+            == "1faba21f99d464fbdd0b5948a64fc8b2abd51137a7f09f968b443f58f013d36e"
+        )
         connection.execute(
             "UPDATE sqlite_master SET sql=replace(sql, ?, ?) WHERE name='proposal_sets'",
             ("fixed-conservative-v23", "fixed-conservative-v22"),

@@ -1,3 +1,4 @@
+import { DescriptionAdviceCard } from '../components/DescriptionAdviceCard'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
@@ -7,6 +8,23 @@ import { fieldLabel, labelWords } from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
+  if (item.category === 'description')
+    return (
+      <article className="diagnostic-entry">
+        <h3>Advised description · Authored content</h3>
+        <p>
+          {item.engine} · {item.model}.{' '}
+          {item.selected
+            ? 'Selected under the existing write requirements; Activity records the effect outcome.'
+            : `Preparation ${item.state}.`}
+        </p>
+        {item.candidate ? (
+          <p className="description-advice-text">{item.candidate.output.description}</p>
+        ) : (
+          <p>No authored candidate was produced.</p>
+        )}
+      </article>
+    )
   if (item.category === 'owner' || item.category === 'automatic') {
     const action =
       item.category === 'owner'
@@ -167,6 +185,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
     )
   return (
     <>
+      <DescriptionAdviceCard
+        advice={data.fields.find((field) => field.destination === 'description')?.descriptionAdvice}
+        reviewCaseId={reviewCaseId}
+      />
       <header className="diagnostic-heading" data-route-focus tabIndex={-1}>
         <h1>{data.title}</h1>
         <p className="diagnostic-authors">

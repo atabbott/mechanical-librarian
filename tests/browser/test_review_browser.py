@@ -152,7 +152,7 @@ def _report():
 
 _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
     {
-        "schema_version": "owner-settings-v3",
+        "schema_version": "owner-settings-v4",
         "revision": 1,
         "connections": [{"name": "primary", "endpoint": "https://library.invalid"}],
         "libraries": [
@@ -270,6 +270,10 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    description_fixture: Literal[
+        "ready", "needs_review", "failed", "automatic", "no_change"
+    ]
+    | None = None,
     provider_recovery: bool = False,
     retained_decoration: tuple[str, bool] | None = None,
     retained_component_text: str | None = None,
@@ -283,6 +287,21 @@ def _server(
     on_app: Callable[[Any], None] | None = None,
 ):
     repository = open_repository(database, create=True, cross_thread=True)
+    if (
+        description_fixture in {"automatic", "no_change"}
+        and settings_document is not None
+    ):
+        from mechanical_librarian.domain.description_advice import (
+            DescriptionAdviceSettings,
+        )
+
+        settings_document = settings_document.model_copy(
+            update={
+                "description_advice": DescriptionAdviceSettings(
+                    automatic_application=True
+                )
+            }
+        )
     settings = None
     if settings_document is not None:
         connection = sqlite3.connect(database)
@@ -397,7 +416,9 @@ def _server(
         )
     else:
         report = _report()
-    if provider_recovery:
+    if description_fixture is not None:
+        case_id = ""  # The real description producer below owns case admission.
+    elif provider_recovery:
         from tests.support.provider_recovery_rail import publish_provider_failure_case
 
         case_id, report, _, proposal_set = publish_provider_failure_case(repository)
@@ -565,8 +586,8 @@ def _server(
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
     )
-    reviewer_access = Mock(spec=ReviewerAccessOperations)
-    reviewer_access.read.return_value = ReviewerAccessView(
+    unconfigured_reviewer = Mock(spec=ReviewerAccessOperations)
+    unconfigured_reviewer.read.return_value = ReviewerAccessView(
         revision=1,
         mapping=None,
         openrouter_key_configured=False,
@@ -578,6 +599,134 @@ def _server(
         ),
         openrouter=ReviewerEngineStatus(engine="openrouter", state="unconfigured"),
     )
+    reviewer_access: ReviewerAccessOperations | Mock = unconfigured_reviewer
+    if description_fixture is not None:
+        from types import SimpleNamespace
+
+        from mechanical_librarian.application.contained_reviewer_contract import (
+            ContainedReviewRequest,
+            canonical_json,
+        )
+        from mechanical_librarian.application.description_advice import (
+            DescriptionAdviceService,
+        )
+        from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+        from mechanical_librarian.domain.description_advice import (
+            DescriptionAdviceBinding,
+            description_digest,
+        )
+        from tests.support.automatic_decisions import _automatic_decisions
+        from tests.support.automatic_no_change import _automatic_no_change_inputs
+        from tests.unit.test_reviewer_access_application import _Auth, _OpenRouter
+
+        report, category, option, _ = _automatic_no_change_inputs(
+            "description_preserved"
+        )
+        decisions = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+        deterministic = next(
+            value for value in decisions if value.destination == "description"
+        )
+        case_id = deterministic.review_case_id
+        description_profile = b"synthetic-contained-description-profile"
+
+        def description_runner(profile_bytes, instruction, inputs, schema, images):
+            assert profile_bytes == description_profile and images == ()
+            request = ContainedReviewRequest(
+                instruction.decode(), inputs.decode(), schema.decode()
+            )
+            if description_fixture == "failed":
+                return "invalid synthetic output"
+            text = (
+                "Existing description."
+                if description_fixture == "no_change"
+                else "A synthetic reader explores an old library.\nIts stories bring distant communities together. <strong>Authored text stays text.</strong>"
+            )
+            return canonical_json(
+                {
+                    "request_sha256": request.digest,
+                    "result": {
+                        "description": text,
+                        "disposition": "needs_review"
+                        if description_fixture == "needs_review"
+                        else "ready",
+                    },
+                }
+            )
+
+        reviewer_access = ReviewerAccessOperations(
+            repository.reviewer_access_store(),
+            codex_auth=_Auth("usable"),
+            codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+            codex_identity=lambda: ("synthetic-contained-model", description_profile),
+            codex_binding=lambda: (
+                "synthetic-contained-model",
+                description_profile,
+                description_runner,
+            ),
+            codex_description_binding=lambda: (
+                "synthetic-contained-model",
+                description_profile,
+                description_runner,
+            ),
+            openrouter_factory=lambda key, model: _OpenRouter(key, model, []),
+        )
+        reviewer_access.select_codex(expected_revision=1, task="description_rewrite")
+        store = repository.description_advice_store()
+        preferences = store.current_settings()
+        binding = DescriptionAdviceBinding(
+            review_case_id=case_id,
+            report_id=report.report_id,
+            proposal_set_id=deterministic.proposal_set_id,
+            target_fingerprint=report.target.fingerprint,
+            policy_generation=repository._connection.execute(
+                "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()[0],
+            access_revision=2,
+            preferences_digest=description_digest(preferences.model_dump()),
+        )
+        candidate = DescriptionAdviceService(
+            store, reviewer_access, store.current_settings, lambda: 1000
+        ).prepare(report, binding, lambda: store.binding_is_current(binding))
+        if candidate is not None and description_fixture in {"automatic", "no_change"}:
+            selected = store.admit(
+                candidate.candidate_id, binding, "automatic_policy", "e" * 64, 1000
+            )
+            if description_fixture == "no_change":
+                assert repository.record_current_field_effect_no_change(selected, 1001)
+            else:
+                from mechanical_librarian.adapters.field_effect_authority import (
+                    PersistedFieldEffectAuthority,
+                )
+                from tests.support.description_advice import _guarded_application
+
+                authority = PersistedFieldEffectAuthority(repository)
+                snapshot = authority.resolve(selected)
+                service, target = _guarded_application(
+                    repository, database.parent, authority
+                )
+                operation = service.plan(
+                    selected,
+                    connection=snapshot.connection,
+                    library=snapshot.library,
+                    work_id=snapshot.work_id,
+                    destination=snapshot.destination,
+                    pre_value=snapshot.pre_value,
+                    desired_value=snapshot.decision_value,
+                    target_fingerprint=snapshot.target_fingerprint,
+                    target_version=snapshot.target_version,
+                    dependency_digests=snapshot.dependency_digests,
+                    capability_digest="c" * 64,
+                )
+                assert operation is not None
+                target.seed(operation.plan)
+                assert service.apply(operation.plan.plan_id).state == "verified"
+                assert target.read(operation.plan).value == candidate.output.description
     app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(
@@ -3958,7 +4107,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
         certificate, key = _certificate(root)
         settings = OwnerSettingsDocument.model_validate(
             {
-                "schema_version": "owner-settings-v3",
+                "schema_version": "owner-settings-v4",
                 "revision": 1,
                 "connections": [
                     {
@@ -4928,4 +5077,89 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                     page.get_by_role("heading", name="Evidence", exact=True)
                 ).to_be_visible()
                 expect(page.get_by_text(reason)).to_have_count(0)
+            browser.close()
+
+
+@pytest.mark.parametrize(
+    "state", ("ready", "needs_review", "failed", "automatic", "no_change")
+)
+def test_description_advice_displays_real_persisted_outcomes(state):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1280, "height": 800},
+                reduced_motion="reduce",
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture=state,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field=description"
+                )
+                card = page.get_by_role("article", name="Advised description")
+                expect(card).to_be_visible()
+                expect(
+                    card.get_by_text("codex · synthetic-contained-model")
+                ).to_be_visible()
+                select = card.get_by_role("button", name="Use advised description")
+                if state == "failed":
+                    expect(
+                        card.get_by_text("could not be prepared", exact=False)
+                    ).to_be_visible()
+                    expect(select).to_be_disabled()
+                elif state in {"automatic", "no_change"}:
+                    expect(card.get_by_role("status")).to_contain_text(
+                        "Advised description selected"
+                    )
+                    expect(select).to_be_disabled()
+                else:
+                    expect(select).to_be_enabled()
+                    expect(card.locator("strong")).to_have_count(0)
+                    expect(
+                        card.get_by_text(
+                            "<strong>Authored text stays text.</strong>", exact=False
+                        )
+                    ).to_be_visible()
+                    if state == "needs_review":
+                        expect(
+                            card.get_by_text(
+                                "It cannot apply automatically.", exact=False
+                            )
+                        ).to_be_visible()
+                presentations: tuple[tuple[int, Literal["light", "dark"]], ...] = (
+                    (1280, "light"),
+                    (390, "dark"),
+                )
+                for width, theme in presentations:
+                    page.set_viewport_size({"width": width, "height": 800})
+                    page.emulate_media(color_scheme=theme)
+                    expect(card).to_be_visible()
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                card.get_by_role("button", name="Retry description advice").click()
+                expect(
+                    card.get_by_role("status").filter(
+                        has_text="Description preparation requested"
+                    )
+                ).to_be_visible()
             browser.close()

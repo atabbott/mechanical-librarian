@@ -17,6 +17,7 @@ import type {
   PolicyTransitionView,
   ShadowPostureView,
 } from '../api/http'
+import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
 import { Dropdown } from '../components/Dropdown'
 import { fieldLabel } from '../labels'
 import { policyRoute, useReviewContext } from '../router'
@@ -1275,6 +1276,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               )
             })}
           </div>
+          {activeChapter === 'curation' ? <DescriptionAdviceSettings http={http} /> : null}
         </section>
         <section
           className={`cm-policy-finish stage-${stage}`}

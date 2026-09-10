@@ -7,6 +7,9 @@ import sqlite3
 from _thread import RLock
 from contextlib import AbstractContextManager, nullcontext
 
+from mechanical_librarian.adapters.persistence.description_advice import (
+    request_description_preparation,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     reconcile_preparation_library_additions,
@@ -191,6 +194,8 @@ class OwnerSettingsStore(ConnectionScoped):
                 document.revision,
                 accepted_at,
             )
+            if previous.description_advice != document.description_advice:
+                request_description_preparation(self._connection, accepted_at)
             committed = _settings_view(document, values)
             transaction.commit()
         except OwnerSettingsError:

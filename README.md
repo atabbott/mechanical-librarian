@@ -12,7 +12,9 @@ The 0.17.0 configuration and first-run checkpoint runs one authenticated owner
 workspace. A first visitor creates the owner password, connects Audiobookshelf,
 selects book libraries and optional metadata providers, verifies read-only
 mounts, optionally configures one cover reviewer, and starts preparation
-without restarting the container. Settings is a
+without restarting the container. Optional description advice has its own engine
+selection and cleanup preferences; automatic application starts off and all
+authored text remains marked as advised. Settings is a
 primary workspace destination, and store-managed changes take effect as soon as
 they are saved; deploy-managed TLS, listener, proxy, and
 mount values remain outside browser authority. The workspace prepares exact-current

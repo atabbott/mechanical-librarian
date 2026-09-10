@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Configure optional description advice independently of cover review, with
+  editable cleanup preferences and automatic application off by default.
+  Authored text keeps its advised provenance through review, guarded writes,
+  reversal and history. Existing application state requires a clean rebuild
+  (#892).
+
 - Automatic rich-metadata decisions now bind the local-transport qualification.
   Earlier qualification decisions remain readable but cannot authorize new
   effects; qualified options and scoring are unchanged (#844).

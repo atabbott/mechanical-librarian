@@ -63,6 +63,7 @@ from mechanical_librarian.application.review_application import (
 )
 from mechanical_librarian.application.review_web import ReviewWebError
 from mechanical_librarian.application.reviewer_access import (
+    CodexDescriptionDisclosure,
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
     ReviewerAccessRepositoryError,
@@ -72,6 +73,11 @@ from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
     DeviceAuthFailure,
     DeviceAuthStatus,
+)
+from mechanical_librarian.domain.description_advice import (
+    AuthoredDescriptionDecision,
+    DescriptionAdviceBinding,
+    DescriptionAdviceCandidate,
 )
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
@@ -84,7 +90,10 @@ from mechanical_librarian.domain.owner_settings import (
     SecretWrite,
     SettingsView,
 )
-from mechanical_librarian.domain.reviewer_access import OpenRouterModelId
+from mechanical_librarian.domain.reviewer_access import (
+    DescriptionModelMetadata,
+    OpenRouterModelId,
+)
 from mechanical_librarian.interfaces.web import live_stream, review_frontend
 from mechanical_librarian.interfaces.web.react_assets import (
     ReactAssetError,
@@ -186,10 +195,12 @@ class _ReviewerRevisionRequest(_ClosedModel):
 
 
 class _ReviewerSelectionRequest(_ReviewerRevisionRequest):
+    task: Literal["cover_observation", "description_rewrite"] = "cover_observation"
     engine: Literal["codex"] | None
 
 
 class _OpenRouterWriteRequest(_ReviewerRevisionRequest):
+    task: Literal["cover_observation", "description_rewrite"] = "cover_observation"
     api_key: SecretStr = Field(json_schema_extra={"writeOnly": True})
     model: OpenRouterModelId
 
@@ -405,6 +416,36 @@ class _CoverConsiderationResponse(_ClosedModel):
     target_fingerprint: str
 
 
+class _DescriptionAdviceResponse(_ClosedModel):
+    state: Literal["requested", "running", "succeeded", "failed", "interrupted"]
+    failure: Literal["unavailable", "invalid_output", "interrupted"] | None
+    engine: Literal["codex", "openrouter"]
+    model: str
+    attempt_id: str
+    current: bool
+    candidate: DescriptionAdviceCandidate | None
+    binding: DescriptionAdviceBinding
+    selection: AuthoredDescriptionDecision | None
+
+
+class _DescriptionSelectionRequest(_ClosedModel):
+    candidate_id: str = Field(pattern=r"^description_candidate_[0-9a-f]{64}$")
+    binding: DescriptionAdviceBinding
+
+
+class _DescriptionRetryAcknowledgement(_ClosedModel):
+    queued: Literal[True]
+
+
+class _DescriptionSelectionAcknowledgement(_ClosedModel):
+    schema_version: Literal["description-selection-ack-v1"] = (
+        "description-selection-ack-v1"
+    )
+    decision_id: str
+    advised: Literal[True]
+    invalidation_sequences: list[int]
+
+
 class _ReviewField(_ClosedModel):
     classification: Literal[
         "needs_attention",
@@ -441,6 +482,7 @@ class _ReviewField(_ClosedModel):
     target_fingerprint: str
     uncertainty: list[str]
     cover_consideration: _CoverConsiderationResponse | None = None
+    description_advice: _DescriptionAdviceResponse | None = None
 
 
 class _ChoiceEvidence(_ClosedModel):
@@ -566,6 +608,18 @@ class _HistoryCoverItem(_ClosedModel):
     schema_version: Literal["cover-consideration-event-v1"]
 
 
+class _HistoryDescriptionItem(_ClosedModel):
+    schema_version: Literal["description-advice-history-v1"]
+    kind: Literal["description_advice_recorded", "description_selected"]
+    occurred_at: int
+    review_case_id: str
+    state: Literal["requested", "running", "succeeded", "failed", "interrupted"]
+    engine: Literal["codex", "openrouter"]
+    model: str
+    candidate: DescriptionAdviceCandidate | None
+    decision: AuthoredDescriptionDecision | None
+
+
 class _HistoryResponse(_ClosedModel):
     items: list[
         _HistoryTransitionItem
@@ -573,6 +627,7 @@ class _HistoryResponse(_ClosedModel):
         | _HistoryShadowItem
         | _HistoryAutomaticItem
         | _HistoryCoverItem
+        | _HistoryDescriptionItem
     ] = Field(max_length=150)
     next_cursor: str | None
     review_case_id: str
@@ -1606,6 +1661,7 @@ def create_review_app(
             # The write contract permits a 2,048-character key plus its
             # model, revision, and JSON framing.
             "/api/v1/reviewer-access/openrouter": 4096,
+            "/api/v1/reviewer-access/description-model/test": 4096,
             "/api/v1/reviewer-access/selection": 2048,
             "/api/v1/reviewer-access/codex/device": 2048,
             "/api/v1/reviewer-access/codex/recheck": 2048,
@@ -1891,13 +1947,49 @@ def _register_reviewer_access_routes(
         },
     )
     def refresh_openrouter(
+        task: Literal["cover_observation", "description_rewrite"] = "cover_observation",
         ml_session: str = Depends(authenticated_session_cookie),
         x_csrf_token: str = Header(),
     ) -> ReviewerAccessView:
         _require_session(application, ml_session, x_csrf_token)
         try:
-            return authority().refresh_openrouter()
+            return authority().refresh_openrouter(task)
         except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
+
+    @app.post(
+        "/api/v1/reviewer-access/description-model/contained",
+        response_model=CodexDescriptionDisclosure,
+    )
+    def describe_contained_description(
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> CodexDescriptionDisclosure:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().describe_contained_description()
+        except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
+            raise problem(error) from None
+
+    @app.post(
+        "/api/v1/reviewer-access/description-model/test",
+        response_model=DescriptionModelMetadata,
+    )
+    def test_description_model(
+        request: _OpenRouterWriteRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> DescriptionModelMetadata:
+        _require_session(application, ml_session, x_csrf_token)
+        try:
+            return authority().test_description_model(
+                request.api_key.get_secret_value(), request.model
+            )
+        except (
+            ValueError,
+            ReviewerAccessRepositoryError,
+            ReviewerAccessApplicationError,
+        ) as error:
             raise problem(error) from None
 
     @app.put(
@@ -1919,6 +2011,7 @@ def _register_reviewer_access_routes(
                 expected_revision=request.expected_revision,
                 api_key=request.api_key.get_secret_value(),
                 model=request.model,
+                task=request.task,
             )
         except (
             ValueError,
@@ -1966,9 +2059,11 @@ def _register_reviewer_access_routes(
             operations = authority()
             if request.engine == "codex":
                 return operations.select_codex(
-                    expected_revision=request.expected_revision
+                    expected_revision=request.expected_revision, task=request.task
                 )
-            return operations.select_none(expected_revision=request.expected_revision)
+            return operations.select_none(
+                expected_revision=request.expected_revision, task=request.task
+            )
         except (ReviewerAccessRepositoryError, ReviewerAccessApplicationError) as error:
             raise problem(error) from None
 
@@ -2733,6 +2828,45 @@ def _register_case_and_effect_routes(
         _require_case_id(review_case_id)
         return _CoverConsiderationResponse.model_validate(
             _case_call(lambda: application.retry_cover_consideration(review_case_id))
+        )
+
+    @app.post(
+        "/api/v1/review-cases/{review_case_id}/description-advice/retry",
+        response_model=_DescriptionRetryAcknowledgement,
+    )
+    def retry_description_advice(
+        review_case_id: str,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+    ) -> _DescriptionRetryAcknowledgement:
+        _require_session(sessions, ml_session, x_csrf_token)
+        _require_case_id(review_case_id)
+        return _DescriptionRetryAcknowledgement.model_validate(
+            _case_call(lambda: application.retry_description_advice(review_case_id))
+        )
+
+    @app.post(
+        "/api/v1/review-cases/{review_case_id}/description-advice/selection",
+        response_model=_DescriptionSelectionAcknowledgement,
+    )
+    def select_description_advice(
+        review_case_id: str,
+        payload: _DescriptionSelectionRequest,
+        ml_session: str = Depends(authenticated_session_cookie),
+        x_csrf_token: str = Header(),
+        idempotency_key: str = Header(min_length=16, max_length=128),
+    ) -> _DescriptionSelectionAcknowledgement:
+        _require_session(sessions, ml_session, x_csrf_token)
+        _require_case_id(review_case_id)
+        return _DescriptionSelectionAcknowledgement.model_validate(
+            _decision_call(
+                lambda: application.select_description_advice(
+                    review_case_id,
+                    payload.candidate_id,
+                    payload.binding,
+                    idempotency_key,
+                )
+            )
         )
 
     @app.post(

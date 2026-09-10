@@ -41,6 +41,7 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
+from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.field_effect import LIST_DESTINATIONS
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
@@ -343,6 +344,22 @@ class FakeReviewRepository:
 
     def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
         return tuple(self.decisions.values())
+
+    def record_authored_description_decision(
+        self,
+        candidate_id: str,
+        binding: DescriptionAdviceBinding,
+        idempotency_digest: str,
+        now: int,
+    ) -> str:
+        # Authored admission is exercised against the real persisted service;
+        # ordinary fake decisions cannot mint authored authority.
+        raise ValueError("authored description candidate is not configured")
+
+    def request_description_retry(
+        self, review_case_id: str, now: int
+    ) -> tuple[str, str]:
+        raise ValueError("description preparation is not configured")
 
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         return next(

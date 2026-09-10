@@ -18,6 +18,7 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
+from mechanical_librarian.domain.description_advice import AuthoredDescriptionDecision
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -165,7 +166,10 @@ class FakeAuthorityCurrentness:
 
     def bind(
         self,
-        decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
         *,
         connection: str,
         library: str,
@@ -199,7 +203,11 @@ class FakeAuthorityCurrentness:
         )
 
     def resolve(
-        self, decision: HumanDecision | AutomaticDecision | CoverAutomaticDecision
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
     ) -> AuthoritySnapshot:
         return self.bindings[decision.decision_id]
 

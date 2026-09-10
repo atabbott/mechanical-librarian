@@ -129,6 +129,107 @@
         "title": "AudnexusProviderSettings",
         "type": "object"
       },
+      "AuthoredDescriptionDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "application": {
+            "const": "guarded",
+            "default": "guarded",
+            "title": "Application",
+            "type": "string"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/DescriptionAdviceBinding"
+          },
+          "candidate_id": {
+            "pattern": "^description_candidate_[0-9a-f]{64}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "decision_id": {
+            "pattern": "^(human|automatic)_decision_[0-9a-f]{64}$",
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "destination": {
+            "const": "description",
+            "default": "description",
+            "title": "Destination",
+            "type": "string"
+          },
+          "idempotency_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Idempotency Digest",
+            "type": "string"
+          },
+          "occurred_at": {
+            "minimum": 0.0,
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "origin": {
+            "enum": [
+              "human",
+              "automatic_policy"
+            ],
+            "title": "Origin",
+            "type": "string"
+          },
+          "outcome": {
+            "const": "accept",
+            "default": "accept",
+            "title": "Outcome",
+            "type": "string"
+          },
+          "qualification_manifest_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Qualification Manifest Sha256",
+            "type": "string"
+          },
+          "resolved_policy_id": {
+            "pattern": "^resolved_policy_[0-9a-f]{64}$",
+            "title": "Resolved Policy Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "authored-description-decision-v1",
+            "default": "authored-description-decision-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "candidate_id",
+          "binding",
+          "origin",
+          "resolved_policy_id",
+          "qualification_manifest_sha256",
+          "idempotency_digest",
+          "occurred_at"
+        ],
+        "title": "AuthoredDescriptionDecision",
+        "type": "object"
+      },
+      "CodexDescriptionDisclosure": {
+        "additionalProperties": false,
+        "properties": {
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "profile_sha256": {
+            "title": "Profile Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "profile_sha256"
+        ],
+        "title": "CodexDescriptionDisclosure",
+        "type": "object"
+      },
       "CodexTaskSelection": {
         "additionalProperties": false,
         "properties": {
@@ -166,6 +267,278 @@
         "title": "CoverPreferenceSettings",
         "type": "object"
       },
+      "DescriptionAdviceBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "access_revision": {
+            "minimum": 1.0,
+            "title": "Access Revision",
+            "type": "integer"
+          },
+          "policy_generation": {
+            "minimum": 1.0,
+            "title": "Policy Generation",
+            "type": "integer"
+          },
+          "preferences_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Preferences Digest",
+            "type": "string"
+          },
+          "proposal_set_id": {
+            "pattern": "^proposal_set_[0-9a-f]{64}$",
+            "title": "Proposal Set Id",
+            "type": "string"
+          },
+          "report_id": {
+            "pattern": "^report_[0-9a-f]{64}$",
+            "title": "Report Id",
+            "type": "string"
+          },
+          "review_case_id": {
+            "pattern": "^review_case_[0-9a-f]{64}$",
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "target_fingerprint": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Target Fingerprint",
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_case_id",
+          "report_id",
+          "proposal_set_id",
+          "target_fingerprint",
+          "policy_generation",
+          "access_revision",
+          "preferences_digest"
+        ],
+        "title": "DescriptionAdviceBinding",
+        "type": "object"
+      },
+      "DescriptionAdviceCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "access_revision": {
+            "minimum": 1.0,
+            "title": "Access Revision",
+            "type": "integer"
+          },
+          "advised": {
+            "const": true,
+            "default": true,
+            "title": "Advised",
+            "type": "boolean"
+          },
+          "attempt_id": {
+            "pattern": "^description_attempt_[0-9a-f]{32}$",
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "candidate_id": {
+            "pattern": "^description_candidate_[0-9a-f]{64}$",
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "created_at": {
+            "minimum": 0.0,
+            "title": "Created At",
+            "type": "integer"
+          },
+          "engine": {
+            "enum": [
+              "codex",
+              "openrouter"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "instruction_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Instruction Digest",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 256,
+            "minLength": 1,
+            "title": "Model",
+            "type": "string"
+          },
+          "output": {
+            "$ref": "#/components/schemas/DescriptionAdviceOutput"
+          },
+          "preferences_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Preferences Digest",
+            "type": "string"
+          },
+          "profile_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Profile Digest",
+            "type": "string"
+          },
+          "provenance": {
+            "const": "authored_content",
+            "default": "authored_content",
+            "title": "Provenance",
+            "type": "string"
+          },
+          "request_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Request Digest",
+            "type": "string"
+          },
+          "request_identity": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Request Identity",
+            "type": "string"
+          },
+          "schema_digest": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Schema Digest",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "description-advice-candidate-v1",
+            "default": "description-advice-candidate-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "attempt_id",
+          "request_identity",
+          "request_digest",
+          "instruction_digest",
+          "schema_digest",
+          "preferences_digest",
+          "profile_digest",
+          "engine",
+          "model",
+          "access_revision",
+          "output",
+          "created_at"
+        ],
+        "title": "DescriptionAdviceCandidate",
+        "type": "object"
+      },
+      "DescriptionAdviceOutput": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "maxLength": 16384,
+            "minLength": 1,
+            "title": "Description",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "ready",
+              "needs_review"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          }
+        },
+        "required": [
+          "description",
+          "disposition"
+        ],
+        "title": "DescriptionAdviceOutput",
+        "type": "object"
+      },
+      "DescriptionAdviceSettings": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_application": {
+            "default": false,
+            "title": "Automatic Application",
+            "type": "boolean"
+          },
+          "remove_marketing": {
+            "default": true,
+            "title": "Remove Marketing",
+            "type": "boolean"
+          },
+          "remove_praise": {
+            "default": true,
+            "title": "Remove Praise",
+            "type": "boolean"
+          },
+          "remove_sales_boasts": {
+            "default": true,
+            "title": "Remove Sales Boasts",
+            "type": "boolean"
+          }
+        },
+        "title": "DescriptionAdviceSettings",
+        "type": "object"
+      },
+      "DescriptionModelMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "completion_price": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Completion Price",
+            "type": "string"
+          },
+          "model": {
+            "maxLength": 256,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
+            "title": "Model",
+            "type": "string"
+          },
+          "observed_at": {
+            "minimum": 0.0,
+            "title": "Observed At",
+            "type": "integer"
+          },
+          "prompt_price": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Prompt Price",
+            "type": "string"
+          },
+          "request_price": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Request Price",
+            "type": "string"
+          },
+          "structured_outputs": {
+            "const": true,
+            "default": true,
+            "title": "Structured Outputs",
+            "type": "boolean"
+          },
+          "text_input": {
+            "const": true,
+            "default": true,
+            "title": "Text Input",
+            "type": "boolean"
+          },
+          "text_output": {
+            "const": true,
+            "default": true,
+            "title": "Text Output",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "model",
+          "observed_at",
+          "prompt_price",
+          "completion_price",
+          "request_price"
+        ],
+        "title": "DescriptionModelMetadata",
+        "type": "object"
+      },
       "GoogleBooksProviderSettings": {
         "additionalProperties": false,
         "properties": {
@@ -196,6 +569,19 @@
           "enabled"
         ],
         "title": "GoogleBooksProviderSettings",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
         "type": "object"
       },
       "HardcoverProviderSettings": {
@@ -525,6 +911,15 @@
               "prefer_minimal_composition": false
             }
           },
+          "description_advice": {
+            "$ref": "#/components/schemas/DescriptionAdviceSettings",
+            "default": {
+              "automatic_application": false,
+              "remove_marketing": true,
+              "remove_praise": true,
+              "remove_sales_boasts": true
+            }
+          },
           "libraries": {
             "items": {
               "$ref": "#/components/schemas/LibrarySettings"
@@ -621,7 +1016,7 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "owner-settings-v3",
+            "const": "owner-settings-v4",
             "title": "Schema Version",
             "type": "string"
           },
@@ -759,6 +1154,51 @@
             "default": "OpenRouter and the selected endpoint may process submitted cover previews; review current provider data policies before use.",
             "title": "Data Use Caveat",
             "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReviewerEngineStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "description_mapping": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "codex": "#/components/schemas/CodexTaskSelection",
+                    "openrouter": "#/components/schemas/OpenRouterTaskSelection"
+                  },
+                  "propertyName": "engine"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CodexTaskSelection"
+                  },
+                  {
+                    "$ref": "#/components/schemas/OpenRouterTaskSelection"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description Mapping"
+          },
+          "description_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DescriptionModelMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "free_tier_caveat": {
             "default": "OpenRouter currently documents free-model caps of 20 requests/minute and 50 requests/day before $10 in lifetime purchases, or 1,000/day after; provider limits may change.",
@@ -1163,6 +1603,46 @@
           "endpoint"
         ],
         "title": "TargetSettings",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
         "type": "object"
       },
       "_ActivityCapability": {
@@ -3655,6 +4135,94 @@
         "title": "_DecisionRequest",
         "type": "object"
       },
+      "_DescriptionAdviceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_id": {
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "binding": {
+            "$ref": "#/components/schemas/DescriptionAdviceBinding"
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DescriptionAdviceCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "current": {
+            "title": "Current",
+            "type": "boolean"
+          },
+          "engine": {
+            "enum": [
+              "codex",
+              "openrouter"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "failure": {
+            "anyOf": [
+              {
+                "enum": [
+                  "unavailable",
+                  "invalid_output",
+                  "interrupted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "selection": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthoredDescriptionDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "enum": [
+              "requested",
+              "running",
+              "succeeded",
+              "failed",
+              "interrupted"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "failure",
+          "engine",
+          "model",
+          "attempt_id",
+          "current",
+          "candidate",
+          "binding",
+          "selection"
+        ],
+        "title": "_DescriptionAdviceResponse",
+        "type": "object"
+      },
       "_DescriptionQualification": {
         "additionalProperties": false,
         "properties": {
@@ -3692,6 +4260,74 @@
           "option"
         ],
         "title": "_DescriptionQualification",
+        "type": "object"
+      },
+      "_DescriptionRetryAcknowledgement": {
+        "additionalProperties": false,
+        "properties": {
+          "queued": {
+            "const": true,
+            "title": "Queued",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "queued"
+        ],
+        "title": "_DescriptionRetryAcknowledgement",
+        "type": "object"
+      },
+      "_DescriptionSelectionAcknowledgement": {
+        "additionalProperties": false,
+        "properties": {
+          "advised": {
+            "const": true,
+            "title": "Advised",
+            "type": "boolean"
+          },
+          "decision_id": {
+            "title": "Decision Id",
+            "type": "string"
+          },
+          "invalidation_sequences": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Invalidation Sequences",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "description-selection-ack-v1",
+            "default": "description-selection-ack-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "decision_id",
+          "advised",
+          "invalidation_sequences"
+        ],
+        "title": "_DescriptionSelectionAcknowledgement",
+        "type": "object"
+      },
+      "_DescriptionSelectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/DescriptionAdviceBinding"
+          },
+          "candidate_id": {
+            "pattern": "^description_candidate_[0-9a-f]{64}$",
+            "title": "Candidate Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "binding"
+        ],
+        "title": "_DescriptionSelectionRequest",
         "type": "object"
       },
       "_ErrorCode": {
@@ -4223,6 +4859,88 @@
         "title": "_HistoryDecisionItem",
         "type": "object"
       },
+      "_HistoryDescriptionItem": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DescriptionAdviceCandidate"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AuthoredDescriptionDecision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "engine": {
+            "enum": [
+              "codex",
+              "openrouter"
+            ],
+            "title": "Engine",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "description_advice_recorded",
+              "description_selected"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "occurred_at": {
+            "title": "Occurred At",
+            "type": "integer"
+          },
+          "review_case_id": {
+            "title": "Review Case Id",
+            "type": "string"
+          },
+          "schema_version": {
+            "const": "description-advice-history-v1",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "requested",
+              "running",
+              "succeeded",
+              "failed",
+              "interrupted"
+            ],
+            "title": "State",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "kind",
+          "occurred_at",
+          "review_case_id",
+          "state",
+          "engine",
+          "model",
+          "candidate",
+          "decision"
+        ],
+        "title": "_HistoryDescriptionItem",
+        "type": "object"
+      },
       "_HistoryResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4243,6 +4961,9 @@
                 },
                 {
                   "$ref": "#/components/schemas/_HistoryCoverItem"
+                },
+                {
+                  "$ref": "#/components/schemas/_HistoryDescriptionItem"
                 }
               ]
             },
@@ -4674,6 +5395,15 @@
             "minLength": 3,
             "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
             "title": "Model",
+            "type": "string"
+          },
+          "task": {
+            "default": "cover_observation",
+            "enum": [
+              "cover_observation",
+              "description_rewrite"
+            ],
+            "title": "Task",
             "type": "string"
           }
         },
@@ -6378,6 +7108,16 @@
             "title": "Decision Actions",
             "type": "array"
           },
+          "description_advice": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_DescriptionAdviceResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "destination": {
             "title": "Destination",
             "type": "string"
@@ -6537,6 +7277,15 @@
             "minimum": 1.0,
             "title": "Expected Revision",
             "type": "integer"
+          },
+          "task": {
+            "default": "cover_observation",
+            "enum": [
+              "cover_observation",
+              "description_rewrite"
+            ],
+            "title": "Task",
+            "type": "string"
           }
         },
         "required": [
@@ -10919,6 +11668,173 @@
         "summary": "Record Decision"
       }
     },
+    "/api/v1/review-cases/{review_case_id}/description-advice/retry": {
+      "post": {
+        "operationId": "retry_description_advice_api_v1_review_cases__review_case_id__description_advice_retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DescriptionRetryAcknowledgement"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Retry Description Advice"
+      }
+    },
+    "/api/v1/review-cases/{review_case_id}/description-advice/selection": {
+      "post": {
+        "operationId": "select_description_advice_api_v1_review_cases__review_case_id__description_advice_selection_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "review_case_id",
+            "required": true,
+            "schema": {
+              "title": "Review Case Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 16,
+              "title": "Idempotency-Key",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_DescriptionSelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_DescriptionSelectionAcknowledgement"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Select Description Advice"
+      }
+    },
     "/api/v1/review-cases/{review_case_id}/evidence": {
       "get": {
         "operationId": "case_evidence_api_v1_review_cases__review_case_id__evidence_get",
@@ -12641,6 +13557,144 @@
         "summary": "Recheck Codex"
       }
     },
+    "/api/v1/reviewer-access/description-model/contained": {
+      "post": {
+        "operationId": "describe_contained_description_api_v1_reviewer_access_description_model_contained_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CodexDescriptionDisclosure"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Describe Contained Description"
+      }
+    },
+    "/api/v1/reviewer-access/description-model/test": {
+      "post": {
+        "operationId": "test_description_model_api_v1_reviewer_access_description_model_test_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-csrf-token",
+            "required": true,
+            "schema": {
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact identity of the installed authenticated browser build.",
+            "in": "header",
+            "name": "x-ml-build-identity",
+            "required": true,
+            "schema": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/_OpenRouterWriteRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DescriptionModelMetadata"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Browser build mismatch"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Test Description Model"
+      }
+    },
     "/api/v1/reviewer-access/openrouter": {
       "delete": {
         "operationId": "clear_openrouter_api_v1_reviewer_access_openrouter_delete",
@@ -12871,6 +13925,20 @@
       "post": {
         "operationId": "refresh_openrouter_api_v1_reviewer_access_openrouter_refresh_post",
         "parameters": [
+          {
+            "in": "query",
+            "name": "task",
+            "required": false,
+            "schema": {
+              "default": "cover_observation",
+              "enum": [
+                "cover_observation",
+                "description_rewrite"
+              ],
+              "title": "Task",
+              "type": "string"
+            }
+          },
           {
             "in": "header",
             "name": "x-csrf-token",

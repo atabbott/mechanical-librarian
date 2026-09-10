@@ -4,7 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiError } from '../src/api/http'
+import { ApiError, mapCaseDetail } from '../src/api/http'
+import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import { reconciliationKey } from '../src/reviewDecisionController'
 import { sourceStatusLabel } from '../src/routes/LibraryPage'
@@ -7295,3 +7296,47 @@ it.each(['Evidence', 'History'] as const)(
     )
   },
 )
+
+it('keeps authored description separate and submits its immutable binding through the decision controller', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')!
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const card = await screen.findByRole('article', { name: 'Advised description' })
+  expect(within(card).getByText('Authored synthetic description.')).toBeVisible()
+  expect(within(card).getByText(/authored advice, not independent provider evidence/)).toBeVisible()
+  await userEvent
+    .setup()
+    .click(within(card).getByRole('button', { name: 'Use advised description' }))
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
+  const command = vi.mocked(http.recordDecision).mock.calls[0]![1]
+  expect(command.authoredDescription).toEqual({
+    candidateId: field.descriptionAdvice!.candidate!.candidate_id,
+    binding: field.descriptionAdvice!.binding,
+  })
+  expect(command.idempotencyKey).toBeTruthy()
+})
+
+it('renders hostile multiline advice as text and refuses stale selection while ordinary choices remain', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')!
+  const advice = field.descriptionAdvice!
+  field.descriptionAdvice = {
+    ...advice,
+    current: false,
+    candidate: {
+      ...advice.candidate!,
+      output: { description: '<img src=x onerror=alert(1)>\nSecond line', disposition: 'ready' },
+    },
+  }
+  renderRoute('/library?lens=all&preview=case-1&field=description', {
+    ...createHttp(),
+    getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+  })
+  const card = await screen.findByRole('article', { name: 'Advised description' })
+  expect(within(card).getByText(/<img src=x onerror=alert\(1\)>/)).toBeVisible()
+  expect(card.querySelector('img')).toBeNull()
+  expect(within(card).getByRole('button', { name: 'Use advised description' })).toBeDisabled()
+  expect(within(card).getByRole('status')).toHaveTextContent('This advice is stale')
+})

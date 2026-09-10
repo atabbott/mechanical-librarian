@@ -710,7 +710,18 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                                 else pointer[3] in {"no_case", "retired"}
                             )
                         )
-                        if pointer_matches:
+                        pending_description = (
+                            self._connection.execute(
+                                "SELECT 1 FROM description_preparation_pending WHERE review_case_id=?",
+                                (review_case_id,),
+                            ).fetchone()
+                            is not None
+                        )
+                        if pointer_matches and pending_description:
+                            stage = "projection"
+                            state = "queued"
+                            outcome = None
+                        elif pointer_matches:
                             stage = "complete"
                             state = "complete"
                             outcome = (

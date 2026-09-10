@@ -9,10 +9,10 @@ from mechanical_librarian.domain.reviewer_access import (
 )
 
 
-def test_document_admits_only_the_one_task_and_two_fixed_engines() -> None:
+def test_document_admits_only_two_tasks_and_two_fixed_engines() -> None:
     assert ReviewerAccessDocument.model_validate(
         {
-            "schema_version": "reviewer-access-v1",
+            "schema_version": "reviewer-access-v2",
             "revision": 1,
             "cover_observation": {"engine": "openrouter", "model": "example/vision"},
         }
@@ -22,7 +22,7 @@ def test_document_admits_only_the_one_task_and_two_fixed_engines() -> None:
     with pytest.raises(ValidationError):
         ReviewerAccessDocument.model_validate(
             {
-                "schema_version": "reviewer-access-v1",
+                "schema_version": "reviewer-access-v2",
                 "revision": 1,
                 "description_advice": {
                     "engine": "openrouter",
@@ -33,7 +33,7 @@ def test_document_admits_only_the_one_task_and_two_fixed_engines() -> None:
     with pytest.raises(ValidationError):
         ReviewerAccessDocument.model_validate(
             {
-                "schema_version": "reviewer-access-v1",
+                "schema_version": "reviewer-access-v2",
                 "revision": 1,
                 "cover_observation": {"engine": "other"},
             }
@@ -75,3 +75,10 @@ def test_openrouter_selection_rejects_hostile_or_ambiguous_model_ids(
 )
 def test_openrouter_selection_admits_provider_local_model_ids(model: str) -> None:
     assert OpenRouterTaskSelection(engine="openrouter", model=model).model == model
+
+
+def test_predecessor_reviewer_document_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        ReviewerAccessDocument.model_validate_json(
+            '{"cover_observation":null,"revision":1,"schema_version":"reviewer-access-v1"}'
+        )

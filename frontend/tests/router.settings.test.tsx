@@ -17,98 +17,15 @@ import {
 } from '../src/api/http'
 import type { ReviewerAccessView, SettingsView, SettingsWrite } from '../src/api/http'
 import { createHttp, renderRoute } from './fixtures'
-
-const document: SettingsView['document'] = {
-  schema_version: 'owner-settings-v3',
-  revision: 3,
-  connections: [{ adapter: 'audiobookshelf', endpoint: 'https://library.invalid', name: 'home' }],
-  providers: [
-    { adapter: 'hardcover', cover_enabled: true, enabled: true, name: 'hardcover' },
-    {
-      adapter: 'open_library',
-      contact_email: 'owner@example.invalid',
-      cover_enabled: true,
-      enabled: true,
-      name: 'open-library',
-    },
-  ],
-  libraries: [
-    {
-      connection: 'home',
-      library_id: 'books',
-      media_kind: 'ebook',
-      mount: 'ebooks',
-      name: 'a-very_long-library-name',
-      display_name: 'Ebooks & Audiobooks: Collected Editions',
-      policy_override: null,
-      provider_connections: ['hardcover'],
-    },
-  ],
-  limits: {
-    audio_source_bytes: 8_589_934_592,
-    provider_response_bytes: 65_536,
-    source_archive_bytes: 268_435_456,
-    target_response_bytes: 1_048_576,
-    timeout_seconds: 30,
-  },
-  pending_restart: [],
-  provider_recovery_generation: 1,
-  reduced_motion: 'follow_system',
-  server: {
-    diagnostic_timings_enabled: false,
-    graceful_shutdown_seconds: 30,
-    library_polling_interval_seconds: 900,
-    session_lifetime_seconds: 2_592_000,
-  },
-  cover_preferences: {
-    avoid_promotional_text: false,
-    avoid_tie_in_branding: false,
-    prefer_minimal_composition: false,
-  },
-}
-
-const view = (authority: 'file' | 'store' = 'store'): SettingsView => ({
-  authority,
-  document,
-  fields: [
-    {
-      apply_effect: 'applied_live',
-      field_id: 'connections',
-      group: 'connections',
-      managed_by_file: authority === 'file',
-      managed_path: authority === 'file' ? '/data/config.json' : null,
-    },
-    {
-      apply_effect: 'applied_live',
-      field_id: 'providers',
-      group: 'providers',
-      managed_by_file: authority === 'file',
-      managed_path: authority === 'file' ? '/data/config.json' : null,
-    },
-    {
-      apply_effect: 'applied_live',
-      field_id: 'reduced_motion',
-      group: 'appearance',
-      managed_by_file: authority === 'file',
-      managed_path: authority === 'file' ? '/data/config.json' : null,
-    },
-  ],
-  managed_path: authority === 'file' ? '/data/config.json' : null,
-  provider_capabilities: [],
-  secrets: [
-    {
-      configured: true,
-      field_id: 'connection.home.key',
-      indicator: 'Configured · ····home',
-    },
-    { configured: true, field_id: 'provider.hardcover.key', indicator: 'Configured · ····abcd' },
-  ],
-})
+import { document, view } from './settingsFixtures'
 
 const reviewerView: ReviewerAccessView = {
   schema_version: 'reviewer-access-view-v1',
   revision: 3,
   mapping: null,
+  description_mapping: null,
+  description_metadata: null,
+  description: null,
   openrouter_key_configured: false,
   codex: {
     engine: 'codex',
@@ -1120,4 +1037,84 @@ describe('owner settings route', () => {
     expect(audio).not.toHaveAttribute('aria-invalid', 'true')
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled()
   })
+})
+
+it('discloses description prices before activation and preserves the cover task and automatic preference', async () => {
+  const http = createHttp()
+  const initial: ReviewerAccessView = {
+    ...reviewerView,
+    mapping: { engine: 'openrouter', model: 'example/cover-a' },
+    openrouter_key_configured: true,
+  }
+  const metadata = {
+    model: 'example/text-b',
+    observed_at: 100,
+    prompt_price: '0.000001',
+    completion_price: '0.000002',
+    request_price: '0',
+    text_input: true as const,
+    text_output: true as const,
+    structured_outputs: true as const,
+  }
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => initial)
+  http.testDescriptionModel = vi.fn(async () => metadata)
+  http.configureOpenRouter = vi.fn(async () => ({
+    ...initial,
+    revision: 4,
+    description_mapping: { engine: 'openrouter' as const, model: metadata.model },
+    description_metadata: metadata,
+  }))
+  renderRoute('/settings?group=reviewer', http)
+  const user = userEvent.setup()
+  const enable = await screen.findByRole('button', {
+    name: 'Use this OpenRouter model for descriptions',
+  })
+  expect(enable).toBeDisabled()
+  expect(screen.getByRole('link', { name: /Review cleanup preferences/ })).toHaveAttribute(
+    'href',
+    '/policy?section=curation#description-advice',
+  )
+  await user.type(
+    screen.getByRole('textbox', { name: 'OpenRouter description model' }),
+    metadata.model,
+  )
+  await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
+  expect(await screen.findByText(/Maximum-size input estimate/)).toBeVisible()
+  expect(screen.getByText(/Metadata observed/)).toHaveTextContent(metadata.model)
+  expect(http.configureOpenRouter).not.toHaveBeenCalled()
+  await user.click(enable)
+  await waitFor(() =>
+    expect(http.configureOpenRouter).toHaveBeenCalledWith({
+      expected_revision: 3,
+      api_key: '',
+      model: metadata.model,
+      task: 'description_rewrite',
+    }),
+  )
+  expect(http.writeSettings).not.toHaveBeenCalled()
+  expect(document.description_advice.automatic_application).toBe(false)
+})
+
+it('inspects the exact contained description model before selection without starting a request', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    codex: { ...reviewerView.codex, state: 'usable' as const },
+  }))
+  http.describeContainedDescription = vi.fn(async () => ({
+    model: 'contained-model',
+    profile_sha256: 'a'.repeat(64),
+  }))
+  renderRoute('/settings?group=reviewer', http)
+  const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
+  expect(use).toBeDisabled()
+  await userEvent
+    .setup()
+    .click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+  expect(await screen.findByText(/Model: contained-model/)).toBeVisible()
+  expect(screen.getByText(/per-request monetary estimate is unavailable/)).toBeVisible()
+  expect(use).toBeEnabled()
+  expect(http.selectReviewer).not.toHaveBeenCalled()
 })

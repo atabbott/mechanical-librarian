@@ -16,6 +16,7 @@ from pydantic import (
     model_validator,
 )
 
+from mechanical_librarian.domain.description_advice import DescriptionAdviceSettings
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
@@ -262,7 +263,7 @@ class CoverPreferenceSettings(_Closed):
 
 
 class OwnerSettingsDocument(_Closed):
-    schema_version: Literal["owner-settings-v3"]
+    schema_version: Literal["owner-settings-v4"]
     revision: Annotated[StrictInt, Field(ge=1)]
     connections: Annotated[list[TargetSettings], Field(min_length=1, max_length=32)]
     providers: Annotated[list[ProviderSettings], Field(max_length=32)] = []
@@ -271,6 +272,7 @@ class OwnerSettingsDocument(_Closed):
     provider_recovery_generation: Annotated[StrictInt, Field(ge=1)] = 1
     server: ServerSettings = ServerSettings()
     cover_preferences: CoverPreferenceSettings = CoverPreferenceSettings()
+    description_advice: DescriptionAdviceSettings = DescriptionAdviceSettings()
     reduced_motion: Literal["follow_system", "always_reduced"] = "follow_system"
     pending_restart: Annotated[list[StrictStr], Field(max_length=32)] = []
 
@@ -455,6 +457,10 @@ def store_field_metadata(document: OwnerSettingsDocument) -> tuple[SettingField,
             live
             | {
                 "reduced_motion",
+                "description_advice.remove_marketing",
+                "description_advice.remove_sales_boasts",
+                "description_advice.remove_praise",
+                "description_advice.automatic_application",
                 "cover_preferences.avoid_promotional_text",
                 "cover_preferences.avoid_tie_in_branding",
                 "cover_preferences.prefer_minimal_composition",

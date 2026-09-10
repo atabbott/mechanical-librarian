@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from typing import Literal, Protocol, cast
 
@@ -20,9 +21,11 @@ from mechanical_librarian.application.reviewer_contracts import (
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.reviewer_access import (
     CodexTaskSelection,
+    DescriptionModelMetadata,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
     ReviewerEngine,
+    ReviewerTask,
     ReviewerTaskSelection,
 )
 from mechanical_librarian.domain.validation import credential
@@ -99,7 +102,13 @@ class CodexAuth(Protocol):
 
 
 class OpenRouterClient(Protocol):
+    def run_description(
+        self, profile: bytes, instruction: bytes, packet: bytes, schema: bytes
+    ) -> str: ...
+
     def probe(self) -> OpenRouterAccountStatus: ...
+
+    def probe_description(self) -> OpenRouterAccountStatus: ...
 
     def run(
         self,
@@ -115,6 +124,11 @@ class OpenRouterClient(Protocol):
 
 class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
+
+
+class CodexDescriptionDisclosure(_Closed):
+    model: StrictStr
+    profile_sha256: StrictStr
 
 
 class ReviewerEngineStatus(_Closed):
@@ -139,6 +153,9 @@ class ReviewerAccessView(_Closed):
     schema_version: Literal["reviewer-access-view-v1"] = "reviewer-access-view-v1"
     revision: StrictInt
     mapping: ReviewerTaskSelection | None
+    description_mapping: ReviewerTaskSelection | None = None
+    description_metadata: DescriptionModelMetadata | None = None
+    description: ReviewerEngineStatus | None = None
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus
     openrouter: ReviewerEngineStatus
@@ -179,14 +196,20 @@ class ReviewerAccessOperations:
         codex_identity: CodexIdentity | None = None,
         codex_binding: CodexBinding,
         openrouter_factory: OpenRouterFactory,
+        codex_description_binding: CodexBinding | None = None,
     ) -> None:
+        self._changed: Callable[[], None] = lambda: None
         self._repository = repository
         self._codex_auth = codex_auth
         self._codex_host = codex_host
         self._codex_binding = codex_binding
+        self._codex_description_binding = codex_description_binding
         self._codex_identity = codex_identity or (lambda: self._codex_binding()[:2])
         self._openrouter_factory = openrouter_factory
         self._serialized: Callable[[Callable[[], object]], object] = lambda call: call()
+
+    def attach_changes(self, changed: Callable[[], None]) -> None:
+        self._changed = changed
 
     def attach_serialization(
         self, serialized: Callable[[Callable[[], object]], object]
@@ -199,27 +222,76 @@ class ReviewerAccessOperations:
     def read(self) -> ReviewerAccessView:
         return cast("ReviewerAccessView", self._serialized(self._view))
 
-    def refresh_openrouter(self) -> ReviewerAccessView:
-        return cast("ReviewerAccessView", self._serialized(self._refresh_openrouter))
+    def refresh_openrouter(
+        self, task: ReviewerTask = "cover_observation"
+    ) -> ReviewerAccessView:
+        return cast(
+            "ReviewerAccessView",
+            self._serialized(lambda: self._refresh_openrouter(task)),
+        )
 
-    def _refresh_openrouter(self) -> ReviewerAccessView:
+    def _refresh_openrouter(
+        self, task: ReviewerTask = "cover_observation"
+    ) -> ReviewerAccessView:
         document, configured = self._repository.read()
-        selection = document.cover_observation
+        selection = getattr(document, task)
         if not configured or not isinstance(selection, OpenRouterTaskSelection):
             return self._view(document=document, configured=configured)
         try:
             account = self._probe_openrouter(
-                self._repository.openrouter_key(), selection.model
+                self._repository.openrouter_key(), selection.model, task
             )
+            if task == "description_rewrite":
+                metadata = DescriptionModelMetadata.model_validate(
+                    {
+                        "model": selection.model,
+                        "observed_at": account.observed_at,
+                        "prompt_price": account.prompt_price,
+                        "completion_price": account.completion_price,
+                        "request_price": account.request_price,
+                    }
+                )
+                document = ReviewerAccessDocument.model_validate(
+                    {
+                        **document.model_dump(),
+                        "revision": document.revision + 1,
+                        "description_metadata": metadata,
+                    }
+                )
+                self._repository.replace(document, document.revision - 1)
+                self._changed()
             status = ReviewerEngineStatus(
                 engine="openrouter",
                 state="usable",
                 model=account.model,
                 tier=account.tier,
             )
-        except OpenRouterReviewerError as error:
-            status = _openrouter_failure_status(selection.model, error)
-        return self._view(document=document, configured=configured, openrouter=status)
+        except (OpenRouterReviewerError, ValueError) as error:
+            status = (
+                _openrouter_failure_status(selection.model, error)
+                if isinstance(error, OpenRouterReviewerError)
+                else ReviewerEngineStatus(
+                    engine="openrouter",
+                    state="model_unavailable",
+                    model=selection.model,
+                )
+            )
+            if task == "description_rewrite":
+                document = ReviewerAccessDocument.model_validate(
+                    {
+                        **document.model_dump(),
+                        "revision": document.revision + 1,
+                        "description_metadata": None,
+                    }
+                )
+                self._repository.replace(document, document.revision - 1)
+                self._changed()
+        return self._view(
+            document=document,
+            configured=configured,
+            openrouter=status if task == "cover_observation" else None,
+            description=status if task == "description_rewrite" else None,
+        )
 
     def _view(
         self,
@@ -228,13 +300,16 @@ class ReviewerAccessOperations:
         configured: bool | None = None,
         openrouter: ReviewerEngineStatus | None = None,
         codex: ReviewerEngineStatus | None = None,
+        description: ReviewerEngineStatus | None = None,
     ) -> ReviewerAccessView:
         if document is None or configured is None:
             document, configured = self._repository.read()
         selection = document.cover_observation
         if codex is not None:
             codex_status = codex
-        elif isinstance(selection, CodexTaskSelection):
+        elif isinstance(selection, CodexTaskSelection) or isinstance(
+            document.description_rewrite, CodexTaskSelection
+        ):
             host = self._codex_host()
             flow = self._codex_auth.status()
             credential = (
@@ -294,58 +369,167 @@ class ReviewerAccessOperations:
         return ReviewerAccessView(
             revision=document.revision,
             mapping=selection,
+            description_mapping=document.description_rewrite,
+            description_metadata=document.description_metadata,
+            description=(
+                description
+                or (
+                    codex_status
+                    if isinstance(document.description_rewrite, CodexTaskSelection)
+                    else ReviewerEngineStatus(
+                        engine="openrouter",
+                        state=(
+                            "unconfigured"
+                            if not configured
+                            else "configured"
+                            if document.description_metadata is not None
+                            else "model_unavailable"
+                        ),
+                        model=document.description_rewrite.model,
+                    )
+                    if isinstance(document.description_rewrite, OpenRouterTaskSelection)
+                    else None
+                )
+            ),
             openrouter_key_configured=configured,
             codex=codex_status,
             openrouter=openrouter_status,
         )
 
     def configure_openrouter(
-        self, *, expected_revision: int, api_key: str, model: str
+        self,
+        *,
+        expected_revision: int,
+        api_key: str,
+        model: str,
+        task: ReviewerTask = "cover_observation",
     ) -> ReviewerAccessView:
         return cast(
             "ReviewerAccessView",
             self._serialized(
                 lambda: self._configure_openrouter(
-                    expected_revision=expected_revision, api_key=api_key, model=model
+                    expected_revision=expected_revision,
+                    api_key=api_key,
+                    model=model,
+                    task=task,
                 )
             ),
         )
 
+    def describe_contained_description(self) -> CodexDescriptionDisclosure:
+        """Explicitly inspect the contained task identity without dispatch or selection."""
+
+        def describe() -> CodexDescriptionDisclosure:
+            if not self._codex_host().available:
+                raise ReviewerAccessApplicationError("host_unsupported")
+            try:
+                model, profile = self._codex_identity()
+            except Exception:
+                raise ReviewerAccessApplicationError("model_unavailable") from None
+            return CodexDescriptionDisclosure(
+                model=model, profile_sha256=hashlib.sha256(profile).hexdigest()
+            )
+
+        return cast("CodexDescriptionDisclosure", self._serialized(describe))
+
+    def test_description_model(
+        self, api_key: str, model: str
+    ) -> DescriptionModelMetadata:
+        """Observe price and capability before selecting a description task."""
+
+        def test() -> DescriptionModelMetadata:
+            key = api_key or self._repository.openrouter_key()
+            if not credential(key):
+                raise ValueError("invalid reviewer credential")
+            try:
+                account = self._probe_openrouter(key, model, "description_rewrite")
+                return DescriptionModelMetadata.model_validate(
+                    {
+                        "model": model,
+                        "observed_at": account.observed_at,
+                        "prompt_price": account.prompt_price,
+                        "completion_price": account.completion_price,
+                        "request_price": account.request_price,
+                    }
+                )
+            except OpenRouterReviewerError as error:
+                raise ReviewerAccessApplicationError(
+                    _public_openrouter_failure(error)
+                ) from None
+
+        return cast("DescriptionModelMetadata", self._serialized(test))
+
     def _configure_openrouter(
-        self, *, expected_revision: int, api_key: str, model: str
+        self,
+        *,
+        expected_revision: int,
+        api_key: str,
+        model: str,
+        task: ReviewerTask = "cover_observation",
     ) -> ReviewerAccessView:
+        if task == "description_rewrite" and not api_key:
+            api_key = self._repository.openrouter_key()
         if not credential(api_key):
             raise ValueError("invalid reviewer credential")
         try:
-            account = self._probe_openrouter(api_key, model)
+            account = self._probe_openrouter(api_key, model, task)
         except OpenRouterReviewerError as error:
             raise ReviewerAccessApplicationError(
                 _public_openrouter_failure(error)
             ) from None
-        replacement = ReviewerAccessDocument(
-            schema_version="reviewer-access-v1",
-            revision=expected_revision + 1,
-            cover_observation=OpenRouterTaskSelection(engine="openrouter", model=model),
+        if task == "description_rewrite" and (
+            account.observed_at is None
+            or account.prompt_price is None
+            or account.completion_price is None
+            or account.request_price is None
+        ):
+            raise ReviewerAccessApplicationError("model_unavailable")
+        document, _configured = self._repository.read()
+        replacement = ReviewerAccessDocument.model_validate(
+            {
+                **document.model_dump(),
+                "revision": expected_revision + 1,
+                task: OpenRouterTaskSelection(engine="openrouter", model=model),
+                "description_metadata": (
+                    DescriptionModelMetadata.model_validate(
+                        {
+                            "model": model,
+                            "observed_at": account.observed_at,
+                            "prompt_price": account.prompt_price,
+                            "completion_price": account.completion_price,
+                            "request_price": account.request_price,
+                        }
+                    )
+                    if task == "description_rewrite"
+                    else document.description_metadata
+                ),
+            }
         )
         self._repository.replace(replacement, expected_revision, openrouter_key=api_key)
+        self._changed()
+        status = ReviewerEngineStatus(
+            engine="openrouter", state="usable", model=account.model, tier=account.tier
+        )
         return self._view(
-            openrouter=ReviewerEngineStatus(
-                engine="openrouter",
-                state="usable",
-                model=account.model,
-                tier=account.tier,
-            )
+            openrouter=status if task == "cover_observation" else None,
+            description=status if task == "description_rewrite" else None,
         )
 
-    def select_codex(self, *, expected_revision: int) -> ReviewerAccessView:
+    def select_codex(
+        self, *, expected_revision: int, task: ReviewerTask = "cover_observation"
+    ) -> ReviewerAccessView:
         return cast(
             "ReviewerAccessView",
             self._serialized(
-                lambda: self._select_codex(expected_revision=expected_revision)
+                lambda: self._select_codex(
+                    expected_revision=expected_revision, task=task
+                )
             ),
         )
 
-    def _select_codex(self, *, expected_revision: int) -> ReviewerAccessView:
+    def _select_codex(
+        self, *, expected_revision: int, task: ReviewerTask = "cover_observation"
+    ) -> ReviewerAccessView:
         host = self._codex_host()
         if not host.available:
             raise ReviewerAccessApplicationError("host_unsupported")
@@ -355,6 +539,7 @@ class ReviewerAccessOperations:
         self._replace_selection(
             expected_revision,
             CodexTaskSelection(engine="codex"),
+            task,
         )
         return self._view(
             codex=ReviewerEngineStatus(
@@ -364,9 +549,11 @@ class ReviewerAccessOperations:
             )
         )
 
-    def select_none(self, *, expected_revision: int) -> ReviewerAccessView:
+    def select_none(
+        self, *, expected_revision: int, task: ReviewerTask = "cover_observation"
+    ) -> ReviewerAccessView:
         def select() -> ReviewerAccessView:
-            self._replace_selection(expected_revision, None)
+            self._replace_selection(expected_revision, None, task)
             return self._view()
 
         return cast("ReviewerAccessView", self._serialized(select))
@@ -384,14 +571,24 @@ class ReviewerAccessOperations:
         selection = document.cover_observation
         if isinstance(selection, OpenRouterTaskSelection):
             selection = None
-        replacement = ReviewerAccessDocument(
-            schema_version="reviewer-access-v1",
-            revision=expected_revision + 1,
-            cover_observation=selection,
+        document, _configured = self._repository.read()
+        replacement = ReviewerAccessDocument.model_validate(
+            {
+                **document.model_dump(),
+                "revision": expected_revision + 1,
+                "cover_observation": selection,
+                "description_metadata": None,
+                "description_rewrite": (
+                    None
+                    if isinstance(document.description_rewrite, OpenRouterTaskSelection)
+                    else document.description_rewrite
+                ),
+            }
         )
         self._repository.replace(
             replacement, expected_revision, clear_openrouter_key=True
         )
+        self._changed()
         return self._view()
 
     def start_codex(
@@ -403,8 +600,10 @@ class ReviewerAccessOperations:
                 raise ReviewerAccessApplicationError("access_changed")
             if not self._codex_host().available:
                 raise ReviewerAccessApplicationError("host_unsupported")
-            if isinstance(document.cover_observation, CodexTaskSelection):
-                self._replace_selection(expected_revision, None)
+            if isinstance(document.cover_observation, CodexTaskSelection) or isinstance(
+                document.description_rewrite, CodexTaskSelection
+            ):
+                self._clear_codex_selections(document, expected_revision)
             device = self._codex_auth.start()
             return self._view(), device
 
@@ -455,22 +654,39 @@ class ReviewerAccessOperations:
                 raise ReviewerAccessApplicationError(
                     "credential_clear_failed"
                 ) from None
-            selection = document.cover_observation
-            if isinstance(selection, CodexTaskSelection):
-                selection = None
-            self._replace_selection(expected_revision, selection)
+            self._clear_codex_selections(document, expected_revision)
             return self._view()
 
         return cast("ReviewerAccessView", self._serialized(clear))
+
+    def _clear_codex_selections(
+        self, document: ReviewerAccessDocument, expected_revision: int
+    ) -> None:
+        replacement = ReviewerAccessDocument.model_validate(
+            {
+                **document.model_dump(),
+                "revision": expected_revision + 1,
+                "cover_observation": None
+                if isinstance(document.cover_observation, CodexTaskSelection)
+                else document.cover_observation,
+                "description_rewrite": None
+                if isinstance(document.description_rewrite, CodexTaskSelection)
+                else document.description_rewrite,
+            }
+        )
+        self._repository.replace(replacement, expected_revision)
+        self._changed()
 
     def dispatch_cover_observation(self) -> ReviewerDispatch:
         return cast(
             "ReviewerDispatch", self._serialized(self._dispatch_cover_observation)
         )
 
-    def _dispatch_cover_observation(self) -> ReviewerDispatch:
+    def _dispatch_cover_observation(
+        self, task: ReviewerTask = "cover_observation"
+    ) -> ReviewerDispatch:
         document, key = self._repository.snapshot()
-        selection = document.cover_observation
+        selection = getattr(document, task)
         if selection is None:
             raise ReviewerAccessApplicationError("not_configured")
         if isinstance(selection, CodexTaskSelection):
@@ -484,7 +700,14 @@ class ReviewerAccessOperations:
             if self._codex_auth.recheck_credential_status().state != "usable":
                 raise ReviewerAccessApplicationError("credential_unavailable", identity)
             try:
-                bound_model, bound_profile, runner = self._codex_binding()
+                binding = (
+                    self._codex_binding
+                    if task == "cover_observation"
+                    else self._codex_description_binding
+                )
+                if binding is None:
+                    raise RuntimeError("description binding unavailable")
+                bound_model, bound_profile, runner = binding()
             except Exception:
                 raise ReviewerAccessApplicationError(
                     "credential_unavailable", identity
@@ -502,9 +725,14 @@ class ReviewerAccessOperations:
         )
         if key is None:
             raise ReviewerAccessApplicationError("credential_unavailable", identity)
+        if task == "description_rewrite" and (
+            document.description_metadata is None
+            or document.description_metadata.model != selection.model
+        ):
+            raise ReviewerAccessApplicationError("model_unavailable", identity)
         try:
             dispatch = self._openrouter_dispatch(
-                document.revision, key, selection.model
+                document.revision, key, selection.model, task
             )
         except Exception:
             raise ReviewerAccessApplicationError("unreachable", identity) from None
@@ -512,6 +740,24 @@ class ReviewerAccessOperations:
             dispatch.close()
             raise ReviewerAccessApplicationError("access_changed", identity)
         return dispatch
+
+    def dispatch_description_rewrite(self) -> ReviewerDispatch:
+        return cast(
+            "ReviewerDispatch",
+            self._serialized(
+                lambda: self._dispatch_cover_observation("description_rewrite")
+            ),
+        )
+
+    def current_description_rewrite_identity(
+        self,
+    ) -> tuple[int, str, str, bytes] | None:
+        return cast(
+            "tuple[int, str, str, bytes] | None",
+            self._serialized(
+                lambda: self._current_cover_observation_identity("description_rewrite")
+            ),
+        )
 
     def current_cover_observation_identity(
         self,
@@ -524,9 +770,10 @@ class ReviewerAccessOperations:
 
     def _current_cover_observation_identity(
         self,
+        task: ReviewerTask = "cover_observation",
     ) -> tuple[int, str, str, bytes] | None:
         document, _key = self._repository.snapshot()
-        selection = document.cover_observation
+        selection = getattr(document, task)
         if selection is None:
             return None
         if isinstance(selection, CodexTaskSelection):
@@ -552,24 +799,46 @@ class ReviewerAccessOperations:
         self._serialized(self._codex_auth.close)
 
     def _replace_selection(
-        self, expected_revision: int, selection: ReviewerTaskSelection | None
+        self,
+        expected_revision: int,
+        selection: ReviewerTaskSelection | None,
+        task: ReviewerTask = "cover_observation",
     ) -> None:
-        replacement = ReviewerAccessDocument(
-            schema_version="reviewer-access-v1",
-            revision=expected_revision + 1,
-            cover_observation=selection,
+        document, _configured = self._repository.read()
+        replacement = ReviewerAccessDocument.model_validate(
+            {
+                **document.model_dump(),
+                "revision": expected_revision + 1,
+                task: selection,
+                "description_metadata": (
+                    None
+                    if task == "description_rewrite"
+                    else document.description_metadata
+                ),
+            }
         )
         self._repository.replace(replacement, expected_revision)
+        self._changed()
 
-    def _probe_openrouter(self, key: str, model: str) -> OpenRouterAccountStatus:
+    def _probe_openrouter(
+        self, key: str, model: str, task: ReviewerTask = "cover_observation"
+    ) -> OpenRouterAccountStatus:
         client = self._openrouter_factory(key, model)
         try:
-            return client.probe()
+            return (
+                client.probe_description()
+                if task == "description_rewrite"
+                else client.probe()
+            )
         finally:
             client.close()
 
     def _openrouter_dispatch(
-        self, revision: int, key: str, model: str
+        self,
+        revision: int,
+        key: str,
+        model: str,
+        task: ReviewerTask = "cover_observation",
     ) -> ReviewerDispatch:
         client = self._openrouter_factory(key, model)
 
@@ -581,6 +850,8 @@ class ReviewerAccessOperations:
             images: tuple[tuple[str, str, bytes], ...],
         ) -> str:
             try:
+                if task == "description_rewrite":
+                    return client.run_description(profile, instruction, packet, schema)
                 return client.run(profile, instruction, packet, schema, images)
             finally:
                 client.close()

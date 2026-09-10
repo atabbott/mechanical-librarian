@@ -160,6 +160,7 @@ from mechanical_librarian.application.cover_consideration import (
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
+from mechanical_librarian.application.description_advice import DescriptionAdviceService
 from mechanical_librarian.application.field_effects import GuardedFieldApplication
 from mechanical_librarian.application.metadata_policy import (
     PolicyPreviewApplication,
@@ -252,7 +253,10 @@ from mechanical_librarian.application.setup_connection import (
     SetupConnectionVerification,
 )
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
-from mechanical_librarian.bootstrap.contained_reviewer import run_cover_packet_reviewer
+from mechanical_librarian.bootstrap.contained_reviewer import (
+    run_cover_packet_reviewer,
+    run_description_reviewer,
+)
 from mechanical_librarian.domain.audio_composition import (
     InspectedTrack,
     attach_claim_references,
@@ -282,6 +286,11 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverTruncationReason,
     cover_source_id,
 )
+from mechanical_librarian.domain.description_advice import (
+    DescriptionAdviceBinding,
+    DescriptionAdviceSettings,
+    description_digest,
+)
 from mechanical_librarian.domain.epub_inspection import (
     DateEvent,
     EpubInspectionOutcome,
@@ -309,6 +318,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.owner_settings import SettingsView
 from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
     SetupStateDocument,
@@ -2152,6 +2162,9 @@ def create_review_pipeline(
                 authority=database_authority,
             )
             try:
+                recovery_repository.description_advice_store().interrupt_recovered(
+                    int(time.time())
+                )
                 artifacts.recover_unreferenced(
                     recovery_repository.artifact_is_referenced
                 )
@@ -2558,6 +2571,89 @@ def create_review_pipeline(
             provider_recovery=provider_recovery,
         )
 
+    def prepare_description(
+        pipeline_repository: ReviewPipelineRepository, action: PipelineAction
+    ) -> None:
+        if action.review_case_id is None:
+            return
+        identity = reviewer_access.current_description_rewrite_identity()
+        if identity is None:
+            return
+        repository = cast("SQLiteMetadataReportRepository", pipeline_repository)
+        snapshot = repository.read_staged_description_preparation(action)
+        case = ReviewCase.from_json(snapshot[0])
+        report = MetadataReport.from_json(snapshot[1])
+        review = cast("ReviewWebConfiguration", configuration.review)
+        settings = DescriptionAdviceSettings(
+            remove_marketing=review.description_remove_marketing,
+            remove_sales_boasts=review.description_remove_sales_boasts,
+            remove_praise=review.description_remove_praise,
+            automatic_application=review.description_automatic_application,
+        )
+        binding = DescriptionAdviceBinding(
+            review_case_id=case.review_case_id,
+            report_id=case.report_id,
+            proposal_set_id=case.proposal_set_id,
+            target_fingerprint=case.target_fingerprint,
+            policy_generation=action.policy_generation or 1,
+            access_revision=identity[0],
+            preferences_digest=description_digest(settings.model_dump()),
+        )
+
+        def current() -> bool:
+            try:
+                return (
+                    repository.read_staged_description_preparation(action) == snapshot
+                )
+            except (ValueError, RuntimeError):
+                return False
+
+        repository.description_advice_store().bind_settings(settings)
+        DescriptionAdviceService(
+            repository.description_advice_store(),
+            reviewer_access,
+            repository.description_advice_store().current_settings,
+            lambda: int(time.time()),
+        ).prepare(
+            report,
+            binding,
+            current,
+            retry=repository.description_advice_store().pending_retry(
+                case.review_case_id
+            ),
+        )
+        repository.description_advice_store().consume_pending(case.review_case_id)
+
+    def admit_description(
+        pipeline_repository: ReviewPipelineRepository, action: PipelineAction
+    ) -> None:
+        if action.review_case_id is None:
+            return
+        repository = cast("SQLiteMetadataReportRepository", pipeline_repository)
+        store = repository.description_advice_store()
+        advice = store.read(action.review_case_id)
+        if advice is None or advice["candidate"] is None:
+            return
+        candidate = cast("dict[str, object]", advice["candidate"])
+        binding = DescriptionAdviceBinding.model_validate(advice["binding"])
+        try:
+            store.admit(
+                str(candidate["candidate_id"]),
+                binding,
+                "automatic_policy",
+                description_digest(
+                    {
+                        "candidate": candidate["candidate_id"],
+                        "binding": binding.digest,
+                        "origin": "automatic_policy",
+                    }
+                ),
+                int(time.time()),
+            )
+        except ValueError:
+            # Parked, owner-final and stale results retain their immutable text.
+            return
+
     stages = ReviewPipelineStages(
         configuration=configuration,
         catalogue=catalogue_repository,
@@ -2571,6 +2667,8 @@ def create_review_pipeline(
         create_proposal_set=create_proposal_set_for,
         admit_review_case=admit_review_case_for,
         cover_considerations=cover_considerations,
+        prepare_description=prepare_description,
+        admit_description=admit_description,
         recovery_observer=provider_recovery,
         drain_outbox=drain_outbox,
         discovery_lock=discovery_lock,
@@ -4032,6 +4130,31 @@ def _compose_reviewer_access(
             model, payload = lazy_codex_auth.bind(codex_identity)
             return model, payload, codex_reviewer
 
+    def description_binding() -> tuple[
+        str,
+        bytes,
+        Callable[[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]], str],
+    ]:
+        if profile_file is None:
+            raise RuntimeError("description profile unavailable")
+        model, payload = lazy_codex_auth.bind(codex_identity)
+
+        def run(
+            profile: bytes,
+            instruction: bytes,
+            packet: bytes,
+            schema: bytes,
+            images: tuple[tuple[str, str, bytes], ...],
+        ) -> str:
+            with active_coordinator.activity():
+                with lazy_codex_auth.review_admission():
+                    pass
+                return run_description_reviewer(
+                    profile, instruction, packet, schema, images
+                )
+
+        return model, payload, run
+
     return ReviewerAccessOperations(
         repository.reviewer_access_store(),
         codex_auth=codex_auth,
@@ -4043,6 +4166,7 @@ def _compose_reviewer_access(
             else lambda: (*codex_identity(), codex_reviewer)
         ),
         openrouter_factory=lambda key, model: OpenRouterReviewer(key, model),
+        codex_description_binding=description_binding,
     )
 
 
