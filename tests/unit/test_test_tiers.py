@@ -1453,12 +1453,10 @@ def test_deadline_exits_even_when_diagnostic_write_fails() -> None:
 import threading
 from unittest.mock import patch
 from scripts.run_test_tier import _CohortSession, _report_stalled_test
-class Broken:
-    def write(self, value): raise RuntimeError('write failed')
 session = _CohortSession()
 session.pytest_runtest_logstart('safe.test', None)
 session._current_started_at = 0
-with patch('scripts.run_test_tier.sys.__stderr__', Broken()):
+with patch('scripts.run_test_tier.os.write', side_effect=OSError('write failed')):
     _report_stalled_test(session, threading.Event(), 1)
 """
     result = subprocess.run(
@@ -1475,3 +1473,33 @@ def test_passing_cohort_with_optional_deadline(
     targets = _module(tmp_path, "def test_pass(): pass\n")
     with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
         assert run_cohort(Path.cwd(), "fast", deadline)
+
+
+def test_deadline_bypasses_blocked_python_stderr() -> None:
+    import subprocess
+
+    driver = """
+import threading, time
+from unittest.mock import patch
+from scripts.run_test_tier import _CohortSession, _report_stalled_test
+class Blocked:
+    def write(self, value): time.sleep(60)
+    def flush(self): time.sleep(60)
+session = _CohortSession()
+session.pytest_runtest_logstart('safe.test', None)
+session._current_started_at = 0
+with patch('scripts.run_test_tier.sys.__stderr__', Blocked()):
+    _report_stalled_test(session, threading.Event(), 1)
+"""
+    result = subprocess.run(
+        [sys.executable, "-c", driver], capture_output=True, text=True, timeout=10
+    )
+    assert result.returncode == 1
+    diagnostic = json.loads(result.stderr)
+    assert diagnostic == {
+        "schema": "test-tier-timeout-v1",
+        "tier": "fast",
+        "test_id": "safe.test",
+        "timeout_seconds": 1,
+    }
+    assert not result.stdout

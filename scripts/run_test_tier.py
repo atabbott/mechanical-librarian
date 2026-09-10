@@ -1048,19 +1048,21 @@ def _report_stalled_test(
                     >= test_timeout_seconds
                 ):
                     try:
-                        print(
-                            json.dumps(
-                                {
-                                    "schema": "test-tier-timeout-v1",
-                                    "tier": "fast",
-                                    "test_id": session._current_test_id,
-                                    "timeout_seconds": test_timeout_seconds,
-                                },
-                                sort_keys=True,
-                                separators=(",", ":"),
-                            ),
-                            file=sys.__stderr__,
-                            flush=True,
+                        os.write(
+                            2,
+                            (
+                                json.dumps(
+                                    {
+                                        "schema": "test-tier-timeout-v1",
+                                        "tier": "fast",
+                                        "test_id": session._current_test_id,
+                                        "timeout_seconds": test_timeout_seconds,
+                                    },
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                )
+                                + "\n"
+                            ).encode("ascii"),
                         )
                     finally:
                         # Exception handlers in the test cannot absorb this.
