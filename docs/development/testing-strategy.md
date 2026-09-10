@@ -75,6 +75,11 @@ The browser asset build is not optional: the tier reads `ML_REACT_ASSET_DIR`
 with no fallback, and building into the checkout would leave untracked output
 where a clean tree is itself a check.
 
+Exact-artifact qualification accepts an executable `uv` on `PATH`, including
+version-manager shims such as mise's. It preserves the absolute invocation path
+so the shim dispatches the selected tool even when qualification changes working
+directories; regular-file and executable checks still apply (#924).
+
 The audiobook probe executes in two cohorts. The slow tier runs it as part of
 the complete maintainer-local pass, so a workstation needs an `ffprobe` on one
 of the paths the parent resolves (Debian: `apt-get install ffmpeg`; macOS:
