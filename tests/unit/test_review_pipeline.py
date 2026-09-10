@@ -2159,6 +2159,35 @@ def test_completion_allocator_uses_one_covering_linear_population_pass(
                 "EXPLAIN QUERY PLAN " + sql, (run_id,)
             )
         )
+        roots = dict(
+            repository._connection.execute(
+                "SELECT name,rootpage FROM sqlite_schema WHERE name IN "
+                "('review_preparation_presentation',"
+                "'review_preparation_presentation_completion_integrity')"
+            )
+        )
+        # SQLite may omit the COVERING label despite index-only payload reads.
+        # DeferredSeek opens the table cursor without necessarily reading it.
+        for query, expected in (
+            (sql, True),
+            (sql.replace("SELECT COUNT", "SELECT MAX(display_name),COUNT"), False),
+        ):
+            code = tuple(repository._connection.execute("EXPLAIN " + query, (run_id,)))
+            table = {
+                row[2]
+                for row in code
+                if row[1] == "OpenRead"
+                and row[3] == roots["review_preparation_presentation"]
+            }
+            index = {
+                row[2]
+                for row in code
+                if row[1] == "OpenRead"
+                and row[3]
+                == roots["review_preparation_presentation_completion_integrity"]
+            }
+            reads = {row[2] for row in code if row[1] == "Column"}
+            assert (bool(reads & index) and not bool(reads & table)) is expected
         repository.close()
         return len(statements), steps, plan
 
@@ -2166,7 +2195,6 @@ def test_completion_allocator_uses_one_covering_linear_population_pass(
     large_queries, large_steps, large_plan = measured(2_000)
     assert small_queries == large_queries == 2
     assert small_plan == large_plan
-    assert any("COVERING INDEX" in row for row in large_plan)
     assert all("TEMP B-TREE" not in row for row in large_plan)
     assert large_steps <= small_steps + 30 * 2_000
 
