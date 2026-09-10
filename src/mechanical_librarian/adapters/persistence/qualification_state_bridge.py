@@ -61,7 +61,7 @@ _SOURCE_SCHEMA_OBJECTS_SHA256 = (
     "e6323cdec1412ab7158ffcde612a927d2ca5e859e7de412041a19af0d6ab1fd1"
 )
 _TARGET_SCHEMA_OBJECTS_SHA256 = (
-    "6d3db2cf020d9adc5d3f606fd92b2903f9115f726e6bd63671102d6e08a24bf7"
+    "b6010ee239907f8fc1bef39fd560ecdec4e05352c938eae4cb736d5763bf94ee"
 )
 _SOURCE_REPORT_SCHEMA = "metadata-report-v26"
 _SOURCE_COMPARISON_VERSION = "closed-title-creator-publication-v4"

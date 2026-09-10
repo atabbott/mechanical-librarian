@@ -384,10 +384,24 @@ only. Its existing frontend byte binding includes the bounded diagnostic return
 context; no router or view file is added to automatic qualification bindings.
 
 The [v22 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v22.json)
-is the current combined source closure for local transport and provider recovery
+is the retained combined source closure for local transport and provider recovery
 explanations (#844, #891). Its primary predecessor is the canonical provider-recovery
 v21; the exact local-transport v21 is an explicit additional predecessor. Both
 remain byte-frozen and readable history, without current effect authority. V22
-retains all 13 options, scoring and measurements, the complete provider closure,
-and the six projection bindings shared with current F19a v8. It adds no rescoring
-or fresh holdout claim.
+retains all 13 options, scoring and measurements and the six projection bindings
+shared with retained F19a v8. Its provider closure restates the three bindings
+that carry ambiguous provider identity and retains the other twelve, and its
+frozen contract restates the provider identity diagnostic stage map; the digest
+v22 published before that restatement remains readable history only. It adds no
+rescoring or fresh holdout claim.
+
+
+The [v23 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v23.json)
+and [v9 F19a manifest](../reference/f19a-qualification-manifest-v9.json) are the
+current source-only successors for authored description integration (#892).
+V23 inherits the delivered v39 identity-diagnostic bindings from repinned v22;
+the [original v22 artifact](../reference/f20-rich-metadata-qualification-candidate-v22-before-identity-diagnostics.json)
+is retained separately with its exact bytes. Both v22 digests remain readable
+history for the same 13 options, without current effect authority. All inherited
+measurements, options and scoring remain unchanged; no fresh qualification or
+model-quality claim is made.

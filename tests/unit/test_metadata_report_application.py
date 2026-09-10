@@ -967,6 +967,96 @@ def test_incomplete_cause_property_is_mapped_without_private_material() -> None:
     assert "/private/library" not in report.to_json()
 
 
+def test_ambiguous_provider_identity_reserves_the_malformed_response_category() -> None:
+    """One candidate identity restated with claims that disagree is an identity
+    failure, and the report never calls it a malformed or over-bound response."""
+    selected = TargetFile("a" * 64, "book.epub", "epub")
+    snapshot = TargetSnapshot("ebook", "Current title", (selected,))
+    target = FakeTarget([snapshot, snapshot])
+    claim = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="ISBN 9780306406157",
+        applicability="ebook",
+        basis="opening_matter",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+    inspector = FakeInspector(InspectionResult("c" * 64, (claim,)))
+    repository = FakeReportRepository()
+
+    def stated(title: str) -> ProviderCandidate:
+        return ProviderCandidate(
+            "edition-shared",
+            "work-shared",
+            (
+                ProviderClaim.create(
+                    provider="catalogue",
+                    candidate="edition-shared",
+                    kind=ClaimKind.TITLE,
+                    value=title,
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                ),
+            ),
+        )
+
+    class Provider:
+        def observe(self, plan, *, deadline):
+            return ProviderResult(
+                provider_observation(
+                    "catalogue",
+                    (
+                        ProviderLaneResult(
+                            plan.lanes[0],
+                            ProviderStatus.CANDIDATES,
+                            (stated("The Example"), stated("A Different Example")),
+                        ),
+                    ),
+                )
+            )
+
+    service = GenerateMetadataReport(
+        target=target,
+        inspector=inspector,
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=(ProviderBinding("catalogue", True, Provider),),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "ebooks",
+            "primary",
+            "library-id",
+            "ebook",
+            "books",
+            ("catalogue",),
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+    )
+
+    report = MetadataReport.from_json(service.run("item-1", 0))
+
+    observed = report.providers[0]
+    assert ProviderStatus.MALFORMED == observed.status
+    assert () == observed.candidates
+    assert [(FailureCategory.IDENTITY, FailureStage.IDENTITY)] == [
+        (value.category, value.stage) for value in observed.diagnostics
+    ]
+    assert [(FailureCategory.IDENTITY, FailureStage.IDENTITY)] == [
+        (value.category, value.stage)
+        for lane in observed.lanes
+        for value in lane.diagnostics
+    ]
+    assert FailureCategory.MALFORMED_OVER_BOUND_RESPONSE not in [
+        value.category for value in observed.diagnostics
+    ]
+
+
 def test_provider_parser_attempt_and_incomplete_diagnostics_merge_once_on_reopen() -> (
     None
 ):

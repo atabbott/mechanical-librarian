@@ -282,6 +282,8 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         bundle_id=None,
     )
     prior_digests = (
+        "aacb6e2ebce0490f58b86c8069963445dcb470ffdd70283b5558dde082449103",
+        "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee",
         "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff",
         "7aeaca9b020022b9ab385a9baf249d1b63dc7ffcfcc4a20735d6f6480b5b68e7",
         "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",
@@ -627,3 +629,17 @@ def test_captured_base_producers_remain_history_without_new_effect_authority(
     )
     with pytest.raises(AutomaticDecisionError):
         AutomaticDecision.create(**decision._core(), occurred_at=2)
+
+
+def test_both_v22_histories_retain_the_same_thirteen_noncurrent_options() -> None:
+    from mechanical_librarian.domain.automatic_decision import (
+        _PRIOR_F20_QUALIFICATION_MANIFESTS,
+    )
+
+    old = "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee"
+    delivered = "aacb6e2ebce0490f58b86c8069963445dcb470ffdd70283b5558dde082449103"
+    histories = dict(_PRIOR_F20_QUALIFICATION_MANIFESTS)
+    assert len(histories) == len(_PRIOR_F20_QUALIFICATION_MANIFESTS)
+    assert histories[old] == histories[delivered]
+    assert len(histories[old]) == 13
+    assert F20_QUALIFICATION_CANDIDATE_SHA256 not in {old, delivered}

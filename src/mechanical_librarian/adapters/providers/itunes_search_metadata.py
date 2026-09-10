@@ -39,6 +39,9 @@ from mechanical_librarian.adapters.providers.visible_text import (
     HTML_VISIBLE_TEXT_VERSION,
     projected_description,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    merge_provider_diagnostics,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
@@ -147,6 +150,21 @@ _MAX_COLLECTION_ID = 9_999_999_999_999
 # The store states a collection, never a work, so the candidate and its cover
 # provenance carry the same unresolved work sentinel.
 _UNRESOLVED_WORK = "unresolved"
+# One page naming the same collection twice with claims that disagree states an
+# ambiguous identity rather than a response this adapter could not read, so the
+# lane says which of the two it was.
+_IDENTITY_CONFLICT_DIAGNOSTIC = FailureDiagnostic(
+    FailureCategory.IDENTITY,
+    FailureComponent.PROVIDER,
+    FailureStage.IDENTITY,
+    retryable=False,
+)
+
+
+class _AmbiguousIdentity(ValueError):
+    """One page states one collection identifier twice with different claims."""
+
+
 # The artwork shards the store serves cover art from.  One capture names one of
 # them, but the store balances a result across the set, so pinning the single
 # observed shard would silently drop the art of every result answered by
@@ -303,18 +321,29 @@ class ITunesSearchMetadataProvider:
         self._session.ledger = ledger
         results: list[ProviderLaneResult] = []
         descriptors: tuple[ProviderCoverDescriptor, ...] = ()
+        conflicts: tuple[FailureDiagnostic, ...] = ()
         with provider_client_lifetime(self._client):
             for lane in lanes:
                 self._cover_descriptors = ()
                 lookup = _lane_lookup(lane, plan.local_claims)
                 physical = self._resolve(ledger, lane, lookup, deadline=deadline)
                 observation = qualify_provider_observation(physical, lookup)
+                # Schema rejections are counted across the whole observation and
+                # stated once below; an ambiguous identity belongs to the one
+                # lane that read the page, and is restated for the observation.
+                identity = tuple(
+                    value
+                    for value in observation.diagnostics
+                    if value.category is FailureCategory.IDENTITY
+                )
+                conflicts = merge_provider_diagnostics(conflicts, identity)
                 results.append(
                     ProviderLaneResult(
                         lane,
                         observation.status,
                         observation.candidates,
                         observation.accessed_at,
+                        diagnostics=identity,
                         dispatch_lineage=observation.dispatch_lineage,
                         transformation_lineage=observation.transformation_lineage,
                     )
@@ -336,7 +365,9 @@ class ITunesSearchMetadataProvider:
             self._name,
             tuple(results),
             authority="itunes_search",
-            diagnostics=self._schema_diagnostics(),
+            diagnostics=merge_provider_diagnostics(
+                self._schema_diagnostics(), conflicts
+            ),
             request_accounting=ledger.accounting(),
         )
 
@@ -410,6 +441,10 @@ class ITunesSearchMetadataProvider:
             )
         except ProviderFailure as error:
             return self._result(lookup, error.status)
+        except _AmbiguousIdentity:
+            return self._result(
+                lookup, ProviderStatus.MALFORMED, identity_conflict=True
+            )
         except (
             EvidenceValueError,
             KeyError,
@@ -461,7 +496,13 @@ class ITunesSearchMetadataProvider:
         candidates: tuple[ProviderCandidate, ...] = (),
         *,
         dispatch_lineage: WorkDispatchLineage | None = None,
+        identity_conflict: bool = False,
     ) -> ProviderObservation:
+        diagnostics = self._schema_diagnostics()
+        if identity_conflict:
+            diagnostics = merge_provider_diagnostics(
+                diagnostics, (_IDENTITY_CONFLICT_DIAGNOSTIC,)
+            )
         return ProviderObservation(
             self._name,
             status,
@@ -470,7 +511,7 @@ class ITunesSearchMetadataProvider:
             lookup.kind,
             "itunes_search",
             accessed_at=self._session.accessed_at,
-            diagnostics=self._schema_diagnostics(),
+            diagnostics=diagnostics,
             dispatch_lineage=dispatch_lineage,
         )
 
@@ -560,8 +601,19 @@ def _candidates(
         )
         for result in results
     ]
-    identities = [value.identity for value in admitted]
-    if len(set(identities)) != len(identities):
+    by_identity: dict[str, ProviderCandidate] = {}
+    duplicated = False
+    for value in admitted:
+        previous = by_identity.get(value.identity)
+        if previous is None:
+            by_identity[value.identity] = value
+        elif previous == value:
+            # A page that merely repeats a result states nothing new and
+            # nothing contradictory: it is a malformed page, as it was before.
+            duplicated = True
+        else:
+            raise _AmbiguousIdentity("provider candidate identity is ambiguous")
+    if duplicated:
         raise ValueError("provider candidates are duplicated")
     return tuple(sorted(admitted, key=lambda value: value.identity))
 

@@ -235,7 +235,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v38"
+    assert report.schema_version == "metadata-report-v39"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     for table in (
@@ -255,7 +255,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
 
 def test_target_schema_binding_is_the_exact_installed_contract() -> None:
     assert bridge._TARGET_SCHEMA_OBJECTS_SHA256 == (
-        "6d3db2cf020d9adc5d3f606fd92b2903f9115f726e6bd63671102d6e08a24bf7"
+        "b6010ee239907f8fc1bef39fd560ecdec4e05352c938eae4cb736d5763bf94ee"
     )
     assert (
         bridge._expected_schema_objects_digest() == bridge._TARGET_SCHEMA_OBJECTS_SHA256
@@ -1268,4 +1268,4 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
         report = MetadataReport.from_json(
             connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
         )
-    assert report.schema_version == "metadata-report-v38"
+    assert report.schema_version == "metadata-report-v39"

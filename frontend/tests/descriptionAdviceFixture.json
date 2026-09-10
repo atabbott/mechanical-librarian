@@ -58,7 +58,7 @@
       "needs_attention": true,
       "notices": ["unique_typed_candidate"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_7fdb58ff9a95267e42b7ad0d885bec867bbfcce564e2c1e12360002580811ee3",
+      "proposal_id": "review_proposal_0fb9f0f21d71cd8afb6e3ab9e8118a4f88c055ba7490b7b8ec978a04b8ee99fd",
       "proposed_values": [
         {
           "kind": "series",
@@ -138,7 +138,7 @@
       "needs_attention": true,
       "notices": ["manifestation_verification_required"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_c88b049af1fc3dca2ab1d649550e14d8a3151f82af1c19a42936f7a992cd7e0b",
+      "proposal_id": "review_proposal_a95713483a4f91a519a36d73822ece54aaf3f44e403137c88947e70a3dd72d8c",
       "proposed_values": [
         {
           "kind": "text",
@@ -215,7 +215,7 @@
       "needs_attention": false,
       "notices": ["positive_preservation_evidence"],
       "preservation_only": true,
-      "proposal_id": "review_proposal_de44916f8c0502978ebe2fd2c00d7dca94bca6e3ff393e55bc1c214b9f533724",
+      "proposal_id": "review_proposal_b2d3cc608cd2de2702a4d7ddfb711bc178f45a91f73d09317ca4ecd833898a61",
       "proposed_values": [],
       "provenance": ["provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
@@ -257,7 +257,7 @@
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_3d9e00b8e74302e71b10d3c136c0d2882a2cb74596424de059a1caecbdcff977",
+      "proposal_id": "review_proposal_66ad3b6c04ea160952ea7f2fb7a1652955571cc20e19f28341df6d24f2b15fb1",
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
@@ -325,7 +325,7 @@
       "needs_attention": false,
       "notices": ["positive_preservation_evidence"],
       "preservation_only": true,
-      "proposal_id": "review_proposal_c867bb7c86e9fabf7b6526ada135305b18f6bcd1f9f1c4e565b395f5afc332dd",
+      "proposal_id": "review_proposal_15258d0281cf7e5ba71e3b69fdbcd69a1deda71253edcb60c63eeed234c08f26",
       "proposed_values": [],
       "provenance": ["provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
@@ -382,7 +382,7 @@
       "needs_attention": false,
       "notices": ["unique_typed_candidate"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_a0c24072c7c6a179baa6abae4f29cf160a30473faebf4e69af0d99c69d7d7f3d",
+      "proposal_id": "review_proposal_fb0c70125b47735c5d54706fd44958a4d167425a1d71aee700f9d8062f2ad33e",
       "proposed_values": [
         {
           "kind": "list",
@@ -429,7 +429,7 @@
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_fb76f177c33f9fbe317e50c70e15ec363f00f82ed109a2553f73557fd8fd36cf",
+      "proposal_id": "review_proposal_e6309d5abdff100932d0910339e1a75a5986d1b53212895fce8e2b08100de5c4",
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
@@ -471,7 +471,7 @@
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_9e088621b1e7e3847acf4b8a5c861101b3bf5dbca5b8c2fc0fde182c8c2fa0bd",
+      "proposal_id": "review_proposal_19279d2dc050b8bd3809f1950d965d7faa2bb4f51b14e662a6bac6140a0b8ad3",
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
@@ -480,12 +480,12 @@
     {
       "automatic_decision": {
         "candidate_id": null,
-        "decision_id": "automatic_decision_2a024906ca9e91d9da970b2a210f55ed578d8341eae412c85a1e0fb8cdb8de4b",
+        "decision_id": "automatic_decision_171207c35b392ee0e4857346d4b041803a71aa9a969ae202d12bb1690e3d68a7",
         "destination": "description",
         "occurred_at": 4,
         "outcome": "keep_current",
-        "proposal_id": "review_proposal_6e8506bbf5c284073e85dc86630fc97e5665ea8015c18d34846714bde1f62821",
-        "review_case_id": "review_case_156fbb2f707d198142c074b7e782ccf4e843121fb63bfc66a1bea44104438d6c",
+        "proposal_id": "review_proposal_ce6c8d1970e2b779096d6d83bb8807dfa8df65dc2b8ef9fd937aeee7555e8b66",
+        "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
         "selected_value": null,
         "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
       },
@@ -533,21 +533,22 @@
       },
       "decision_actions": ["keep_current", "accept"],
       "description_advice": {
-        "attempt_id": "description_attempt_1630c2fc956d434c87bd3c68d3210e23",
+        "application_outcome": null,
+        "attempt_id": "description_attempt_53ad231ef8764396aa46e665e1b28a8b",
         "binding": {
           "access_revision": 2,
           "policy_generation": 2,
           "preferences_digest": "9e030aa3a068e670b822b13d49e77781f4a82ff8af1b72a3d696dd9eeb3047b2",
-          "proposal_set_id": "proposal_set_f6ca7e8cd4838689eea6395125a5e79a58fbc19c22c207616268da54471d46ee",
-          "report_id": "report_7a143a237d2175f0ed69350ad0359a587fc000124dcfce99c0c6692c9b22b22b",
-          "review_case_id": "review_case_156fbb2f707d198142c074b7e782ccf4e843121fb63bfc66a1bea44104438d6c",
+          "proposal_set_id": "proposal_set_00e302c0fbecd569fb17cead63105740f56e3dc1acf46716712ccc5b961e2682",
+          "report_id": "report_773e62bb8f78a31776c1102fdba43d486b17701eaf13a228d8bf8a98345ad1dd",
+          "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
           "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5"
         },
         "candidate": {
           "access_revision": 2,
           "advised": true,
-          "attempt_id": "description_attempt_1630c2fc956d434c87bd3c68d3210e23",
-          "candidate_id": "description_candidate_cd8e735b28ddc4d1f51a7676c76e83bb3c86c0ed145a54944f0e207ba23e17da",
+          "attempt_id": "description_attempt_53ad231ef8764396aa46e665e1b28a8b",
+          "candidate_id": "description_candidate_894051b8f647c5abac3c5aacf673ee4143c747553bc027a33394031ebc421fd2",
           "created_at": 10,
           "engine": "codex",
           "instruction_digest": "d4caf4b51ca28d020acaeb8cdc80eabac12ce89f896751b2a98870d6e3841df6",
@@ -569,8 +570,7 @@
         "failure": null,
         "model": "synthetic-model",
         "selection": null,
-        "state": "succeeded",
-        "application_outcome": null
+        "state": "succeeded"
       },
       "destination": "description",
       "deterministic_disposition": "unresolved_choice",
@@ -584,7 +584,7 @@
       "needs_attention": false,
       "notices": ["populated_subjective_field"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_6e8506bbf5c284073e85dc86630fc97e5665ea8015c18d34846714bde1f62821",
+      "proposal_id": "review_proposal_ce6c8d1970e2b779096d6d83bb8807dfa8df65dc2b8ef9fd937aeee7555e8b66",
       "proposed_values": [
         {
           "kind": "text",
@@ -631,7 +631,7 @@
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_7e44d69ce3475a9cfecf3a15379ee034cc2b39a194a35bd49de512caa63ca3f0",
+      "proposal_id": "review_proposal_68493c156f9f75479196622b41e842a67773c1bde8114d61cb317be4c5e2fa09",
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
@@ -673,7 +673,7 @@
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_28b5c353ff7d502ee233a397d2d84da80837ad46696554dccd97b0708d7cfa75",
+      "proposal_id": "review_proposal_f2462242a014e76a68d165fdf2913f5464b70e6196d1404aeb244899ebc9ac1e",
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
@@ -730,7 +730,7 @@
       "needs_attention": false,
       "notices": ["unique_typed_candidate"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_b949f26983426265ef3d233541a45be702a28432e40c95bbd32275182b108ab9",
+      "proposal_id": "review_proposal_45a014f14a4425ff993155b810908e7a3862ff4dd30e39d311394524b0f20917",
       "proposed_values": [
         {
           "kind": "list",
@@ -777,14 +777,14 @@
       "needs_attention": false,
       "notices": ["no_supported_evidence"],
       "preservation_only": false,
-      "proposal_id": "review_proposal_65a9674dc70727864a6215b823134e5a782530426453dad429b96a7971970085",
+      "proposal_id": "review_proposal_4b7c6e3328ec6c5e2c90821462714105e3a6d747205f0120fd562afed47d8e82",
       "proposed_values": [],
       "provenance": [],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
       "uncertainty": []
     }
   ],
-  "review_case_id": "review_case_156fbb2f707d198142c074b7e782ccf4e843121fb63bfc66a1bea44104438d6c",
+  "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
   "schema_version": "review-case-detail-v2",
   "target": {
     "authors": ["Mick Herron"],

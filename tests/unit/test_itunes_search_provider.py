@@ -14,10 +14,15 @@ from mechanical_librarian.adapters.providers.itunes_search_metadata import (
     ITunesSearchMetadataProvider,
     ITunesSearchPacer,
 )
+from mechanical_librarian.application.metadata_report import observe_provider
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSourceKind,
     CoverSourceState,
+)
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureStage,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -399,6 +404,55 @@ def test_a_search_states_one_related_edition_cover_for_each_retained_result() ->
         assert descriptor.allow_redirects is False
         assert descriptor.provenance is not None
         assert CoverDesignation.RELATED_EDITION is descriptor.provenance.designation
+
+
+def _repeated_collection_page(*, drift: bool) -> dict[str, Any]:
+    """Restate one captured result, optionally with a claim that disagrees."""
+    document = copy.deepcopy(payload("itunes_search"))
+    repeated = copy.deepcopy(document["results"][1])
+    if drift:
+        repeated["description"] = "The store states another summary for this one."
+    document["results"].append(repeated)
+    document["resultCount"] = len(document["results"])
+    return document
+
+
+def test_a_repeated_collection_with_disagreeing_claims_states_an_identity_failure() -> (
+    None
+):
+    _seen, handle = _recorder(_store(_repeated_collection_page(drift=True)))
+    provider = _provider(handle)
+
+    result = observe_provider("itunes", "itunes_search", provider, work_plan())
+
+    observation = result.observation
+    assert ProviderStatus.MALFORMED is observation.status
+    assert () == observation.candidates
+    assert () == result.cover_descriptors
+    assert [(FailureCategory.IDENTITY, FailureStage.IDENTITY)] == [
+        (value.category, value.stage) for value in observation.diagnostics
+    ]
+    assert [(FailureCategory.IDENTITY, FailureStage.IDENTITY)] == [
+        (value.category, value.stage)
+        for lane in observation.lanes
+        for value in lane.diagnostics
+    ]
+
+
+def test_a_byte_identical_repeated_collection_stays_a_malformed_response() -> None:
+    _seen, handle = _recorder(_store(_repeated_collection_page(drift=False)))
+    provider = _provider(handle)
+
+    observation = observe_provider(
+        "itunes", "itunes_search", provider, work_plan()
+    ).observation
+
+    assert ProviderStatus.MALFORMED is observation.status
+    assert () == observation.candidates
+    assert [FailureCategory.MALFORMED_OVER_BOUND_RESPONSE] == [
+        value.category for value in observation.diagnostics
+    ]
+    assert [] == [value for lane in observation.lanes for value in lane.diagnostics]
 
 
 @pytest.mark.parametrize(

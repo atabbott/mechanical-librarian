@@ -1759,7 +1759,12 @@ def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure()
         rotation["additional_prior_manifest_sha256"]
         == hashlib.sha256(TRANSPORT_V21_MANIFEST.read_bytes()).hexdigest()
     )
-    for field in set(primary) - {"schema", "authority_rotation", "frozen_contract"}:
+    for field in set(primary) - {
+        "schema",
+        "authority_rotation",
+        "frozen_contract",
+        "provider_contract_source_closure",
+    }:
         assert current[field] == primary[field]
     for field in set(primary["frozen_contract"]) - {"behavior_sources"}:
         assert current["frozen_contract"][field] == primary["frozen_contract"][field]
@@ -1782,6 +1787,9 @@ def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure()
     expected["src/mechanical_librarian/domain/automatic_decision.py"] = (
         "historical_reader_only"
     )
+    expected["src/mechanical_librarian/domain/metadata_report.py"] = (
+        "provider_identity_diagnostic_stage_v39"
+    )
     closure = rotation["source_closure"]
     assert closure["bound_source_classification"] == expected
     for name, category in expected.items():
@@ -1792,6 +1800,18 @@ def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure()
     projection = current["review_projection_source_closure"]
     assert len(provider["behavior_sources"]) == 15
     assert len(projection["behavior_sources"]) == 6
+    primary_provider = primary["provider_contract_source_closure"]
+    assert set(provider) == set(primary_provider)
+    assert {
+        name
+        for name, digest in provider["behavior_sources"].items()
+        if digest != primary_provider["behavior_sources"][name]
+    } == {
+        "src/mechanical_librarian/adapters/providers/itunes_search_metadata.py",
+        "src/mechanical_librarian/application/failure_diagnostics.py",
+        "src/mechanical_librarian/application/metadata_report.py",
+    }
+    assert projection == primary["review_projection_source_closure"]
     for retained in (provider, projection):
         assert retained["fresh_scoring_run"] is False
         assert retained["fresh_holdout_claim"] is False
@@ -1821,7 +1841,7 @@ def test_f39_successors_preserve_history_and_exhaustive_live_source_closure() ->
     title = json.loads(LATEST_F19A_MANIFEST.read_bytes())
     assert (
         hashlib.sha256(V22_MANIFEST.read_bytes()).hexdigest()
-        == "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee"
+        == "aacb6e2ebce0490f58b86c8069963445dcb470ffdd70283b5558dde082449103"
     )
     assert (
         hashlib.sha256(V8_F19A_MANIFEST.read_bytes()).hexdigest()
@@ -1842,6 +1862,22 @@ def test_f39_successors_preserve_history_and_exhaustive_live_source_closure() ->
     assert (
         current["authority_rotation"]["prior_manifest_sha256"]
         == hashlib.sha256(V22_MANIFEST.read_bytes()).hexdigest()
+    )
+    alias = V22_MANIFEST.with_name(
+        "f20-rich-metadata-qualification-candidate-v22-before-identity-diagnostics.json"
+    )
+    assert hashlib.sha256(alias.read_bytes()).hexdigest() == (
+        "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee"
+    )
+    assert current["authority_rotation"]["additional_prior_manifest_sha256"] == (
+        hashlib.sha256(alias.read_bytes()).hexdigest()
+    )
+    assert current["authority_rotation"]["additional_prior_manifest_path"] == (
+        "docs/reference/" + alias.name
+    )
+    assert (
+        json.loads(alias.read_bytes())["passing_automatic_options"]
+        == prior["passing_automatic_options"]
     )
     assert current["schema"] == "f20-rich-metadata-qualification-candidate-v23"
     for key in set(title_prior) - {

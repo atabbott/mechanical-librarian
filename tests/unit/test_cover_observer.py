@@ -2,7 +2,7 @@ import io
 import tempfile
 import time
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 from PIL import Image
@@ -28,6 +28,7 @@ from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
+    CoverSource,
     CoverSourceKind,
     CoverSourceState,
     CoverTruncationReason,
@@ -266,6 +267,131 @@ def test_terminal_descriptor_state_is_published_without_remote_fetch(
         )
     provider_value = next(value for value in values if value.kind is kind)
     assert CoverSourceState.REJECTED == provider_value.state
+    fetch.assert_not_called()
+
+
+_CATALOGUE = ProviderConnectionConfiguration(
+    "catalogue",
+    True,
+    True,
+    "/secrets/catalogue",
+)
+
+
+def _candidates_observation(
+    provider: str, edition: str, work: str
+) -> ProviderObservation:
+    return ProviderObservation(
+        provider,
+        ProviderStatus.CANDIDATES,
+        (),
+        (ProviderCandidate(edition, work, ()),),
+    )
+
+
+def _provider_descriptor(
+    designation: CoverDesignation,
+    work_identity: str,
+    edition_identity: str | None,
+) -> ProviderCoverDescriptor:
+    return ProviderCoverDescriptor(
+        "catalogue",
+        CoverSourceKind.HARDCOVER,
+        cover_source_id(CoverSourceKind.HARDCOVER, "catalogue:cover"),
+        "https://example.com/cover.jpg",
+        CoverProvenance("catalogue", designation, work_identity, edition_identity),
+    )
+
+
+def _provider_cover_rows(
+    descriptor: ProviderCoverDescriptor,
+    observations: tuple[ProviderObservation, ...],
+) -> tuple[list[CoverSource], Mock]:
+    with (
+        tempfile.TemporaryDirectory() as directory,
+        patch(
+            "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+            return_value=RemoteCover(
+                "https://example.com/cover.jpg",
+                "image/jpeg",
+                _jpeg(),
+            ),
+        ) as fetch,
+    ):
+        values = _CoverEvidenceObserver(
+            _Target(None),
+            CoverArtifactStore(Path(directory)),
+            (_CATALOGUE,),
+        ).observe(
+            TargetSnapshot("ebook", "Title", (), None),
+            observations,
+            (),
+            (descriptor,),
+        )
+    return [value for value in values if value.kind is CoverSourceKind.HARDCOVER], fetch
+
+
+def test_an_unresolved_work_descriptor_is_admitted_on_an_observed_edition() -> None:
+    rows, fetch = _provider_cover_rows(
+        _provider_descriptor(
+            CoverDesignation.RELATED_EDITION, "unresolved", "edition-1"
+        ),
+        (_candidates_observation("catalogue", "edition-1", "unresolved"),),
+    )
+
+    assert [CoverSourceState.RETRIEVED] == [value.state for value in rows]
+    assert 1 == fetch.call_count
+
+
+def test_a_resolved_work_descriptor_keeps_the_existing_same_provider_work_match() -> (
+    None
+):
+    rows, fetch = _provider_cover_rows(
+        _provider_descriptor(
+            CoverDesignation.RELATED_EDITION, "work-1", "edition-unobserved"
+        ),
+        (_candidates_observation("catalogue", "edition-1", "work-1"),),
+    )
+
+    assert [CoverSourceState.RETRIEVED] == [value.state for value in rows]
+    assert 1 == fetch.call_count
+
+
+@pytest.mark.parametrize(
+    ("descriptor", "observations"),
+    (
+        pytest.param(
+            _provider_descriptor(
+                CoverDesignation.RELATED_EDITION, "unresolved", "edition-other"
+            ),
+            (_candidates_observation("catalogue", "edition-1", "unresolved"),),
+            id="different_edition",
+        ),
+        pytest.param(
+            _provider_descriptor(CoverDesignation.WORK, "unresolved", None),
+            (_candidates_observation("catalogue", "edition-1", "unresolved"),),
+            id="absent_edition",
+        ),
+        pytest.param(
+            _provider_descriptor(
+                CoverDesignation.RELATED_EDITION, "unresolved", "edition-1"
+            ),
+            (
+                _candidates_observation("catalogue", "edition-2", "unresolved"),
+                _candidates_observation("other", "edition-1", "unresolved"),
+            ),
+            id="edition_observed_by_another_provider",
+        ),
+    ),
+)
+def test_an_unresolved_work_descriptor_is_refused_before_any_cover_fetch(
+    descriptor: ProviderCoverDescriptor,
+    observations: tuple[ProviderObservation, ...],
+) -> None:
+    """Two unresolved sentinels are equal and mean nothing, so they admit nothing."""
+    rows, fetch = _provider_cover_rows(descriptor, observations)
+
+    assert [] == rows
     fetch.assert_not_called()
 
 

@@ -14,6 +14,13 @@
   reversal and history. Existing application state requires a clean rebuild
   (#892).
 
+- A provider that restates one candidate identity with claims that disagree now
+  fails closed as an ambiguous identity rather than a malformed response, and a
+  provider cover whose work is unresolved is used only when its edition is one
+  that provider actually observed. Nothing is fetched for a cover that names a
+  different or no edition. Existing installs require a clean
+  `metadata-report-v39` database. (#957)
+
 - Add an exact-candidate local Linux fast check and an opt-in per-test
   deadlock deadline, with conditional platform-sensitive qualification (#777).
 

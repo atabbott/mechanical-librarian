@@ -1,13 +1,15 @@
 {
   "authority_rotation": {
+    "additional_prior_manifest_path": "docs/reference/f20-rich-metadata-qualification-candidate-v22-before-identity-diagnostics.json",
+    "additional_prior_manifest_sha256": "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee",
     "historical_reader_delta": {
-      "change": "Preserve F19a v8 and F20 v22 as readable history; current deterministic authority binds F19a v9 and F20 v23.",
-      "current_sha256": "5a0329e73063049b8bf1a5d6ae25bd966b962aa8e9a7f3cb8c831700278a83d1",
+      "change": "Preserve F19a v8 and both historical F20 v22 identities as readable history; current deterministic authority binds F19a v9 and F20 v23.",
+      "current_sha256": "e8c9a0e20d2e3531e5233da4a315fbe535a47a33be2342f3012d19de29cd57cd",
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
-      "measured_sha256": "9daf457c0b53354ef1bb13e308d104e3a747027b09e4135658621553fb11d80b"
+      "measured_sha256": "1914319545f5e5b038296f7615e0d9f40b0d53802a34f3ac400c3ca6eeff2315"
     },
     "prior_manifest_path": "docs/reference/f20-rich-metadata-qualification-candidate-v22.json",
-    "prior_manifest_sha256": "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee",
+    "prior_manifest_sha256": "aacb6e2ebce0490f58b86c8069963445dcb470ffdd70283b5558dde082449103",
     "scope": "Source-only F39 integration of separately authored description authority. Preserve deterministic options, evaluator outcomes, scoring inputs and all inherited measurements. No model quality, fresh scoring or holdout claim.",
     "source_closure": {
       "bound_source_classification": {
@@ -163,7 +165,7 @@
       "src/mechanical_librarian/application/field_effects.py": "d9f85df089e54b583d2f97487be54525b1325f5ff41a0d9805c3cdbf7db7164f",
       "src/mechanical_librarian/application/metadata_policy.py": "7003d6f98a8b733aeef600e8eb1fdd033b541280f80463c814bde52fb4748047",
       "src/mechanical_librarian/domain/audio_inspection.py": "10eb3766b9b609053f85ed354fedc3fcbd3a32d2ec1b055ce2ee82cc51f9f28f",
-      "src/mechanical_librarian/domain/automatic_decision.py": "5a0329e73063049b8bf1a5d6ae25bd966b962aa8e9a7f3cb8c831700278a83d1",
+      "src/mechanical_librarian/domain/automatic_decision.py": "e8c9a0e20d2e3531e5233da4a315fbe535a47a33be2342f3012d19de29cd57cd",
       "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
       "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
       "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
@@ -175,7 +177,7 @@
       "src/mechanical_librarian/domain/field_value_comparison.py": "000f661e9c24585e51465bfd43998d1ff13edb3af7375225125436d53bf14f36",
       "src/mechanical_librarian/domain/identifiers.py": "ab8862f3259921b9cd5e00bf2bf636c846b810db79c58c293c8cf12bd1c54f6a",
       "src/mechanical_librarian/domain/metadata_policy.py": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0",
-      "src/mechanical_librarian/domain/metadata_report.py": "d624e3ef9176de6fd8e9b569b0b8d2cb65b0c964c724ffbbcc2ff8fcdd2dd344",
+      "src/mechanical_librarian/domain/metadata_report.py": "1f0f06d4852a0bfbbd24ab7295db42fe2527a523d8684cdae38f37a394cc969c",
       "src/mechanical_librarian/domain/proposal_set.py": "87a662f5894c52e02cd26365b8458804e3dcca29f4add8aebc4d4c5e7f91ae26",
       "src/mechanical_librarian/domain/review_case.py": "2f5109fa202e93e6a9f575649d2d3f6cdfaa94daa3b1e1f8cf1be838efe30f92",
       "src/mechanical_librarian/domain/reviewer_decision_summary.py": "dabf218ef80bbd59076e7e235dc506819950016dca25f581fd3020edade70555",
@@ -471,12 +473,12 @@
       "src/mechanical_librarian/adapters/providers/google_books_metadata.py": "1757e811025b73682b031833ed63c8c2221e7b1f536ee7d3873ab279dc6b7d25",
       "src/mechanical_librarian/adapters/providers/hardcover_metadata.py": "80d6969d8f25a416c95d2c6ddc8bb4c508c51c93883eaa511b6b79086bcade6e",
       "src/mechanical_librarian/adapters/providers/inventaire_metadata.py": "6bee019f2bff6a2c2c7298e99ce0e6d0d51fd332e90426d90187e736731d091f",
-      "src/mechanical_librarian/adapters/providers/itunes_search_metadata.py": "3b3ac9fbfb89f30405fc45ef719ed69c5fe5468aa6a80c74f917e7060f520a65",
+      "src/mechanical_librarian/adapters/providers/itunes_search_metadata.py": "85d4d4c63e6c65200a68ccad5273cc10c2fcd75e6ea607a0f7795b34909f8e73",
       "src/mechanical_librarian/adapters/providers/open_library_metadata.py": "d2c88d28a956494475f4865edf926f917c64056c9dcbb54189a786d13686a4a0",
       "src/mechanical_librarian/adapters/providers/retry_safety.py": "8343b35ac098647b405cdfc3ee3ab0ae7c29601763f21ded1ca33a7508ed6ecc",
       "src/mechanical_librarian/adapters/providers/sdk.py": "7bfc661148624447934bb3f81a9e00b210473d563126a5e9d7f2d3b7b69a309c",
-      "src/mechanical_librarian/application/failure_diagnostics.py": "8c9b3400ee54b90fc3541fca2824d6da83c64a4e85b2ac2a7259cf8c90707844",
-      "src/mechanical_librarian/application/metadata_report.py": "d23ff2726d14642b5be7b68c631d6b82bf6a7c875b969e36f688e5c6840d9a8f",
+      "src/mechanical_librarian/application/failure_diagnostics.py": "2aa922f5b5bfbd414d65092e20ac1fb0ace1cccb51ed1ea2850608e00661ae71",
+      "src/mechanical_librarian/application/metadata_report.py": "9493dd949ada1939510657e9b5dea9f2338dc91dd7d648024a95cd6df180b94e",
       "src/mechanical_librarian/application/provider_evidence.py": "9f6b41fd1ae40d3d70d05ec65705248e890eb374b5c5bde505997018689987b2",
       "src/mechanical_librarian/application/provider_recovery_evidence.py": "5a6b904a288f67a4f8fa68e3dde6c6245215bcdea4fafe8e880d41157063b28a",
       "src/mechanical_librarian/application/provider_retry_successor.py": "dcb2c0bb585c2483e9e9402c8d068080c9f2b74a69c6b6a27186b40e1edc6e00"

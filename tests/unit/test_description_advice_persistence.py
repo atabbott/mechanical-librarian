@@ -69,14 +69,18 @@ def test_attempt_persisted_before_dispatch_and_success_rebinds_without_call(
     reopened.close()
 
 
-def test_base_schema_is_rejected_without_mutation(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "fixture", ["base-schema-before-f39.json", "base-schema-v39-before-f39.json"]
+)
+def test_base_schema_is_rejected_without_mutation(tmp_path: Path, fixture: str) -> None:
     from mechanical_librarian.application.metadata_report import MetadataReportError
 
     path = tmp_path / "predecessor.sqlite"
     objects = json.loads(
         (
             Path(__file__).parents[1]
-            / "support/automatic_decision_predecessors/base-schema-before-f39.json"
+            / "support/automatic_decision_predecessors"
+            / fixture
         ).read_text()
     )
     with sqlite3.connect(path) as connection:

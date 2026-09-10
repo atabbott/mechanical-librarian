@@ -1096,7 +1096,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v38" == report.schema_version
+    assert "metadata-report-v39" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -1167,6 +1167,46 @@ def _conflicting_lane_results(
     )
 
 
+def _drifting_lane_results(
+    lanes: tuple[MetadataDiscoveryLane, ...],
+) -> tuple[ProviderLaneResult, ...]:
+    """One candidate identity restated across rungs with claims that disagree."""
+    return (
+        ProviderLaneResult(
+            lanes[0],
+            ProviderStatus.CANDIDATES,
+            (
+                _identity_candidate(
+                    title="The Example",
+                    identity="edition-shared",
+                    work_identity="work-shared",
+                ),
+            ),
+            diagnostics=(
+                FailureDiagnostic(
+                    FailureCategory.PROVIDER_DECLARED_ERROR,
+                    FailureComponent.PROVIDER,
+                    FailureStage.RESPONSE,
+                    retryable=False,
+                ),
+            ),
+        ),
+        ProviderLaneResult(
+            lanes[1],
+            ProviderStatus.CANDIDATES,
+            (
+                _identity_candidate(
+                    title="A Different Example",
+                    identity="edition-shared",
+                    work_identity="work-shared",
+                ),
+            ),
+        ),
+        ProviderLaneResult(lanes[2], ProviderStatus.RATE_LIMITED),
+        ProviderLaneResult(lanes[3], ProviderStatus.NO_MATCH),
+    )
+
+
 @pytest.mark.parametrize(
     ("build", "expected"),
     (
@@ -1178,6 +1218,7 @@ def _conflicting_lane_results(
         pytest.param(
             _conflicting_lane_results, ProviderStatus.MALFORMED, id="conflict"
         ),
+        pytest.param(_drifting_lane_results, ProviderStatus.MALFORMED, id="drift"),
     ),
 )
 def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
@@ -1206,6 +1247,14 @@ def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
         "retryable": False,
         "stage": "response",
     }
+    identity_diagnostic = {
+        "category": "identity",
+        "component": "provider",
+        "count": 1,
+        "current": None,
+        "retryable": False,
+        "stage": "identity",
+    }
     declared_diagnostic = {
         "category": "provider_declared_error",
         "component": "provider",
@@ -1219,13 +1268,18 @@ def test_aggregate_candidate_failures_preserve_independent_lane_statuses(
         for lane in observation.lanes
     }
     if expected is ProviderStatus.MALFORMED:
-        assert [malformed_diagnostic, declared_diagnostic] == by_identity_diagnostics[
+        assert [identity_diagnostic, declared_diagnostic] == by_identity_diagnostics[
             lanes[0].identity
         ]
-        assert [malformed_diagnostic] == by_identity_diagnostics[lanes[1].identity]
+        assert [identity_diagnostic] == by_identity_diagnostics[lanes[1].identity]
+        assert malformed_diagnostic not in by_identity_diagnostics[lanes[0].identity]
+        assert [identity_diagnostic] == [
+            value.to_data() for value in observation.diagnostics
+        ]
     else:
         assert [] == by_identity_diagnostics[lanes[0].identity]
         assert [] == by_identity_diagnostics[lanes[1].identity]
+        assert () == observation.diagnostics
     assert observation.to_data() == replayed_order.to_data()
     report = MetadataReport.create(
         target=TargetFacts("primary", "ebooks", "item-1", default_target_fields(None)),
