@@ -248,34 +248,11 @@ The policy is deliberately conservative:
   unchanged; real creators in the same report keep their source order, while
   `Anonymous`, nonexact names, provider creators, and explicit opening-matter
   creators remain eligible under the ordinary rules;
-- selecting a `publishedDate` at year, month, or full-day precision always
-  requires two materially independent correlation groups;
-- two independent month-capable observations that agree through `YYYY-MM`
-  produce one month candidate. Differing exact days in that month are
-  complementary month evidence, not competing month candidates. The candidate
-  carries the union of their evidence references and correlation groups;
-- work first-publication, copyright, modification, and unknown-event evidence
-  never vote for manifestation date or year fields;
-- independent direct year-only edition evidence becomes a year-precision
-  `publishedDate` candidate and is not padded into a month or day;
-- one month observation alone has no candidate. A month candidate
-  requires independent month-capable support; day evidence may become a
-  `publishedDate` candidate, while a signed-offset timestamp may reduce to that
-  exact stated day without offset conversion. Source precision remains in the
-  cited report fact;
-- a timestamp without `Z` or an exact signed `HH:MM` offset remains visible in
-  the report but supplies neither a year nor day vote; this includes naive and
-  parser-admitted offset-second forms;
-- a day plus an agreeing year supports the shared year twice but the day only
-  once. A day plus an independently agreeing month supports that month.
-  Different months preserve only their shared year; different years remain
-  conflicting. No rule fills or invents a missing month or day;
-- provider publication text whose event or manifestation linkage is unresolved
-  remains visible evidence and never becomes a selectable candidate;
-- provider evidence that explicitly names a different work cannot vote for a
-  manifestation publication value or an automatic genre. Unavailable identity
-  proof remains unresolved evidence, so filtering a contradiction cannot elect
-  one otherwise unsupported survivor;
+- publication candidates follow the [current sufficiency rule](#publication-candidate-sufficiency).
+  Applicability, event, precision, independence, and contradiction checks precede
+  quorum counting; retained evidence is not automatically a vote;
+- explicit wrong-work provider evidence also cannot supply automatic genre
+  authority; removing a contradiction cannot elect an unsupported survivor;
 - local work subtitles and exact-edition provider subtitles remain in their
   respective evidence scopes;
 - populated description, genres, and tags are never merged, replaced, or
@@ -300,6 +277,58 @@ The policy is deliberately conservative:
 
 There are no scores, provider priority, configured policy, fuzzy matching, AI,
 review admission, decision, or apply behavior.
+
+## Publication candidate sufficiency
+
+The current evaluator requires local publication evidence and at least two
+independent provider authority correlations supporting the selected precision.
+It produces one canonical `publishedDate` alternative at the strongest shared
+year, month, or day precision, retaining the supporting evidence references
+and correlations. `publishedYear` is derived target context, not a
+second selectable publication decision. Multiple connections to one authority
+supply one provider correlation; provider failure supplies no vote and is
+neither absence nor disagreement.
+
+Provider dates must pass manifestation applicability, including the matching
+valid local ISBN family, before voting. Explicit wrong-work evidence remains
+inspectable but cannot vote (#1000). Unavailable work identity is neither a
+contradiction nor positive identity proof: it does not itself disqualify an
+otherwise applicable date or supply missing support. Work-first, copyright,
+modification, unknown-event, and incompatible-manifestation evidence never vote.
+
+All admitted observations must be compatible at the projected precision. With
+local and two independent provider observations supporting it:
+
+- agreeing `2001-02-03` values yield that day;
+- days differing only within February 2001 yield `2001-02`;
+- different months in 2001 yield `2001`;
+- conflicting years yield no candidate.
+
+A local year plus two agreeing provider days supports only the year under the
+current quorum: local evidence does not support the missing month or day.
+A timestamp with `Z` or an exact signed `HH:MM` offset may support its stated
+calendar day without timezone conversion. Naive timestamps and offset-second
+forms remain visible but non-voting. No missing component is invented.
+
+A candidate conflicting with a retained target year remains an unresolved
+choice. Candidate existence is separate from deterministic recommendation,
+policy routing, qualified persistence authority, and guarded target writes.
+The current publication preview independently requires local evidence plus two
+provider correlations and consistent publication context; a preview alone grants
+no write authority. The current SQL Ask-routing rule names title, series, and
+subtitle, not publication. A settled ebook publication candidate therefore does
+not by itself establish an eligible Library owner action in Ask mode, as
+[the retained #1000 observation](https://github.com/atabbott/mechanical-librarian/issues/1000#issuecomment-5578211874)
+records.
+
+The bounded [#1003 investigation](https://github.com/atabbott/mechanical-librarian/issues/1003)
+retains this rule pending publication-specific usefulness evidence. Its offline
+hypothesis of two supporting correlation groups, including a provider authority,
+exposes synthetic candidate opportunities; it is not a delivered or qualified
+policy. Retained synthetic qualification and genre-preservation results do not
+establish adjudicated real-library publication gains or below-quorum owner-action
+benefit. Any candidate-only change needs separate owner acceptance; automatic
+authority expansion remains subject to #445 and its qualification boundary.
 
 ## Currentness and persistence
 

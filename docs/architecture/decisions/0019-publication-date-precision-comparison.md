@@ -76,6 +76,18 @@ The exact-current report is `metadata-report-v22`, the proposal policy is
 ADR-0013 rejects all earlier pre-release database shapes without migration,
 import, or compatibility parsing.
 
+## Later evolution
+
+The versions and two-source projection above record this decision's historical
+boundary. The current evaluator requires local evidence plus two independent
+provider authority correlations at the selected precision. It projects the
+strongest supported year, month, or day as one canonical `publishedDate`;
+`publishedYear` remains derived context rather than a second decision. The
+precision, event, applicability, and no-invented-component constraints remain.
+See [current publication sufficiency](../../operations/proposal-set.md#publication-candidate-sufficiency)
+for the delivered rule and the #1003 retain-pending-evidence disposition. This
+clarification changes no historical qualification or runtime policy.
+
 ## Consequences
 
 ### Positive

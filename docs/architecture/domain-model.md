@@ -187,13 +187,15 @@ queue work. Cases do not record decisions or write authority.
 
 The pure evaluator has no configuration, provider, network, persistence, or
 write authority. Its fixed rules preserve ordered complete people lists,
-atomic series name/sequence, linked publication date/year, accepted
-edition-identifier applicability, and cover-gallery completeness. Untyped
+atomic series name/sequence, canonical publication date with derived year
+context, accepted edition-identifier applicability, and cover-gallery completeness. Untyped
 contributor evidence cannot become a partial narrator list, and unresolved
 ISBN applicability defers. Year-only edition evidence remains a year rather
 than becoming a full date. Local work subtitles and exact-edition provider
-subtitles retain their source-appropriate scope. A full date that refines a populated target year
-needs two independent correlation groups. Populated
+subtitles retain their source-appropriate scope. Publication candidates require
+local evidence plus two independent provider authority correlations at their
+selected precision; [ProposalSet operation](../operations/proposal-set.md#publication-candidate-sufficiency)
+states the current admission and precision rules. Populated
 subjective fields are not merged or replaced. Multiple values, weak
 correlation, duplicate connections to one provider authority, malformed/unloaded
 target state, role ambiguity, or incomplete

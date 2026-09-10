@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+- Clarify current publication candidate sufficiency and its separate owner-action and automatic-authority limits (#1003).
+
 - Library explains provider evidence groups, lookup states, and field-local automatic withholding (#891).
 
 - Audiobook decisions now apply through the existing guarded Audiobookshelf path,

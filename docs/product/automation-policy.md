@@ -212,6 +212,13 @@ provider evidence.
 | Duplicate or media removal | Never automatic. | Always requires a separate destructive review and explicit human authorization. |
 | Embedded media-file write | Disabled in the first production phase. | Requires a later feature with independent file backup, validation, and rollback policy. |
 
+The publication row describes intended field policy. The
+[current publication candidate rule](../operations/proposal-set.md#publication-candidate-sufficiency)
+requires local evidence plus two independent provider correlations at the
+selected precision. Candidate availability, Ask-mode owner-action reachability,
+and qualified automatic authority are separate; #1003 retains the current rule
+pending publication-specific usefulness evidence.
+
 ## Evidence posture
 
 Evidence is evaluated for applicability, independence, and contradiction—not only by a single numerical confidence score.
