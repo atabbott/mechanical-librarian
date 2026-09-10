@@ -722,7 +722,10 @@ def _setup_asset_server(
                 bootstrap_verifier_digest="0" * 64,
             )
 
-    app = create_setup_app(cast(Any, object()), cast(Any, State()), "")
+    origin = f"https://127.0.0.1:{port.number}"
+    app = create_setup_app(
+        cast(Any, object()), cast(Any, State()), "", canonical_origin=origin
+    )
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -734,7 +737,6 @@ def _setup_asset_server(
             ssl_keyfile=str(key),
         )
     )
-    origin = f"https://127.0.0.1:{port.number}"
     port.release()
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -1446,6 +1448,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     )
                     if query.get("page_size") == ["50"] and not held_page_size_response:
                         held_page_size_response.append((route, response, payload))
+                        page.evaluate(
+                            "console.debug('activity-page-size-response-held')"
+                        )
                         return
                     route.fulfill(status=response.status, json=payload)
 
@@ -1507,7 +1512,12 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 ).to_be_focused()
                 rows = page.get_by_role("combobox", name="Rows per activity page")
                 rows.click()
-                page.get_by_role("option", name="50 per page").click()
+                with page.expect_console_message(
+                    predicate=lambda message: (
+                        message.text == "activity-page-size-response-held"
+                    )
+                ):
+                    page.get_by_role("option", name="50 per page").click()
                 expect(rows).to_be_focused()
                 page.set_viewport_size({"width": 1440, "height": 900})
                 activity_search = page.get_by_role("searchbox", name="Search activity")
@@ -3076,7 +3086,8 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         )
 
                 setup_client = TestClient(
-                    create_setup_app(cast(Any, object()), cast(Any, State()), "")
+                    create_setup_app(cast(Any, object()), cast(Any, State()), ""),
+                    base_url="https://testserver",
                 )
 
                 secured_setup_asset = partial(_serve_setup_asset, setup_client)
@@ -3099,8 +3110,9 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                     "providers",
                                     "libraries",
                                     "mounts",
+                                    "reviewer",
                                 ],
-                                "revision": 6,
+                                "revision": 7,
                                 "providers": [],
                                 "libraries": [],
                                 "mounts": [],
@@ -3544,7 +3556,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     )
                     return
                 if path == "/api/setup/mounts":
-                    stage["value"] = "kick_off"
+                    stage["value"] = "reviewer"
                     route.fulfill(
                         json={
                             "completed_steps": [
@@ -3554,8 +3566,47 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                 "libraries",
                                 "mounts",
                             ],
-                            "next_step": "kick_off",
+                            "next_step": "reviewer",
                             "revision": 6,
+                        }
+                    )
+                    return
+                if path == "/api/setup/reviewer-access":
+                    route.fulfill(
+                        json=ReviewerAccessView(
+                            revision=1,
+                            mapping=None,
+                            openrouter_key_configured=False,
+                            codex=ReviewerEngineStatus(
+                                engine="codex",
+                                state="host_unsupported",
+                                reason="headroom_below_1_gib",
+                                host_headroom_bytes=536_870_912,
+                            ),
+                            openrouter=ReviewerEngineStatus(
+                                engine="openrouter", state="unconfigured"
+                            ),
+                        ).model_dump(mode="json")
+                    )
+                    return
+                if path == "/api/setup/reviewer" and method == "POST":
+                    assert route.request.post_data_json == {
+                        "expected_revision": 6,
+                        "outcome": "skipped",
+                    }
+                    stage["value"] = "kick_off"
+                    route.fulfill(
+                        json={
+                            "completed_steps": [
+                                "claim",
+                                "connect",
+                                "providers",
+                                "libraries",
+                                "mounts",
+                                "reviewer",
+                            ],
+                            "next_step": "kick_off",
+                            "revision": 7,
                         }
                     )
                     return
@@ -3571,7 +3622,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     return
                 if path == "/api/setup/state":
                     value = stage["value"]
-                    selected = value in {"mounts", "kick_off"}
+                    selected = value in {"mounts", "reviewer", "kick_off"}
                     route.fulfill(
                         json={
                             "csrf_token": "c" * 32,
@@ -3587,14 +3638,16 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                 "providers",
                                 "libraries",
                                 "mounts",
-                            ],
+                            ]
+                            + (["reviewer"] if value in {"kick_off", "active"} else []),
                             "next_step": value,
                             "revision": {
                                 "providers": 3,
                                 "libraries": 4,
                                 "mounts": 5,
-                                "kick_off": 6,
-                            }.get(value, 6),
+                                "reviewer": 6,
+                                "kick_off": 7,
+                            }.get(value, 7),
                             "connection": {
                                 "name": "primary",
                                 "endpoint": "https://library.invalid",
@@ -3623,7 +3676,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                     {"library": "books", "state": "matched"},
                                     {"library": "long", "state": "matched"},
                                 ]
-                                if value == "kick_off"
+                                if value in {"reviewer", "kick_off"}
                                 else []
                             ),
                         }
@@ -3822,6 +3875,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 for field in page.get_by_label("service path", exact=False).all():
                     expect(field).not_to_have_value("")
                 page.get_by_role("button", name="Check mounts").click()
+                page.get_by_role("button", name="Continue without a reviewer").click()
                 expect(
                     page.get_by_role("heading", name="Kick off preparation")
                 ).to_be_visible()
