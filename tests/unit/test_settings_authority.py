@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import get_args
+from typing import Any, get_args
 
 import pytest
 
@@ -9,12 +9,16 @@ import mechanical_librarian.interfaces.web
 from mechanical_librarian.application.configuration import (
     AUDIOBOOK_PROVIDER_ADAPTERS,
     ConfigurationError,
+    ProviderConnectionConfiguration,
 )
+from mechanical_librarian.application.review_web import _provider_label
 from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
 from mechanical_librarian.domain.owner_settings import (
+    PROVIDER_LABELS,
     AudibleCatalogProviderSettings,
     Marketplace,
     OwnerSettingsDocument,
+    ProviderAdapter,
     SettingsView,
     provider_capabilities,
 )
@@ -291,6 +295,123 @@ def test_only_audible_and_itunes_may_carry_a_cover_switch() -> None:
             )
 
 
+def _settings_vocabulary() -> dict[str, Any]:
+    return json.loads(
+        (
+            Path(mechanical_librarian.interfaces.web.__file__).parent
+            / "settings_vocabulary.json"
+        ).read_text(encoding="utf-8")
+    )
+
+
+def test_only_audible_and_itunes_may_carry_a_cover_switch_in_the_browser() -> None:
+    """The browser list is a subset of what the contract accepts, never more.
+
+    Settings renders the switch from this list alone, so an adapter that
+    reaches it without the contract accepting `cover_enabled=True` would offer
+    the owner a control whose save is refused (#967).
+    """
+    offered = _settings_vocabulary()["cover_switch_provider_adapters"]
+    assert offered == ["audible_catalog", "itunes_search"]
+
+    for adapter in offered:
+        document = _audiobook_document(
+            providers=[
+                {
+                    "name": "audio",
+                    "adapter": adapter,
+                    "enabled": True,
+                    "cover_enabled": True,
+                }
+            ]
+        )
+        assert document.providers[0].cover_enabled is True
+    # The converse is deliberately not asserted: Hardcover, Open Library and
+    # Inventaire accept the field and are still offered no control here.
+    assert not set(offered) & {"hardcover", "open_library", "inventaire"}
+
+
+@pytest.mark.parametrize("adapter", ["audible_catalog", "itunes_search"])
+def test_a_disabled_audiobook_source_may_not_carry_cover_evidence(
+    adapter: str,
+) -> None:
+    """Settings hides the control while the provider is off; this is why.
+
+    Both authorities refuse the pair outright, so a value that reached the
+    document past a stale draft, a hand-edited file, or a future surface is
+    rejected rather than quietly consulted. This holds the claim in
+    `docs/reference/configuration.md` that `cover_enabled` can never be true
+    for a provider that is off (#967).
+    """
+    with pytest.raises(ValueError, match="settings document is invalid"):
+        _audiobook_document(
+            providers=[
+                {
+                    "name": "audio",
+                    "adapter": adapter,
+                    "enabled": False,
+                    "cover_enabled": True,
+                }
+            ]
+        )
+    with pytest.raises(
+        ConfigurationError, match="cover enablement requires provider enablement"
+    ):
+        ProviderConnectionConfiguration(
+            name="audio",
+            enabled=False,
+            cover_enabled=True,
+            secret_file=None,
+            adapter=adapter,
+        )
+    # The same pair is accepted the moment the provider is enabled, so the
+    # refusal is about enablement and nothing else. Only the enabled Audible
+    # catalogue carries a marketplace order, and it must be non-empty.
+    assert (
+        ProviderConnectionConfiguration(
+            name="audio",
+            enabled=True,
+            cover_enabled=True,
+            secret_file=None,
+            adapter=adapter,
+            marketplaces=(
+                AUDIOBOOK_MARKETPLACES if adapter == "audible_catalog" else ()
+            ),
+        ).cover_enabled
+        is True
+    )
+
+
+def test_every_surface_states_one_canonical_provider_label() -> None:
+    """One label table, its readers, and no leak into an identifier.
+
+    The capability list, the review report's provider label, the browser
+    vocabulary that setup and Settings share, and the closed adapter set all
+    name a provider with the same word; the instance name stays the owner's own
+    identifier (#967). Cover-evidence statements
+    (`application/cover_consideration.py`) still name their own sources and are
+    deliberately outside this claim.
+
+    `review_web._provider_label` restates the table in place rather than
+    reading it: that module is byte-bound by the F19a association
+    re-qualification record, so this test is what holds it to the canonical
+    word until a re-pin lets it read the table directly.
+    """
+    assert set(PROVIDER_LABELS) == set(get_args(ProviderAdapter))
+    assert _settings_vocabulary()["provider_labels"] == dict(PROVIDER_LABELS)
+
+    document = _audiobook_document(providers=[])
+    capabilities = provider_capabilities(document)
+    assert {item.adapter: item.label for item in capabilities} == dict(PROVIDER_LABELS)
+    assert {item.adapter: item.name for item in capabilities} == {
+        adapter: adapter for adapter in PROVIDER_LABELS
+    }
+    for adapter, label in PROVIDER_LABELS.items():
+        assert _provider_label(adapter) == label
+    assert _provider_label(None) == "Provider (name unavailable)"
+    assert _provider_label("unknown_adapter") == "Provider (name unavailable)"
+
+
 def test_store_authority_carries_the_order_only_while_audible_is_enabled() -> None:
     bootstrap = ReviewBootstrap.model_validate(
         {
@@ -350,12 +471,7 @@ def test_the_settings_marketplace_vocabulary_stays_one_closed_set() -> None:
     the others: the domain names it, the settings contract encodes it as a
     JSON-schema enum, and the browser vocabulary ships it to an added entry."""
 
-    vocabulary = json.loads(
-        (
-            Path(mechanical_librarian.interfaces.web.__file__).parent
-            / "settings_vocabulary.json"
-        ).read_text(encoding="utf-8")
-    )
+    vocabulary = _settings_vocabulary()
 
     assert get_args(Marketplace) == AUDIOBOOK_MARKETPLACES
     assert tuple(vocabulary["audible_marketplace_order"]) == AUDIOBOOK_MARKETPLACES
