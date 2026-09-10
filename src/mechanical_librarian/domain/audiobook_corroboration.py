@@ -22,7 +22,6 @@ from enum import StrEnum
 from typing import Final
 
 from mechanical_librarian.domain.metadata_report import (
-    DURATION_AGREEMENT_BAND_SECONDS,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -35,11 +34,14 @@ from mechanical_librarian.domain.metadata_report import (
     duration_milliseconds,
 )
 
-# A provider states a runtime in whole minutes, so two sources that agree
-# exactly still differ by up to half a minute of rounding on each side. The
-# tight band is the same parameter the report's duration comparison uses, and
-# is defined once there.
-RUNTIME_BAND_TIGHT_SECONDS: Final = DURATION_AGREEMENT_BAND_SECONDS
+# Ninety whole seconds. A provider states a runtime in whole minutes, so two
+# sources that agree exactly still differ by up to half a minute of rounding on
+# each side, and the measured gate that admits a runtime as corroborating
+# evidence sits at 90 s. The report's claim-link comparison happens to use the
+# same number today, but that is a comparison over stated claims and this is the
+# corroboration gate: each is measured on its own and retuned on its own at
+# slice-2 qualification, so the value is owned here (ADR-0064).
+RUNTIME_BAND_TIGHT_SECONDS: Final = 90
 # Ten minutes: an edition whose runtime differs by less than this is routinely
 # the same recording with a different intro, outro, or end-credit block.
 # Beyond it, two recordings of one work are the ordinary explanation.

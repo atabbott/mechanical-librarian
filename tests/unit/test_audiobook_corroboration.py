@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from mechanical_librarian.domain import audiobook_corroboration, metadata_report
 from mechanical_librarian.domain.audio_inspection import AudioChapter
 from mechanical_librarian.domain.audiobook_corroboration import (
     CHAPTER_DURATION_TOLERANCE_SECONDS,
@@ -27,12 +28,16 @@ from mechanical_librarian.domain.audiobook_corroboration import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    Comparison,
+    ComparisonMethod,
     FieldState,
     FileFacts,
     LocalClaim,
     MetadataReport,
     ProviderChapterStructure,
+    ProviderClaim,
     TargetFacts,
+    comparison_links,
     default_target_fields,
 )
 from tests.support.metadata_report_doubles import single_track_audio_facts
@@ -115,6 +120,55 @@ def test_runtime_bands_separate_agreement_from_a_different_recording(
     signal = runtime_agreement(local, provider)
     assert outcome == signal.outcome
     assert (reason.value,) == signal.reasons
+
+
+def test_the_runtime_gate_owns_its_band_independently_of_the_report_comparison() -> (
+    None
+):
+    """Two rules happen to share the number 90; neither may move the other.
+
+    The report's duration band decides whether a stated claim links to a local
+    one; this module's tight band decides whether a runtime corroborates an
+    identity. They are measured separately and retuned separately (ADR-0064),
+    so retuning either one leaves the other's verdict exactly as it was.
+    """
+    assert 90 == RUNTIME_BAND_TIGHT_SECONDS
+    assert not hasattr(audiobook_corroboration, "DURATION_AGREEMENT_BAND_SECONDS")
+
+    local_claim = LocalClaim.create(
+        kind=ClaimKind.DURATION,
+        observed="43200.000",
+        canonical="43200.000",
+        excerpt="43200.000",
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+    )
+    provider_claim = ProviderClaim.create(
+        provider="audnexus",
+        candidate="asin-1",
+        kind=ClaimKind.DURATION,
+        value="43289.000",
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+    )
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(metadata_report, "DURATION_AGREEMENT_BAND_SECONDS", 5)
+        retuned_report = runtime_agreement(36_000, 36_089)
+    assert CorroborationOutcome.CORROBORATED == retuned_report.outcome
+    assert (
+        CorroborationReason.RUNTIME_WITHIN_TIGHT_BAND.value,
+    ) == retuned_report.reasons
+
+    with pytest.MonkeyPatch.context() as patched:
+        patched.setattr(audiobook_corroboration, "RUNTIME_BAND_TIGHT_SECONDS", 5)
+        links = comparison_links(provider_claim, (local_claim,))
+    assert 1 == len(links)
+    assert Comparison.AGREEMENT == links[0].outcome
+    assert ComparisonMethod.DURATION_BAND_AGREEMENT == links[0].method
 
 
 def test_a_chapter_vector_aligns_within_tolerance_and_diverges_beyond_it() -> None:

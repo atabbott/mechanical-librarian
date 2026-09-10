@@ -18,6 +18,17 @@
   },
   "required_provider_keys": ["hardcover"],
   "keyless_provider_adapters": ["audible_catalog", "audiosilo", "audnexus", "inventaire", "itunes_search"],
+  "cover_switch_provider_adapters": ["audible_catalog", "itunes_search"],
+  "provider_labels": {
+    "audible_catalog": "Audible",
+    "audiosilo": "AudioSilo",
+    "audnexus": "Audnexus",
+    "google_books": "Google Books",
+    "hardcover": "Hardcover",
+    "inventaire": "Inventaire",
+    "itunes_search": "iTunes",
+    "open_library": "Open Library"
+  },
   "audible_marketplace_order": ["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"],
   "errors": {
     "secret": "Secrets must be 1–2,048 printable ASCII characters with no whitespace or Bearer prefix.",

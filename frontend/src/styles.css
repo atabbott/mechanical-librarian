@@ -558,6 +558,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .settings-fields,.settings-record { min-width:0; }
 .settings-record + .settings-record { border-top:.75rem solid var(--page); }
 .settings-record > h3 { margin:0; padding:.65rem 1.25rem; border-bottom:1px solid var(--line); color:var(--accent-strong); background:var(--accent-soft); font:700 1rem/1.3 Georgia,'Times New Roman',serif; overflow-wrap:anywhere; }
+.settings-record > h3 code { margin-left:.4rem; color:var(--soft); font-size:.72rem; font-weight:400; }
 .settings-record-meta { margin:0; padding:.45rem 1.25rem; border-bottom:1px solid var(--line); color:var(--soft); font-size:.7rem; overflow-wrap:anywhere; }
 .settings-field-row { display:grid; grid-template-columns:minmax(0,1fr) minmax(13rem,26rem); gap:.75rem 1.5rem; min-width:0; padding:.8rem 1.25rem; border-bottom:1px solid var(--line); }
 .settings-field-row > div { min-width:0; }

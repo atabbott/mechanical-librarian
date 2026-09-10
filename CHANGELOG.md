@@ -8,6 +8,13 @@
 
 ## Unreleased
 
+- Settings now carries a Cover evidence switch for Audible and iTunes, off while
+  the provider is off and unchanged for every other source. Setup, Settings and
+  the review report's provider label state one canonical name per provider, with
+  the instance name shown beside it. The audiobook runtime corroboration gate
+  owns its own 90-second band instead of borrowing the report's comparison band.
+  (#967)
+
 - Restore manual mutant generation, test-selection statistics, and audit execution
   with the pinned mutation engine (#901).
 
