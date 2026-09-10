@@ -27,6 +27,12 @@ from mechanical_librarian.domain.metadata_report import MetadataReport
 
 
 class DescriptionAdviceRepository(Protocol):
+    """Attempt callbacks read staged case state on this same worker repository.
+
+    The callback must not acquire an owner/access gate or read another store.
+    Local request and passive profile checks belong to the repository transaction.
+    """
+
     def begin_attempt(
         self,
         request_identity: str,
@@ -34,19 +40,21 @@ class DescriptionAdviceRepository(Protocol):
         engine: str,
         model: str,
         now: int,
-        current: Callable[[], bool],
+        case_current: Callable[[], bool],
         *,
         retry: bool = False,
     ) -> tuple[str, DescriptionAdviceCandidate | None] | None: ...
 
-    def start(self, attempt_id: str, now: int, current: Callable[[], bool]) -> bool: ...
+    def start(
+        self, attempt_id: str, now: int, case_current: Callable[[], bool]
+    ) -> bool: ...
 
     def finish(
         self,
         attempt_id: str,
         candidate: DescriptionAdviceCandidate | None,
         now: int,
-        current: Callable[[], bool],
+        case_current: Callable[[], bool],
     ) -> bool: ...
 
 
@@ -96,23 +104,13 @@ class DescriptionAdviceService:
             }
         )
 
-        def current() -> bool:
-            return (
-                self._access.current_description_rewrite_identity() == identity
-                and self._settings() == settings
-                and binding.access_revision == revision
-                and binding.preferences_digest
-                == description_digest(settings.model_dump())
-                and case_current()
-            )
-
         attempt = self._repository.begin_attempt(
             request_identity,
             binding,
             engine,
             model,
             self._clock(),
-            current,
+            case_current,
             retry=retry,
         )
         if attempt is None:
@@ -120,7 +118,7 @@ class DescriptionAdviceService:
         attempt_id, reused = attempt
         if reused is not None:
             return reused
-        if not self._repository.start(attempt_id, self._clock(), current):
+        if not self._repository.start(attempt_id, self._clock(), case_current):
             return None
         candidate = None
         try:
@@ -178,6 +176,6 @@ class DescriptionAdviceService:
             # before dispatch; raw provider/model errors never enter history.
             candidate = None
         admitted = self._repository.finish(
-            attempt_id, candidate, self._clock(), current
+            attempt_id, candidate, self._clock(), case_current
         )
         return candidate if admitted else None

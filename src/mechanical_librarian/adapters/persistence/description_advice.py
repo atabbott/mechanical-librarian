@@ -119,18 +119,16 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             and operation.plan.pre_value != operation.plan.desired_value
         )
 
-    def _candidate_is_current(
-        self, candidate: DescriptionAdviceCandidate, binding: DescriptionAdviceBinding
-    ) -> bool:
-        """Bind authored content to the exact provider request at admission."""
+    def _current_request(
+        self, binding: DescriptionAdviceBinding, engine: str, model: str
+    ) -> tuple[str, str, str, str] | None:
+        """Reconstruct local request identity without an access gate or transport."""
         from mechanical_librarian.application.contained_reviewer_contract import (
             ContainedReviewRequest,
         )
         from mechanical_librarian.domain.metadata_report import MetadataReport
         from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
 
-        if not self.binding_is_current(binding):
-            return False
         report_row = self._connection.execute(
             "SELECT document FROM metadata_reports WHERE report_id=?",
             (binding.report_id,),
@@ -138,53 +136,92 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         access_row = self._connection.execute(
             "SELECT document FROM reviewer_access WHERE singleton=1"
         ).fetchone()
-        if report_row is None or access_row is None:
-            return False
-        selection = ReviewerAccessDocument.model_validate_json(
-            access_row[0]
-        ).description_rewrite
-        if selection is None:
-            return False
+        generation = self._connection.execute(
+            "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+        ).fetchone()
+        if (
+            report_row is None
+            or access_row is None
+            or generation != (binding.policy_generation,)
+        ):
+            return None
+        access = ReviewerAccessDocument.model_validate_json(access_row[0])
+        selection = access.description_rewrite
+        settings = self.current_settings()
+        if (
+            selection is None
+            or selection.engine != engine
+            or access.revision != binding.access_revision
+            or description_digest(settings.model_dump()) != binding.preferences_digest
+            or (selection.engine == "openrouter" and selection.model != model)
+        ):
+            return None
         try:
-            identity = self._identity(
-                selection.engine, getattr(selection, "model", None)
+            identity = self._identity(engine, getattr(selection, "model", None))
+            if identity is None or identity[0] != model:
+                return None
+            preferences = settings.cleanup()
+            request = ContainedReviewRequest(
+                DESCRIPTION_INSTRUCTION,
+                description_document(
+                    DescriptionAdviceInput.from_report(
+                        MetadataReport.from_json(report_row[0]), preferences
+                    ).model_dump()
+                ),
+                DESCRIPTION_OUTPUT_SCHEMA,
             )
         except (OSError, ValueError, RuntimeError):
-            return False
-        if identity != (candidate.model, candidate.profile_digest):
-            return False
-        preferences = self.current_settings().cleanup()
-        request = ContainedReviewRequest(
-            DESCRIPTION_INSTRUCTION,
-            description_document(
-                DescriptionAdviceInput.from_report(
-                    MetadataReport.from_json(report_row[0]), preferences
-                ).model_dump()
-            ),
-            DESCRIPTION_OUTPUT_SCHEMA,
+            return None
+        request_identity = description_digest(
+            {
+                "request": request.digest,
+                "access_revision": binding.access_revision,
+                "engine": engine,
+                "model": model,
+                "profile": identity[1],
+            }
         )
         return (
-            selection is not None
-            and candidate.engine == selection.engine
-            and (selection.engine != "openrouter" or candidate.model == selection.model)
+            request.digest,
+            description_digest(preferences.model_dump()),
+            identity[1],
+            request_identity,
+        )
+
+    def _attempt_is_current(
+        self,
+        request_identity: str,
+        binding: DescriptionAdviceBinding,
+        engine: str,
+        model: str,
+    ) -> bool:
+        request = self._current_request(binding, engine, model)
+        return (
+            request is not None
+            and request[3] == request_identity
+            and self._target_unchanged(binding)
+        )
+
+    def _candidate_is_current(
+        self, candidate: DescriptionAdviceCandidate, binding: DescriptionAdviceBinding
+    ) -> bool:
+        if not self.binding_is_current(binding):
+            return False
+        request = self._current_request(binding, candidate.engine, candidate.model)
+        return (
+            request is not None
+            and request
+            == (
+                candidate.request_digest,
+                candidate.preferences_digest,
+                candidate.profile_digest,
+                candidate.request_identity,
+            )
             and candidate.access_revision == binding.access_revision
-            and candidate.preferences_digest
-            == description_digest(preferences.model_dump())
-            and candidate.request_digest == request.digest
             and candidate.instruction_digest
             == hashlib.sha256(DESCRIPTION_INSTRUCTION.encode()).hexdigest()
             and candidate.schema_digest
             == hashlib.sha256(DESCRIPTION_OUTPUT_SCHEMA.encode()).hexdigest()
-            and candidate.request_identity
-            == description_digest(
-                {
-                    "request": request.digest,
-                    "access_revision": binding.access_revision,
-                    "engine": candidate.engine,
-                    "model": candidate.model,
-                    "profile": candidate.profile_digest,
-                }
-            )
         )
 
     def admit(
@@ -407,7 +444,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         engine: str,
         model: str,
         now: int,
-        current: Callable[[], bool],
+        case_current: Callable[[], bool],
         *,
         retry: bool = False,
     ) -> tuple[str, DescriptionAdviceCandidate | None] | None:
@@ -415,7 +452,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         transaction = self._transaction("description_attempt")
         try:
             transaction.begin()
-            if not current() or not self._target_unchanged(binding):
+            if not case_current() or not self._attempt_is_current(
+                request_identity, binding, engine, model
+            ):
                 transaction.commit()
                 return None
             prior = self._connection.execute(
@@ -477,19 +516,23 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ),
         )
 
-    def start(self, attempt_id: str, now: int, current: Callable[[], bool]) -> bool:
+    def start(
+        self, attempt_id: str, now: int, case_current: Callable[[], bool]
+    ) -> bool:
         transaction = self._transaction("description_start")
         try:
             transaction.begin()
             row = self._connection.execute(
-                "SELECT binding_document FROM description_advice_attempts WHERE attempt_id=?",
+                "SELECT request_identity,binding_document,engine,model FROM description_advice_attempts WHERE attempt_id=?",
                 (attempt_id,),
             ).fetchone()
             if row is None:
                 transaction.commit()
                 return False
-            binding = DescriptionAdviceBinding.model_validate_json(row[0])
-            if not current() or not self._target_unchanged(binding):
+            binding = DescriptionAdviceBinding.model_validate_json(row[1])
+            if not case_current() or not self._attempt_is_current(
+                row[0], binding, row[2], row[3]
+            ):
                 self._connection.execute(
                     "UPDATE description_advice_attempts SET state='interrupted',failure='interrupted',updated_at=? WHERE attempt_id=? AND state='requested'",
                     (now, attempt_id),
@@ -511,7 +554,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         attempt_id: str,
         candidate: DescriptionAdviceCandidate | None,
         now: int,
-        current: Callable[[], bool],
+        case_current: Callable[[], bool],
     ) -> bool:
         transaction = self._transaction("description_finish")
         try:
@@ -555,7 +598,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                     attempt_id,
                 ),
             )
-            admitted = current() and self._target_unchanged(binding)
+            admitted = case_current() and self._attempt_is_current(
+                row[0], binding, row[2], row[3]
+            )
             if candidate is not None and admitted:
                 self._connection.execute(
                     "UPDATE current_description_advice SET candidate_id=? WHERE review_case_id=? AND attempt_id=? AND binding_document=?",

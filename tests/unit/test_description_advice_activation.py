@@ -223,7 +223,13 @@ def test_mismatched_candidate_contract_cannot_gain_authority(
 
     repository, store, binding, candidate, _ = _prepared(tmp_path)
     attempt = store.begin_attempt(
-        "e" * 64, binding, candidate.engine, candidate.model, 12, lambda: True
+        candidate.request_identity,
+        binding,
+        candidate.engine,
+        candidate.model,
+        12,
+        lambda: True,
+        retry=True,
     )
     assert attempt is not None
     altered = DescriptionAdviceCandidate.create(
@@ -231,7 +237,6 @@ def test_mismatched_candidate_contract_cannot_gain_authority(
             **candidate.model_dump(exclude={"candidate_id"}),
             "attempt_id": attempt[0],
             field: "f" * 64,
-            "request_identity": "e" * 64,
         }
     )
     assert store.start(attempt[0], 13, lambda: True)
@@ -594,6 +599,7 @@ def test_second_preparation_worker_observes_running_attempt_without_lock_or_disp
             store = second.description_advice_store()
             settings = DescriptionAdviceSettings(automatic_application=True)
             store.bind_settings(settings)
+            store.bind_identity(repository.description_advice_store()._identity)
             report = MetadataReport.from_json(
                 second.get_review_case_report(binding.review_case_id)
             )
@@ -678,9 +684,14 @@ def test_interrupted_explicit_attempt_does_not_fall_back_to_older_success_or_ret
     assert repository._connection.execute(
         "SELECT count(*) FROM description_advice_attempts"
     ).fetchone() == (2,)
+    settings = store.current_settings()
     repository.close()
     reopened = open_repository(tmp_path / "reports.sqlite", create=False)
     recovered = reopened.description_advice_store()
+    recovered.bind_settings(settings)
+    recovered.bind_identity(
+        lambda engine, model: (candidate.model, candidate.profile_digest)
+    )
     assert recovered.read(binding.review_case_id)["state"] == "interrupted"
     assert (
         recovered.begin_attempt(
@@ -1596,4 +1607,240 @@ def test_authored_admission_replaces_pending_but_not_claimed_deterministic_effec
         assert not authority.current(operation.plan.authority)
     assert target._effects == {}
     assert store.read(binding.review_case_id)["current"] is True
+    repository.close()
+
+
+def test_complete_preparation_never_enters_public_access_gate_inside_sqlite(
+    tmp_path: Path,
+) -> None:
+    observed = []
+
+    def observe(repository, _report, _decision, access, _calls):
+        def serialized(call):
+            observed.append(repository._connection.in_transaction)
+            assert not repository._connection.in_transaction
+            return call()
+
+        access.attach_serialization(serialized)
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, pipeline_probe=observe
+    )
+    assert observed and not any(observed)
+    assert store.read(binding.review_case_id)["current"] is True
+    assert (
+        store.read(binding.review_case_id)["candidate"]["candidate_id"]
+        == candidate.candidate_id
+    )
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_advice_attempts"
+    ).fetchone() == (1,)
+    repository.close()
+
+
+def test_worker_attempt_and_owner_gate_waiting_for_sqlite_complete_without_inversion(
+    tmp_path: Path,
+) -> None:
+    import hashlib
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    captured = []
+
+    def capture(_repository, report, _decision, access, calls):
+        captured.append((report, access, calls))
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, pipeline_probe=capture
+    )
+    report, original_access, calls = captured[0]
+    gate = threading.RLock()
+    worker_begin = threading.Event()
+    owner_waiting = threading.Event()
+    owner_ready = threading.Event()
+    worker_gate_states = []
+    settings = store.current_settings()
+    profile = b"synthetic-contained-profile"
+
+    def owner():
+        own = open_repository(
+            tmp_path / "reports.sqlite", authority=repository.authority
+        )
+        try:
+            owner_ready.set()
+            assert worker_begin.wait(3)
+            with gate:
+                own._connection.set_trace_callback(
+                    lambda statement: (
+                        owner_waiting.set() if statement == "BEGIN IMMEDIATE" else None
+                    )
+                )
+                own._connection.execute("BEGIN IMMEDIATE")
+                own._connection.execute(
+                    "UPDATE metadata_policy_state SET generation=generation"
+                )
+                own._connection.commit()
+        finally:
+            own.close()
+
+    def worker():
+        own = open_repository(
+            tmp_path / "reports.sqlite", authority=repository.authority
+        )
+        local = own.description_advice_store()
+        local.bind_settings(settings)
+
+        def passive(_engine, _model):
+            if own._connection.in_transaction and not worker_begin.is_set():
+                worker_begin.set()
+                assert owner_waiting.wait(3)
+            return candidate.model, hashlib.sha256(profile).hexdigest()
+
+        local.bind_identity(passive)
+        access = ReviewerAccessOperations(
+            own.reviewer_access_store(),
+            codex_auth=_Auth("usable"),
+            codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+            codex_identity=lambda: (candidate.model, profile),
+            codex_binding=original_access._codex_binding,
+            codex_description_binding=original_access._codex_description_binding,
+            openrouter_factory=lambda *_: pytest.fail("unexpected engine"),
+        )
+
+        def serialized(call):
+            worker_gate_states.append(own._connection.in_transaction)
+            assert not own._connection.in_transaction
+            assert gate.acquire(timeout=3)
+            try:
+                return call()
+            finally:
+                gate.release()
+
+        access.attach_serialization(serialized)
+        try:
+            assert owner_ready.wait(3)
+            prepared = DescriptionAdviceService(
+                local, access, local.current_settings, lambda: 30
+            ).prepare(
+                report,
+                binding,
+                lambda: local.binding_is_current(binding),
+                retry=True,
+            )
+            assert prepared is not None
+            assert local.read(binding.review_case_id)["current"] is True
+        finally:
+            own.close()
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        owner_future = pool.submit(owner)
+        worker_future = pool.submit(worker)
+        worker_future.result(timeout=6)
+        owner_future.result(timeout=6)
+    assert worker_begin.is_set() and owner_waiting.is_set()
+    assert worker_gate_states and not any(worker_gate_states)
+    assert len(calls) == 2
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "boundary", ["begin_to_start", "start_to_dispatch", "dispatch_to_finish"]
+)
+@pytest.mark.parametrize(
+    "drift", ["access", "task", "model", "profile", "preferences", "staged_case"]
+)
+def test_attempt_transition_drift_never_publishes_or_admits_stale_request(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str, drift: str
+) -> None:
+    identity = ("synthetic-model", b"synthetic-contained-profile")
+    captured = []
+
+    def capture(_repository, report, _decision, access, calls):
+        captured.append((report, access, calls))
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, contained_identity=lambda: identity, pipeline_probe=capture
+    )
+    report, access, calls = captured[0]
+    staged_current = True
+
+    def change():
+        nonlocal identity, staged_current
+        if drift == "access":
+            access.select_codex(expected_revision=2, task="description_rewrite")
+        elif drift == "task":
+            access.select_none(expected_revision=2, task="description_rewrite")
+        elif drift == "model":
+            identity = ("changed-synthetic-model", identity[1])
+        elif drift == "profile":
+            identity = (identity[0], b"changed-synthetic-profile")
+        elif drift == "preferences":
+            store.bind_settings(
+                DescriptionAdviceSettings(
+                    automatic_application=True, remove_marketing=False
+                )
+            )
+        else:
+            staged_current = False
+
+    if boundary == "begin_to_start":
+        original = store.begin_attempt
+
+        def begin(*args, **kwargs):
+            result = original(*args, **kwargs)
+            assert result is not None
+            change()
+            return result
+
+        monkeypatch.setattr(store, "begin_attempt", begin)
+    elif boundary == "start_to_dispatch":
+        original = store.start
+
+        def start(*args, **kwargs):
+            result = original(*args, **kwargs)
+            assert result
+            change()
+            return result
+
+        monkeypatch.setattr(store, "start", start)
+    else:
+        original = store.finish
+
+        def finish(*args, **kwargs):
+            change()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(store, "finish", finish)
+    result = DescriptionAdviceService(
+        store, access, store.current_settings, lambda: 30
+    ).prepare(
+        report,
+        binding,
+        lambda: staged_current and store.binding_is_current(binding),
+        retry=True,
+    )
+    assert result is None
+    dispatched = boundary == "dispatch_to_finish" or (
+        boundary == "start_to_dispatch" and drift in {"preferences", "staged_case"}
+    )
+    assert len(calls) == 1 + int(dispatched)
+    row = repository._connection.execute(
+        "SELECT p.candidate_id,a.state FROM current_description_advice p JOIN description_advice_attempts a ON a.attempt_id=p.attempt_id"
+    ).fetchone()
+    assert row[0] is None
+    assert row[1] == (
+        "interrupted"
+        if boundary == "begin_to_start"
+        else "succeeded"
+        if dispatched
+        else "failed"
+    )
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_advice_candidates"
+    ).fetchone() == (1 + int(dispatched),)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions"
+    ).fetchone() == (0,)
+    with pytest.raises(ValueError):
+        store.admit(candidate.candidate_id, binding, "human", "f" * 64, 31)
     repository.close()
