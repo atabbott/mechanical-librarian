@@ -11068,15 +11068,20 @@ def test_rediscovered_libraries_retain_combined_preparation_high_water(
                 action, 1, "a" * 64, (entries[action.library],), at
             )
         else:
+
+            def complete_extraction(
+                value: ReportRepository,
+                published: MetadataReport,
+                claimed: PipelineAction = action,
+                completed_at: int = at,
+            ) -> None:
+                assert isinstance(value, SQLiteMetadataReportRepository)
+                value.complete_review_extraction_publication(
+                    claimed, published.report_id, completed_at, 0, "evidence_only"
+                )
+
             repository.publish(
-                reports[action.library],
-                lambda: True,
-                None,
-                lambda value, published, action=action, at=at: (
-                    value.complete_review_extraction_publication(
-                        action, published.report_id, at, 0, "evidence_only"
-                    )
-                ),
+                reports[action.library], lambda: True, None, complete_extraction
             )
     assert repository.claim_review_pipeline_action(24) is None
     for ordinal, library in enumerate(("fiction", "history")):
