@@ -16,6 +16,7 @@ import {
   settingsValidationCopy,
 } from '../api/http'
 import type { SettingsView, SettingsWrite } from '../api/http'
+import settingsVocabulary from '../../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 import { ReviewerAccessPanel } from '../components/ReviewerAccessPanel'
 import { settingsRoute, useReviewContext } from '../router'
 import type { SettingsGroup } from '../router'
@@ -30,6 +31,17 @@ type AudibleMarketplace = Extract<
   Document['providers'][number],
   { adapter: 'audible_catalog' }
 >['marketplaces'][number]
+type Provider = Document['providers'][number]
+// Only the two adapters that state a cover asset of their own carry the
+// switch. The JSON list is the one place that set is written; the `Extract`
+// below is its compile-time restatement, and a Python test holds the two
+// together against the settings contract that accepts the field.
+type CoverSwitchProvider = Extract<Provider, { adapter: 'audible_catalog' | 'itunes_search' }>
+const coverSwitchAdapters: readonly string[] = settingsVocabulary.cover_switch_provider_adapters
+const hasCoverSwitch = (provider: Provider): provider is CoverSwitchProvider =>
+  coverSwitchAdapters.includes(provider.adapter)
+const providerLabel = (adapter: Provider['adapter']): string =>
+  settingsVocabulary.provider_labels[adapter]
 type SecretWrite = SettingsWrite['secrets'][number]
 type Group = SettingsGroup
 interface FieldIssue {
@@ -705,7 +717,9 @@ const SettingsEditor = ({
                   const secretId = 'provider.' + provider.name + '.key'
                   return (
                     <div className="settings-record" key={provider.name}>
-                      <h3>{provider.name.replaceAll('_', ' ')}</h3>
+                      <h3>
+                        {providerLabel(provider.adapter)} <code>{provider.name}</code>
+                      </h3>
                       <Row
                         fieldId={`provider.${provider.name}.enabled`}
                         title="Provider state"
@@ -748,6 +762,36 @@ const SettingsEditor = ({
                           </label>
                         )}
                       </Row>
+                      {hasCoverSwitch(provider) ? (
+                        <Row
+                          fieldId={`provider.${provider.name}.cover_enabled`}
+                          title="Cover evidence"
+                          description="Consider this source's own cover image. It stays off while the provider is off."
+                          effect={effect('providers')}
+                          locked={locked}
+                        >
+                          {locked ? (
+                            <strong>{provider.cover_enabled ? 'On' : 'Off'}</strong>
+                          ) : (
+                            <label className="settings-check">
+                              <FieldInput
+                                fieldId={`provider.${provider.name}.cover_enabled`}
+                                type="checkbox"
+                                checked={provider.cover_enabled}
+                                disabled={!provider.enabled}
+                                onChange={(event) =>
+                                  update((value) => {
+                                    const item = value.providers.at(index)
+                                    if (item && hasCoverSwitch(item))
+                                      item.cover_enabled = event.currentTarget.checked
+                                  })
+                                }
+                              />
+                              Use {provider.name.replaceAll('_', ' ')} covers
+                            </label>
+                          )}
+                        </Row>
+                      ) : null}
                       {provider.adapter === 'audible_catalog' ? (
                         <Row
                           title="Marketplace order"
@@ -821,8 +865,7 @@ const SettingsEditor = ({
                             target="_blank"
                             rel="noreferrer"
                           >
-                            Get a{' '}
-                            {provider.adapter === 'google_books' ? 'Google Books' : 'Hardcover'} key
+                            Get a {providerLabel(provider.adapter)} key
                           </a>
                         </Row>
                       )}

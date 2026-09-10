@@ -50,6 +50,21 @@ leaves the saved revision and active runtime unchanged. The private
 after activation; deploy-managed TLS, origin, proxy, mount, and listener values
 still require an operator restart.
 
+Settings shows a Cover evidence switch for the two audiobook sources that state
+a cover asset of their own, `audible_catalog` and `itunes_search`. The control
+is unreachable while the provider is disabled and is forced off when the owner
+disables one. Both the settings contract and the configuration boundary refuse
+the pair outright, so `cover_enabled` can never be true for a provider that is
+off. `audnexus` and `audiosilo` restate Audible's art and carry no switch, and
+Hardcover, Open Library and Inventaire keep exactly the controls they had.
+Guided setup still records `cover_enabled: false` for Audible and iTunes, so
+their covers start off and become evidence only when the owner turns them on.
+Setup, Settings and the review report's provider label state one canonical name
+per provider; cover-evidence statements still name their own sources. The
+instance `name` remains the owner's own identifier and never becomes a display
+label, so field ids, `provider_connections` entries and adapter keys are
+unaffected by what is shown.
+
 `provider_recovery_generation` is a required positive operator generation for
 provider recovery. After correcting a provider credential, authorization, or
 configuration condition, increment it and save Settings. It is the
