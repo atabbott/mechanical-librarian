@@ -934,6 +934,11 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             },
         }
 
+    def activity_transitions(
+        self, event_id: str, after_sequence: int | None = None
+    ) -> dict[str, object]:
+        return _seeded_projection().activity_transitions(event_id, after_sequence)
+
     def enable(self, grants):
         self.enabled_libraries.update(library for library, _ in grants)
         return self.activity()

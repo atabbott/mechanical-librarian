@@ -74,6 +74,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 from mechanical_librarian.interfaces.web.app import owner_password_binding
 from tests.support.review_web_doubles import (
+    FakeActivityApplication,
     FakeReviewRepository,
     ReviewWebContext,
     review_web_context,
@@ -602,6 +603,47 @@ def test_activity_transition_transport_rejects_malformed_ids_and_guards_persiste
         assert unavailable.status_code == 503
         assert unavailable.json()["error"]["code"] == "persistence"
         transitions.assert_called_once_with(valid_id, 7)
+
+
+def test_seeded_activity_details_retain_real_transitions(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    configuration = ReviewWebConfiguration(
+        canonical_origin="http://review.test",
+        owner_password_hash_file=str(web.hash_path),
+    )
+    with TestClient(
+        create_transport_test_app(
+            web.repository, configuration, field_application=FakeActivityApplication()
+        ),
+        base_url="http://review.test",
+    ) as client:
+        assert (
+            client.post(
+                "/api/v1/session/login",
+                json={"password": "correct horse"},
+                headers={"Origin": "http://review.test"},
+            ).status_code
+            == 200
+        )
+        events = client.get("/api/v1/activity").json()["events"]
+        event = next(
+            item
+            for item in events
+            if item["state"] == "stale" and item["destination"] == "title"
+        )
+        path = f"/api/v1/activity/{event['transition_id']}/transitions"
+        response = client.get(path)
+        assert response.status_code == 200
+        transitions = response.json()
+        assert [
+            (item["state"], item["sequence"]) for item in transitions["events"]
+        ] == [("planned", 1), ("stale", 2)]
+        assert transitions["has_more"] is False
+        assert (
+            client.get(path, params={"after_sequence": 1}).json()["events"]
+            == (transitions["events"][1:])
+        )
 
 
 def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(
