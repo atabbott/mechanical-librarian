@@ -9,7 +9,7 @@ execute the mutants in subprocesses instead of forks.
 Two departures from `mutmut run`, both deliberate:
 
 * The whole package is copied to `mutants/src` before mutmut copies the audited
-  modules over it. `[tool.mutmut] paths_to_mutate` names only the modules under
+  modules over it. `[tool.mutmut] source_paths` names only the modules under
   audit, so mutmut alone would leave `mutants/src` holding those files and
   nothing else, and `mechanical_librarian` would not import at all. Excluding
   the rest through `do_not_mutate` instead does not work: those patterns are
@@ -54,8 +54,8 @@ def generate(root: Path) -> None:
         copy_also_copy_files,
         copy_src_dir,
         create_mutants,
-        ensure_config_loaded,
     )
+    from mutmut.configuration import Config
 
     mutants = root / "mutants"
     shutil.rmtree(mutants, ignore_errors=True)
@@ -73,7 +73,7 @@ def generate(root: Path) -> None:
     importlib.invalidate_caches()
     shutil.copytree(root / "src", mutants / "src", dirs_exist_ok=True)
 
-    ensure_config_loaded()
+    Config.ensure_loaded()
     copy_src_dir()
     create_mutants(4)
     copy_also_copy_files()
@@ -94,9 +94,10 @@ def collect_stats(root: Path) -> int:
 
     import mutmut
     import pytest
-    from mutmut.__main__ import ensure_config_loaded, strip_prefix
+    from mutmut.__main__ import strip_prefix
+    from mutmut.configuration import Config
 
-    ensure_config_loaded()
+    Config.ensure_loaded()
     failures: list[str] = []
 
     class StatsCollector:

@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Restore manual mutant generation, test-selection statistics, and audit execution
+  with the pinned mutation engine (#901).
+
 - Correct idle-load qualification to measure an exact 42-minute window and preparation cadence (#917).
 
 - Exact-artifact qualification supports mise's `uv` shim without a PATH

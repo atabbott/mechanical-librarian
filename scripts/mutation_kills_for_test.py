@@ -43,8 +43,6 @@ def main() -> int:
     work: list[str] = []
     for path in sorted((MUTANTS / "src").rglob("*.py")):
         source = path.read_text(encoding="utf-8")
-        if "MUTANT_UNDER_TEST" not in source:
-            continue
         module = str(path.relative_to(MUTANTS / "src"))
         module = module.removesuffix("/__init__.py").removesuffix(".py")
         module = module.replace("/", ".")
