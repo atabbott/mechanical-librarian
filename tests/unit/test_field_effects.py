@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -4308,6 +4309,22 @@ def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
         reader_a._connection.execute("SELECT 1 FROM field_effects LIMIT 1").fetchone()
         writer.start()
         assert writer_ready.wait(1)
+        # Readiness precedes COMMIT: prove the writer has reached PENDING,
+        # where a new reader is refused, before timing the Activity read.
+        with closing(
+            sqlite3.connect(effects.database_path, timeout=0, isolation_level=None)
+        ) as probe:
+            deadline = time.monotonic() + 1
+            while True:
+                try:
+                    with closing(
+                        probe.execute("SELECT 1 FROM field_effects LIMIT 1")
+                    ) as cursor:
+                        cursor.fetchone()
+                except sqlite3.OperationalError as error:
+                    assert error.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                    break
+                assert time.monotonic() < deadline
         started = time.monotonic()
         with pytest.raises(FieldEffectError, match="^persistence$") as raised:
             reader_c.field_effect_activity_page(
