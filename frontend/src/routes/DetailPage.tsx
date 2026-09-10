@@ -4,7 +4,7 @@ import { Link } from '@tanstack/react-router'
 import type { CaseDetailView, EvidenceView, HistoryValueView, HistoryView } from '../api/http'
 import { displayValue } from '../api/http'
 import { fieldLabel, labelWords } from '../labels'
-import { detailRoute, useReviewContext } from '../router'
+import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
   if (item.category === 'owner' || item.category === 'automatic') {
@@ -137,7 +137,7 @@ function historyValuesMatch(previous: HistoryValueView | null, selected: History
 
 export default function DetailPage({ data }: { data: CaseDetailView }) {
   const { http } = useReviewContext()
-  const search = detailRoute.useSearch()
+  const search = normalizeDetailSearch(detailRoute.useSearch())
   const { reviewCaseId } = detailRoute.useParams()
   const evidence = useInfiniteQuery({
     queryKey: ['review-case', reviewCaseId, 'evidence'],
@@ -221,6 +221,9 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   return (
                     <section className="diagnostic-entry evidence-field" key={field.destination}>
                       <h3>{fieldLabel(field.destination)}</h3>
+                      {field.automaticWithheldReason ? (
+                        <p className="automatic-withheld-reason">{field.automaticWithheldReason}</p>
+                      ) : null}
                       {fieldObservations.length ? (
                         <ul className="evidence-values">
                           {fieldObservations.map((item, index) => (

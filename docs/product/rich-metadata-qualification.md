@@ -353,7 +353,7 @@ this is neither rescoring nor a fresh holdout claim. V19 remains byte-frozen and
 readable as history, but grants no current effect authority. F19a v7 is unchanged.
 
 
-The [v21 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v21.json)
+The [local-transport v21 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v21-local-transport.json)
 rotates the exact source closure for explicit local transport (#844). Shared
 validation adds strict HTTP/HTTPS origin admission; existing validation functions,
 provider sources, proposal/election behavior, policy v23 and all 13 passing options
@@ -362,3 +362,32 @@ a dedicated Activity reader and serialized live repository observations. V20 and
 all historical measurements remain byte-frozen; no rescoring or fresh holdout is
 claimed. V20 decisions remain readable history but are stale for new effects;
 only the current qualification can authorize newly prepared automatic effects.
+## Provider recovery explanations source closure (#891)
+
+The [v21 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v21.json)
+and [v8 F19a manifest](../reference/f19a-qualification-manifest-v8.json) bind the
+read-only current review projection and its persisted policy reader. They retain
+all earlier measurements, scoring, evaluator identities and qualified options;
+this is source closure, not fresh scoring or a fresh holdout. The complete F20
+provider and behavior source sets remain bound alongside the six projection
+sources. Policy v23, classifications, recovery and persisted schemas are unchanged.
+
+Prior F20 v20 and F19a v7 decisions remain readable as history but grant no current
+effect authority. Existing currentness checks reject them before scheduling or
+capability access. New decisions use the successor identities; historical
+manifests and decisions are never rewritten.
+
+The #891 successor inherits the guarded audiobook source envelope from merged
+v20 (`12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5`).
+Both that digest and the earlier published v20 digest remain readable history
+only. Its existing frontend byte binding includes the bounded diagnostic return
+context; no router or view file is added to automatic qualification bindings.
+
+The [v22 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v22.json)
+is the current combined source closure for local transport and provider recovery
+explanations (#844, #891). Its primary predecessor is the canonical provider-recovery
+v21; the exact local-transport v21 is an explicit additional predecessor. Both
+remain byte-frozen and readable history, without current effect authority. V22
+retains all 13 options, scoring and measurements, the complete provider closure,
+and the six projection bindings shared with current F19a v8. It adds no rescoring
+or fresh holdout claim.

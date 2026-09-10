@@ -90,7 +90,20 @@ export const normalizeDetailSearch = (search: Record<string, unknown>): DetailSe
   const lens =
     search.lens === 'needs_attention' || search.lens === 'no_attention_needed' ? search.lens : 'all'
   const subview = search.subview === 'history' ? 'history' : 'evidence'
-  return { ...(field ? { field } : {}), lens, subview }
+  const q = bounded(search.q)
+  const cursor = bounded(search.cursor)
+  const attentionCursor = bounded(search.attentionCursor)
+  const preparation = bounded(search.preparation)
+  return {
+    ...(field ? { field } : {}),
+    lens,
+    subview,
+    ...(q ? { q } : {}),
+    ...(cursor ? { cursor } : {}),
+    ...(attentionCursor ? { attentionCursor } : {}),
+    ...(preparation ? { preparation } : {}),
+    ...(search.attention === 'open' ? { attention: 'open' } : {}),
+  }
 }
 export const normalizePolicySearch = (search: Record<string, unknown>): PolicySearch => ({
   section:
@@ -874,13 +887,9 @@ const AttentionRouteComponent = () => {
 const DiagnosticRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
   const { http } = rootRoute.useRouteContext()
-  const search = detailRoute.useSearch()
+  const search = normalizeDetailSearch(detailRoute.useSearch())
   const detail = useQuery(detailQuery(http, reviewCaseId))
-  const backSearch = {
-    lens: search.lens,
-    preview: reviewCaseId,
-    ...(search.field ? { field: search.field } : {}),
-  }
+  const backSearch = normalizeLibrarySearch({ ...search, preview: reviewCaseId })
   const problem =
     detail.error instanceof ApiError && detail.error.code === 'not_found'
       ? 'No retained diagnostic was found for this work.'

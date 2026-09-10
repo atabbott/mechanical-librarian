@@ -6313,6 +6313,18 @@
             "title": "Automatic Selection Sources",
             "type": "array"
           },
+          "automatic_withheld_reason": {
+            "anyOf": [
+              {
+                "maxLength": 512,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Automatic Withheld Reason"
+          },
           "choice_contexts": {
             "items": {
               "$ref": "#/components/schemas/_ChoiceContext"

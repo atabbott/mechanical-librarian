@@ -129,6 +129,13 @@ candidate, report, target, consideration, or reference identifiers. They have
 no legacy redirect or compatibility behavior. Durable cross-work diagnostics
 and history remain in Activity.
 
+Evidence and History preserve the originating Library lens, bounded search,
+Library page cursor, Attention cursor and selected field through tab switches,
+refresh and Back to work. Return links use the case identity in the diagnostic
+path, including while diagnostics load or cannot be read. Unknown or malformed
+query values never become return settings; returning does not independently
+fetch an off-page work to disguise lost Library context.
+
 A `ReviewGroup` is a display/query projection for confirmed instances of the
 same work, such as an Audiobookshelf ebook and audiobook or a future target in
 another adapter. It may contain identity labels, link method, link confidence,
@@ -235,7 +242,22 @@ first without hiding automatic-only, resolved, pre-admission, current no-case,
 or retired work. Within the attention group it presents works whose current
 provider report is complete before those with a provider-limited lane; both the
 `all` and `needs_attention` lenses keep that grouping while
-`no_attention_needed` remains alphabetical. A current work without a review
+`no_attention_needed` remains alphabetical. Page-local headings name
+**Provider evidence complete** and **Provider evidence limited**, preserving the
+server order even when a page begins partway through a group. Clear works end
+the attention grouping. Compact row descriptions name the observed lookup
+statuses. Complete includes `no_match`, disabled, and insufficient-input lanes;
+it does not promise a match. Limited is broader than retrying: a failure status
+alone never promises a scheduled retry. Recoverable lookups can change group
+when new evidence arrives. Graded ordering remains deferred to #877, including
+the original ≥10% steady-state criterion; the earlier measurement is unavailable.
+
+An unresolved Automatic field explains withheld decisions only when its exact
+current policy/report/proposal preview identifies failed contributing provider
+evidence. The explanation stays beside that field in Library and Evidence;
+unrelated failed lookups create no causal claim. Existing direct choices remain
+available, and replacement evidence removes an explanation whose cause no longer
+holds. A current work without a review
 case remains readable and searchable but does not offer a false detail or
 preview action. Internal
 connection and item keys do not become its primary visible identity. Search

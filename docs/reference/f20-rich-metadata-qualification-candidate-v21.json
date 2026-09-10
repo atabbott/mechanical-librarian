@@ -1,26 +1,26 @@
 {
   "authority_rotation": {
     "historical_reader_delta": {
-      "change": "Append the exact v20 digest with its frozen option set to read-only historical acceptance. Creation and current effect authority remain exact-current.",
-      "current_sha256": "410e770bc562bef56afd312ce2f1342301d87d8eddc85e12fb560e75fc7e936e",
+      "change": "Retain both published v20 digests as read-only history; new decisions and effect authority require the final current qualification digest.",
+      "current_sha256": "4b1641ba27ae6869f7fae2f08779f9c0e1876418699dc68168ce04e65a030491",
       "identity": "src/mechanical_librarian/domain/automatic_decision.py",
       "measured_sha256": "b4d8caf5d692f20cd1e8e239c0ddb1c9413353f794273f1ff8b1cd126cc62be9"
     },
     "prior_manifest_sha256": "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",
-    "scope": "Explicit HTTP target and browser transport admission; unchanged policy, qualified options and historical measurements.",
+    "scope": "Read-only current review projection source closure; inherited guarded audiobook application, retained scoring and unchanged qualified options and authority rules.",
     "source_closure": {
       "bound_source_classification": {
         "src/mechanical_librarian/adapters/field_effect_authority.py": "unchanged",
         "src/mechanical_librarian/adapters/field_effect_runtime.py": "unchanged",
-        "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py": "unchanged",
+        "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py": "book_media_guarded_application",
         "src/mechanical_librarian/adapters/persistence/documents.py": "unchanged",
-        "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "unchanged",
+        "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "book_media_guarded_application",
         "src/mechanical_librarian/adapters/persistence/field_effect_validation.py": "unchanged",
-        "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "unchanged",
+        "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "read_only_review_projection",
         "src/mechanical_librarian/adapters/persistence/transactions.py": "unchanged",
         "src/mechanical_librarian/adapters/providers/inventaire_metadata.py": "unchanged",
-        "src/mechanical_librarian/application/continuous_field_effects.py": "unchanged",
-        "src/mechanical_librarian/application/field_effects.py": "unchanged",
+        "src/mechanical_librarian/application/continuous_field_effects.py": "book_media_guarded_application",
+        "src/mechanical_librarian/application/field_effects.py": "book_media_guarded_application",
         "src/mechanical_librarian/application/metadata_policy.py": "unchanged",
         "src/mechanical_librarian/domain/audio_inspection.py": "unchanged",
         "src/mechanical_librarian/domain/automatic_decision.py": "historical_reader_only",
@@ -30,31 +30,31 @@
         "src/mechanical_librarian/domain/epub_opening.py": "unchanged",
         "src/mechanical_librarian/domain/evidence_bounds.py": "unchanged",
         "src/mechanical_librarian/domain/failure_diagnostics.py": "unchanged",
-        "src/mechanical_librarian/domain/field_effect.py": "unchanged",
+        "src/mechanical_librarian/domain/field_effect.py": "book_media_guarded_application",
         "src/mechanical_librarian/domain/field_outcomes.py": "unchanged",
         "src/mechanical_librarian/domain/field_value_comparison.py": "unchanged",
         "src/mechanical_librarian/domain/identifiers.py": "unchanged",
         "src/mechanical_librarian/domain/metadata_policy.py": "unchanged",
         "src/mechanical_librarian/domain/metadata_report.py": "unchanged",
         "src/mechanical_librarian/domain/proposal_set.py": "unchanged",
-        "src/mechanical_librarian/domain/review_case.py": "unchanged",
+        "src/mechanical_librarian/domain/review_case.py": "book_media_guarded_application",
         "src/mechanical_librarian/domain/reviewer_decision_summary.py": "unchanged",
         "src/mechanical_librarian/domain/rich_metadata_preview.py": "unchanged",
         "src/mechanical_librarian/domain/shadow_decision.py": "unchanged",
         "src/mechanical_librarian/domain/shadow_outcome.py": "unchanged",
         "src/mechanical_librarian/domain/shadow_review.py": "unchanged",
         "src/mechanical_librarian/domain/shadow_review_actions.py": "unchanged",
-        "src/mechanical_librarian/domain/validation.py": "transport_admission_addition",
+        "src/mechanical_librarian/domain/validation.py": "unchanged",
         "src/mechanical_librarian/domain/work_identity.py": "unchanged"
       },
       "current_byte_bindings": {
-        "frontend/src/api/http.ts": "785c114808d9a83a5fe0e50f997dcb2a15d82e52f3ea4cae5b52c56eb6f5a253",
-        "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
+        "frontend/src/api/http.ts": "2846bf7cdfc117d8f1a7a78bea09d35b24075b0b6e636476d06515f1590cc3d6",
+        "scripts/qualify_audiobookshelf_field_effect.py": "db3f3cae5895891a5db2c647eb2b26fe817bdfa324ed8a299b4cd055baae99ae",
         "src/mechanical_librarian/domain/human_decision.py": "949761de7fc75c5635da9c75c3c4e435564a5a9ca26479583a731da5c432353a"
       },
       "f20_option_outcomes_changed": false,
       "f20_scoring_inputs_changed": false,
-      "proof": "All 36 F20 behavior-source hashes were checked. Only shared transport-origin admission and the historical v20 reader changed; all nine pre-existing validation functions retain identical ASTs. Proposal, election, policy options, provider closure and scoring inputs are unchanged. The Audiobookshelf qualifier uses current configuration, dedicated Activity projection ownership and serialized live repository observation; frontend and human-decision bindings are unchanged."
+      "proof": "All 36 F20 behavior-source hashes were checked. The merged guarded audiobook application is retained. Only the read-only review projection and historical qualification readers differ from merged v20 in this map; the existing frontend byte binding adds the nullable cause and bounded diagnostic return context. Qualified options, provider sources and retained scoring are unchanged."
     }
   },
   "automatic_authority": "decision_only",
@@ -155,14 +155,14 @@
       "src/mechanical_librarian/adapters/persistence/documents.py": "eeb855cafe56a39b6adc318eff41c42225553bf5d544d91b8ab9405486410baa",
       "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "2abd3c6e426a83896e5b6f81e1d478c961930127bbbe9978a7a97190bde91281",
       "src/mechanical_librarian/adapters/persistence/field_effect_validation.py": "196479934ea0cdcc155645c50e36f0fdbf28170b1062bca1fb8db1f650f39617",
-      "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "b13eb350de28386822639babdca72e1ad045d01a68e59e2823e3a6205071952b",
+      "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "f92a3b9dabf41c55b53f0c3e66efe3463b1943fc0ca0a86fa8f30d0ddc0a73fe",
       "src/mechanical_librarian/adapters/persistence/transactions.py": "d925b8d8829c4b06d9b8ebd22eb85bdf4dfefd2de918997253312554c09f2ab9",
       "src/mechanical_librarian/adapters/providers/inventaire_metadata.py": "6bee019f2bff6a2c2c7298e99ce0e6d0d51fd332e90426d90187e736731d091f",
       "src/mechanical_librarian/application/continuous_field_effects.py": "efacbe4973564cace4c252c4e1cfd56cb182fffb9116671578c91f376399fdb3",
       "src/mechanical_librarian/application/field_effects.py": "82f9bf4d33d93d30dcec62c1d6134e2608b22c24d44135201148e0ed77c0382c",
       "src/mechanical_librarian/application/metadata_policy.py": "7003d6f98a8b733aeef600e8eb1fdd033b541280f80463c814bde52fb4748047",
       "src/mechanical_librarian/domain/audio_inspection.py": "10eb3766b9b609053f85ed354fedc3fcbd3a32d2ec1b055ce2ee82cc51f9f28f",
-      "src/mechanical_librarian/domain/automatic_decision.py": "410e770bc562bef56afd312ce2f1342301d87d8eddc85e12fb560e75fc7e936e",
+      "src/mechanical_librarian/domain/automatic_decision.py": "4b1641ba27ae6869f7fae2f08779f9c0e1876418699dc68168ce04e65a030491",
       "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
       "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
       "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
@@ -183,7 +183,7 @@
       "src/mechanical_librarian/domain/shadow_outcome.py": "a347408dd62085ca9ba8be1b962491685cd59fcb4934234ef48b50175eac64b7",
       "src/mechanical_librarian/domain/shadow_review.py": "16153d513d6d5ddf7b7844533f42c988103167d443c1b7af6c1708f986ce5b5c",
       "src/mechanical_librarian/domain/shadow_review_actions.py": "24b9473a8cc102226c99e2ce5b497c3a30e60132354bd1608689803d32db4791",
-      "src/mechanical_librarian/domain/validation.py": "da5b1952989cd2dff31aa375d4874e0177d1d5ccb786d844919b50ba0024ca94",
+      "src/mechanical_librarian/domain/validation.py": "c72da11903fc02514af0430bee2e813a58e70dfd285d4e82bcfa42a4f72e526f",
       "src/mechanical_librarian/domain/work_identity.py": "da96b62cb77a4b0246ed3bfb6e381d9f4f9fdde1c035073e356a52da44b912a7"
     },
     "original_programme_seal_sha256": "95f2aca28d154b41bf0381bfc4af7dc1628fa3c6f69ca3199b2bd100e9a9ada9",
@@ -482,6 +482,20 @@
     },
     "fresh_holdout_claim": false,
     "fresh_scoring_run": false
+  },
+  "review_projection_source_closure": {
+    "behavior_sources": {
+      "src/mechanical_librarian/adapters/persistence/metadata_policy.py": "56170629caefbffb3ad034c7b0fbd9d287c88794a4b7363dfe95829bab169941",
+      "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "f92a3b9dabf41c55b53f0c3e66efe3463b1943fc0ca0a86fa8f30d0ddc0a73fe",
+      "src/mechanical_librarian/adapters/persistence/review_cases.py": "7b4a1a19dfd3e7cfc861351d3143d2de5fc631d3dc17ac88b336b59520bdbb79",
+      "src/mechanical_librarian/adapters/persistence/review_projections.py": "512ce5107476699cd8640e86de07905c1f8862bda3b3a8b13e017dd424a6b082",
+      "src/mechanical_librarian/adapters/persistence/review_sql.py": "132f65b99969b5ea8370a9d252936a3fbd5a4475330bfd355869fc6daf085c58",
+      "src/mechanical_librarian/application/review_web.py": "7e13ad7ac2d03d53fc058d03fb46ac41a37cb4174fdaa99f3e0b457b451d5e2f"
+    },
+    "fresh_holdout_claim": false,
+    "fresh_scoring_run": false,
+    "issue": 891,
+    "scope": "Read-only same-snapshot provider withholding explanation; unchanged scoring, options, classification, recovery and authority rules."
   },
   "schema": "f20-rich-metadata-qualification-candidate-v21",
   "zero_tolerance": {

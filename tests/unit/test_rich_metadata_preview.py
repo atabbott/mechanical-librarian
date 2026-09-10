@@ -8,12 +8,6 @@ from typing import cast
 
 import pytest
 
-from mechanical_librarian.application.metadata_report import (
-    ProviderLaneResult,
-    TargetSnapshot,
-    metadata_discovery_plan,
-    provider_observation,
-)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
@@ -73,6 +67,12 @@ from tests.support.proposal_evidence import (
     _target_work_candidate,
     _target_work_report,
 )
+from tests.support.provider_recovery_rail import (
+    _automatic_series_fields,
+    _automatic_series_report,
+    _series_claims,
+    _series_provider,
+)
 from tests.unit.test_bibliographic_bundles import _bibliographic_report, _source
 
 
@@ -109,26 +109,6 @@ def _automatic_series_preview(report, option="source_order"):
         value
         for value in compile_rich_metadata_preview(policy, report, proposal).fields
         if value.field == "series"
-    )
-
-
-def _series_claims(provider, candidate, name="Reading Order", sequence="2"):
-    return (
-        _claim(
-            provider,
-            candidate,
-            ClaimKind.SERIES,
-            name,
-            scope=ClaimScope.WORK,
-        ),
-        _claim(
-            provider,
-            candidate,
-            ClaimKind.SERIES_SEQUENCE,
-            sequence,
-            scope=ClaimScope.WORK,
-            order=1,
-        ),
     )
 
 
@@ -273,65 +253,6 @@ def _local_series_claims(name="Reading Order", sequence="2"):
             scope=ClaimScope.WORK,
             occurrence=1,
         ),
-    )
-
-
-def _automatic_series_report(*providers, current_title="Current title"):
-    return _report(
-        fields=_automatic_series_fields(current_title),
-        local_claims=(_local_isbn("9780306406157", "valid_isbn_13"),),
-        providers=providers,
-    )
-
-
-def _automatic_series_fields(current_title="Current title"):
-    return _fields(
-        current_title,
-        authors=TargetField(
-            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Example",)
-        ),
-        series=TargetField(TargetDestination.SERIES, TargetFieldState.MISSING),
-    )
-
-
-def _series_provider(
-    name, candidate, authority, claims=None, *, current_title="Current title"
-):
-    identity = (
-        _claim(name, candidate, ClaimKind.TITLE, current_title, scope=ClaimScope.WORK),
-        _claim(
-            name,
-            candidate,
-            ClaimKind.CREATOR,
-            "Ada Example",
-            scope=ClaimScope.WORK,
-            role="author",
-        ),
-        _claim(
-            name,
-            candidate,
-            ClaimKind.ISBN,
-            "9780306406157",
-            scope=ClaimScope.EDITION,
-            applicability="ebook",
-        ),
-    )
-    source = _provider(
-        name,
-        candidate,
-        identity + (_series_claims(name, candidate) if claims is None else claims),
-        authority=authority,
-    )
-    lane = metadata_discovery_plan(
-        TargetSnapshot(
-            "ebook", current_title, (), fields=_automatic_series_fields(current_title)
-        ),
-        (_local_isbn("9780306406157", "valid_isbn_13"),),
-    ).lanes[0]
-    return provider_observation(
-        name,
-        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, source.candidates),),
-        authority=authority,
     )
 
 

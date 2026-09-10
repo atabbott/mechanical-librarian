@@ -49,11 +49,16 @@ ASSOCIATION_MANIFEST = MANIFEST.with_name(
 )
 V19_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v19.json")
 V20_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v20.json")
+V21_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v21.json")
+TRANSPORT_V21_MANIFEST = MANIFEST.with_name(
+    "f20-rich-metadata-qualification-candidate-v21-local-transport.json"
+)
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v21.json"
+    "f20-rich-metadata-qualification-candidate-v22.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
+V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1390,9 +1395,13 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
     )
     evidence = rich["evidence_method"]["title_component_associations"]
     assert title["association_requalification"] == evidence
-    for name, digest in evidence["review_projection_followup"][
-        "behavior_sources"
-    ].items():
+    latest_projection = json.loads(LATEST_MANIFEST.read_text())[
+        "review_projection_source_closure"
+    ]["behavior_sources"]
+    assert set(evidence["review_projection_followup"]["behavior_sources"]) < set(
+        latest_projection
+    )
+    for name, digest in latest_projection.items():
         assert (
             hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
             == digest
@@ -1448,11 +1457,11 @@ def test_inventaire_successor_binds_current_sources_and_preserves_authority() ->
 def test_inventaire_f19a_successor_preserves_historical_measurements_and_options() -> (
     None
 ):
-    current = json.loads(LATEST_F19A_MANIFEST.read_text())
+    current = json.loads(V7_F19A_MANIFEST.read_text())
     prior = json.loads(ASSOCIATION_F19A_MANIFEST.read_text())
     assert (
-        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
-        == F19A_QUALIFICATION_MANIFEST_SHA256
+        hashlib.sha256(V7_F19A_MANIFEST.read_bytes()).hexdigest()
+        == "62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014"
     )
     assert (
         current["prior_manifest_sha256"]
@@ -1530,6 +1539,123 @@ def test_provider_contract_rotation_binds_complete_sources_without_rescoring():
     )
 
 
+def test_review_projection_successors_bind_current_sources_without_rescoring():
+    rich = json.loads(V21_MANIFEST.read_text())
+    title = json.loads(LATEST_F19A_MANIFEST.read_text())
+    prior_rich = json.loads(V20_MANIFEST.read_text())
+    prior_title = json.loads(V7_F19A_MANIFEST.read_text())
+    assert (
+        hashlib.sha256(V21_MANIFEST.read_bytes()).hexdigest()
+        == "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff"
+    )
+    assert (
+        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
+        == F19A_QUALIFICATION_MANIFEST_SHA256
+    )
+    assert rich["schema"] == "f20-rich-metadata-qualification-candidate-v21"
+    assert (
+        title["prior_manifest_sha256"]
+        == hashlib.sha256(V7_F19A_MANIFEST.read_bytes()).hexdigest()
+    )
+    assert (
+        rich["authority_rotation"]["prior_manifest_sha256"]
+        == hashlib.sha256(V20_MANIFEST.read_bytes()).hexdigest()
+    )
+    assert {
+        k: v
+        for k, v in title.items()
+        if k not in {"prior_manifest_sha256", "review_projection_source_closure"}
+    } == {k: v for k, v in prior_title.items() if k != "prior_manifest_sha256"}
+    assert {
+        k: v
+        for k, v in rich.items()
+        if k
+        not in {
+            "schema",
+            "authority_rotation",
+            "review_projection_source_closure",
+            "frozen_contract",
+        }
+    } == {
+        k: v
+        for k, v in prior_rich.items()
+        if k not in {"schema", "authority_rotation", "frozen_contract"}
+    }
+    assert {
+        k: v for k, v in rich["frozen_contract"].items() if k != "behavior_sources"
+    } == {
+        k: v
+        for k, v in prior_rich["frozen_contract"].items()
+        if k != "behavior_sources"
+    }
+    broad = rich["frozen_contract"]["behavior_sources"]
+    assert set(broad) == set(prior_rich["frozen_contract"]["behavior_sources"])
+    assert len(broad) == 36
+    assert {
+        name
+        for name in broad
+        if broad[name] != prior_rich["frozen_contract"]["behavior_sources"][name]
+    } == {
+        "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
+        "src/mechanical_librarian/domain/automatic_decision.py",
+    }
+    assert (
+        rich["provider_contract_source_closure"]
+        == prior_rich["provider_contract_source_closure"]
+    )
+    assert len(rich["provider_contract_source_closure"]["behavior_sources"]) == 15
+    closure = rich["review_projection_source_closure"]
+    assert closure == title["review_projection_source_closure"]
+    assert (
+        closure["fresh_scoring_run"] is False
+        and closure["fresh_holdout_claim"] is False
+    )
+    assert set(closure["behavior_sources"]) == {
+        "src/mechanical_librarian/" + name
+        for name in (
+            "adapters/persistence/metadata_reports.py",
+            "adapters/persistence/metadata_policy.py",
+            "adapters/persistence/review_cases.py",
+            "adapters/persistence/review_projections.py",
+            "adapters/persistence/review_sql.py",
+            "application/review_web.py",
+        )
+    }
+    authority = rich["authority_rotation"]["source_closure"]
+    prior_authority = prior_rich["authority_rotation"]["source_closure"]
+    assert set(authority["bound_source_classification"]) == set(broad)
+    assert authority["f20_option_outcomes_changed"] is False
+    assert authority["f20_scoring_inputs_changed"] is False
+    assert authority["bound_source_classification"] == {
+        **prior_authority["bound_source_classification"],
+        "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "read_only_review_projection",
+    }
+    current_bytes = authority["current_byte_bindings"]
+    assert (
+        set(current_bytes)
+        == set(prior_authority["current_byte_bindings"])
+        == {
+            "frontend/src/api/http.ts",
+            "src/mechanical_librarian/domain/human_decision.py",
+            "scripts/qualify_audiobookshelf_field_effect.py",
+        }
+    )
+    assert {
+        name
+        for name in current_bytes
+        if current_bytes[name] != prior_authority["current_byte_bindings"][name]
+    } == {"frontend/src/api/http.ts"}
+    history = rich["authority_rotation"]["historical_reader_delta"]
+    assert (
+        history["identity"] == "src/mechanical_librarian/domain/automatic_decision.py"
+    )
+    assert history["current_sha256"] == broad[history["identity"]]
+    assert (
+        history["measured_sha256"]
+        == prior_rich["frozen_contract"]["behavior_sources"][history["identity"]]
+    )
+
+
 def test_v20_binds_the_book_media_guarded_application_rotation() -> None:
     manifest = json.loads(V20_MANIFEST.read_text())
     sources = manifest["frozen_contract"]["behavior_sources"]
@@ -1561,7 +1687,10 @@ def test_v20_binds_the_book_media_guarded_application_rotation() -> None:
 
 
 def test_v21_binds_transport_sources_without_rescoring_or_new_authority() -> None:
-    current = json.loads(LATEST_MANIFEST.read_bytes())
+    assert hashlib.sha256(TRANSPORT_V21_MANIFEST.read_bytes()).hexdigest() == (
+        "7aeaca9b020022b9ab385a9baf249d1b63dc7ffcfcc4a20735d6f6480b5b68e7"
+    )
+    current = json.loads(TRANSPORT_V21_MANIFEST.read_bytes())
     prior = json.loads(V20_MANIFEST.read_bytes())
     assert current["schema"] == "f20-rich-metadata-qualification-candidate-v21"
     rotation = current["authority_rotation"]
@@ -1603,12 +1732,56 @@ def test_v21_binds_transport_sources_without_rescoring_or_new_authority() -> Non
         prior["authority_rotation"]["source_closure"]["current_byte_bindings"]
     )
     assert len(additional) == 3
-    for bindings in (sources, provider["behavior_sources"], additional):
-        for name, digest in bindings.items():
-            assert (
-                hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
-                == digest
-            )
     history = rotation["historical_reader_delta"]
     assert history["measured_sha256"] == prior_sources[history["identity"]]
+    assert history["current_sha256"] == sources[history["identity"]]
+
+
+def test_v22_combines_exact_predecessors_and_exhaustive_current_source_closure() -> None:
+    current = json.loads(LATEST_MANIFEST.read_bytes())
+    primary = json.loads(V21_MANIFEST.read_bytes())
+    transport = json.loads(TRANSPORT_V21_MANIFEST.read_bytes())
+    assert current["schema"] == "f20-rich-metadata-qualification-candidate-v22"
+    rotation = current["authority_rotation"]
+    assert rotation["prior_manifest_sha256"] == hashlib.sha256(V21_MANIFEST.read_bytes()).hexdigest()
+    assert rotation["additional_prior_manifest_path"] == "docs/reference/f20-rich-metadata-qualification-candidate-v21-local-transport.json"
+    assert rotation["additional_prior_manifest_sha256"] == hashlib.sha256(TRANSPORT_V21_MANIFEST.read_bytes()).hexdigest()
+    for field in set(primary) - {"schema", "authority_rotation", "frozen_contract"}:
+        assert current[field] == primary[field]
+    for field in set(primary["frozen_contract"]) - {"behavior_sources"}:
+        assert current["frozen_contract"][field] == primary["frozen_contract"][field]
+    assert current["passing_automatic_options"] == transport["passing_automatic_options"]
+    assert len(current["passing_automatic_options"]) == 13
+    sources = current["frozen_contract"]["behavior_sources"]
+    primary_sources = primary["frozen_contract"]["behavior_sources"]
+    assert len(sources) == 36
+    assert set(sources) == set(primary_sources) == set(transport["frozen_contract"]["behavior_sources"])
+    expected = dict.fromkeys(sources, "unchanged")
+    expected["src/mechanical_librarian/domain/validation.py"] = "transport_admission_addition"
+    expected["src/mechanical_librarian/domain/automatic_decision.py"] = "historical_reader_only"
+    closure = rotation["source_closure"]
+    assert closure["bound_source_classification"] == expected
+    for name, category in expected.items():
+        assert (sources[name] == primary_sources[name]) is (category == "unchanged")
+    assert closure["f20_option_outcomes_changed"] is False
+    assert closure["f20_scoring_inputs_changed"] is False
+    provider = current["provider_contract_source_closure"]
+    projection = current["review_projection_source_closure"]
+    assert len(provider["behavior_sources"]) == 15
+    assert len(projection["behavior_sources"]) == 6
+    for retained in (provider, projection):
+        assert retained["fresh_scoring_run"] is False
+        assert retained["fresh_holdout_claim"] is False
+    additional = closure["current_byte_bindings"]
+    assert len(additional) == 3
+    assert set(additional) == set(primary["authority_rotation"]["source_closure"]["current_byte_bindings"])
+    qualifier = "scripts/qualify_audiobookshelf_field_effect.py"
+    for name, value in additional.items():
+        predecessor = transport if name == qualifier else primary
+        assert value == predecessor["authority_rotation"]["source_closure"]["current_byte_bindings"][name]
+    for bindings in (sources, provider["behavior_sources"], projection["behavior_sources"], additional):
+        for name, digest in bindings.items():
+            assert hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest() == digest
+    history = rotation["historical_reader_delta"]
+    assert history["measured_sha256"] == primary_sources[history["identity"]]
     assert history["current_sha256"] == sources[history["identity"]]

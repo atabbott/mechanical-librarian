@@ -25,6 +25,7 @@
   HTTP, trusted direct HTTPS, or an exact HTTPS proxy. Fresh deployment defaults
   to loopback HTTP. Replace configuration/bootstrap documents with config-v9
   and review-bootstrap-v2; database schemas are unchanged (#844).
+- Library explains provider evidence groups, lookup states, and field-local automatic withholding (#891).
 
 - Audiobook decisions now apply through the existing guarded Audiobookshelf path,
   with narrators joining the write-capable destinations on both media. Because

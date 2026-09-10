@@ -282,6 +282,8 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         bundle_id=None,
     )
     prior_digests = (
+        "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff",
+        "7aeaca9b020022b9ab385a9baf249d1b63dc7ffcfcc4a20735d6f6480b5b68e7",
         "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",
         "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd",
         "47b142cfea8c5d73ed267cb71f85a0edf3ab4b646ad29bba457a1f03b7aa37f2",
@@ -302,6 +304,7 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
         "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
         "a7af724b0711177ff04ff1ae56c8a7db42c1166fe97390c29e60fed506440500",
+        "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd",
     )
     for prior_digest in prior_digests:
         prior_core = {
@@ -566,14 +569,21 @@ def test_qualification_manifest_defers_imprint() -> None:
     "option",
     ["replace_target:provider_consensus_noise", "replace_target:decoration_tidy"],
 )
+@pytest.mark.parametrize(
+    "prior_digest",
+    (
+        "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
+        "62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014",
+    ),
+)
 def test_prior_f19a_v6_title_remains_readable_without_current_authority(
     option: str,
+    prior_digest: str,
 ) -> None:
     decision = AutomaticDecision.from_json(
-        _f19a_title_decision_document(
-            "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6", option
-        )
+        _f19a_title_decision_document(prior_digest, option)
     )
+    assert AutomaticDecision.from_json(decision.to_json()) == decision
     assert not qualification_manifest_is_current(
         decision.policy_category,
         decision.policy_option,
