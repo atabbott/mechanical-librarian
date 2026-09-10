@@ -566,9 +566,11 @@ def test_missing_description_prices_do_not_disable_cover_and_refresh_recovers():
     assert unavailable.description_metadata is None
     assert unavailable.description is not None
     assert unavailable.description.state == "model_unavailable"
+    assert unavailable.model_dump()["description"]["reason"] == "model_unavailable"
     current = operations.read()
     assert current.description is not None
     assert current.description.state == "model_unavailable"
+    assert current.model_dump()["description"]["reason"] == "model_unavailable"
     with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
         operations.dispatch_description_rewrite()
     cover_dispatch = operations.dispatch_cover_observation()

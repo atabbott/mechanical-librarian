@@ -272,7 +272,14 @@ def _server(
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
     description_fixture: Literal[
-        "ready", "needs_review", "failed", "automatic", "no_change"
+        "ready",
+        "needs_review",
+        "failed",
+        "automatic",
+        "no_change",
+        "no_alternatives",
+        "missing_prices",
+        "unavailable_model",
     ]
     | None = None,
     provider_recovery: bool = False,
@@ -623,6 +630,31 @@ def _server(
         report, category, option, _ = _automatic_no_change_inputs(
             "description_preserved"
         )
+        if description_fixture == "no_alternatives":
+            report = MetadataReport.create(
+                target=report.target,
+                file=report.file,
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=tuple(
+                    replace(
+                        provider,
+                        candidates=tuple(
+                            replace(
+                                candidate,
+                                claims=tuple(
+                                    claim
+                                    for claim in candidate.claims
+                                    if claim.kind is not ClaimKind.DESCRIPTION
+                                ),
+                            )
+                            for candidate in provider.candidates
+                        ),
+                    )
+                    for provider in report.providers
+                ),
+                cover_sources=report.cover_sources,
+            )
         decisions = _automatic_decisions(
             SimpleNamespace(repository=repository),
             report,
@@ -635,8 +667,25 @@ def _server(
         )
         case_id = deterministic.review_case_id
         description_profile = b"synthetic-contained-description-profile"
+        description_calls = []
+        unavailable = False
+
+        class DescriptionOpenRouter(_OpenRouter):
+            def run_description(self, *args):
+                pytest.fail("browser metadata fixture dispatched an OpenRouter model")
+
+            def probe_description(self):
+                from mechanical_librarian.application.reviewer_contracts import (
+                    OpenRouterReviewerError,
+                )
+
+                if unavailable and description_fixture == "unavailable_model":
+                    raise OpenRouterReviewerError("model_unavailable")
+                result = super().probe_description()
+                return replace(result, prompt_price=None) if unavailable else result
 
         def description_runner(profile_bytes, instruction, inputs, schema, images):
+            description_calls.append("dispatch")
             assert profile_bytes == description_profile and images == ()
             request = ContainedReviewRequest(
                 instruction.decode(), inputs.decode(), schema.decode()
@@ -675,9 +724,35 @@ def _server(
                 description_profile,
                 description_runner,
             ),
-            openrouter_factory=lambda key, model: _OpenRouter(key, model, []),
+            openrouter_factory=lambda key, model: DescriptionOpenRouter(key, model, []),
         )
-        reviewer_access.select_codex(expected_revision=1, task="description_rewrite")
+        if description_fixture in {"missing_prices", "unavailable_model"}:
+            cover_access = reviewer_access.configure_openrouter(
+                expected_revision=1, api_key="synthetic-key", model="synthetic/cover-a"
+            )
+            description_access = reviewer_access.configure_openrouter(
+                expected_revision=cover_access.revision,
+                api_key="",
+                model="synthetic/description-b",
+                task="description_rewrite",
+            )
+            unavailable = True
+            unavailable_access = reviewer_access.refresh_openrouter(
+                "description_rewrite"
+            )
+            assert unavailable_access.description is not None
+            assert unavailable_access.description.state == "model_unavailable"
+            assert unavailable_access.description.reason == "model_unavailable"
+            assert unavailable_access.description_metadata is None
+            assert unavailable_access.mapping == cover_access.mapping
+            assert unavailable_access.revision == description_access.revision + 1
+            unavailable = (
+                False  # Only a subsequent explicit refresh can recover metadata.
+            )
+        else:
+            reviewer_access.select_codex(
+                expected_revision=1, task="description_rewrite"
+            )
         store = repository.description_advice_store()
         store.bind_identity(
             lambda engine, _model: (
@@ -698,12 +773,24 @@ def _server(
             policy_generation=repository._connection.execute(
                 "SELECT generation FROM metadata_policy_state WHERE singleton=1"
             ).fetchone()[0],
-            access_revision=2,
+            access_revision=reviewer_access.read().revision,
             preferences_digest=description_digest(preferences.model_dump()),
         )
         candidate = DescriptionAdviceService(
             store, reviewer_access, store.current_settings, lambda: 1000
         ).prepare(report, binding, lambda: store.binding_is_current(binding))
+        if description_fixture in {
+            "no_alternatives",
+            "missing_prices",
+            "unavailable_model",
+        }:
+            assert candidate is None and description_calls == []
+            assert repository._connection.execute(
+                "SELECT count(*) FROM description_advice_candidates"
+            ).fetchone() == (0,)
+            assert repository._connection.execute(
+                "SELECT count(*) FROM description_decisions"
+            ).fetchone() == (0,)
         if candidate is not None and description_fixture in {"automatic", "no_change"}:
             selected = store.admit(
                 candidate.candidate_id, binding, "automatic_policy", "e" * 64, 1000
@@ -5265,4 +5352,113 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                         "<strong>Authored text stays text.</strong>", exact=False
                     )
                 ).to_have_count(0)
+            browser.close()
+
+
+@pytest.mark.parametrize(
+    "state", ("no_alternatives", "missing_prices", "unavailable_model")
+)
+def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 390, "height": 844}
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture=state,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field=description"
+                )
+                if state == "no_alternatives":
+                    retained = page.get_by_role(
+                        "region", name="Description recorded outcome"
+                    )
+                    expect(retained).to_contain_text("Resolved automatically")
+                    expect(retained).to_contain_text("Existing description.")
+                else:
+                    expect(
+                        page.get_by_role(
+                            "button", name="Choose current value: Existing description."
+                        )
+                    ).to_be_enabled()
+                expect(
+                    page.get_by_role(
+                        "button", name=re.compile("^Choose advised value:")
+                    )
+                ).to_have_count(0)
+                if state == "no_alternatives":
+                    expect(
+                        page.get_by_role(
+                            "button", name=re.compile("^Choose proposed value:")
+                        )
+                    ).to_have_count(0)
+                    expect(
+                        page.get_by_role("button", name="Retry description advice")
+                    ).to_have_count(0)
+                else:
+                    expect(
+                        page.get_by_role(
+                            "button",
+                            name="Choose proposed value: A qualified description.",
+                        )
+                    ).to_be_enabled()
+                page.goto(f"{origin}/settings?group=reviewer")
+                adviser = page.get_by_role(
+                    "region", name="Optional description adviser", exact=True
+                )
+                if state == "no_alternatives":
+                    expect(adviser).to_contain_text("contained Codex")
+                else:
+                    expect(adviser).to_contain_text("model_unavailable")
+                    expect(adviser).to_contain_text(
+                        "Price and text capability metadata must be available"
+                    )
+                    with page.expect_response(
+                        lambda response: urlparse(response.url).path.endswith(
+                            "/api/v1/reviewer-access/openrouter/refresh"
+                        )
+                    ) as refreshed:
+                        adviser.get_by_role(
+                            "button", name="Refresh description model status and prices"
+                        ).click()
+                    assert refreshed.value.status == 200
+                    expect(adviser).to_contain_text("synthetic/description-b. usable.")
+                    expect(adviser).to_contain_text(
+                        "Prices in USD: 0.000001 per input token"
+                    )
+                    expect(
+                        page.get_by_role("textbox", name="Model ID", exact=True)
+                    ).to_have_attribute("placeholder", "synthetic/cover-a")
+                    with page.expect_response(
+                        lambda response: response.url.endswith(
+                            "/api/v1/reviewer-access/selection"
+                        )
+                    ) as removed:
+                        adviser.get_by_role(
+                            "button", name="Continue without description advice"
+                        ).click()
+                    assert removed.value.status == 200
+                    expect(adviser).to_contain_text("No description adviser selected.")
+                    expect(
+                        page.get_by_role("textbox", name="Model ID", exact=True)
+                    ).to_have_attribute("placeholder", "synthetic/cover-a")
             browser.close()

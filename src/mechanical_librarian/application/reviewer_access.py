@@ -273,6 +273,7 @@ class ReviewerAccessOperations:
                 else ReviewerEngineStatus(
                     engine="openrouter",
                     state="model_unavailable",
+                    reason="model_unavailable",
                     model=selection.model,
                 )
             )
@@ -384,6 +385,11 @@ class ReviewerAccessOperations:
                             else "configured"
                             if document.description_metadata is not None
                             else "model_unavailable"
+                        ),
+                        reason=(
+                            "model_unavailable"
+                            if configured and document.description_metadata is None
+                            else None
                         ),
                         model=document.description_rewrite.model,
                     )
