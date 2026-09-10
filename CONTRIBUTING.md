@@ -63,6 +63,10 @@ artifact evidence and runs the representative installed tier against that exact
 wheel. The testing strategy also documents the independent browser, explicit
 slow, and one-command complete exact-head qualifications.
 
+For platform, permission, locking and runner changes, use the
+[local Linux fast command](docs/development/testing-strategy.md#local-linux-fast-checks)
+or document the omission and actual replacement coverage.
+
 Do not install project tools globally or add unrecorded dependencies. Update
 `pyproject.toml` and regenerate `uv.lock` together when the dependency graph
 changes.

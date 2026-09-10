@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Add an exact-candidate local Linux fast check and an opt-in per-test
+  deadlock deadline, with conditional platform-sensitive qualification (#777).
+
 - Settings now carries a Cover evidence switch for Audible and iTunes, off while
   the provider is off and unchanged for every other source. Setup, Settings and
   the review report's provider label state one canonical name per provider, with
