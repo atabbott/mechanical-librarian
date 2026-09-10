@@ -31,6 +31,7 @@ import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 from typing import cast
 from unittest.mock import patch
@@ -201,6 +202,11 @@ def _require_installed_automatic_series_evidence(
                 sort_keys=True,
             )
         )
+
+
+def _installed_current_case_count(repository, continuous) -> tuple[int, int]:
+    """Observe the exact-current population through the live owner's gate."""
+    return continuous._serialize(partial(repository.count_current_review_cases, None))
 
 
 def _suspend_installed_cover_capability(repository, continuous) -> None:
@@ -1631,17 +1637,21 @@ def _installed_continuous_qualification(
                     for value in retried_state.get("libraries", [])
                     if type(value) is dict
                 ):
-                    failures = repository._connection.execute(
-                        "SELECT stage,failure_code,count(*) FROM review_preparation_work "
-                        "WHERE state='failed' GROUP BY stage,failure_code "
-                        "ORDER BY stage,failure_code"
-                    ).fetchall()
+                    failures = continuous._serialize(
+                        lambda: repository._connection.execute(
+                            "SELECT stage,failure_code,count(*) FROM review_preparation_work "
+                            "WHERE state='failed' GROUP BY stage,failure_code "
+                            "ORDER BY stage,failure_code"
+                        ).fetchall()
+                    )
                     provider_statuses: list[str] = []
-                    for (report_document,) in repository._connection.execute(
-                        "SELECT reports.document FROM review_preparation_work work "
-                        "JOIN metadata_reports reports ON reports.report_id=work.report_id "
-                        "WHERE work.state='failed' AND work.stage='provider'"
-                    ).fetchall():
+                    for (report_document,) in continuous._serialize(
+                        lambda: repository._connection.execute(
+                            "SELECT reports.document FROM review_preparation_work work "
+                            "JOIN metadata_reports reports ON reports.report_id=work.report_id "
+                            "WHERE work.state='failed' AND work.stage='provider'"
+                        ).fetchall()
+                    ):
                         failed_report = MetadataReport.from_json(report_document)
                         for provider in failed_report.providers:
                             provider_statuses.append(
@@ -1919,8 +1929,12 @@ def _installed_continuous_qualification(
                 )
                 if (
                     override.status_code != 200
-                    or repository.field_effect_manual_hold_context(
-                        case_id, automatic_destination
+                    or continuous._serialize(
+                        partial(
+                            repository.field_effect_manual_hold_context,
+                            case_id,
+                            automatic_destination,
+                        )
                     )
                     is None
                 ):
@@ -1931,8 +1945,12 @@ def _installed_continuous_qualification(
                 return_library = _string(
                     target.get("library"), "installed_preparation_invalid"
                 )
-                before_return_progress = repository.review_pipeline_progress(
-                    return_connection, return_library
+                before_return_progress = continuous._serialize(
+                    partial(
+                        repository.review_pipeline_progress,
+                        return_connection,
+                        return_library,
+                    )
                 )
                 if before_return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
@@ -1949,12 +1967,15 @@ def _installed_continuous_qualification(
                     f"{automatic_destination}/return-to-automatic",
                     headers=mutation_headers,
                 )
-                requested_return_progress, return_hold = _read_installed_return_lineage(
-                    repository,
-                    return_connection,
-                    return_library,
-                    case_id,
-                    automatic_destination,
+                requested_return_progress, return_hold = continuous._serialize(
+                    partial(
+                        _read_installed_return_lineage,
+                        repository,
+                        return_connection,
+                        return_library,
+                        case_id,
+                        automatic_destination,
+                    )
                 )
                 if requested_return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
@@ -1988,12 +2009,15 @@ def _installed_continuous_qualification(
                 raise QualificationError("installed_manual_hold_unproved")
             return_deadline = time.monotonic() + 60
             while time.monotonic() < return_deadline:
-                return_progress, return_hold = _read_installed_return_lineage(
-                    repository,
-                    return_connection,
-                    return_library,
-                    case_id,
-                    automatic_destination,
+                return_progress, return_hold = continuous._serialize(
+                    partial(
+                        _read_installed_return_lineage,
+                        repository,
+                        return_connection,
+                        return_library,
+                        case_id,
+                        automatic_destination,
+                    )
                 )
                 if return_progress is None:
                     raise QualificationError("installed_preparation_invalid")
@@ -2041,9 +2065,11 @@ def _installed_continuous_qualification(
             time.sleep(0.5)
             paused_states = {
                 str(state): int(count)
-                for state, count in repository._connection.execute(
-                    "SELECT state,count(*) FROM field_effects GROUP BY state"
-                ).fetchall()
+                for state, count in continuous._serialize(
+                    lambda: repository._connection.execute(
+                        "SELECT state,count(*) FROM field_effects GROUP BY state"
+                    ).fetchall()
+                )
             }
             if not paused_states or set(paused_states) != {"planned"}:
                 raise QualificationError(
@@ -2074,10 +2100,12 @@ def _installed_continuous_qualification(
                         destination: "automatic_policy"
                         for destination in supplemental_automatic
                     }
-                    for (document,) in repository._connection.execute(
-                        "SELECT document FROM field_effects WHERE state='verified' "
-                        "ORDER BY updated_at,plan_id"
-                    ).fetchall():
+                    for (document,) in continuous._serialize(
+                        lambda: repository._connection.execute(
+                            "SELECT document FROM field_effects WHERE state='verified' "
+                            "ORDER BY updated_at,plan_id"
+                        ).fetchall()
+                    ):
                         operation = FieldEffectOperation.from_json(document)
                         decision_origin = operation.plan.authority.origin
                         if (
@@ -2124,17 +2152,23 @@ def _installed_continuous_qualification(
                 for destination, origin in expected_origins.items()
             ):
                 binding_diagnostics = []
-                for document in repository.pending_field_effect_decision_documents(100):
+                for document in continuous._serialize(
+                    partial(repository.pending_field_effect_decision_documents, 100)
+                ):
                     decision = continuous._decision(document)
                     # A decision that refuses to bind is the report, not an
                     # exception that replaces it. Letting one escape here masks
                     # the whole `installed_scheduler_failed` payload.
                     try:
-                        first = continuous._authority.resolve(decision)
+                        first = continuous._serialize(
+                            partial(continuous._authority.resolve, decision)
+                        )
                         application = continuous._applications[
                             (first.connection, first.library)
                         ]
-                        second = application._authority.resolve(decision)
+                        second = continuous._serialize(
+                            partial(application._authority.resolve, decision)
+                        )
                     except FieldEffectError as error:
                         binding_diagnostics.append(
                             {
@@ -2299,10 +2333,11 @@ def _installed_continuous_qualification(
                 )
 
             first_rescan = rescan_all()
-            stable_case_count = repository.count_current_review_cases(None)
+            stable_case_count = _installed_current_case_count(repository, continuous)
             if (
                 rescan_all() != first_rescan
-                or repository.count_current_review_cases(None) != stable_case_count
+                or _installed_current_case_count(repository, continuous)
+                != stable_case_count
             ):
                 raise QualificationError("installed_rescan_not_idempotent")
             drifted = _mapping(
@@ -2338,10 +2373,14 @@ def _installed_continuous_qualification(
                 activity_status=lifecycle_activity.status_code,
                 suspensions=tuple(lifecycle_activity.json().get("suspensions", [])),
                 pending_cleanup_plan_ids=tuple(
-                    repository.pending_field_effect_cleanups(1)
+                    continuous._serialize(
+                        partial(repository.pending_field_effect_cleanups, 1)
+                    )
                 ),
                 event_documents=tuple(
-                    repository.field_effect_event_documents(row["plan_id"])
+                    continuous._serialize(
+                        partial(repository.field_effect_event_documents, row["plan_id"])
+                    )
                     for row in installed_outcomes
                 ),
             )
@@ -2597,7 +2636,9 @@ def _installed_automatic_series_qualification(
                         )
                     decisions = tuple(
                         AutomaticDecision.from_json(document)
-                        for document in repository.get_review_case_decisions(case_id)
+                        for document in continuous._serialize(
+                            partial(repository.get_review_case_decisions, case_id)
+                        )
                         if json.loads(document).get("origin") == "automatic_policy"
                         and json.loads(document).get("destination") == "series"
                     )
@@ -2669,9 +2710,11 @@ def _installed_automatic_series_qualification(
                 while time.monotonic() < deadline:
                     operations = tuple(
                         FieldEffectOperation.from_json(document)
-                        for (document,) in repository._connection.execute(
-                            "SELECT document FROM field_effects WHERE destination='series'"
-                        ).fetchall()
+                        for (document,) in continuous._serialize(
+                            lambda: repository._connection.execute(
+                                "SELECT document FROM field_effects WHERE destination='series'"
+                            ).fetchall()
+                        )
                     )
                     if (
                         len(

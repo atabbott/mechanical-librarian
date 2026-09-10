@@ -108,8 +108,10 @@ def test_series_request_observer_uses_real_configured_secret_file_factory(
     assert requests == ["item"]
 
 
-def test_installed_suspension_uses_the_composed_scheduler_serialization_gate(
+@pytest.mark.parametrize("operation", ("suspend", "count"))
+def test_installed_observation_and_suspension_use_the_composed_scheduler_gate(
     tmp_path: Path,
+    operation: str,
 ) -> None:
     repository = qualification.open_repository(
         tmp_path / "application.sqlite3", cross_thread=True
@@ -127,6 +129,7 @@ def test_installed_suspension_uses_the_composed_scheduler_serialization_gate(
     gate = threading.RLock()
     gate_entered = threading.Event()
     errors: list[BaseException] = []
+    counts: list[tuple[int, int]] = []
 
     def serialized(call: Callable[[], object]) -> object:
         gate_entered.set()
@@ -137,7 +140,14 @@ def test_installed_suspension_uses_the_composed_scheduler_serialization_gate(
 
     def suspend() -> None:
         try:
-            qualification._suspend_installed_cover_capability(repository, continuous)
+            if operation == "suspend":
+                qualification._suspend_installed_cover_capability(
+                    repository, continuous
+                )
+            else:
+                counts.append(
+                    qualification._installed_current_case_count(repository, continuous)
+                )
         except BaseException as error:
             errors.append(error)
 
@@ -149,21 +159,29 @@ def test_installed_suspension_uses_the_composed_scheduler_serialization_gate(
             worker.start()
             try:
                 assert gate_entered.wait(1), (
-                    "fixture mutation bypassed scheduler serialization"
+                    "fixture operation bypassed scheduler serialization"
                 )
                 assert (
                     repository.field_effect_capability_suspension("canary", "cover")
                     is None
                 )
+                assert not counts
                 assert repository._connection.in_transaction
             finally:
                 transaction.commit()
         worker.join(2)
         assert not worker.is_alive()
         assert not errors
-        assert (
-            repository.field_effect_capability_suspension("canary", "cover") is not None
-        )
+        if operation == "suspend":
+            assert (
+                repository.field_effect_capability_suspension("canary", "cover")
+                is not None
+            )
+        else:
+            assert counts == [(0, 0)]
+            assert (
+                repository.field_effect_capability_suspension("canary", "cover") is None
+            )
         assert not repository._connection.in_transaction
     finally:
         worker.join(2)
