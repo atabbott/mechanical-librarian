@@ -14,6 +14,8 @@
   reversal and history. Existing application state requires a clean rebuild
   (#892).
 
+- Correct idle-load qualification to measure an exact 42-minute window and preparation cadence (#917).
+
 - Exact-artifact qualification supports mise's `uv` shim without a PATH
   workaround (#924).
 

@@ -869,7 +869,14 @@ describe('Application shell', () => {
         paused: false,
         libraries: [],
       }
-      const http: ReviewHttp = { ...createHttp(), getPreparation: vi.fn(async () => active) }
+      const preparationReads: number[] = []
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getPreparation: vi.fn(async () => {
+          preparationReads.push(Date.now())
+          return active
+        }),
+      }
       const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
       const router = createApplicationRouter(
         http,
@@ -883,7 +890,10 @@ describe('Application shell', () => {
         </QueryClientProvider>,
       )
       await act(async () => {
-        await vi.advanceTimersByTimeAsync(1)
+        await vi.waitFor(
+          () => expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible(),
+          { interval: 0 },
+        )
       })
       expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
       const before = {
@@ -933,7 +943,14 @@ describe('Application shell', () => {
         before.attention +
         (afterIdle.library - before.library) +
         (afterIdle.preparation - before.preparation)
-      expect(idleRequests).toBeLessThanOrEqual(Math.floor(237 / 10))
+      expect(idleRequests).toBe(20)
+      const idlePreparationReads = preparationReads.slice(before.preparation)
+      expect(idlePreparationReads).toHaveLength(20)
+      expect(
+        idlePreparationReads
+          .slice(1)
+          .map((at, index) => at - (idlePreparationReads[index] ?? Number.NaN)),
+      ).toEqual(Array.from({ length: 19 }, () => 126_000))
       expect(afterIdle).toEqual({ attention: 1, library: 1, preparation: 21 })
 
       visibility = 'hidden'
