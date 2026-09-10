@@ -1,5 +1,9 @@
 # ADR-0030: Use one authenticated Python review web boundary
 
+Transport provisions are superseded by [ADR-0072](0072-explicit-local-transport.md);
+all other provisions remain in force.
+
+
 Status: accepted
 
 ## Context

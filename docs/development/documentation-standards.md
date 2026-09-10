@@ -87,7 +87,7 @@ describes, and nowhere else. What merging proves today:
   in `docs/development/dependencies.md`, no grant outlives the dependency it
   covers, and a grant's own spelled count still matches its subjects;
 - the generated `docs/reference/review-openapi-v1.json` matches the routes, and
-  `docs/reference/config-v8.schema.json` matches the configuration model;
+  `docs/reference/config-v9.schema.json` matches the configuration model;
 - `docs/examples/synthetic-config.json` is executable — the CLI tests load it;
 - `CONTRIBUTING.md`'s check table matches `.github/workflows/public-gate.yml`
   row by row;

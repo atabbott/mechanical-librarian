@@ -58,6 +58,8 @@ def writes(
         create_transport_test_app(
             web.repository,
             ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
                 canonical_origin="https://review.test",
                 owner_password_hash_file=str(web.hash_path),
                 session_lifetime_seconds=600,

@@ -1,0 +1,75 @@
+{
+  "schema_version": "config-v8",
+  "provider_recovery_generation": 1,
+  "connections": [
+    {
+      "name": "secondary",
+      "adapter": "audiobookshelf",
+      "endpoint": "https://secondary.invalid",
+      "secret_file": "/synthetic/secondary.secret"
+    },
+    {
+      "name": "primary",
+      "adapter": "audiobookshelf",
+      "endpoint": "https://primary.invalid",
+      "secret_file": "/synthetic/primary.secret"
+    }
+  ],
+  "libraries": [
+    {
+      "name": "books",
+      "connection": "primary",
+      "library_id": "library-a",
+      "mount": "books",
+      "provider_connections": [
+        "second",
+        "first"
+      ]
+    },
+    {
+      "name": "other",
+      "connection": "secondary",
+      "library_id": "library-b",
+      "mount": "other",
+      "provider_connections": [
+        "first"
+      ]
+    }
+  ],
+  "mounts": [
+    {
+      "name": "other",
+      "container_path": "/media/other",
+      "service_path": "/other",
+      "read_only": true
+    },
+    {
+      "name": "books",
+      "container_path": "/media/books",
+      "service_path": "/books",
+      "read_only": true
+    }
+  ],
+  "providers": [
+    {
+      "name": "second",
+      "adapter": "hardcover",
+      "enabled": false,
+      "cover_enabled": false,
+      "secret_file": null
+    },
+    {
+      "name": "first",
+      "adapter": "hardcover",
+      "enabled": false,
+      "cover_enabled": false,
+      "secret_file": null
+    }
+  ],
+  "review": {
+    "canonical_origin": "https://review.example.invalid",
+    "owner_password_hash_file": "/synthetic/owner.hash",
+    "tls_certificate_file": "/synthetic/review.crt",
+    "tls_private_key_file": "/synthetic/review.key"
+  }
+}

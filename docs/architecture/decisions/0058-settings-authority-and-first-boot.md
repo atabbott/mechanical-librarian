@@ -1,5 +1,9 @@
 # ADR-0058: Make settings-store authority explicit after first boot
 
+Transport provisions are superseded by [ADR-0072](0072-explicit-local-transport.md);
+all other provisions remain in force.
+
+
 - Status: accepted
 - Date: 2026-08-22
 - Owners: project maintainers

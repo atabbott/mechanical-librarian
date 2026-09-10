@@ -1,0 +1,6 @@
+{
+  "schema_version": "review-bootstrap-v2",
+  "canonical_origin": "http://localhost:8080",
+  "trusted_proxy_ips": [],
+  "mounts": []
+}

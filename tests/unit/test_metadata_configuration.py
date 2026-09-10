@@ -26,6 +26,7 @@ from mechanical_librarian.infrastructure.configuration import (
     ConfigurationInput,
     Marketplace,
     configuration_schema_json,
+    load_configuration_document,
     load_configuration_file,
 )
 from mechanical_librarian.infrastructure.security.credentials import (
@@ -43,7 +44,7 @@ _SYNTHETIC_SECRET = str(_SYNTHETIC_ROOT / "provider.secret")
 
 def _source(root: Path) -> dict[str, object]:
     return {
-        "schema_version": "config-v8",
+        "schema_version": "config-v9",
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -322,6 +323,8 @@ def test_owner_session_lifetime_defaults_to_thirty_days_and_rejects_noncanonical
     tmp_path: Path,
 ) -> None:
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.example.invalid",
         owner_password_hash_file=str(tmp_path / "owner.hash"),
     )
@@ -329,6 +332,8 @@ def test_owner_session_lifetime_defaults_to_thirty_days_and_rejects_noncanonical
     for value in (299, 2_592_001, True, 2_592_000.0):
         with pytest.raises(ConfigurationError):
             ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
                 canonical_origin="https://review.example.invalid",
                 owner_password_hash_file=str(tmp_path / "owner.hash"),
                 session_lifetime_seconds=cast(int, value),
@@ -337,6 +342,8 @@ def test_owner_session_lifetime_defaults_to_thirty_days_and_rejects_noncanonical
     for value in (300, 2_592_000):
         assert (
             ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
                 canonical_origin="https://review.example.invalid",
                 owner_password_hash_file=str(tmp_path / "owner.hash"),
                 session_lifetime_seconds=value,
@@ -496,7 +503,7 @@ def _original_schema_version(source: dict[str, object]) -> None:
 
 
 def _previous_schema_version(source: dict[str, object]) -> None:
-    source["schema_version"] = "config-v7"
+    source["schema_version"] = "config-v8"
 
 
 def _enabled_provider_without_a_secret(source: dict[str, object]) -> None:
@@ -549,7 +556,7 @@ def test_multiple_referenced_cover_providers_share_the_bounded_gallery() -> None
 
 def test_generated_schema_is_current() -> None:
     expected = (
-        Path(__file__).parents[2] / "docs" / "reference" / "config-v8.schema.json"
+        Path(__file__).parents[2] / "docs" / "reference" / "config-v9.schema.json"
     ).read_text(encoding="utf-8")
     assert configuration_schema_json() == expected
 
@@ -979,7 +986,7 @@ def test_hardcover_raw_token_is_confined_to_the_exact_graphql_post() -> None:
 
 
 def test_the_audio_ceiling_is_a_default_a_config_document_need_not_carry() -> None:
-    """No schema increment: an older `config-v8` document still validates.
+    """The optional audio ceiling remains optional within current `config-v9`.
 
     `LimitsInput` is closed, so a key added to it would reject every document
     written before it existed had it not carried a default. Both shapes an
@@ -1010,3 +1017,192 @@ def test_the_audio_ceiling_is_a_default_a_config_document_need_not_carry() -> No
             ConfigurationInput.model_validate(
                 {**_source(_SYNTHETIC_ROOT), "limits": {"audio_source_bytes": value}}
             )
+
+
+@pytest.mark.parametrize(
+    ("origin", "identity", "proxies", "valid"),
+    [
+        ("http://review.test", False, (), True),
+        ("https://review.test", True, (), True),
+        ("https://review.test", False, ("127.0.0.1",), True),
+        ("http://review.test", True, (), False),
+        ("https://review.test", False, (), False),
+        ("https://review.test", False, ("127.0.0.1", "127.0.0.1"), False),
+        ("https://review.test", False, ("127.0.0.0/8",), False),
+    ],
+)
+def test_browser_modes_match_domain_json_and_schema(
+    origin: str,
+    identity: bool,
+    proxies: tuple[str, ...],
+    valid: bool,
+) -> None:
+    review = {
+        "canonical_origin": origin,
+        "owner_password_hash_file": "/synthetic/owner.hash",
+        "trusted_proxy_ips": list(proxies),
+        "tls_certificate_file": "/synthetic/review.crt" if identity else None,
+        "tls_private_key_file": "/synthetic/review.key" if identity else None,
+    }
+    source = {**_source(_SYNTHETIC_ROOT), "review": review}
+    if valid:
+        loaded = load_configuration_document(json.dumps(source).encode())
+        assert loaded.review is not None
+        assert loaded.review.canonical_origin == origin
+        assert loaded.review.tls_certificate_file == review["tls_certificate_file"]
+        assert loaded.review.trusted_proxy_ips == proxies
+    else:
+        with pytest.raises(ConfigurationError):
+            load_configuration_document(json.dumps(source).encode())
+    # The generated combinations describe listener modes; IP lexical validation
+    # remains domain-owned, as it was before the transport change.
+    combinations = json.loads(configuration_schema_json())["$defs"]["ReviewInput"][
+        "oneOf"
+    ]
+    assert len(combinations) == 3
+
+
+def test_real_predecessor_configuration_is_rejected_without_mutating_input(
+    tmp_path: Path,
+) -> None:
+    source = (
+        Path(__file__).parents[1] / "support/configuration_predecessors/config-v8.json"
+    )
+    payload = source.read_bytes()
+    path = tmp_path / "config.json"
+    path.write_bytes(payload)
+    path.chmod(0o600)
+    with pytest.raises(ConfigurationError):
+        load_configuration_file(path)
+    assert path.read_bytes() == payload
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://audiobookshelf:80",
+        "http://192.168.1.10:13378",
+        "https://audiobookshelf:443",
+        "http://[::1]:13378",
+    ],
+)
+def test_target_scheme_alone_selects_transport_and_scopes_authorization(
+    origin: str,
+) -> None:
+    from mechanical_librarian.infrastructure.security.credentials import (
+        target_client_token,
+    )
+
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200)
+
+    with target_client_token(origin, "synthetic-token", 5) as client:
+        client._transport = httpx.MockTransport(respond)
+        client.get("/api/libraries")
+        client.get("/api/items/item-1")
+        client.patch("/api/items/item-1/media", json={})
+        client.post("/api/items/item-1")
+        client.get("https://other.invalid/api/items/item-1")
+        assert client.follow_redirects is False
+        assert client.trust_env is False
+    assert [request.headers.get("authorization") for request in requests] == [
+        "Bearer synthetic-token",
+        "Bearer synthetic-token",
+        "Bearer synthetic-token",
+        None,
+        None,
+    ]
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "http://@host",
+        "http://:pass@host",
+        "http://host:bad",
+        "http://host:65536",
+        "http://host:0",
+        "http://host:",
+        "http://bad host",
+        "http://host/path",
+        "http://host?",
+        "http://host#",
+        "http://host\\evil",
+        "http://%65vil",
+        "http://-host",
+        "http://host..test",
+        "ftp://host",
+        "http://[::1",
+    ],
+    ids=[
+        "empty_userinfo",
+        "password",
+        "text_port",
+        "large_port",
+        "zero_port",
+        "empty_port",
+        "space_host",
+        "path",
+        "query",
+        "fragment",
+        "backslash",
+        "percent_host",
+        "leading_hyphen",
+        "empty_label",
+        "scheme",
+        "unclosed_ipv6",
+    ],
+)
+def test_malformed_target_authorities_are_rejected_before_client_creation(
+    origin: str,
+) -> None:
+    from mechanical_librarian.infrastructure.security.credentials import (
+        target_client_token,
+    )
+
+    with pytest.raises(CredentialError, match="target endpoint is invalid"):
+        target_client_token(origin, "synthetic-token", 5)
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "HTTPS://review.test",
+        "HTTP://review.test",
+        "\x00https://review.test",
+        "\x1fhttp://review.test",
+    ],
+)
+def test_noncanonical_scheme_prefixes_cannot_disable_browser_security(
+    origin: str,
+) -> None:
+    from mechanical_librarian.infrastructure.security.credentials import (
+        target_client_token,
+    )
+    from mechanical_librarian.infrastructure.settings_authority import ReviewBootstrap
+
+    review = {**_review(_SYNTHETIC_ROOT), "canonical_origin": origin}
+    with pytest.raises(ConfigurationError):
+        ReviewWebConfiguration(
+            canonical_origin=origin,
+            owner_password_hash_file="/synthetic/owner.hash",
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+        )
+    with pytest.raises(ValueError):
+        ConfigurationInput.model_validate(
+            {**_source(_SYNTHETIC_ROOT), "review": review}
+        )
+    bootstrap = {
+        key: value for key, value in review.items() if key != "owner_password_hash_file"
+    }
+    with pytest.raises(ValueError):
+        ReviewBootstrap.model_validate(
+            {"schema_version": "review-bootstrap-v2", **bootstrap}
+        )
+    with pytest.raises(CredentialError):
+        target_client_token(origin, "synthetic-token", 5)

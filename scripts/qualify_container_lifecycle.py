@@ -22,6 +22,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from functools import partial
 from pathlib import Path
 
 from argon2 import PasswordHasher
@@ -218,11 +219,13 @@ def _verified_context(certificate_pem: str) -> ssl.SSLContext:
     return context
 
 
-def _health(port: int, route: str, deadline: float, context: ssl.SSLContext) -> bool:
+def _health(
+    port: int, route: str, deadline: float, context: ssl.SSLContext | None
+) -> bool:
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(
-                f"https://127.0.0.1:{port}{route}",
+                f"{'https' if context is not None else 'http'}://127.0.0.1:{port}{route}",
                 context=context,
                 timeout=1,
             ) as response:
@@ -331,9 +334,10 @@ def _json_request(
     method: str = "GET",
     payload: dict[str, object] | None = None,
     headers: dict[str, str] | None = None,
+    scheme: str = "https",
 ) -> tuple[int, object]:
     request = urllib.request.Request(
-        f"https://127.0.0.1:{port}{path}",
+        f"{scheme}://127.0.0.1:{port}{path}",
         data=(
             None
             if payload is None
@@ -363,7 +367,10 @@ def _qualify_first_run(
     image: str,
     run_id: str,
     suffix: str,
+    *,
+    scheme: str = "https",
 ) -> dict[str, object]:
+    request_json = partial(_json_request, scheme=scheme)
     data_volume = f"mechanical-librarian-first-run-data-{suffix}"
     secrets_volume = f"mechanical-librarian-first-run-secrets-{suffix}"
     media_volume = f"mechanical-librarian-first-run-media-{suffix}"
@@ -410,10 +417,14 @@ def _qualify_first_run(
             (source / "review-bootstrap.json").write_text(
                 json.dumps(
                     {
-                        "schema_version": "review-bootstrap-v1",
-                        "canonical_origin": "https://review.test",
-                        "tls_certificate_file": "/run/secrets/tls.crt",
-                        "tls_private_key_file": "/run/secrets/tls.key",
+                        "schema_version": "review-bootstrap-v2",
+                        "canonical_origin": f"{scheme}://review.test",
+                        "tls_certificate_file": "/run/secrets/tls.crt"
+                        if scheme == "https"
+                        else None,
+                        "tls_private_key_file": "/run/secrets/tls.key"
+                        if scheme == "https"
+                        else None,
                         "trusted_proxy_ips": [],
                         "mounts": [
                             {
@@ -517,14 +528,14 @@ def _qualify_first_run(
             raise QualificationError("first_run_container_ownership_failed")
         _run(["docker", "start", review])
         port = int(_run(["docker", "port", target, "8443/tcp"]).rsplit(":", 1)[1])
-        context = _verified_context(certificate_pem)
+        context = _verified_context(certificate_pem) if scheme == "https" else None
         if not _health(port, "/health/ready", time.monotonic() + 30, context):
             raise QualificationError("first_run_readiness_failed")
         opener = urllib.request.build_opener(
             urllib.request.HTTPSHandler(context=context),
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
         )
-        status, claim = _json_request(opener, port, "/api/setup/claim")
+        status, claim = request_json(opener, port, "/api/setup/claim")
         if (
             status != 200
             or not isinstance(claim, dict)
@@ -532,7 +543,7 @@ def _qualify_first_run(
         ):
             raise QualificationError("first_run_claim_failed")
         password = "synthetic qualification owner"
-        status, session = _json_request(
+        status, session = request_json(
             opener,
             port,
             "/api/setup/session",
@@ -543,7 +554,7 @@ def _qualify_first_run(
                 "expected_revision": claim["revision"],
             },
             headers={
-                "Origin": "https://review.test",
+                "Origin": f"{scheme}://review.test",
                 "X-Setup-Nonce": str(claim["nonce"]),
             },
         )
@@ -551,7 +562,7 @@ def _qualify_first_run(
             raise QualificationError("first_run_password_failed")
         csrf = str(session["csrf_token"])
         mutation_headers = {
-            "Origin": "https://review.test",
+            "Origin": f"{scheme}://review.test",
             "X-CSRF-Token": csrf,
         }
         steps = (
@@ -568,7 +579,7 @@ def _qualify_first_run(
             ("/api/setup/providers", {"expected_revision": 3, "providers": []}, 4),
         )
         for path, payload, revision in steps:
-            status, result = _json_request(
+            status, result = request_json(
                 opener,
                 port,
                 path,
@@ -582,7 +593,7 @@ def _qualify_first_run(
                 or result.get("revision") != revision
             ):
                 raise QualificationError("first_run_step_failed")
-        status, discovery = _json_request(
+        status, discovery = request_json(
             opener, port, "/api/setup/libraries?expected_revision=4"
         )
         if (
@@ -592,7 +603,7 @@ def _qualify_first_run(
             or len(discovery["libraries"]) != 1
         ):
             raise QualificationError("first_run_discovery_failed")
-        status, result = _json_request(
+        status, result = request_json(
             opener,
             port,
             "/api/setup/libraries",
@@ -613,7 +624,7 @@ def _qualify_first_run(
         )
         if status != 200 or not isinstance(result, dict) or result.get("revision") != 5:
             raise QualificationError("first_run_library_selection_failed")
-        status, mounts = _json_request(
+        status, mounts = request_json(
             opener,
             port,
             "/api/setup/mounts",
@@ -626,26 +637,41 @@ def _qualify_first_run(
         )
         if status != 200 or not isinstance(mounts, dict) or mounts.get("revision") != 6:
             raise QualificationError("first_run_mount_failed")
-        status, _ = _json_request(
+        status, reviewer = request_json(
+            opener,
+            port,
+            "/api/setup/reviewer",
+            method="POST",
+            payload={"expected_revision": 6, "outcome": "skipped"},
+            headers=mutation_headers,
+        )
+        if (
+            status != 200
+            or not isinstance(reviewer, dict)
+            or reviewer.get("revision") != 7
+            or reviewer.get("next_step") != "kick_off"
+        ):
+            raise QualificationError("first_run_reviewer_failed")
+        status, _ = request_json(
             opener,
             port,
             "/api/setup/kick-off",
             method="POST",
-            payload={"expected_revision": 6},
+            payload={"expected_revision": 7},
             headers=mutation_headers,
         )
         if status != 202:
             raise QualificationError("first_run_promotion_failed")
-        status, _ = _json_request(opener, port, "/api/setup/state")
+        status, _ = request_json(opener, port, "/api/setup/state")
         if status != 404:
             raise QualificationError("first_run_setup_routes_open")
         workspace = urllib.request.Request(
-            f"https://127.0.0.1:{port}/library", headers={"Host": "review.test"}
+            f"{scheme}://127.0.0.1:{port}/library", headers={"Host": "review.test"}
         )
         with opener.open(workspace, timeout=5) as response:
             if response.status != 200 or b"review-app" not in response.read(1_048_577):
                 raise QualificationError("first_run_session_handoff_failed")
-        status, settings = _json_request(opener, port, "/api/v1/settings")
+        status, settings = request_json(opener, port, "/api/v1/settings")
         if (
             status != 200
             or not isinstance(settings, dict)
@@ -655,7 +681,7 @@ def _qualify_first_run(
         preparation_advanced = False
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            status, preparation = _json_request(
+            status, preparation = request_json(
                 opener, port, "/api/v1/review-preparation"
             )
             if status == 200 and isinstance(preparation, dict):
@@ -681,18 +707,15 @@ def _qualify_first_run(
             urllib.request.HTTPSHandler(context=context),
             urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
         )
-        status, _ = _json_request(
+        status, _ = request_json(
             restarted,
             port,
             "/api/v1/session/login",
             method="POST",
             payload={"password": password},
-            headers={"Origin": "https://review.test"},
+            headers={"Origin": f"{scheme}://review.test"},
         )
-        if (
-            status != 200
-            or _json_request(restarted, port, "/api/v1/settings")[0] != 200
-        ):
+        if status != 200 or request_json(restarted, port, "/api/v1/settings")[0] != 200:
             raise QualificationError("first_run_durable_restart_failed")
         _clean_stop(review)
         return {
@@ -714,7 +737,7 @@ def _qualify_first_run(
 
 def _configuration() -> dict[str, object]:
     return {
-        "schema_version": "config-v8",
+        "schema_version": "config-v9",
         "provider_recovery_generation": 1,
         "connections": [
             {
@@ -1070,7 +1093,10 @@ def main() -> None:
             second_hash = _sha256(second)
         if first_hash != second_hash:
             raise QualificationError("container_restart_state_changed")
-        first_run = _qualify_first_run(image, run_id, suffix)
+        first_run = {
+            "https": _qualify_first_run(image, run_id, suffix),
+            "http": _qualify_first_run(image, run_id, suffix + "-http", scheme="http"),
+        }
         if (
             _run(["git", "rev-parse", "HEAD"]) != source_sha
             or _run(["git", "status", "--porcelain"])

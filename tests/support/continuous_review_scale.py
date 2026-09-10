@@ -1570,7 +1570,7 @@ class _InstalledQualificationEnvironment:
         config_path.write_text(
             json.dumps(
                 {
-                    "schema_version": "config-v8",
+                    "schema_version": "config-v9",
                     "provider_recovery_generation": 1,
                     "connections": [
                         {

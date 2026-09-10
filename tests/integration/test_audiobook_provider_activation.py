@@ -339,7 +339,10 @@ def _configuration(covers: bool = False) -> ApplicationConfiguration:
         ),
         provider_recovery_generation=1,
         review=ReviewWebConfiguration(
-            "https://review.example.invalid", "/run/owner-password"
+            "https://review.example.invalid",
+            "/run/owner-password",
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
         ),
     )
 

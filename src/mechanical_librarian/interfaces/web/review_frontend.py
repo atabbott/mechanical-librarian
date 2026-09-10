@@ -26,7 +26,7 @@ def login_html() -> str:
     <section class="login-card" aria-labelledby="login-title">
       <p class="eyebrow">Private owner access</p>
       <h1 id="login-title">Review your library with confidence.</h1>
-      <p class="lede">Sign in to inspect exact-current exception cases. Nothing is written to your library from this workspace.</p>
+      <p class="lede">Sign in to inspect exact-current exception cases. Library changes require your write permission and must pass safeguards.</p>
       <form id="login">
         <label for="password">Owner password</label>
         <input id="password" name="password" type="password" autocomplete="current-password" required>
@@ -68,7 +68,7 @@ LOGIN_JS = r"""
     root.dataset.theme = theme;
     toggle.setAttribute('aria-pressed', String(theme === 'dark'));
     label.textContent = theme === 'dark' ? 'Light mode' : 'Dark mode';
-    document.cookie = `ml_theme=${theme}; Path=/; SameSite=Strict; Secure`;
+    document.cookie = `ml_theme=${theme}; Path=/; SameSite=Strict${location.protocol === "https:" ? "; Secure" : ""}`;
     if (announce) status.textContent = `${theme === 'dark' ? 'Dark' : 'Light'} mode enabled`;
   };
   const saved = document.cookie.split('; ').find((part) => part.startsWith('ml_theme='));

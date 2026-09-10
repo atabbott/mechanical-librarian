@@ -913,7 +913,6 @@ def _refresh_preparation_presentation(
         "ORDER BY work.updated_at,presentation.enrollment_ordinal,presentation.ordinal,presentation.work_id",
         (run_id,),
     ).fetchall()
-    observed = [0, 0, 0, 0, 0, 0]
     completion_count = _completion_sequence_count(connection, run_id)
     new_completion_count = sum(
         old_outcome is None
@@ -1007,6 +1006,14 @@ def _refresh_preparation_presentation(
                 row_id,
             ),
         )
+    # Completed enrollments retain their observations without being refreshed
+    # from mutable work. Their passages still belong to this run's totals.
+    observed = [0, 0, 0, 0, 0, 0]
+    for stage, outcome in connection.execute(
+        "SELECT work_stage,work_outcome FROM review_preparation_presentation "
+        "WHERE row_kind='work' AND run_id=?",
+        (run_id,),
+    ):
         rank = _STAGE_ORDER[stage]
         observed[0] += rank >= 1
         observed[1] += rank >= 2

@@ -286,6 +286,8 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
     covers.ensure.return_value = view
     covers.image.return_value = b"\x89PNG\r\n\x1a\nsynthetic"
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -372,6 +374,8 @@ def test_shutdown_timeout_preserves_shared_repository_for_live_worker(
 
     application = _DrainingApplication()
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -394,6 +398,8 @@ def test_shutdown_closes_both_admissions_before_one_shared_deadline(
     web: ReviewWebContext[_CloseRecordingRepository], failing_worker: str
 ) -> None:
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -470,6 +476,8 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
 ) -> None:
     application = FakeActivityApplication()
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -564,6 +572,8 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
     web: ReviewWebContext[_CloseRecordingRepository],
 ) -> None:
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -713,6 +723,8 @@ def test_review_preparation_control_runtime_failures_remain_persistence(
     web: ReviewWebContext[_CloseRecordingRepository], path: str, method: str
 ) -> None:
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -910,6 +922,8 @@ def test_policy_draft_persistence_failure_is_unavailable_not_validation(
             raise RuntimeError("policy draft store is unavailable")
 
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -1984,6 +1998,8 @@ def test_case_detail_reports_write_consent_it_never_asked_the_read_model_for(
         create_transport_test_app(
             web.repository,
             ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
                 canonical_origin="https://review.test",
                 owner_password_hash_file=str(web.hash_path),
                 session_lifetime_seconds=600,

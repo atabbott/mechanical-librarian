@@ -1441,7 +1441,9 @@ class BodyLimitMiddleware:
         maximum_bytes: int,
         decision_maximum_bytes: int,
         path_limits: dict[str, int] | None = None,
+        hsts: bool = True,
     ) -> None:
+        self._hsts = hsts
         self._app = app
         self._maximum_bytes = maximum_bytes
         self._decision_maximum_bytes = decision_maximum_bytes
@@ -1497,10 +1499,12 @@ class BodyLimitMiddleware:
         if declared is not None:
             try:
                 if int(declared) > maximum:
-                    await _oversized_body_response(scope, receive, send)
+                    await _oversized_body_response(
+                        scope, receive, send, hsts=self._hsts
+                    )
                     return
             except ValueError:
-                await _oversized_body_response(scope, receive, send)
+                await _oversized_body_response(scope, receive, send, hsts=self._hsts)
                 return
         messages: list[Message] = []
         size = 0
@@ -1512,7 +1516,7 @@ class BodyLimitMiddleware:
                 return
             size += len(message.get("body", b""))
             if size > maximum:
-                await _oversized_body_response(scope, receive, send)
+                await _oversized_body_response(scope, receive, send, hsts=self._hsts)
                 return
             if not message.get("more_body", False):
                 break
@@ -1528,9 +1532,11 @@ def _replay(messages: list[Message]) -> Receive:
     return receive
 
 
-async def _oversized_body_response(scope: Scope, receive: Receive, send: Send) -> None:
+async def _oversized_body_response(
+    scope: Scope, receive: Receive, send: Send, *, hsts: bool
+) -> None:
     response = _error(413, "body_too_large")
-    _set_security_headers(response, hsts=True)
+    _set_security_headers(response, hsts=hsts)
     await response(scope, receive, send)
 
 
@@ -1593,6 +1599,7 @@ def create_review_app(
         BodyLimitMiddleware,
         maximum_bytes=2048,
         decision_maximum_bytes=8192,
+        hsts=origin.scheme == "https",
         path_limits={
             "/api/v1/review-preparation/dismiss": 2048,
             "/api/v1/reviewer-access/openrouter/refresh": 2048,
@@ -1617,13 +1624,21 @@ def create_review_app(
         # a request the router sent to a mutating API route
         # (GHSA-86qp-5c8j-p5mr). Routing itself dispatches on the scope path.
         if request.scope["path"] not in {"/health/live", "/health/ready"}:
-            if not _request_matches_origin(request, configuration):
-                return _secured_error(400, "invalid_origin")
+            if not _request_matches_origin(
+                request,
+                configuration.canonical_origin,
+                configuration.trusted_proxy_ips,
+                require_forwarding=origin.scheme == "https"
+                and configuration.tls_certificate_file is None,
+            ):
+                return _secured_error(
+                    400, "invalid_origin", hsts=origin.scheme == "https"
+                )
             if (
                 request.method not in {"GET", "HEAD", "OPTIONS"}
                 and request.headers.get("origin") != configuration.canonical_origin
             ):
-                return _secured_error(403, "origin")
+                return _secured_error(403, "origin", hsts=origin.scheme == "https")
         response = await call_next(request)
         _set_security_headers(response, hsts=origin.scheme == "https")
         return response
@@ -2158,7 +2173,7 @@ def _register_session_and_operations_routes(
             _COOKIE_NAME,
             tokens.session_token,
             httponly=True,
-            secure=True,
+            secure=configuration.canonical_origin.startswith("https://"),
             samesite="strict",
             max_age=configuration.session_lifetime_seconds,
             path="/",
@@ -2192,7 +2207,11 @@ def _register_session_and_operations_routes(
             }.get(error.code, 503)
             raise HTTPException(status, detail={"code": error.code}) from None
         response.delete_cookie(
-            _COOKIE_NAME, path="/", secure=True, httponly=True, samesite="strict"
+            _COOKIE_NAME,
+            path="/",
+            secure=configuration.canonical_origin.startswith("https://"),
+            httponly=True,
+            samesite="strict",
         )
         response.status_code = 204
         return response
@@ -3537,25 +3556,33 @@ def owner_password_binding(
 
 
 def _request_matches_origin(
-    request: Request, configuration: ReviewWebConfiguration
+    request: Request,
+    canonical_origin: str,
+    trusted_proxy_ips: tuple[str, ...],
+    *,
+    require_forwarding: bool,
 ) -> bool:
-    host = request.headers.get("host", "")
-    scheme = request.url.scheme
-    forwarded_host = request.headers.get("x-forwarded-host")
-    forwarded_proto = request.headers.get("x-forwarded-proto")
-    peer = None if request.client is None else request.client.host
-    if peer in configuration.trusted_proxy_ips:
-        if forwarded_host is not None:
-            if "," in forwarded_host:
-                return False
-            host = forwarded_host
-        if forwarded_proto is not None:
-            if forwarded_proto not in {"http", "https"}:
-                return False
-            scheme = forwarded_proto
-    elif forwarded_host is not None or forwarded_proto is not None:
+    headers = request.headers
+    if len(headers.getlist("host")) != 1 or headers.getlist("forwarded"):
         return False
-    expected = urlsplit(configuration.canonical_origin)
+    host = headers["host"]
+    scheme = request.url.scheme
+    forwarded_hosts = headers.getlist("x-forwarded-host")
+    forwarded_protos = headers.getlist("x-forwarded-proto")
+    if forwarded_hosts or forwarded_protos:
+        peer = None if request.client is None else request.client.host
+        if (
+            peer not in trusted_proxy_ips
+            or len(forwarded_hosts) != 1
+            or len(forwarded_protos) != 1
+            or "," in forwarded_hosts[0]
+            or forwarded_protos[0] not in {"http", "https"}
+        ):
+            return False
+        host, scheme = forwarded_hosts[0], forwarded_protos[0]
+    elif require_forwarding:
+        return False
+    expected = urlsplit(canonical_origin)
     return scheme == expected.scheme and host == expected.netloc
 
 
@@ -3642,9 +3669,9 @@ def _error(
     )
 
 
-def _secured_error(status_code: int, code: str) -> JSONResponse:
+def _secured_error(status_code: int, code: str, *, hsts: bool) -> JSONResponse:
     response = _error(status_code, code)
-    _set_security_headers(response, hsts=True)
+    _set_security_headers(response, hsts=hsts)
     return response
 
 

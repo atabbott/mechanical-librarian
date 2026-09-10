@@ -74,6 +74,7 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 from mechanical_librarian.interfaces.web.app import owner_password_binding
 from tests.support.review_web_doubles import (
+    FakeActivityApplication,
     FakeReviewRepository,
     ReviewWebContext,
     review_web_context,
@@ -129,6 +130,8 @@ def test_settings_file_authority_transport_is_private_and_locked(
         create_transport_test_app(
             web.repository,
             ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
                 canonical_origin="https://review.test",
                 owner_password_hash_file=str(web.hash_path),
             ),
@@ -214,6 +217,8 @@ def test_settings_store_transport_redacts_secret_and_derives_effects(
         create_transport_test_app(
             web.repository,
             ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
                 canonical_origin="https://review.test",
                 owner_password_hash_file=str(web.hash_path),
             ),
@@ -391,6 +396,8 @@ def test_operational_status_and_support_are_authenticated_bounded_surfaces(
         ]
     }
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -596,6 +603,47 @@ def test_activity_transition_transport_rejects_malformed_ids_and_guards_persiste
         assert unavailable.status_code == 503
         assert unavailable.json()["error"]["code"] == "persistence"
         transitions.assert_called_once_with(valid_id, 7)
+
+
+def test_seeded_activity_details_retain_real_transitions(
+    web: ReviewWebContext[FakeReviewRepository],
+) -> None:
+    configuration = ReviewWebConfiguration(
+        canonical_origin="http://review.test",
+        owner_password_hash_file=str(web.hash_path),
+    )
+    with TestClient(
+        create_transport_test_app(
+            web.repository, configuration, field_application=FakeActivityApplication()
+        ),
+        base_url="http://review.test",
+    ) as client:
+        assert (
+            client.post(
+                "/api/v1/session/login",
+                json={"password": "correct horse"},
+                headers={"Origin": "http://review.test"},
+            ).status_code
+            == 200
+        )
+        events = client.get("/api/v1/activity").json()["events"]
+        event = next(
+            item
+            for item in events
+            if item["state"] == "stale" and item["destination"] == "title"
+        )
+        path = f"/api/v1/activity/{event['transition_id']}/transitions"
+        response = client.get(path)
+        assert response.status_code == 200
+        transitions = response.json()
+        assert [
+            (item["state"], item["sequence"]) for item in transitions["events"]
+        ] == [("planned", 1), ("stale", 2)]
+        assert transitions["has_more"] is False
+        assert (
+            client.get(path, params={"after_sequence": 1}).json()["events"]
+            == (transitions["events"][1:])
+        )
 
 
 def test_host_header_cannot_relabel_a_routed_path_as_a_health_probe(
@@ -1013,6 +1061,8 @@ def test_one_explicit_decision_requires_csrf_and_is_server_authoritative(
         enabled=True,
     )
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
         session_lifetime_seconds=600,
@@ -1983,6 +2033,8 @@ def test_argon2i_hash_file_is_rejected(
     )
     os.chmod(web.hash_path, 0o600)
     configuration = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
         canonical_origin="https://review.test",
         owner_password_hash_file=str(web.hash_path),
     )
@@ -2202,6 +2254,8 @@ def test_first_boot_acknowledgement_is_authenticated_csrf_bound_and_durable(
     app = create_transport_test_app(
         web.repository,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(web.hash_path),
         ),
@@ -2228,3 +2282,161 @@ def test_first_boot_acknowledgement_is_authenticated_csrf_bound_and_durable(
     assert acknowledged.status_code == 200, acknowledged.text
     assert acknowledged.json()["first_boot"] is False
     assert acknowledgements == ["acknowledged"]
+
+
+@pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
+def test_browser_transport_cookie_hsts_and_session_contract(mode: str) -> None:
+    context = review_web_context(FakeReviewRepository, mode=mode)
+    web = next(context)
+    try:
+        secure = mode != "http"
+        for path, status in [
+            ("/login", 200),
+            ("/api/v1/library", 401),
+            ("/health/ready", 200),
+        ]:
+            response = web.client.get(path)
+            assert response.status_code == status
+            assert ("strict-transport-security" in response.headers) is secure
+        response = web.client.post(
+            "/api/v1/session/login",
+            headers=web.origin,
+            json={"password": "correct horse"},
+        )
+        assert response.status_code == 200
+        cookie = response.headers["set-cookie"]
+        assert ("; Secure" in cookie) is secure
+        assert (
+            "HttpOnly" in cookie and "SameSite=strict" in cookie and "Path=/" in cookie
+        )
+        assert "Max-Age=600" in cookie
+        # A real TLS proxy forwards this Secure cookie to its HTTP backend.
+        web.client.headers["cookie"] = cookie.split(";", 1)[0]
+        web.client.headers["x-ml-build-identity"] = TEST_REACT_BUILD_IDENTITY
+        assert web.client.get("/api/v1/library").status_code == 200
+        logout = web.client.post(
+            "/api/v1/session/logout",
+            headers={**web.origin, "x-csrf-token": response.json()["csrf_token"]},
+        )
+        assert logout.status_code == 204
+        assert ("; Secure" in logout.headers["set-cookie"]) is secure
+        assert "Max-Age=0" in logout.headers["set-cookie"]
+        assert web.client.get("/api/v1/library").status_code == 401
+    finally:
+        context.close()
+        web.close()
+
+
+@pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
+@pytest.mark.parametrize(
+    "failure", ["host", "origin", "validation", "declared", "streamed"]
+)
+def test_browser_transport_hsts_in_early_failures(mode: str, failure: str) -> None:
+    context = review_web_context(FakeReviewRepository, mode=mode)
+    web = next(context)
+    try:
+        headers = dict(web.origin)
+        if failure == "host":
+            headers["host"] = "wrong.invalid"
+            if mode == "proxy":
+                headers["x-forwarded-host"] = "wrong.invalid"
+        if failure == "origin":
+            headers["Origin"] = "https://wrong.invalid"
+        if failure == "declared":
+            headers["content-length"] = "999999"
+        if failure == "streamed":
+            response = web.client.post(
+                "/api/v1/session/login", headers=headers, content=iter([b"x" * 2049])
+            )
+        else:
+            response = web.client.post(
+                "/api/v1/session/login", headers=headers, json={}
+            )
+        assert (
+            response.status_code
+            == {
+                "host": 400,
+                "origin": 403,
+                "validation": 422,
+                "declared": 413,
+                "streamed": 413,
+            }[failure]
+        )
+        assert ("strict-transport-security" in response.headers) is (mode != "http")
+        assert response.headers["x-frame-options"] == "DENY"
+    finally:
+        context.close()
+        web.close()
+
+
+@pytest.mark.parametrize("peer", ["127.0.0.1", "192.0.2.1", None])
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [("host", "review.test")],
+        [("host", "review.test"), ("x-forwarded-host", "review.test")],
+        [("host", "review.test"), ("x-forwarded-proto", "https")],
+        [
+            ("host", "review.test"),
+            ("x-forwarded-host", "review.test"),
+            ("x-forwarded-proto", "https"),
+        ],
+        [
+            ("host", "review.test"),
+            ("host", "review.test"),
+            ("x-forwarded-host", "review.test"),
+            ("x-forwarded-proto", "https"),
+        ],
+        [
+            ("host", "review.test"),
+            ("x-forwarded-host", "review.test"),
+            ("x-forwarded-host", "review.test"),
+            ("x-forwarded-proto", "https"),
+        ],
+        [
+            ("host", "review.test"),
+            ("x-forwarded-host", "review.test"),
+            ("x-forwarded-proto", "https"),
+            ("x-forwarded-proto", "https"),
+        ],
+        [
+            ("host", "review.test"),
+            ("x-forwarded-host", "review.test,other"),
+            ("x-forwarded-proto", "https"),
+        ],
+        [
+            ("host", "review.test"),
+            ("x-forwarded-host", "review.test"),
+            ("x-forwarded-proto", "https"),
+            ("forwarded", "proto=https"),
+        ],
+    ],
+)
+def test_raw_proxy_admission_is_exact(
+    peer: str | None, headers: list[tuple[str, str]]
+) -> None:
+    from starlette.requests import Request
+
+    from mechanical_librarian.interfaces.web.app import _request_matches_origin
+
+    request = Request(
+        {
+            "type": "http",
+            "scheme": "http",
+            "path": "/login",
+            "headers": [(k.encode(), v.encode()) for k, v in headers],
+            "client": None if peer is None else (peer, 12345),
+            "server": ("review.test", 80),
+        }
+    )
+    expected = peer == "127.0.0.1" and headers == [
+        ("host", "review.test"),
+        ("x-forwarded-host", "review.test"),
+        ("x-forwarded-proto", "https"),
+    ]
+    assert (
+        _request_matches_origin(
+            request, "https://review.test", ("127.0.0.1",), require_forwarding=True
+        )
+        is expected
+    )

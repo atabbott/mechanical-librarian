@@ -27,13 +27,15 @@ NOT_HTTP = b"nothing resembling a status line\r\n\r\n"
 
 @contextlib.contextmanager
 def _server(
-    certificate: Path, private_key: Path, response: bytes
+    certificate: Path | None, private_key: Path | None, response: bytes
 ) -> Iterator[tuple[int, list[bytes]]]:
     """One TLS responder that answers a single request with fixed bytes."""
 
     received: list[bytes] = []
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.load_cert_chain(str(certificate), str(private_key))
+    context = None
+    if certificate is not None:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(certificate), str(private_key))
     listener = socket.socket()
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
@@ -43,7 +45,11 @@ def _server(
     def serve() -> None:
         try:
             raw, _ = listener.accept()
-            with context.wrap_socket(raw, server_side=True) as stream:
+            with (
+                context.wrap_socket(raw, server_side=True)
+                if context is not None
+                else raw
+            ) as stream:
                 received.append(stream.recv(4096))
                 stream.sendall(response)
         except OSError:
@@ -78,7 +84,7 @@ def _configuration(
     config.write_text(
         json.dumps(
             {
-                "schema_version": "config-v8",
+                "schema_version": "config-v9",
                 "provider_recovery_generation": 1,
                 "connections": [
                     {
@@ -232,3 +238,40 @@ def test_the_probe_targets_the_surface_the_entrypoint_actually_serves() -> None:
     # the probe is inside that container and stays on loopback.
     assert container.HOST == "0.0.0.0"
     assert container_health.HOST == "127.0.0.1"
+
+
+@pytest.mark.parametrize("authority", ["file", "bootstrap"])
+@pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
+@pytest.mark.parametrize(
+    ("response", "expected"),
+    [(READY, HEALTHY), (DRAINING, "not_ready_503"), (NOT_HTTP, "malformed_response")],
+)
+def test_readiness_selects_actual_listener_transport(
+    tmp_path: Path, authority: str, mode: str, response: bytes, expected: str
+) -> None:
+    certificate, key = synthetic_tls_identity(tmp_path)
+    direct = mode == "direct"
+    with _server(
+        certificate if direct else None, key if direct else None, response
+    ) as (port, received):
+        origin = f"{'http' if mode == 'http' else 'https'}://127.0.0.1:{port}"
+        config = _configuration(tmp_path, origin, certificate, key)
+        source = json.loads(config.read_bytes())
+        review = source["review"]
+        if not direct:
+            review["tls_certificate_file"] = None
+            review["tls_private_key_file"] = None
+        review["trusted_proxy_ips"] = ["127.0.0.1"] if mode == "proxy" else []
+        bootstrap = tmp_path / "bootstrap.json"
+        if authority == "bootstrap":
+            config.unlink()
+            review.pop("owner_password_hash_file")
+            bootstrap.write_text(
+                json.dumps({"schema_version": "review-bootstrap-v2", **review})
+            )
+            bootstrap.chmod(0o600)
+        else:
+            config.write_text(json.dumps(source))
+        assert check(config, bootstrap_path=bootstrap, port=port) == expected
+    assert len(received) == 1
+    assert b"Authorization" not in received[0] and b"Cookie" not in received[0]

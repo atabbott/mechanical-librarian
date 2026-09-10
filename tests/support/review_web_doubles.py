@@ -935,6 +935,11 @@ class FakeActivityApplication(ContinuousGuardedApplication):
             },
         }
 
+    def activity_transitions(
+        self, event_id: str, after_sequence: int | None = None
+    ) -> dict[str, object]:
+        return _seeded_projection().activity_transitions(event_id, after_sequence)
+
     def enable(self, grants):
         self.enabled_libraries.update(library for library, _ in grants)
         return self.activity()
@@ -998,6 +1003,8 @@ class ReviewWebContext(Generic[RepositoryT]):
 
 def review_web_context(
     repository_factory: Callable[[ReviewCase, MetadataReport], RepositoryT],
+    *,
+    mode: str = "direct",
 ) -> Iterator[ReviewWebContext[RepositoryT]]:
     """Yield one signed-out transport application over `repository_factory`."""
 
@@ -1008,8 +1015,12 @@ def review_web_context(
     report = _report()
     case = ReviewCase.create(evaluate_report(report), report)
     repository = repository_factory(case, report)
+    origin = "http://review.test" if mode == "http" else "https://review.test"
     configuration = ReviewWebConfiguration(
-        canonical_origin="https://review.test",
+        tls_certificate_file="/synthetic/review.crt" if mode == "direct" else None,
+        tls_private_key_file="/synthetic/review.key" if mode == "direct" else None,
+        trusted_proxy_ips=("127.0.0.1",) if mode == "proxy" else (),
+        canonical_origin=origin,
         owner_password_hash_file=str(hash_path),
         session_lifetime_seconds=600,
     )
@@ -1018,7 +1029,11 @@ def review_web_context(
     context: ReviewWebContext[RepositoryT]
     client = TestClient(
         create_transport_test_app(repository, configuration, clock=lambda: context.now),
-        base_url="https://review.test",
+        base_url="http://review.test" if mode == "proxy" else origin,
+        client=("127.0.0.1", 12345),
+        headers={"x-forwarded-host": "review.test", "x-forwarded-proto": "https"}
+        if mode == "proxy"
+        else {},
     )
     context = ReviewWebContext(
         temporary=temporary,
@@ -1027,7 +1042,7 @@ def review_web_context(
         repository=repository,
         now=1_000,
         client=client,
-        origin={"Origin": "https://review.test"},
+        origin={"Origin": origin},
         cleanup=ExitStack(),
     )
     yield context

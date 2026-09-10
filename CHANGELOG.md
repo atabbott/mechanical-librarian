@@ -8,6 +8,24 @@
 
 ## Unreleased
 
+- Automatic rich-metadata decisions now bind the local-transport qualification.
+  Earlier qualification decisions remain readable but cannot authorize new
+  effects; qualified options and scoring are unchanged (#844).
+
+- Preparation totals retain completed libraries while another library finishes,
+  keeping multi-library workspaces valid across restart (#844).
+
+- Rediscovering unchanged completed work keeps preparation valid for Activity
+  and restart without repeating inspection (#844).
+
+- Restarting an idle workspace preserves its application database bytes by
+  avoiding an empty preparation cleanup write (#844).
+
+- Connect to HTTP Audiobookshelf origins and use the owner workspace over local
+  HTTP, trusted direct HTTPS, or an exact HTTPS proxy. Fresh deployment defaults
+  to loopback HTTP. Replace configuration/bootstrap documents with config-v9
+  and review-bootstrap-v2; database schemas are unchanged (#844).
+
 - Clarify current publication candidate sufficiency and its separate owner-action and automatic-authority limits (#1003).
 
 - Library explains provider evidence groups, lookup states, and field-local automatic withholding (#891).

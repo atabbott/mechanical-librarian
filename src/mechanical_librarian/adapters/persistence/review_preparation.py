@@ -49,6 +49,7 @@ from typing import cast
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     record_preparation_names,
+    refresh_preparation_presentation,
     refresh_preparation_run_state,
     refresh_preparation_work,
 )
@@ -797,6 +798,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             record_preparation_names(
                 self._connection, action.scan_id, selected, completed_at
             )
+            refresh_preparation_presentation(self._connection, completed_at)
             transaction.commit()
             return
         except BaseException as error:

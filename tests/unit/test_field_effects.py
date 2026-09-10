@@ -9,6 +9,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable
+from contextlib import closing
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -2349,6 +2350,8 @@ def test_apply_maps_a_faulted_currentness_database_instead_of_escaping(
     app = create_transport_test_app(
         effects.repository,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -2563,6 +2566,9 @@ def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
 @pytest.mark.parametrize(
     "prior_digest",
     (
+        "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff",
+        "7aeaca9b020022b9ab385a9baf249d1b63dc7ffcfcc4a20735d6f6480b5b68e7",
+        "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",
         "99ba8426ee53e4d31e52ecf0f65a0fce4eb237d3e5acef42e4ee17217b57dae9",
         "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
         "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
@@ -3972,6 +3978,8 @@ def test_authenticated_api_uses_the_same_service_and_blocks_anonymous_mutation(
     app = create_transport_test_app(
         effects.repository,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -4016,6 +4024,8 @@ def test_web_maps_permanent_refusals_to_conflict_and_outages_to_unavailable(
     app = create_transport_test_app(
         effects.repository,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -4094,6 +4104,8 @@ def test_web_pause_and_resume_bound_persistence_failures(
     app = create_transport_test_app(
         failing,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -4154,6 +4166,8 @@ def test_web_field_effect_and_review_reads_share_one_repository_lock(
     app = create_transport_test_app(
         blocking,
         ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
             canonical_origin="https://review.test",
             owner_password_hash_file=str(password),
             session_lifetime_seconds=600,
@@ -4297,6 +4311,22 @@ def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
         reader_a._connection.execute("SELECT 1 FROM field_effects LIMIT 1").fetchone()
         writer.start()
         assert writer_ready.wait(1)
+        # Readiness precedes COMMIT: prove the writer has reached PENDING,
+        # where a new reader is refused, before timing the Activity read.
+        with closing(
+            sqlite3.connect(effects.database_path, timeout=0, isolation_level=None)
+        ) as probe:
+            deadline = time.monotonic() + 1
+            while True:
+                try:
+                    with closing(
+                        probe.execute("SELECT 1 FROM field_effects LIMIT 1")
+                    ) as cursor:
+                        cursor.fetchone()
+                except sqlite3.OperationalError as error:
+                    assert error.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                    break
+                assert time.monotonic() < deadline
         started = time.monotonic()
         with pytest.raises(FieldEffectError, match="^persistence$") as raised:
             reader_c.field_effect_activity_page(

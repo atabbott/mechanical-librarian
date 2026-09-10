@@ -11,7 +11,7 @@ migration, conversion, import, repair, or downgrade is supplied by #872, #873,
 
 The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
-vocabularies, so no predecessor is parsed or adopted: supply a `config-v8`
+vocabularies, so no predecessor is parsed or adopted: supply a `config-v9`
 document and rebuild an absent application database through first-run setup.
 No migration is supplied.
 
@@ -124,3 +124,10 @@ is its clean rebuild and signs the owner out.
 Post-release migration and restore policy remains deferred to #57. Nothing in
 this pre-release rebuild contract grants generic migration, retention, pruning,
 purge, or repair authority.
+
+
+#844 requires explicit replacement of `config-v8` and `review-bootstrap-v1`
+with `config-v9` and `review-bootstrap-v2`: clean rebuild required for these
+configuration documents only. No conversion or adoption is supplied. This
+transport change does not advance database, owner-settings, setup, session,
+report, or API schemas; earlier independent rebuild requirements still apply.

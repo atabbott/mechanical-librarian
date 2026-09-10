@@ -27,8 +27,10 @@ This module imports nothing from the project, so any layer may depend on it.
 from __future__ import annotations
 
 from collections.abc import Callable
-from re import Pattern
+from ipaddress import ip_address
+from re import Pattern, fullmatch
 from typing import cast
+from urllib.parse import urlsplit
 
 FieldCheck = Callable[[object], bool]
 
@@ -145,3 +147,39 @@ def closed_document(*unconstrained: str, **schema: FieldCheck) -> FieldCheck:
         )
 
     return check
+
+
+def http_origin(value: object) -> bool:
+    """An explicit HTTP(S) authority without credentials or URL components."""
+    if (
+        type(value) is not str
+        or not 1 <= len(value) <= 2048
+        or not value.startswith(("http://", "https://"))
+    ):
+        return False
+    try:
+        origin = urlsplit(value)
+        host = origin.hostname
+        if (
+            origin.scheme not in {"http", "https"}
+            or not host
+            or origin.username is not None
+            or origin.password is not None
+            or origin.path not in {"", "/"}
+            or "?" in value
+            or "#" in value
+            or origin.port == 0
+            or origin.netloc.endswith(":")
+            or any(character.isspace() for character in value)
+            or "\\" in value
+        ):
+            return False
+        if ":" in host:
+            return ip_address(host).version == 6 and "%" not in host
+        return len(host) <= 253 and all(
+            fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
+            is not None
+            for label in host.split(".")
+        )
+    except ValueError:
+        return False

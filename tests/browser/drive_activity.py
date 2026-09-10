@@ -53,7 +53,10 @@ def main() -> None:
         app = create_transport_test_app(
             repository,
             ReviewWebConfiguration(
-                canonical_origin=origin, owner_password_hash_file=str(hash_path)
+                tls_certificate_file=str(certificate),
+                tls_private_key_file=str(key),
+                canonical_origin=origin,
+                owner_password_hash_file=str(hash_path),
             ),
             clock=lambda: 1_000,
             close_repository=True,

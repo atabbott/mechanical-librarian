@@ -11,7 +11,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -81,6 +81,7 @@ from tests.support.audiobook_reports import admitted_audiobook_report
 from tests.support.metadata_report_doubles import audio_result
 from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
+from tests.support.review_proxy import review_tls_proxy
 from tests.support.review_web_doubles import FakeActivityApplication
 from tests.unit.review_app_fixture import create_transport_test_app
 from tests.unit.test_bibliographic_bundles import (
@@ -263,6 +264,7 @@ def _server(
     certificate: Path,
     key: Path,
     port: ReservedPort,
+    transport_mode: str = "direct",
     cover: bool = False,
     sole_cover_timeout: bool = False,
     stale_cover_successor: bool = False,
@@ -552,7 +554,14 @@ def _server(
         _publish_audiobook(repository)
     if audiobook_case:
         _publish_audiobook_case(repository)
-    origin = f"https://127.0.0.1:{port.number}"
+    origin = (
+        f"http://review-transport.test:{port.number}"
+        if transport_mode == "insecure"
+        else f"http://127.0.0.1:{port.number}"
+        if transport_mode == "http"
+        else f"https://127.0.0.1:{port.number}"
+    )
+    listener_port = ReservedPort() if transport_mode == "proxy" else port
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
     )
@@ -572,6 +581,11 @@ def _server(
     app = create_transport_test_app(
         repository,
         ReviewWebConfiguration(
+            tls_certificate_file=str(certificate)
+            if transport_mode == "direct"
+            else None,
+            tls_private_key_file=str(key) if transport_mode == "direct" else None,
+            trusted_proxy_ips=("127.0.0.1",) if transport_mode == "proxy" else (),
             canonical_origin=origin,
             owner_password_hash_file=str(hash_path),
         ),
@@ -653,11 +667,12 @@ def _server(
         uvicorn.Config(
             app,
             host="127.0.0.1",
-            port=port.number,
+            port=listener_port.number,
             log_level="error",
             access_log=False,
-            ssl_certfile=str(certificate),
-            ssl_keyfile=str(key),
+            ssl_certfile=str(certificate) if transport_mode == "direct" else None,
+            ssl_keyfile=str(key) if transport_mode == "direct" else None,
+            proxy_headers=False,
             # Longer than any idle gap a test in this module leaves between
             # requests on one connection, with room to spare. The longest is
             # the 5,500 ms `page.wait_for_timeout` that proves the activity
@@ -684,7 +699,7 @@ def _server(
     # still held. It is given up here because uvicorn binds it inside
     # `server.run`, and two live binds on one loopback port is what the
     # operating system exists to refuse.
-    port.release()
+    listener_port.release()
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
     deadline = time.monotonic() + 10
@@ -693,7 +708,18 @@ def _server(
     if not server.started:
         raise RuntimeError("synthetic review server did not start")
     try:
-        yield origin, str(case_id)
+        with (
+            review_tls_proxy(
+                f"http://127.0.0.1:{listener_port.number}",
+                origin,
+                port,
+                certificate,
+                key,
+            )
+            if transport_mode == "proxy"
+            else nullcontext()
+        ):
+            yield origin, str(case_id)
     finally:
         server.should_exit = True
         thread.join(timeout=5)
@@ -723,7 +749,10 @@ def _setup_asset_server(
                 bootstrap_verifier_digest="0" * 64,
             )
 
-    app = create_setup_app(cast(Any, object()), cast(Any, State()), "")
+    origin = f"https://127.0.0.1:{port.number}"
+    app = create_setup_app(
+        cast(Any, object()), cast(Any, State()), "", canonical_origin=origin
+    )
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -735,7 +764,6 @@ def _setup_asset_server(
             ssl_keyfile=str(key),
         )
     )
-    origin = f"https://127.0.0.1:{port.number}"
     port.release()
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
@@ -904,6 +932,8 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
             app = create_transport_test_app(
                 repository,
                 ReviewWebConfiguration(
+                    tls_certificate_file=str(certificate),
+                    tls_private_key_file=str(key),
                     canonical_origin=origin,
                     owner_password_hash_file=str(hash_path),
                     session_lifetime_seconds=300,
@@ -1044,7 +1074,10 @@ def test_remembered_owner_session_survives_profile_and_server_restart() -> None:
         assert errors == []
 
 
-def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> None:
+@pytest.mark.parametrize("transport_mode", ["direct", "http", "proxy"])
+def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
+    transport_mode: str,
+) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         os.chmod(root, 0o700)
@@ -1054,7 +1087,13 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
         certificate, key = _certificate(root)
         errors: list[str] = []
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            browser = playwright.chromium.launch(
+                headless=True,
+                args=[
+                    "--host-resolver-rules=MAP review-transport.test 127.0.0.1",
+                    "--no-proxy-server",
+                ],
+            )
             context = browser.new_context(
                 ignore_https_errors=True,
                 viewport={"width": 390, "height": 844},
@@ -1075,10 +1114,13 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     certificate=certificate,
                     key=key,
                     port=reserved_port,
+                    transport_mode=transport_mode,
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
                 _login(page, origin)
+                assert page.evaluate("isSecureContext") is True
+                assert page.evaluate("typeof crypto.randomUUID") == "function"
                 try:
                     page.get_by_role("heading", name="Works", exact=True).wait_for(
                         timeout=8_000
@@ -1094,6 +1136,8 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 assert (
                     page.evaluate("() => document.documentElement.scrollWidth") <= 1440
                 )
+                page.locator(".library-work-row").click()
+                page.wait_for_url(f"**/library?*preview={case_id}*")
                 page.set_viewport_size({"width": 390, "height": 844})
                 brand_box = page.locator(".brand").bounding_box()
                 actions_box = page.locator(".shell-actions").bounding_box()
@@ -1433,6 +1477,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                     )
                     if query.get("page_size") == ["50"] and not held_page_size_response:
                         held_page_size_response.append((route, response, payload))
+                        page.evaluate(
+                            "console.debug('activity-page-size-response-held')"
+                        )
                         return
                     route.fulfill(status=response.status, json=payload)
 
@@ -1494,7 +1541,12 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision() -> Non
                 ).to_be_focused()
                 rows = page.get_by_role("combobox", name="Rows per activity page")
                 rows.click()
-                page.get_by_role("option", name="50 per page").click()
+                with page.expect_console_message(
+                    predicate=lambda message: (
+                        message.text == "activity-page-size-response-held"
+                    )
+                ):
+                    page.get_by_role("option", name="50 per page").click()
                 expect(rows).to_be_focused()
                 page.set_viewport_size({"width": 1440, "height": 900})
                 activity_search = page.get_by_role("searchbox", name="Search activity")
@@ -3063,7 +3115,8 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         )
 
                 setup_client = TestClient(
-                    create_setup_app(cast(Any, object()), cast(Any, State()), "")
+                    create_setup_app(cast(Any, object()), cast(Any, State()), ""),
+                    base_url="https://testserver",
                 )
 
                 secured_setup_asset = partial(_serve_setup_asset, setup_client)
@@ -3086,8 +3139,9 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                     "providers",
                                     "libraries",
                                     "mounts",
+                                    "reviewer",
                                 ],
-                                "revision": 6,
+                                "revision": 7,
                                 "providers": [],
                                 "libraries": [],
                                 "mounts": [],
@@ -3531,7 +3585,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     )
                     return
                 if path == "/api/setup/mounts":
-                    stage["value"] = "kick_off"
+                    stage["value"] = "reviewer"
                     route.fulfill(
                         json={
                             "completed_steps": [
@@ -3541,8 +3595,47 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                 "libraries",
                                 "mounts",
                             ],
-                            "next_step": "kick_off",
+                            "next_step": "reviewer",
                             "revision": 6,
+                        }
+                    )
+                    return
+                if path == "/api/setup/reviewer-access":
+                    route.fulfill(
+                        json=ReviewerAccessView(
+                            revision=1,
+                            mapping=None,
+                            openrouter_key_configured=False,
+                            codex=ReviewerEngineStatus(
+                                engine="codex",
+                                state="host_unsupported",
+                                reason="headroom_below_1_gib",
+                                host_headroom_bytes=536_870_912,
+                            ),
+                            openrouter=ReviewerEngineStatus(
+                                engine="openrouter", state="unconfigured"
+                            ),
+                        ).model_dump(mode="json")
+                    )
+                    return
+                if path == "/api/setup/reviewer" and method == "POST":
+                    assert route.request.post_data_json == {
+                        "expected_revision": 6,
+                        "outcome": "skipped",
+                    }
+                    stage["value"] = "kick_off"
+                    route.fulfill(
+                        json={
+                            "completed_steps": [
+                                "claim",
+                                "connect",
+                                "providers",
+                                "libraries",
+                                "mounts",
+                                "reviewer",
+                            ],
+                            "next_step": "kick_off",
+                            "revision": 7,
                         }
                     )
                     return
@@ -3558,7 +3651,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     return
                 if path == "/api/setup/state":
                     value = stage["value"]
-                    selected = value in {"mounts", "kick_off"}
+                    selected = value in {"mounts", "reviewer", "kick_off"}
                     route.fulfill(
                         json={
                             "csrf_token": "c" * 32,
@@ -3574,14 +3667,16 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                 "providers",
                                 "libraries",
                                 "mounts",
-                            ],
+                            ]
+                            + (["reviewer"] if value in {"kick_off", "active"} else []),
                             "next_step": value,
                             "revision": {
                                 "providers": 3,
                                 "libraries": 4,
                                 "mounts": 5,
-                                "kick_off": 6,
-                            }.get(value, 6),
+                                "reviewer": 6,
+                                "kick_off": 7,
+                            }.get(value, 7),
                             "connection": {
                                 "name": "primary",
                                 "endpoint": "https://library.invalid",
@@ -3610,7 +3705,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                     {"library": "books", "state": "matched"},
                                     {"library": "long", "state": "matched"},
                                 ]
-                                if value == "kick_off"
+                                if value in {"reviewer", "kick_off"}
                                 else []
                             ),
                         }
@@ -3809,6 +3904,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 for field in page.get_by_label("service path", exact=False).all():
                     expect(field).not_to_have_value("")
                 page.get_by_role("button", name="Check mounts").click()
+                page.get_by_role("button", name="Continue without a reviewer").click()
                 expect(
                     page.get_by_role("heading", name="Kick off preparation")
                 ).to_be_visible()
@@ -4567,6 +4663,92 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                 expect(current).to_have_attribute("aria-pressed", "true")
                 page.reload()
                 expect(current).to_have_attribute("aria-pressed", "true")
+            browser.close()
+
+
+def test_insecure_http_decision_fallback_retries_and_reconciles() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright, closing(ReservedPort()) as port:
+            browser = playwright.chromium.launch(
+                args=[
+                    "--host-resolver-rules=MAP review-transport.test 127.0.0.1",
+                    "--no-proxy-server",
+                ]
+            )
+            context = browser.new_context()
+            page = context.new_page()
+            with _server(
+                database=root / "review.sqlite",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=port,
+                transport_mode="insecure",
+            ) as (origin, case_id):
+                _login(page, origin)
+                assert page.evaluate("isSecureContext") is False
+                assert page.evaluate("typeof crypto.randomUUID") == "undefined"
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                commands: list[str] = []
+
+                def first_failure(route):
+                    commands.append(route.request.headers["idempotency-key"])
+                    if len(commands) == 1:
+                        route.fulfill(
+                            status=503,
+                            json={
+                                "schema_version": "review-error-v1",
+                                "error": {"code": "persistence"},
+                            },
+                        )
+                    else:
+                        route.continue_()
+
+                page.route("**/decisions", first_failure)
+                page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).click()
+                retry = page.get_by_role("button", name="Try the same decision again")
+                expect(retry).to_be_visible()
+                expect(retry).to_be_focused()
+                retry.click()
+                page.get_by_role(
+                    "heading", name="Which series should this work use?"
+                ).wait_for()
+                assert len(commands) == 2 and commands[0] == commands[1]
+                assert commands[0].startswith("decision-")
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=title")
+                expect(
+                    page.get_by_role(
+                        "button", name="Choose current value:", exact=False
+                    )
+                ).to_have_attribute("aria-pressed", "true")
+                page.unroute("**/decisions")
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
+                page.route("**/decisions", lambda route: route.abort())
+                page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).click()
+                expect(
+                    page.get_by_text(
+                        "The response was lost. The current case was reloaded before any retry."
+                    )
+                ).to_be_visible()
+                page.unroute("**/decisions")
+                page.get_by_role(
+                    "button", name="Choose current value:", exact=False
+                ).click()
+                expect(
+                    page.get_by_text(
+                        "The response was lost. The current case was reloaded before any retry."
+                    )
+                ).to_have_count(0)
+                context.close()
             browser.close()
 
 

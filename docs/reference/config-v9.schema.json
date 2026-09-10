@@ -1021,6 +1021,57 @@
     },
     "ReviewInput": {
       "additionalProperties": false,
+      "oneOf": [
+        {
+          "properties": {
+            "canonical_origin": {
+              "pattern": "^http://"
+            },
+            "tls_certificate_file": {
+              "type": "null"
+            },
+            "tls_private_key_file": {
+              "type": "null"
+            }
+          }
+        },
+        {
+          "properties": {
+            "canonical_origin": {
+              "pattern": "^https://"
+            },
+            "tls_certificate_file": {
+              "type": "string"
+            },
+            "tls_private_key_file": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "tls_certificate_file",
+            "tls_private_key_file"
+          ]
+        },
+        {
+          "properties": {
+            "canonical_origin": {
+              "pattern": "^https://"
+            },
+            "tls_certificate_file": {
+              "type": "null"
+            },
+            "tls_private_key_file": {
+              "type": "null"
+            },
+            "trusted_proxy_ips": {
+              "minItems": 1
+            }
+          },
+          "required": [
+            "trusted_proxy_ips"
+          ]
+        }
+      ],
       "properties": {
         "canonical_origin": {
           "maxLength": 512,
@@ -1204,7 +1255,7 @@
       "default": null
     },
     "schema_version": {
-      "const": "config-v8",
+      "const": "config-v9",
       "title": "Schema Version",
       "type": "string"
     }
