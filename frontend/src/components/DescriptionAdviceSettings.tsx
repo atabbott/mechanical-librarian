@@ -26,10 +26,12 @@ export const DescriptionAdviceSettings = ({ http }: { http: ReviewHttp }) => {
   return (
     <section
       id="description-advice"
-      className="cm-policy-field"
+      className="description-advice-settings"
       aria-labelledby="description-advice-heading"
     >
-      <h3 id="description-advice-heading">Description advice</h3>
+      <h3 id="description-advice-heading" tabIndex={-1}>
+        Description advice
+      </h3>
       <p>
         A configured adviser can rewrite or combine provider descriptions. Its text is always marked
         as advised, authored content.
@@ -71,13 +73,16 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   const locked = view.authority === 'file'
   const stale = view.document.revision !== base.revision
   const changed = JSON.stringify(draft) !== JSON.stringify(base.description_advice ?? defaults)
-  const reload = async () => {
-    const fresh = await http.getSettings()
-    cache.setQueryData(['settings'], fresh)
-    setBase(fresh.document)
-    setDraft(fresh.document.description_advice ?? defaults)
-    mutation.reset()
-  }
+  const reload = useMutation({
+    mutationFn: () => http.getSettings(),
+    retry: false,
+    onSuccess: (fresh) => {
+      cache.setQueryData(['settings'], fresh)
+      setBase(fresh.document)
+      setDraft(fresh.document.description_advice ?? defaults)
+      mutation.reset()
+    },
+  })
   return (
     <div>
       <p>
@@ -121,7 +126,12 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
             Description preferences could not be saved against the current settings. Reload the
             saved preferences before trying again.
           </p>
-          <button onClick={() => void reload()}>Reload description preferences</button>
+          <button disabled={reload.isPending} onClick={() => reload.mutate()}>
+            {reload.isPending ? 'Reloading preferences…' : 'Reload description preferences'}
+          </button>
+          {reload.isError ? (
+            <p>Saved preferences could not be loaded. Retry when the connection returns.</p>
+          ) : null}
         </div>
       ) : null}
     </div>

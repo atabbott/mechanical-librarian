@@ -2532,6 +2532,7 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
       'candidate',
       'binding',
       'selection',
+      'application_outcome',
     ]) ||
     !['requested', 'running', 'succeeded', 'failed', 'interrupted'].includes(String(value.state)) ||
     !(
@@ -2542,6 +2543,12 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
     !record(value.binding)
   )
     throw new ApiError(502, 'invalid_description_advice')
+  if (
+    value.application_outcome !== null &&
+    (!['verified', 'no_change_required'].includes(String(value.application_outcome)) ||
+      value.selection === null)
+  )
+    throw new ApiError(502, 'invalid_description_application_outcome')
   booleanValue(value.current, 'description_current')
   boundedStringValue(value.model, 'description_model', 256)
   if (
@@ -2592,6 +2599,7 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
       ).test(selection.decision_id) ||
       typeof selection.candidate_id !== 'string' ||
       !/^description_candidate_[0-9a-f]{64}$/.test(selection.candidate_id) ||
+      selection.candidate_id !== candidate?.candidate_id ||
       Object.keys(binding).some(
         (key) =>
           selectedBinding[key as keyof typeof binding] !== binding[key as keyof typeof binding],
@@ -2804,7 +2812,11 @@ export const mapHistory = (value: unknown): HistoryView => {
     items: value.items.map((item, index): HistoryItemView => {
       if (!record(item)) throw new ApiError(502, `invalid_history_item_${String(index)}`)
       const kind = stringValue(item.kind, `history_item_${String(index)}_kind`)
-      if (kind === 'description_advice_recorded' || kind === 'description_selected') {
+      if (
+        kind === 'description_advice_recorded' ||
+        kind === 'description_selected' ||
+        kind === 'description_application'
+      ) {
         integerValue(item.occurred_at, 'description_history_at')
         return {
           category: 'description',

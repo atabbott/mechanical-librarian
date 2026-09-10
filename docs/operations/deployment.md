@@ -284,10 +284,14 @@ A saved OpenRouter key can serve different cover and description models.
 Selection enables advice preparation; it does not enable automatic application.
 Missing model/price information is recoverable through explicit test/refresh.
 
-Review authored cards in Library separately from provider alternatives. Select
-an immutable current candidate, or keep/select an ordinary description choice.
-Activity distinguishes queued work from verified application; History retains
-advised provenance. Stale advice cannot be selected against its old binding.
+In Library's Description choices, select the current, provider, or **Advised ·
+Authored content** alternative through the same choice interaction. The advised
+option identifies its engine, model and status; selection binds that immutable
+candidate through separate authored authority. Evidence retains original provider
+material. History records advice preparation, selection, application and
+supersession with authored provenance; individual choices remain in Library.
+Activity distinguishes queued work from verified application. Stale advice stays
+visible in Description but cannot be selected against its old binding.
 Failed or interrupted work needs explicit retry and never silently spends again.
 New requests while paused remain pending until resume; pausing does not promise
 to interrupt work already accepted. All existing write gates still apply.

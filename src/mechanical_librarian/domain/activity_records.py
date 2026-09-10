@@ -329,6 +329,28 @@ def readable_activity_event(
         change, facts = _write_facts(record, destination, origin, state, failure)
     elif source_kind == "human_decision":
         change, facts = _decision_facts(record, destination, state, report)
+    elif source_kind == "description_preparation":
+        description = {
+            "requested": "Description advice requested",
+            "running": "Preparing description advice",
+            "succeeded": "Description advice prepared for review",
+            "failed": "Description advice could not be prepared",
+            "interrupted": "Description advice preparation interrupted",
+        }.get(state, "Description advice recorded")
+        change = ReadableChange(description, description)
+        facts = [
+            {
+                "label": "Application",
+                "value": "Preparation grants no write authority. Review current Description choices in Library.",
+            }
+        ]
+        if state in {"failed", "interrupted"}:
+            facts.append(
+                {
+                    "label": "Retry",
+                    "value": "Request another attempt from Description in Library; no automatic retry.",
+                }
+            )
     elif source_kind == "description_decision":
         change = ReadableChange(
             "Advised description selected",

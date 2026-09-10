@@ -7297,18 +7297,30 @@ it.each(['Evidence', 'History'] as const)(
   },
 )
 
-it('keeps authored description separate and submits its immutable binding through the decision controller', async () => {
+it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {
   const authored = mapCaseDetail(descriptionAdviceFixture)
   const field = authored.fields.find((item) => item.destination === 'description')!
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
   renderRoute('/library?lens=all&preview=case-1&field=description', http)
-  const card = await screen.findByRole('article', { name: 'Advised description' })
-  expect(within(card).getByText('Authored synthetic description.')).toBeVisible()
-  expect(within(card).getByText(/authored advice, not independent provider evidence/)).toBeVisible()
-  await userEvent
-    .setup()
-    .click(within(card).getByRole('button', { name: 'Use advised description' }))
+  const option = await screen.findByRole('button', {
+    name: 'Choose advised value: Authored synthetic description.',
+  })
+  expect(option).toHaveTextContent('Advised · Authored content')
+  expect(option).toHaveTextContent('codex · synthetic-model')
+  const chooser = option.closest('section.direct-choice')!
+  expect(
+    within(chooser as HTMLElement).getByRole('button', {
+      name: 'Choose current value: Existing description.',
+    }),
+  ).toBeVisible()
+  expect(
+    within(chooser as HTMLElement).getByRole('button', {
+      name: 'Choose proposed value: A qualified description.',
+    }),
+  ).toBeVisible()
+  expect(screen.queryByRole('article', { name: 'Advised description' })).toBeNull()
+  await userEvent.setup().click(option)
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
   const command = vi.mocked(http.recordDecision).mock.calls[0]![1]
   expect(command.authoredDescription).toEqual({
@@ -7334,9 +7346,84 @@ it('renders hostile multiline advice as text and refuses stale selection while o
     ...createHttp(),
     getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
   })
-  const card = await screen.findByRole('article', { name: 'Advised description' })
-  expect(within(card).getByText(/<img src=x onerror=alert\(1\)>/)).toBeVisible()
-  expect(card.querySelector('img')).toBeNull()
-  expect(within(card).getByRole('button', { name: 'Use advised description' })).toBeDisabled()
-  expect(within(card).getByRole('status')).toHaveTextContent('This advice is stale')
+  const option = await screen.findByRole('button', {
+    name: /Choose advised value: <img src=x onerror=alert\(1\)>/,
+  })
+  expect(option.querySelector('img')).toBeNull()
+  expect(option).toBeDisabled()
+  expect(option).toHaveTextContent('Stale advice')
+  expect(
+    screen.getByRole('button', { name: 'Choose current value: Existing description.' }),
+  ).toBeEnabled()
+  expect(
+    screen.getByRole('button', { name: 'Choose proposed value: A qualified description.' }),
+  ).toBeEnabled()
 })
+
+it('retries an advised selection through the ordinary controller with the same authored binding and idempotency key', async () => {
+  const authored = mapCaseDetail(descriptionAdviceFixture)
+  const field = authored.fields.find((item) => item.destination === 'description')!
+  const http = createHttp()
+  http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  http.recordDecision = vi.fn(async () => {
+    throw new ApiError(503, 'persistence')
+  })
+  renderRoute('/library?lens=all&preview=case-1&field=description', http)
+  const user = userEvent.setup()
+  const option = await screen.findByRole('button', {
+    name: 'Choose advised value: Authored synthetic description.',
+  })
+  option.focus()
+  await user.keyboard('{Enter}')
+  const retry = await screen.findByRole('button', { name: 'Try the same decision again' })
+  await user.click(retry)
+  await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(2))
+  const calls = vi.mocked(http.recordDecision).mock.calls
+  expect(calls[1]![1]).toEqual(calls[0]![1])
+  expect(calls[0]![1].authoredDescription?.binding).toEqual(field.descriptionAdvice!.binding)
+})
+
+it.each(['verified', 'no_change_required'] as const)(
+  'shows the exact authored %s outcome without renewing a stale binding',
+  async (outcome) => {
+    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const field = authored.fields.find((item) => item.destination === 'description')!
+    const advice = field.descriptionAdvice!
+    field.descriptionAdvice = {
+      ...advice,
+      current: outcome === 'no_change_required',
+      application_outcome: outcome,
+      selection: {
+        schema_version: 'authored-description-decision-v1',
+        decision_id: `automatic_decision_${'a'.repeat(64)}`,
+        candidate_id: advice.candidate!.candidate_id,
+        binding: advice.binding,
+        origin: 'automatic_policy',
+        resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+        qualification_manifest_sha256: 'c'.repeat(64),
+        idempotency_digest: 'd'.repeat(64),
+        occurred_at: 10,
+        destination: 'description',
+        outcome: 'accept',
+        application: 'guarded',
+      },
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=description', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+    })
+    const option = await screen.findByRole('button', { name: /^Choose advised value:/ })
+    expect(option).toHaveAttribute('aria-pressed', 'true')
+    expect(option).toHaveTextContent(
+      outcome === 'verified' ? 'Applied and verified' : 'No change needed',
+    )
+    expect(option).not.toHaveTextContent('Stale advice')
+    if (outcome === 'verified') expect(option).toBeDisabled()
+    expect(
+      screen.getByRole('button', { name: 'Choose current value: Existing description.' }),
+    ).toHaveAttribute('aria-pressed', 'false')
+    expect(
+      screen.getByRole('button', { name: 'Choose proposed value: A qualified description.' }),
+    ).toHaveAttribute('aria-pressed', 'false')
+  },
+)

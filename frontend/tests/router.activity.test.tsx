@@ -8,6 +8,44 @@ import { activityRoute } from '../src/router'
 import { activity, createHttp, openActivityAuthority, renderRoute } from './fixtures'
 
 describe('Activity route', () => {
+  it('retains authored preparation provenance without offering another choice interface', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    vi.mocked(http.getActivity).mockResolvedValue(
+      activity({
+        events: [
+          {
+            event_id: 'description-attempt-synthetic',
+            destination: 'description',
+            field_label: 'Description',
+            state: 'succeeded',
+            origin: 'adviser',
+            event_type: 'metadata',
+            category: 'automatic',
+            change: 'Description advice prepared for review',
+            change_detail: 'Description advice prepared for review',
+            evidence: [
+              {
+                label: 'Application',
+                value:
+                  'Preparation grants no write authority. Review current Description choices in Library.',
+              },
+              { label: 'Provenance', value: 'Advised · Authored content' },
+              { label: 'Adviser', value: 'codex · synthetic-model' },
+            ],
+          },
+        ],
+      }),
+    )
+    renderRoute('/activity', http)
+    await screen.findByText('Description advice prepared for review')
+    await user.click(screen.getByRole('button', { name: 'Details' }))
+    expect(screen.getByText('Advised · Authored content')).toBeVisible()
+    expect(screen.getByText('codex · synthetic-model')).toBeVisible()
+    expect(screen.getByText(/Preparation grants no write authority/)).toBeVisible()
+    expect(screen.queryByRole('button', { name: /Choose advised|Retry description/ })).toBeNull()
+  })
+
   it('polls idle Activity while mounted and tears the poll down after navigation', async () => {
     vi.useFakeTimers()
     try {

@@ -591,3 +591,39 @@ def test_prior_f19a_v6_title_remains_readable_without_current_authority(
     )
     with pytest.raises(AutomaticDecisionError):
         AutomaticDecision.create(**decision._core(), occurred_at=2)
+
+
+@pytest.mark.parametrize(
+    "name,digest",
+    [
+        (
+            "exact_title",
+            "358e921582a2a8799fb2c9ff0aca7825b7fcda81c62ac52371c7970d7a445998",
+        ),
+        (
+            "description_preserved",
+            "51e3e24c44821628071260cc676a1a37a8293fcec69d6de73d30402bd21a03e3",
+        ),
+    ],
+)
+def test_captured_base_producers_remain_history_without_new_effect_authority(
+    name: str, digest: str
+) -> None:
+    import hashlib
+    from pathlib import Path
+
+    document = (
+        Path(__file__).parents[1]
+        / "support/automatic_decision_predecessors"
+        / f"{name}-before-f39.json"
+    ).read_bytes()
+    assert hashlib.sha256(document).hexdigest() == digest
+    decision = AutomaticDecision.from_json(document.decode())
+    assert AutomaticDecision.from_json(decision.to_json()) == decision
+    assert not qualification_manifest_is_current(
+        decision.policy_category,
+        decision.policy_option,
+        decision.qualification_manifest_sha256,
+    )
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(**decision._core(), occurred_at=2)

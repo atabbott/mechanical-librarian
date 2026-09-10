@@ -1014,11 +1014,40 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .library-provider-summary { display: block; font-size: 0.7rem; line-height: 1.5; overflow-wrap: anywhere; color: var(--soft); }
 .automatic-withheld-reason { font-size: 0.78rem; line-height: 1.55; overflow-wrap: anywhere; }
 
-.description-advice-card { padding:1rem; margin-block:1rem; border:1px solid var(--line); border-radius:.6rem; background:var(--surface); min-width:0; }
-.description-advice-card h3 span { font-size:.8rem; font-weight:400; color:var(--soft); }
 .description-advice-text { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.55; max-height:28rem; overflow:auto; }
-.description-advice-card button { margin:.25rem .5rem .25rem 0; }
-#description-advice { margin-block:1.5rem; }
-#description-advice fieldset { border:1px solid var(--line); padding:.75rem; margin-block:1rem; }
-#description-advice .settings-field-row { display:flex; gap:.6rem; align-items:flex-start; padding:.5rem; }
-#description-advice input[type=checkbox] { flex:none; width:1.25rem; height:1.25rem; }
+
+.description-advice-settings {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 1.25rem;
+  border-bottom: 1px solid var(--line);
+}
+.description-advice-settings h3 {
+  margin: 0;
+  scroll-margin-top: 6rem;
+}
+.description-advice-settings p {
+  max-width: 75ch;
+  margin: 0.5rem 0;
+}
+.description-advice-settings fieldset {
+  display: grid;
+  gap: 0.25rem;
+  max-width: 48rem;
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border: 1px solid var(--line);
+}
+.description-advice-settings .settings-field-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 44px;
+  margin: 0;
+}
+.description-advice-settings input[type='checkbox'] {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+}

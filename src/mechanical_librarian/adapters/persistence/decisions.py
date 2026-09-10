@@ -1025,8 +1025,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
                         },
                     )
                 )
-            for document, candidate_document in self._connection.execute(
-                "SELECT d.document,c.document FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC LIMIT ?",
+            for (
+                document,
+                candidate_document,
+                selected_current,
+            ) in self._connection.execute(
+                "SELECT d.document,c.document,EXISTS(SELECT 1 FROM current_description_decisions current WHERE current.decision_id=d.decision_id) FROM description_decisions d JOIN description_advice_candidates c ON c.candidate_id=d.candidate_id WHERE d.review_case_id=? ORDER BY json_extract(d.document,'$.occurred_at') DESC LIMIT ?",
                 (review_case_id, limit),
             ):
                 authored = AuthoredDescriptionDecision.from_json(document)
@@ -1041,7 +1045,45 @@ class SQLiteDecisionRepository(ConnectionScoped):
                             "kind": "description_selected",
                             "occurred_at": authored.occurred_at,
                             "review_case_id": review_case_id,
-                            "state": "succeeded",
+                            "state": "succeeded" if selected_current else "superseded",
+                            "engine": candidate.engine,
+                            "model": candidate.model,
+                            "candidate": candidate.model_dump(),
+                            "decision": authored.model_dump(),
+                        },
+                    )
+                )
+            for (
+                event_id,
+                at,
+                state,
+                document,
+                candidate_document,
+            ) in self._connection.execute(
+                "SELECT event.event_id,event.occurred_at,event.kind,decision.document,candidate.document "
+                "FROM field_effect_events event JOIN field_effects effect ON effect.plan_id=event.plan_id "
+                "JOIN description_decisions decision ON decision.decision_id=effect.decision_id "
+                "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
+                "WHERE decision.review_case_id=? UNION ALL "
+                "SELECT event.event_id,event.occurred_at,'no_change_required',decision.document,candidate.document "
+                "FROM field_effect_no_changes event JOIN description_decisions decision ON decision.decision_id=event.decision_id "
+                "JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id "
+                "WHERE decision.review_case_id=? ORDER BY 2 DESC LIMIT ?",
+                (review_case_id, review_case_id, limit),
+            ):
+                authored = AuthoredDescriptionDecision.from_json(document)
+                candidate = DescriptionAdviceCandidate.from_json(candidate_document)
+                events.append(
+                    (
+                        at,
+                        2,
+                        event_id,
+                        {
+                            "schema_version": "description-advice-history-v1",
+                            "kind": "description_application",
+                            "occurred_at": at,
+                            "review_case_id": review_case_id,
+                            "state": state,
                             "engine": candidate.engine,
                             "model": candidate.model,
                             "candidate": candidate.model_dump(),

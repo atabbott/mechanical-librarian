@@ -162,6 +162,7 @@ class FakeAuthorityCurrentness:
     def __init__(self) -> None:
         self.revoked: set[str] = set()
         self.automatic_values: dict[str, object] = {}
+        self.authored_values: dict[str, object] = {}
         self.bindings: dict[str, AuthoritySnapshot] = {}
 
     def bind(
@@ -179,6 +180,8 @@ class FakeAuthorityCurrentness:
     ) -> None:
         if type(decision) is HumanDecision and decision.outcome == "accept":
             value: object = decision.selected_value
+        elif type(decision) is AuthoredDescriptionDecision:
+            value = self.authored_values[decision.decision_id]
         elif (
             type(decision)
             in (

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +19,7 @@ from mechanical_librarian.application.reviewer_access import ReviewerAccessOpera
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceBinding,
+    DescriptionAdviceCandidate,
     DescriptionAdviceSettings,
     description_digest,
 )
@@ -67,6 +69,8 @@ def _prepared(
     output_transform=None,
     during_dispatch=None,
     report_override=None,
+    contained_identity=None,
+    result_current=True,
 ):
     repository = open_repository(tmp_path / "reports.sqlite")
     report, category, option, _ = _automatic_no_change_inputs("description_preserved")
@@ -79,9 +83,12 @@ def _prepared(
         decision for decision in existing if decision.destination == "description"
     )
     calls = []
+    identity = contained_identity or (
+        lambda: ("synthetic-model", b"synthetic-contained-profile")
+    )
 
     def runner(profile, instruction, inputs, schema, images):
-        assert profile == b"synthetic-contained-profile"
+        assert profile == identity()[1]
         assert images == ()
         request = ContainedReviewRequest(
             instruction.decode(), inputs.decode(), schema.decode()
@@ -111,15 +118,13 @@ def _prepared(
         repository.reviewer_access_store(),
         codex_auth=_Auth("usable"),
         codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
-        codex_identity=lambda: ("synthetic-model", b"synthetic-contained-profile"),
+        codex_identity=identity,
         codex_binding=lambda: (
-            "synthetic-model",
-            b"synthetic-contained-profile",
+            *identity(),
             runner,
         ),
         codex_description_binding=lambda: (
-            "synthetic-model",
-            b"synthetic-contained-profile",
+            *identity(),
             runner,
         ),
         openrouter_factory=lambda *_: pytest.fail("unexpected external transport"),
@@ -128,6 +133,13 @@ def _prepared(
     settings = DescriptionAdviceSettings(automatic_application=automatic)
     store = repository.description_advice_store()
     store.bind_settings(settings)
+    store.bind_identity(
+        lambda engine, _model: (
+            (identity()[0], hashlib.sha256(identity()[1]).hexdigest())
+            if engine == "codex"
+            else None
+        )
+    )
     binding = DescriptionAdviceBinding(
         review_case_id=deterministic.review_case_id,
         report_id=report.report_id,
@@ -148,13 +160,16 @@ def _prepared(
     candidate = service.prepare(
         report, binding, lambda: store.binding_is_current(binding)
     )
-    assert (candidate is not None) == (output_transform is None)
+    assert (candidate is not None) == (output_transform is None and result_current)
     assert len(calls) == expected_calls
     assert (
         service.prepare(report, binding, lambda: store.binding_is_current(binding))
         == candidate
     )
     assert len(calls) == expected_calls
+    if not result_current:
+        historical = store.read(binding.review_case_id)["candidate"]
+        candidate = DescriptionAdviceCandidate.model_validate(historical)
     return repository, store, binding, candidate, deterministic
 
 
@@ -201,3 +216,38 @@ def _guarded_application(repository, root, authority):
         FakePreclaimHook(),
     )
     return application, target
+
+
+def _contained_profile(root: Path) -> Path:
+    """A valid passive profile whose executable paths must never be opened."""
+    profile = root / "description-profile.json"
+    profile.write_text(
+        canonical_json(
+            {
+                "auth_store_path": str(root / "auth"),
+                "codex": {
+                    "path": str(root / "missing-codex"),
+                    "sha256": "a" * 64,
+                    "version": "codex 1",
+                },
+                "job_root_path": str(root / "jobs"),
+                "limits": {
+                    "file_bytes": 131072,
+                    "memory_bytes": 1073741824,
+                    "output_bytes": 65536,
+                    "processes": 32,
+                    "timeout_seconds": 30,
+                },
+                "model": "synthetic-model",
+                "reasoning": "medium",
+                "sandbox": {
+                    "path": str(root / "missing-bwrap"),
+                    "sha256": "b" * 64,
+                    "version": "bubblewrap 1",
+                },
+                "schema_version": "contained-reviewer-profile-v1",
+            }
+        )
+    )
+    profile.chmod(0o600)
+    return profile

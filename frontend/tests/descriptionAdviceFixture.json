@@ -45,10 +45,7 @@
         "state": "missing",
         "value": null
       },
-      "decision_actions": [
-        "keep_current",
-        "accept"
-      ],
+      "decision_actions": ["keep_current", "accept"],
       "destination": "series",
       "deterministic_disposition": "propose_change",
       "editable": true,
@@ -59,9 +56,7 @@
       "manual_required": false,
       "navigation_role": "attention",
       "needs_attention": true,
-      "notices": [
-        "unique_typed_candidate"
-      ],
+      "notices": ["unique_typed_candidate"],
       "preservation_only": false,
       "proposal_id": "review_proposal_7fdb58ff9a95267e42b7ad0d885bec867bbfcce564e2c1e12360002580811ee3",
       "proposed_values": [
@@ -130,10 +125,7 @@
         "state": "missing",
         "value": null
       },
-      "decision_actions": [
-        "keep_current",
-        "accept"
-      ],
+      "decision_actions": ["keep_current", "accept"],
       "destination": "isbn",
       "deterministic_disposition": "unresolved_choice",
       "editable": true,
@@ -144,9 +136,7 @@
       "manual_required": false,
       "navigation_role": "attention",
       "needs_attention": true,
-      "notices": [
-        "manifestation_verification_required"
-      ],
+      "notices": ["manifestation_verification_required"],
       "preservation_only": false,
       "proposal_id": "review_proposal_c88b049af1fc3dca2ab1d649550e14d8a3151f82af1c19a42936f7a992cd7e0b",
       "proposed_values": [
@@ -161,9 +151,7 @@
         "provider_e97d5b01d8c4d1ac75dd707cf93c8fab512629f95e64aa6695aa2dfa62ef913f"
       ],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
-      "uncertainty": [
-        "manifestation_verification_required"
-      ]
+      "uncertainty": ["manifestation_verification_required"]
     },
     {
       "automatic_decision": null,
@@ -225,15 +213,11 @@
       "manual_required": false,
       "navigation_role": "attention",
       "needs_attention": false,
-      "notices": [
-        "positive_preservation_evidence"
-      ],
+      "notices": ["positive_preservation_evidence"],
       "preservation_only": true,
       "proposal_id": "review_proposal_de44916f8c0502978ebe2fd2c00d7dca94bca6e3ff393e55bc1c214b9f533724",
       "proposed_values": [],
-      "provenance": [
-        "provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"
-      ],
+      "provenance": ["provider_2971cd71b126c09d2fa6302f11d2415450509930da157f8b1d8be7f2ce069efc"],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
       "uncertainty": []
     },
@@ -271,9 +255,7 @@
       "manual_required": false,
       "navigation_role": "attention",
       "needs_attention": false,
-      "notices": [
-        "no_supported_evidence"
-      ],
+      "notices": ["no_supported_evidence"],
       "preservation_only": false,
       "proposal_id": "review_proposal_3d9e00b8e74302e71b10d3c136c0d2882a2cb74596424de059a1caecbdcff977",
       "proposed_values": [],
@@ -328,9 +310,7 @@
       "current": {
         "destination": "authors",
         "state": "value",
-        "value": [
-          "Mick Herron"
-        ]
+        "value": ["Mick Herron"]
       },
       "decision_actions": [],
       "destination": "authors",
@@ -343,15 +323,11 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "positive_preservation_evidence"
-      ],
+      "notices": ["positive_preservation_evidence"],
       "preservation_only": true,
       "proposal_id": "review_proposal_c867bb7c86e9fabf7b6526ada135305b18f6bcd1f9f1c4e565b395f5afc332dd",
       "proposed_values": [],
-      "provenance": [
-        "provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"
-      ],
+      "provenance": ["provider_ea8a4dca284e531ebea622b06ded41aadb8982dd803f8ef277e870c4232dfb87"],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
       "uncertainty": []
     },
@@ -393,10 +369,7 @@
         "state": "missing",
         "value": null
       },
-      "decision_actions": [
-        "keep_current",
-        "accept"
-      ],
+      "decision_actions": ["keep_current", "accept"],
       "destination": "genres",
       "deterministic_disposition": "propose_change",
       "editable": false,
@@ -407,22 +380,16 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "unique_typed_candidate"
-      ],
+      "notices": ["unique_typed_candidate"],
       "preservation_only": false,
       "proposal_id": "review_proposal_a0c24072c7c6a179baa6abae4f29cf160a30473faebf4e69af0d99c69d7d7f3d",
       "proposed_values": [
         {
           "kind": "list",
-          "value": [
-            "Mystery"
-          ]
+          "value": ["Mystery"]
         }
       ],
-      "provenance": [
-        "provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"
-      ],
+      "provenance": ["provider_c5d00f6325d00d72af199f7c0702def45ae7370bea82b63ca0dc945103f7d7a8"],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
       "uncertainty": []
     },
@@ -460,9 +427,7 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "no_supported_evidence"
-      ],
+      "notices": ["no_supported_evidence"],
       "preservation_only": false,
       "proposal_id": "review_proposal_fb76f177c33f9fbe317e50c70e15ec363f00f82ed109a2553f73557fd8fd36cf",
       "proposed_values": [],
@@ -504,9 +469,7 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "no_supported_evidence"
-      ],
+      "notices": ["no_supported_evidence"],
       "preservation_only": false,
       "proposal_id": "review_proposal_9e088621b1e7e3847acf4b8a5c861101b3bf5dbca5b8c2fc0fde182c8c2fa0bd",
       "proposed_values": [],
@@ -553,9 +516,7 @@
               "source": "Hardcover"
             }
           ],
-          "limitations": [
-            "populated_subjective_field"
-          ],
+          "limitations": ["populated_subjective_field"],
           "rationale": "This alternative replaces the local value using work-level evidence with retained supporting evidence.",
           "recommendation": "no_recommendation",
           "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
@@ -570,10 +531,7 @@
         "state": "value",
         "value": "Existing description."
       },
-      "decision_actions": [
-        "keep_current",
-        "accept"
-      ],
+      "decision_actions": ["keep_current", "accept"],
       "description_advice": {
         "attempt_id": "description_attempt_1630c2fc956d434c87bd3c68d3210e23",
         "binding": {
@@ -611,7 +569,8 @@
         "failure": null,
         "model": "synthetic-model",
         "selection": null,
-        "state": "succeeded"
+        "state": "succeeded",
+        "application_outcome": null
       },
       "destination": "description",
       "deterministic_disposition": "unresolved_choice",
@@ -623,9 +582,7 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "populated_subjective_field"
-      ],
+      "notices": ["populated_subjective_field"],
       "preservation_only": false,
       "proposal_id": "review_proposal_6e8506bbf5c284073e85dc86630fc97e5665ea8015c18d34846714bde1f62821",
       "proposed_values": [
@@ -634,13 +591,9 @@
           "value": "A qualified description."
         }
       ],
-      "provenance": [
-        "provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"
-      ],
+      "provenance": ["provider_8d5555b014ce6a5575d245545fd197836a76c7f8e5f496697d90521e01e2e5e4"],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
-      "uncertainty": [
-        "populated_subjective_field"
-      ]
+      "uncertainty": ["populated_subjective_field"]
     },
     {
       "automatic_decision": null,
@@ -676,9 +629,7 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "no_supported_evidence"
-      ],
+      "notices": ["no_supported_evidence"],
       "preservation_only": false,
       "proposal_id": "review_proposal_7e44d69ce3475a9cfecf3a15379ee034cc2b39a194a35bd49de512caa63ca3f0",
       "proposed_values": [],
@@ -720,9 +671,7 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "no_supported_evidence"
-      ],
+      "notices": ["no_supported_evidence"],
       "preservation_only": false,
       "proposal_id": "review_proposal_28b5c353ff7d502ee233a397d2d84da80837ad46696554dccd97b0708d7cfa75",
       "proposed_values": [],
@@ -768,10 +717,7 @@
         "state": "missing",
         "value": null
       },
-      "decision_actions": [
-        "keep_current",
-        "accept"
-      ],
+      "decision_actions": ["keep_current", "accept"],
       "destination": "tags",
       "deterministic_disposition": "propose_change",
       "editable": false,
@@ -782,22 +728,16 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "unique_typed_candidate"
-      ],
+      "notices": ["unique_typed_candidate"],
       "preservation_only": false,
       "proposal_id": "review_proposal_b949f26983426265ef3d233541a45be702a28432e40c95bbd32275182b108ab9",
       "proposed_values": [
         {
           "kind": "list",
-          "value": [
-            "Espionage"
-          ]
+          "value": ["Espionage"]
         }
       ],
-      "provenance": [
-        "provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"
-      ],
+      "provenance": ["provider_e8f3d5f76eca4ea97b720bfe78e64cf22c5796eef346431fdfe943fc76f4e457"],
       "target_fingerprint": "737bca9cdba2545b8063a4d2e5445601217bbc2ace6d989f2b96e0b77050fca5",
       "uncertainty": []
     },
@@ -835,9 +775,7 @@
       "manual_required": false,
       "navigation_role": "inspect",
       "needs_attention": false,
-      "notices": [
-        "no_supported_evidence"
-      ],
+      "notices": ["no_supported_evidence"],
       "preservation_only": false,
       "proposal_id": "review_proposal_65a9674dc70727864a6215b823134e5a782530426453dad429b96a7971970085",
       "proposed_values": [],
@@ -849,9 +787,7 @@
   "review_case_id": "review_case_156fbb2f707d198142c074b7e782ccf4e843121fb63bfc66a1bea44104438d6c",
   "schema_version": "review-case-detail-v2",
   "target": {
-    "authors": [
-      "Mick Herron"
-    ],
+    "authors": ["Mick Herron"],
     "connection": "primary",
     "item": "item-1",
     "library": "ebooks",

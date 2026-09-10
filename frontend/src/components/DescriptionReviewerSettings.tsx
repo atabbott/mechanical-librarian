@@ -179,7 +179,8 @@ export const DescriptionReviewerSettings = ({
       {contained.isError || test.isError || selection.isError || refresh.isError ? (
         <p role="alert">
           Description adviser setup could not complete. Check the model, key and available pricing,
-          then retry. The last saved selection is unchanged.
+          then retry. Reload the current status before retrying a selection whose result is
+          uncertain.
         </p>
       ) : null}
       {selection.isSuccess ? (

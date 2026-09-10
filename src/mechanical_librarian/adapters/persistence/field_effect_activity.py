@@ -1611,6 +1611,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "field_effect_no_change",
                 "human_decision",
                 "description_decision",
+                "description_preparation",
                 "automatic_decision",
                 "cover_safeguard",
                 "policy_transition",
@@ -1703,6 +1704,46 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         or event_id != record.event_id
                     ):
                         raise FieldEffectError("persistence")
+                elif source_kind == "description_preparation":
+                    if (
+                        set(raw)
+                        != {
+                            "attempt_id",
+                            "engine",
+                            "model",
+                            "state",
+                            "failure",
+                            "updated_at",
+                        }
+                        or raw["attempt_id"] != event_id
+                        or raw["state"] != state
+                        or raw["updated_at"] != occurred_at
+                        or raw["engine"] not in {"codex", "openrouter"}
+                        or state
+                        not in {
+                            "requested",
+                            "running",
+                            "succeeded",
+                            "failed",
+                            "interrupted",
+                        }
+                        or raw["failure"]
+                        not in {None, "unavailable", "invalid_output", "interrupted"}
+                        or destination != "description"
+                        or origin != "adviser"
+                    ):
+                        raise FieldEffectError("persistence")
+                    scalar(raw["model"], 256)
+                    if source_document is not None:
+                        candidate = DescriptionAdviceCandidate.from_json(
+                            source_document
+                        )
+                        if (
+                            candidate.attempt_id != event_id
+                            or candidate.engine != raw["engine"]
+                            or candidate.model != raw["model"]
+                        ):
+                            raise FieldEffectError("persistence")
                 elif source_kind == "description_decision":
                     authored_record = authored_records.get(source_identity)
                     if authored_record is None:
@@ -1873,6 +1914,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # private carrier the application consumes and removes, the
             # same way ``connection`` and ``report_id`` are consumed there.
             durable: dict[str, object] = {"source_kind": source_kind}
+            if source_kind == "description_preparation":
+                durable.update(advised=True, engine=raw["engine"], model=raw["model"])
             if source_identity in authored_records:
                 authored, candidate = authored_records[source_identity]
                 durable["advised"] = True
@@ -2318,6 +2361,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
               FROM automatic_decisions decision
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
+            UNION ALL
+            SELECT attempt.attempt_id, json_extract(report.document,'$.target.connection'), 'description',
+                   json_extract(report.document,'$.target.library'), attempt.updated_at, 'adviser', review.report_id,
+                   attempt.state, json_extract(report.document,'$.target.item'),
+                   json_object('attempt_id',attempt.attempt_id,'engine',attempt.engine,'model',attempt.model,'state',attempt.state,'failure',attempt.failure,'updated_at',attempt.updated_at),
+                   'metadata', json_extract(report.document,'$.target.fields[0].value'), NULL,
+                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1
+              FROM description_advice_attempts attempt
+              JOIN review_cases review ON review.review_case_id=json_extract(attempt.binding_document,'$.review_case_id')
+              JOIN metadata_reports report ON report.report_id=review.report_id
+              LEFT JOIN description_advice_candidates candidate ON candidate.attempt_id=attempt.attempt_id
             UNION ALL
             SELECT decision.decision_id, json_extract(report.document,'$.target.connection'), 'description',
                    json_extract(report.document,'$.target.library'), json_extract(decision.document,'$.occurred_at'), json_extract(decision.document,'$.origin'), review.report_id,

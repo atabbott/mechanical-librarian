@@ -1,4 +1,7 @@
-import { DescriptionAdviceCard } from '../components/DescriptionAdviceCard'
+import {
+  DescriptionAdvicePreparation,
+  descriptionAdviceStatus,
+} from '../components/DescriptionAdvice'
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -415,6 +418,7 @@ const commandSelected = (
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
   command?.destination === destination &&
+  !command.authoredDescription &&
   command.outcome === outcome &&
   sameSelectedValue(command.selectedValue, selectedValue)
 // A recorded field is revisited with every option still shown, so which one
@@ -426,10 +430,13 @@ const recordedSelected = (
   outcome: DecisionCommand['outcome'],
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
-  field.humanDecision !== null
-    ? humanChoiceSelected(field.humanDecision, outcome, selectedValue)
-    : field.automaticDecision !== null &&
-      automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
+  (field.descriptionAdvice?.current || field.descriptionAdvice?.application_outcome) &&
+  field.descriptionAdvice?.selection
+    ? false
+    : field.humanDecision !== null
+      ? humanChoiceSelected(field.humanDecision, outcome, selectedValue)
+      : field.automaticDecision !== null &&
+        automaticChoiceSelected(field.automaticDecision, outcome, selectedValue)
 const choiceSelected = (
   field: ReviewField,
   progress: ChoiceProgress,
@@ -768,6 +775,7 @@ const decisionQuestion = (destination: string) =>
   `Which ${labelWords(destination)} should this work use?`
 
 function MetadataChoice({
+  advice,
   context,
   current,
   disabled,
@@ -780,6 +788,7 @@ function MetadataChoice({
   toggle,
   value,
 }: {
+  advice?: ReviewField['descriptionAdvice']
   context: ChoiceContextView | undefined
   current: boolean
   disabled: boolean
@@ -802,7 +811,7 @@ function MetadataChoice({
       <button
         type="button"
         className="value-choice choice-select"
-        aria-label={`Choose ${current ? 'current' : 'proposed'} value: ${value}`}
+        aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} value: ${value}`}
         aria-pressed={selected}
         disabled={disabled}
         onClick={onChoose}
@@ -812,26 +821,32 @@ function MetadataChoice({
           {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
         </small>
         <strong>{longDescription ? `${value.slice(0, 240)}…` : value}</strong>
-        <span>{context?.rationale ?? 'Retained for this owner comparison.'}</span>
+        <span>
+          {advice
+            ? `${advice.engine} · ${advice.model}`
+            : (context?.rationale ?? 'Retained for this owner comparison.')}
+        </span>
         <span className="choice-recommendation">
           {recording
             ? 'Recording…'
-            : context?.recommendation === 'recommended'
-              ? context.recommendationReason
-              : 'No recommendation retained'}
+            : advice
+              ? descriptionAdviceStatus(advice)
+              : context?.recommendation === 'recommended'
+                ? context.recommendationReason
+                : 'No recommendation retained'}
         </span>
       </button>
       {longDescription ? (
         <details className="choice-description">
           <summary>Read full description</summary>
           <p
-            aria-label={`Choose ${current ? 'current' : 'proposed'} full description`}
+            aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} full description`}
             className="choice-description-value"
-            role="button"
-            tabIndex={0}
-            onClick={onChoose}
+            role={disabled ? undefined : 'button'}
+            tabIndex={disabled ? undefined : 0}
+            onClick={disabled ? undefined : onChoose}
             onKeyDown={(event) => {
-              if (event.key !== 'Enter' && event.key !== ' ') return
+              if (disabled || (event.key !== 'Enter' && event.key !== ' ')) return
               event.preventDefault()
               onChoose()
             }}
@@ -2516,6 +2531,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     field: ReviewField,
     outcome: DecisionCommand['outcome'],
     selectedValue: DecisionCommand['selectedValue'] = null,
+    authoredDescription?: DecisionCommand['authoredDescription'],
   ) => {
     setFrozenFieldOrders((current) =>
       current[selectedReviewCaseId] === undefined
@@ -2530,6 +2546,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       targetFingerprint: field.targetFingerprint,
       idempotencyKey: requestKey(),
       ...(field.coverConsideration ? { considerationId: field.coverConsideration.id } : {}),
+      ...(authoredDescription ? { authoredDescription } : {}),
     })
   }
   const closeAutomaticPanel = () => {
@@ -2600,14 +2617,20 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const effect = selected ? effectSummary(selected) : undefined
   const selectedRecorded =
     selected !== undefined &&
-    (selected.humanDecision !== null || selected.automaticDecision !== null)
+    (selected.humanDecision !== null ||
+      selected.automaticDecision !== null ||
+      Boolean(
+        (selected.descriptionAdvice?.current || selected.descriptionAdvice?.application_outcome) &&
+        selected.descriptionAdvice?.selection,
+      ))
   const selectedActionable = selected !== undefined && actionable(selected)
   const selectedRevisitable =
     selected !== undefined &&
     selectedRecorded &&
     selected.editable &&
     selected.decisionActions.length > 0
-  const selectedChoiceMode = selectedActionable || selectedRevisitable
+  const selectedAdvice = selected?.destination === 'description' ? selected.descriptionAdvice : null
+  const selectedChoiceMode = selectedActionable || selectedRevisitable || Boolean(selectedAdvice)
   const selectedCoverPreparation =
     selected?.destination === 'cover' &&
     selected.coverConsideration?.current !== true &&
@@ -3240,32 +3263,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       </dl>
                     ) : null}
                   </header>
-                  {selected.destination === 'description' ? (
-                    <DescriptionAdviceCard
-                      advice={selected.descriptionAdvice}
-                      reviewCaseId={selectedReviewCaseId}
-                      disabled={controller.recording || controller.reloadRequired}
-                      onSelect={() => {
-                        const advice = selected.descriptionAdvice
-                        if (!advice?.candidate) return
-                        controller.submit({
-                          destination: 'description',
-                          outcome: 'accept',
-                          proposalId: selected.proposalId,
-                          targetFingerprint: selected.targetFingerprint,
-                          idempotencyKey: requestKey(),
-                          selectedValue: {
-                            kind: 'text',
-                            value: advice.candidate.output.description,
-                          },
-                          authoredDescription: {
-                            candidateId: advice.candidate.candidate_id,
-                            binding: advice.binding,
-                          },
-                        })
-                      }}
-                    />
-                  ) : null}
                   {(selectedChoiceMode || selectedCoverInspection) && !controller.reloadRequired ? (
                     selected.destination === 'cover' ? (
                       <LibraryCoverChoices
@@ -3334,10 +3331,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                               value={selected.currentValue}
                             />
                           ) : null}
-                          {selected.decisionActions.includes('accept') &&
-                          !selected.preservationOnly ? (
+                          {(selected.decisionActions.includes('accept') &&
+                            !selected.preservationOnly) ||
+                          selectedAdvice?.candidate ? (
                             <div
-                              className={`proposed-choice-list${selected.proposedValues.length === 1 ? ' has-one-choice' : ''}`}
+                              className={`proposed-choice-list${selected.proposedValues.length + (selectedAdvice?.candidate ? 1 : 0) === 1 ? ' has-one-choice' : ''}`}
                             >
                               <header>
                                 <strong>Choose a new value</strong>
@@ -3348,7 +3346,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                   {teachingLine}
                                 </small>
                               </header>
-                              {selected.proposedValues.map((value, index) => {
+                              {(selected.decisionActions.includes('accept') &&
+                              !selected.preservationOnly
+                                ? selected.proposedValues
+                                : []
+                              ).map((value, index) => {
                                 const context = choiceContext(
                                   selected,
                                   selected.choiceContexts.filter(
@@ -3388,9 +3390,75 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                   />
                                 )
                               })}
+                              {selectedAdvice?.candidate ? (
+                                <MetadataChoice
+                                  advice={selectedAdvice}
+                                  context={undefined}
+                                  current={false}
+                                  disabled={
+                                    !selected.editable ||
+                                    !selectedAdvice.current ||
+                                    controller.recording ||
+                                    controller.reloadRequired ||
+                                    selectedAdvice.state === 'requested' ||
+                                    selectedAdvice.state === 'running'
+                                  }
+                                  expanded={false}
+                                  label="Advised · Authored content"
+                                  longDescription={isLongDescription(
+                                    'description',
+                                    selectedAdvice.candidate.output.description,
+                                  )}
+                                  onChoose={() => {
+                                    if (
+                                      !selectedAdvice.current ||
+                                      !selectedAdvice.candidate ||
+                                      !selected.editable
+                                    )
+                                      return
+                                    choose(
+                                      selected,
+                                      'accept',
+                                      {
+                                        kind: 'text',
+                                        value: selectedAdvice.candidate.output.description,
+                                      },
+                                      {
+                                        candidateId: selectedAdvice.candidate.candidate_id,
+                                        binding: selectedAdvice.binding,
+                                      },
+                                    )
+                                  }}
+                                  recording={
+                                    selectedProgress?.command.authoredDescription?.candidateId ===
+                                      selectedAdvice.candidate.candidate_id &&
+                                    selectedProgress.phase === 'recording'
+                                  }
+                                  selected={
+                                    selectedProgress && selectedProgress.phase !== 'failed'
+                                      ? selectedProgress.command.authoredDescription
+                                          ?.candidateId === selectedAdvice.candidate.candidate_id
+                                      : Boolean(
+                                          (selectedAdvice.current ||
+                                            selectedAdvice.application_outcome) &&
+                                          selectedAdvice.selection?.candidate_id ===
+                                            selectedAdvice.candidate.candidate_id,
+                                        )
+                                  }
+                                  toggle={() => undefined}
+                                  value={selectedAdvice.candidate.output.description}
+                                />
+                              ) : null}
                             </div>
                           ) : null}
                         </div>
+                        {selectedAdvice ? (
+                          <DescriptionAdvicePreparation
+                            advice={selectedAdvice}
+                            reviewCaseId={selectedReviewCaseId}
+                            disabled={controller.recording || controller.reloadRequired}
+                          />
+                        ) : null}
                       </section>
                     )
                   ) : selectedRecorded ? (

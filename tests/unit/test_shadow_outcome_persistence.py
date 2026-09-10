@@ -907,7 +907,13 @@ def _qualified_cover_report(
 
 
 def _run_qualified_cover_pipeline(
-    repository, root: Path, report: MetadataReport, proposal, supervisor
+    repository,
+    root: Path,
+    report: MetadataReport,
+    proposal,
+    supervisor,
+    *,
+    repository_factory=None,
 ) -> ReviewPreparationPipeline:
     database = root / "reports.sqlite"
 
@@ -938,9 +944,8 @@ def _run_qualified_cover_pipeline(
         return "stale" if outcome == "stale" else "complete"
 
     pipeline = ReviewPreparationPipeline(
-        repository_factory=lambda: open_repository(
-            database, authority=repository.authority
-        ),
+        repository_factory=repository_factory
+        or (lambda: open_repository(database, authority=repository.authority)),
         libraries=(("primary", "ebooks", "lib-1", "f" * 64),),
         discover=lambda *_: (
             1,

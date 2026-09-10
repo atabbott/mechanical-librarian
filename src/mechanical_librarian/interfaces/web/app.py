@@ -426,6 +426,7 @@ class _DescriptionAdviceResponse(_ClosedModel):
     candidate: DescriptionAdviceCandidate | None
     binding: DescriptionAdviceBinding
     selection: AuthoredDescriptionDecision | None
+    application_outcome: Literal["verified", "no_change_required"] | None
 
 
 class _DescriptionSelectionRequest(_ClosedModel):
@@ -610,10 +611,28 @@ class _HistoryCoverItem(_ClosedModel):
 
 class _HistoryDescriptionItem(_ClosedModel):
     schema_version: Literal["description-advice-history-v1"]
-    kind: Literal["description_advice_recorded", "description_selected"]
+    kind: Literal[
+        "description_advice_recorded", "description_selected", "description_application"
+    ]
     occurred_at: int
     review_case_id: str
-    state: Literal["requested", "running", "succeeded", "failed", "interrupted"]
+    state: Literal[
+        "requested",
+        "running",
+        "succeeded",
+        "failed",
+        "interrupted",
+        "planned",
+        "claimed",
+        "applying",
+        "reconciling",
+        "retryable",
+        "verified",
+        "stale",
+        "superseded",
+        "abandoned",
+        "no_change_required",
+    ]
     engine: Literal["codex", "openrouter"]
     model: str
     candidate: DescriptionAdviceCandidate | None
@@ -1960,6 +1979,9 @@ def _register_reviewer_access_routes(
     @app.post(
         "/api/v1/reviewer-access/description-model/contained",
         response_model=CodexDescriptionDisclosure,
+        responses={
+            status: {"model": _ErrorResponse} for status in (401, 403, 409, 422, 503)
+        },
     )
     def describe_contained_description(
         ml_session: str = Depends(authenticated_session_cookie),
@@ -1974,6 +1996,10 @@ def _register_reviewer_access_routes(
     @app.post(
         "/api/v1/reviewer-access/description-model/test",
         response_model=DescriptionModelMetadata,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 409, 413, 422, 503)
+        },
     )
     def test_description_model(
         request: _OpenRouterWriteRequest,
@@ -2833,6 +2859,10 @@ def _register_case_and_effect_routes(
     @app.post(
         "/api/v1/review-cases/{review_case_id}/description-advice/retry",
         response_model=_DescriptionRetryAcknowledgement,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (401, 403, 404, 409, 422, 503)
+        },
     )
     def retry_description_advice(
         review_case_id: str,
@@ -2848,6 +2878,10 @@ def _register_case_and_effect_routes(
     @app.post(
         "/api/v1/review-cases/{review_case_id}/description-advice/selection",
         response_model=_DescriptionSelectionAcknowledgement,
+        responses={
+            status: {"model": _ErrorResponse}
+            for status in (400, 401, 403, 404, 409, 413, 422, 503)
+        },
     )
     def select_description_advice(
         review_case_id: str,

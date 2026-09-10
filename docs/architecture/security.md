@@ -1364,7 +1364,11 @@ An attempt is durable before transport starts, and transport holds no SQLite
 write transaction. Access revision, exact model/profile and request identity
 are distinct from case/report/proposal/target/policy/preferences admission
 identity. Publication, owner selection, automatic admission and guarded apply
-recheck currentness. Crash recovery interrupts ambiguous running attempts;
+recheck currentness. A passive composition-owned bounded profile read checks
+the live contained model/profile without auth, transport or a second database.
+A verified changing Description effect retires only its original case binding;
+durable application history remains truthful after that binding becomes stale.
+Crash recovery interrupts ambiguous running attempts;
 only explicit bounded retry can request another call. Immutable candidates and
 decisions retain authored/advised provenance through stale and no-change states.
 Raw provider errors and streams never enter failure history.

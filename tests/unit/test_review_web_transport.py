@@ -1756,6 +1756,10 @@ def test_openapi_is_deterministic_and_secret_free(
         if operation.get("security") == [{"OwnerSession": []}]
     }
     assert protected_operations == {
+        ("post", "/api/v1/reviewer-access/description-model/contained"),
+        ("post", "/api/v1/reviewer-access/description-model/test"),
+        ("post", "/api/v1/review-cases/{review_case_id}/description-advice/retry"),
+        ("post", "/api/v1/review-cases/{review_case_id}/description-advice/selection"),
         ("get", "/api/v1/appearance"),
         ("get", "/api/v1/reviewer-access"),
         ("delete", "/api/v1/reviewer-access/codex"),

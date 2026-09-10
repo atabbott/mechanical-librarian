@@ -2137,3 +2137,53 @@ it('maps an actual persisted authored description separately from provider alter
   )
   expect(description.descriptionAdvice?.current).toBe(true)
 })
+
+it('sends an ordinary chooser authored command only to the bound authored selection endpoint', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const field = mapCaseDetail(payload).fields.find((item) => item.destination === 'description')!
+  const advice = field.descriptionAdvice!
+  const fetchMock = vi.fn<typeof fetch>(async () =>
+    Response.json({
+      schema_version: 'description-selection-ack-v1',
+      decision_id: 'human_decision_' + 'a'.repeat(64),
+      advised: true,
+      invalidation_sequences: [],
+    }),
+  )
+  const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+  await client.recordDecision('case-1', {
+    destination: 'description',
+    outcome: 'accept',
+    proposalId: field.proposalId,
+    targetFingerprint: field.targetFingerprint,
+    selectedValue: { kind: 'text', value: advice.candidate!.output.description },
+    idempotencyKey: 'owner-choice-idempotency',
+    authoredDescription: { candidateId: advice.candidate!.candidate_id, binding: advice.binding },
+  })
+  const [url, options] = fetchMock.mock.calls[0]!
+  expect(url).toBe('/api/v1/review-cases/case-1/description-advice/selection')
+  expect(JSON.parse(options!.body as string)).toEqual({
+    candidate_id: advice.candidate!.candidate_id,
+    binding: advice.binding,
+  })
+  expect(new Headers(options!.headers).get('idempotency-key')).toBe('owner-choice-idempotency')
+})
+
+it.each([undefined, 'applying', 'verified'])(
+  'rejects an unbound or invalid description application outcome %s',
+  async (outcome) => {
+    const { default: payload } = await import('./descriptionAdviceFixture.json')
+    const changed = {
+      ...payload,
+      fields: payload.fields.map((field) =>
+        field.destination === 'description'
+          ? {
+              ...field,
+              description_advice: { ...field.description_advice, application_outcome: outcome },
+            }
+          : field,
+      ),
+    }
+    expect(() => mapCaseDetail(changed)).toThrow(ApiError)
+  },
+)

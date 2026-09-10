@@ -34,6 +34,7 @@ def test_real_service_candidate_admits_through_persisted_authority(
         candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
     )
     authority = PersistedFieldEffectAuthority(repository)
+    assert store.read(binding.review_case_id)["application_outcome"] is None
     snapshot = authority.resolve(decision)
     assert snapshot.decision_value == {
         "kind": "text",
@@ -73,6 +74,20 @@ def test_real_service_candidate_admits_through_persisted_authority(
     verified = application.apply(operation.plan.plan_id)
     assert verified.state == "verified"
     assert target.read(operation.plan).value == "Authored synthetic description."
+    advice = store.read(binding.review_case_id)
+    assert advice["current"] is False
+    assert advice["application_outcome"] == "verified"
+    assert advice["selection"]["decision_id"] == decision.decision_id
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    description = next(
+        field
+        for field in InspectCurrentReviewCase(repository).run(binding.review_case_id)[
+            "fields"
+        ]
+        if field["destination"] == "description"
+    )
+    assert description["needs_attention"] is False
     page = repository.field_effect_activity_page(
         search=None, event_type="all", occurred_after=0, page=1, page_size=25
     )
@@ -83,6 +98,16 @@ def test_real_service_candidate_admits_through_persisted_authority(
     assert any(
         event["record"]["source_kind"] == "description_decision"
         for event in page["events"]
+    )
+
+    application_history = repository.get_review_case_history(
+        decision.review_case_id, 50
+    )
+    assert any(
+        event["kind"] == "description_application"
+        and event["state"] == "verified"
+        and event["candidate"]["candidate_id"] == candidate.candidate_id
+        for event in application_history
     )
 
     from mechanical_librarian.application.review_web import RecordHumanDecision
@@ -103,6 +128,10 @@ def test_real_service_candidate_admits_through_persisted_authority(
             "SELECT document FROM human_decisions WHERE decision_id=?",
             (acknowledgement["decision_id"],),
         ).fetchone()[0]
+    )
+    assert any(
+        event["kind"] == "description_selected" and event["state"] == "superseded"
+        for event in repository.get_review_case_history(decision.review_case_id, 50)
     )
     assert reversal.to_json() in repository.pending_field_effect_decision_documents(100)
     restored = authority.resolve(reversal)
@@ -250,6 +279,8 @@ def test_authored_same_text_uses_no_change_and_has_permanent_history(
     )
     assert field["needs_attention"] is False
     assert field["description_advice"]["candidate"]["provenance"] == "authored_content"
+    assert field["description_advice"]["application_outcome"] == "no_change_required"
+    assert field["description_advice"]["current"] is True
     page = repository.field_effect_activity_page(
         search=None, event_type="all", occurred_after=0, page=1, page_size=25
     )
@@ -259,6 +290,12 @@ def test_authored_same_text_uses_no_change_and_has_permanent_history(
         for event in page["events"]
     )
     events = reader.history(binding.review_case_id)["items"]
+    assert any(
+        event["kind"] == "description_application"
+        and event["state"] == "no_change_required"
+        and event["candidate"]["advised"] is True
+        for event in events
+    )
     selected = next(
         event for event in events if event["kind"] == "description_selected"
     )
@@ -274,10 +311,13 @@ def test_real_projection_hook_prepares_and_admits_description(tmp_path: Path) ->
 
     from mechanical_librarian.bootstrap import composition
     from mechanical_librarian.domain.proposal_set import ProposalSet
+    from tests.support.description_advice import _contained_profile
     from tests.unit.test_shadow_outcome_persistence import (
         _pipeline_configuration,
         _run_qualified_cover_pipeline,
     )
+
+    profile = _contained_profile(tmp_path)
 
     def pipeline_probe(repository, report, deterministic, access, calls):
         configuration = _pipeline_configuration()
@@ -285,7 +325,9 @@ def test_real_projection_hook_prepares_and_admits_description(tmp_path: Path) ->
         configuration = replace(
             configuration,
             review=replace(
-                configuration.review, description_automatic_application=True
+                configuration.review,
+                description_automatic_application=True,
+                cover_reviewer_profile_file=str(profile),
             ),
         )
         recovery = composition.SQLiteProviderRecoveryStore.open(
@@ -307,7 +349,12 @@ def test_real_projection_hook_prepares_and_admits_description(tmp_path: Path) ->
             ).fetchone()[0]
         )
         pipeline = _run_qualified_cover_pipeline(
-            repository, tmp_path, report, proposal, supervisor
+            repository,
+            tmp_path,
+            report,
+            proposal,
+            supervisor,
+            repository_factory=supervisor._pipeline._repository_factory,
         )
         try:
             for _ in range(64):
@@ -322,6 +369,32 @@ def test_real_projection_hook_prepares_and_admits_description(tmp_path: Path) ->
             assert repository._connection.execute(
                 "SELECT count(*) FROM current_description_decisions"
             ).fetchone() == (1,)
+            for factory in (
+                supervisor._pipeline._repository_factory,
+                supervisor._pipeline._observation_repository_factory,
+            ):
+                bound = factory()
+                original_profile = profile.read_bytes()
+                try:
+                    assert (
+                        bound.description_advice_store().read(
+                            deterministic.review_case_id
+                        )["current"]
+                        is True
+                    )
+                    changed_profile = json.loads(original_profile)
+                    changed_profile["model"] = "changed-synthetic-model"
+                    profile.write_text(canonical_json(changed_profile))
+                    assert (
+                        bound.description_advice_store().read(
+                            deterministic.review_case_id
+                        )["current"]
+                        is False
+                    )
+                finally:
+                    profile.write_bytes(original_profile)
+                    bound.close()
+            assert len(calls) == 1
             from mechanical_librarian.adapters.persistence.description_advice import (
                 request_description_preparation,
             )
@@ -379,7 +452,11 @@ def test_real_projection_hook_prepares_and_admits_description(tmp_path: Path) ->
             supervisor.stop()
             recovery.close()
 
-    repository, *_ = _prepared(tmp_path, pipeline_probe=pipeline_probe)
+    repository, *_ = _prepared(
+        tmp_path,
+        pipeline_probe=pipeline_probe,
+        contained_identity=lambda: ("synthetic-model", profile.read_bytes()),
+    )
     repository.close()
 
 
@@ -688,4 +765,835 @@ def test_advice_automatic_off_retains_qualified_deterministic_description_fill(
     target.seed(operation.plan)
     assert application.apply(operation.plan.plan_id).state == "verified"
     assert target.read(operation.plan).value == source
+    assert store.read(binding.review_case_id)["current"] is False
+    assert store.read(binding.review_case_id)["application_outcome"] is None
+    with pytest.raises(ValueError, match="description advice is stale"):
+        store.admit(candidate.candidate_id, binding, "human", "b" * 64, 30)
+    repository.close()
+
+
+def test_fake_authority_requires_explicit_value_for_persisted_authored_decision(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.adapters.field_effect_fakes import (
+        FakeAuthorityCurrentness,
+    )
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    decision = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+    persisted = PersistedFieldEffectAuthority(repository).resolve(decision)
+    fake = FakeAuthorityCurrentness()
+    with pytest.raises(KeyError):
+        fake.bind(
+            decision,
+            connection=persisted.connection,
+            library=persisted.library,
+            work_id=persisted.work_id,
+            target_version=persisted.target_version,
+        )
+    fake.authored_values[decision.decision_id] = persisted.decision_value
+    fake.bind(
+        decision,
+        connection=persisted.connection,
+        library=persisted.library,
+        work_id=persisted.work_id,
+        target_version=persisted.target_version,
+    )
+    assert fake.resolve(decision).decision_value == persisted.decision_value
+    assert fake.resolve(decision).source == "fake_service"
+    repository.close()
+
+
+@pytest.mark.parametrize("origin", ["human", "automatic_policy"])
+@pytest.mark.parametrize("drift", ["model", "profile", "unavailable"])
+def test_live_contained_identity_drift_refuses_admission_and_authority(
+    tmp_path: Path,
+    origin: str,
+    drift: str,
+) -> None:
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+
+    identity = ("synthetic-model", b"synthetic-contained-profile")
+    unavailable = False
+
+    def current_identity() -> tuple[str, bytes]:
+        if unavailable:
+            raise RuntimeError("synthetic profile unavailable")
+        return identity
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, contained_identity=current_identity
+    )
+    decision = store.admit(candidate.candidate_id, binding, origin, "a" * 64, 11)
+    authority = PersistedFieldEffectAuthority(repository)
+    assert authority.resolve(decision).decision_value == {
+        "kind": "text",
+        "value": candidate.output.description,
+    }
+    if drift == "model":
+        identity = ("changed-synthetic-model", identity[1])
+    elif drift == "profile":
+        identity = (identity[0], b"changed-synthetic-profile")
+    else:
+        unavailable = True
+    assert store.read(binding.review_case_id)["current"] is False
+    assert (
+        store.read(binding.review_case_id)["candidate"]["candidate_id"]
+        == candidate.candidate_id
+    )
+    with pytest.raises(ValueError, match="candidate request mismatch"):
+        store.admit(candidate.candidate_id, binding, origin, "b" * 64, 12)
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        authority.resolve(decision)
+    # Idempotent replay is historical acknowledgement, not renewed authority.
+    assert (
+        store.admit(candidate.candidate_id, binding, origin, "a" * 64, 12) == decision
+    )
+    assert any(
+        event["kind"] == "description_selected"
+        for event in repository.get_review_case_history(binding.review_case_id, 50)
+    )
+    repository.close()
+
+
+@pytest.mark.parametrize("boundary", ["preclaim", "claim", "target"])
+def test_profile_drift_between_guarded_boundaries_never_writes(
+    tmp_path: Path,
+    boundary: str,
+) -> None:
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from tests.unit.test_field_effects import CAPABILITY
+
+    identity = ("synthetic-model", b"synthetic-contained-profile")
+    calls = []
+
+    def capture(_repository, _report, _decision, _access, dispatched):
+        calls.append(dispatched)
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, contained_identity=lambda: identity, pipeline_probe=capture
+    )
+    decision = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(decision)
+    application, target = _guarded_application(repository, tmp_path, authority)
+    operation = application.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    if boundary == "target":
+        repository.claim_field_effect(
+            operation.plan.plan_id, "planned", "b" * 64, application._clock()
+        )
+    identity = (identity[0], b"changed-synthetic-profile")
+    if boundary == "claim":
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            repository.claim_field_effect(
+                operation.plan.plan_id, "planned", "b" * 64, 14
+            )
+    else:
+        assert application.apply(operation.plan.plan_id).state == "stale"
+    assert target.read(operation.plan).value == snapshot.pre_value
+    assert target._effects == {}
+    assert len(calls[0]) == 1
+    repository.close()
+
+
+def test_primary_and_independent_activity_bind_passive_profile_after_reopen(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+
+    from mechanical_librarian.bootstrap import composition
+    from tests.support.description_advice import _contained_profile
+    from tests.unit.test_shadow_outcome_persistence import _pipeline_configuration
+
+    profile = _contained_profile(tmp_path)
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path, contained_identity=lambda: ("synthetic-model", profile.read_bytes())
+    )
+    configuration = _pipeline_configuration()
+    assert configuration.review is not None
+    configuration = replace(
+        configuration,
+        review=replace(
+            configuration.review,
+            cover_reviewer_profile_file=str(profile),
+            description_automatic_application=True,
+        ),
+    )
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail(
+            "passive identity must not touch auth, access serialization, or transport"
+        )
+
+    monkeypatch.setattr(composition, "CodexDeviceAuthManager", forbidden)
+    monkeypatch.setattr(composition, "OpenRouterReviewer", forbidden)
+    monkeypatch.setattr(composition, "run_description_reviewer", forbidden)
+    assert configuration.review is not None
+    access = composition._compose_reviewer_access(repository, configuration.review)
+    import threading
+
+    primary_gate = threading.Lock()
+
+    def serialized(_call):
+        with primary_gate:
+            return forbidden()
+
+    access.attach_serialization(serialized)
+    assert store.read(binding.review_case_id)["current"] is True
+
+    def independent():
+        reopened = open_repository(
+            tmp_path / "reports.sqlite", authority=repository.authority
+        )
+        try:
+            raw = reopened.description_advice_store().read(binding.review_case_id)
+            assert raw["current"] is False
+            assert raw["candidate"]["candidate_id"] == candidate.candidate_id
+            composition.compose_field_effect_activity_projection(
+                configuration, reopened
+            )
+            assert (
+                reopened.description_advice_store().read(binding.review_case_id)[
+                    "current"
+                ]
+                is True
+            )
+            profile.unlink()
+            assert (
+                reopened.description_advice_store().read(binding.review_case_id)[
+                    "current"
+                ]
+                is False
+            )
+        finally:
+            reopened.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with primary_gate:
+            pool.submit(independent).result(timeout=5)
+    assert store.read(binding.review_case_id)["current"] is False
+    access.attach_serialization(lambda call: call())
+    access.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("failed", [False, True])
+def test_parked_and_failed_preparation_are_authored_activity_without_authority(
+    tmp_path: Path,
+    failed: bool,
+) -> None:
+    from mechanical_librarian.domain.activity_records import readable_activity_event
+
+    repository, store, binding, candidate, _ = _prepared(
+        tmp_path,
+        automatic=False,
+        output_transform=(lambda _response: "invalid synthetic result")
+        if failed
+        else None,
+    )
+    page = repository.field_effect_activity_page(
+        search=None, event_type="all", occurred_after=0, page=1, page_size=25
+    )
+    events = [
+        event
+        for event in page["events"]
+        if event["record"]["source_kind"] == "description_preparation"
+    ]
+    assert len(events) == 1
+    event = events[0]
+    assert event["state"] == ("failed" if failed else "succeeded")
+    assert event["record"]["advised"] is True
+    readable_activity_event(event, None)
+    assert any(
+        fact["value"] == "Advised · Authored content" for fact in event["evidence"]
+    )
+    assert any(
+        "grants no write authority" in fact["value"] for fact in event["evidence"]
+    )
+    assert (
+        "could not be prepared" in event["change"]
+        if failed
+        else "prepared for review" in event["change"]
+    )
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions"
+    ).fetchone() == (0,)
+    repository.close()
+
+
+@pytest.mark.parametrize("during_dispatch", [False, True])
+def test_verified_deterministic_fill_retires_advice_before_successor_scan(
+    tmp_path: Path,
+    during_dispatch: bool,
+) -> None:
+    from mechanical_librarian.domain.metadata_report import (
+        TargetField,
+        TargetFieldState,
+    )
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.proposal_evidence import _report
+    from tests.unit.test_field_effects import CAPABILITY
+
+    base, *_ = _automatic_no_change_inputs("description_preserved")
+    report = _report(
+        fields=tuple(
+            TargetField(field.destination, TargetFieldState.EMPTY, None)
+            if field.destination.value == "description"
+            else field
+            for field in base.target.fields
+        ),
+        local_claims=base.local_claims,
+        providers=base.providers,
+    )
+    writes = []
+    captured = []
+
+    def capture(_repository, _report, _decision, access, calls):
+        captured.append((access, calls))
+
+    def write(repository, _access, binding, deterministic):
+        authority = PersistedFieldEffectAuthority(repository)
+        snapshot = authority.resolve(deterministic)
+        application, target = _guarded_application(repository, tmp_path, authority)
+        operation = application.plan(
+            deterministic,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=snapshot.destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+        assert operation is not None
+        target.seed(operation.plan)
+        assert application.apply(operation.plan.plan_id).state == "verified"
+        assert target.read(operation.plan).value == "A qualified description."
+        writes.append(operation.plan)
+
+    repository, store, binding, candidate, deterministic = _prepared(
+        tmp_path,
+        automatic=False,
+        report_override=report,
+        during_dispatch=write if during_dispatch else None,
+        result_current=not during_dispatch,
+        pipeline_probe=capture,
+    )
+    if not during_dispatch:
+        write(repository, None, binding, deterministic)
+    assert len(writes) == 1
+    advice = store.read(binding.review_case_id)
+    assert advice["current"] is False
+    assert advice["candidate"]["candidate_id"] == candidate.candidate_id
+    assert advice["application_outcome"] is None
+    with pytest.raises(ValueError, match="description advice is stale"):
+        store.admit(candidate.candidate_id, binding, "human", "e" * 64, 30)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_advice_attempts"
+    ).fetchone() == (1,)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_decisions"
+    ).fetchone() == (0,)
+    reopened = open_repository(
+        tmp_path / "reports.sqlite", create=False, authority=repository.authority
+    )
+    assert (
+        reopened.description_advice_store().read(binding.review_case_id)["current"]
+        is False
+    )
+    assert (
+        reopened.description_advice_store().read(binding.review_case_id)["candidate"][
+            "candidate_id"
+        ]
+        == candidate.candidate_id
+    )
+    reopened.close()
+
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    successor = _report(
+        fields=tuple(
+            TargetField(
+                field.destination, TargetFieldState.VALUE, "A qualified description."
+            )
+            if field.destination.value == "description"
+            else field
+            for field in report.target.fields
+        ),
+        local_claims=report.local_claims,
+        providers=report.providers,
+    )
+    resolved = repository.current_resolved_metadata_policy(successor.target.library)
+    assert resolved is not None
+    proposal = evaluate_report(
+        successor, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish(successor, lambda: True, expected_current=report.report_id)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    assert case_id != binding.review_case_id
+    fresh = binding.model_copy(
+        update={
+            "review_case_id": case_id,
+            "report_id": successor.report_id,
+            "proposal_set_id": proposal.proposal_set_id,
+            "target_fingerprint": successor.target.fingerprint,
+        }
+    )
+    access, calls = captured[0]
+    reused = DescriptionAdviceService(
+        store, access, store.current_settings, lambda: 40
+    ).prepare(successor, fresh, lambda: store.binding_is_current(fresh))
+    assert reused == candidate
+    assert len(calls) == 1
+    assert store.read(case_id)["current"] is True
+    assert store.read(case_id)["binding"] == fresh.model_dump()
+    selected = store.admit(candidate.candidate_id, fresh, "human", "f" * 64, 41)
+    assert selected.binding == fresh
+    repository.close()
+
+
+def test_composed_contained_description_uses_image_free_port_and_exact_profile(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    import hashlib
+    from dataclasses import replace
+
+    from mechanical_librarian.application.contained_reviewer_contract import (
+        ContainedReviewRequest,
+        ContainedReviewResult,
+    )
+    from mechanical_librarian.bootstrap import composition, contained_reviewer
+    from mechanical_librarian.domain.metadata_report import MetadataReport
+    from tests.support.description_advice import _contained_profile
+    from tests.unit.test_shadow_outcome_persistence import _pipeline_configuration
+
+    profile = _contained_profile(tmp_path)
+    repository, store, binding, previous, _ = _prepared(
+        tmp_path,
+        automatic=False,
+        contained_identity=lambda: ("synthetic-model", profile.read_bytes()),
+    )
+    review = _pipeline_configuration().review
+    assert review is not None
+    review = replace(review, cover_reviewer_profile_file=str(profile))
+    monkeypatch.setattr(
+        composition, "CodexDeviceAuthManager", lambda *_args, **_kwargs: _Auth("usable")
+    )
+    monkeypatch.setattr(
+        composition,
+        "reviewer_host_status",
+        lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+    )
+
+    def unexpected(*_args, **_kwargs):
+        pytest.fail("description task must not use OpenRouter or cover dispatch")
+
+    monkeypatch.setattr(composition, "OpenRouterReviewer", unexpected)
+    monkeypatch.setattr(composition, "run_cover_packet_reviewer", unexpected)
+    dispatched = []
+
+    def engine(_self, request, on_dispatch):
+        assert type(request) is ContainedReviewRequest
+        assert not hasattr(request, "images")
+        dispatched.append(request)
+        on_dispatch(1, 1, "synthetic-process")
+        document = canonical_json(
+            {"description": "Composed authored description.", "disposition": "ready"}
+        )
+        return ContainedReviewResult(
+            document, hashlib.sha256(document.encode()).hexdigest()
+        )
+
+    monkeypatch.setattr(contained_reviewer.ContainedReviewerAdapter, "run", engine)
+    access = composition._compose_reviewer_access(repository, review)
+    report = MetadataReport.from_json(
+        repository.get_review_case_report(binding.review_case_id)
+    )
+    candidate = DescriptionAdviceService(
+        store, access, store.current_settings, lambda: 20
+    ).prepare(report, binding, lambda: store.binding_is_current(binding), retry=True)
+    assert candidate is not None and candidate.candidate_id != previous.candidate_id
+    assert candidate.engine == "codex" and candidate.model == "synthetic-model"
+    assert candidate.profile_digest == hashlib.sha256(profile.read_bytes()).hexdigest()
+    assert candidate.output.description == "Composed authored description."
+    assert len(dispatched) == 1
+    assert candidate.request_digest == dispatched[0].digest
+    access.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("wrong_model", [False, True])
+def test_composed_openrouter_description_uses_exact_text_model_without_fallback(
+    tmp_path: Path,
+    monkeypatch,
+    wrong_model: bool,
+) -> None:
+    import httpx
+
+    from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
+    from mechanical_librarian.bootstrap import composition
+    from mechanical_librarian.domain.metadata_report import MetadataReport
+    from tests.unit.test_shadow_outcome_persistence import _pipeline_configuration
+
+    repository, store, binding, _, _ = _prepared(tmp_path, automatic=False)
+    posted = []
+
+    def transport(request):
+        assert request.url.host == "openrouter.ai"
+        if request.url.path == "/api/v1/key":
+            return httpx.Response(200, json={"data": {"is_free_tier": True}})
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": "example/text",
+                            "architecture": {
+                                "input_modalities": ["text"],
+                                "output_modalities": ["text"],
+                            },
+                            "supported_parameters": ["structured_outputs"],
+                            "pricing": {
+                                "prompt": "0.000001",
+                                "completion": "0.000002",
+                                "request": "0",
+                            },
+                        }
+                    ]
+                },
+            )
+        assert request.url.path == "/api/v1/chat/completions"
+        posted.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "model": "other/model" if wrong_model else "example/text",
+                "choices": [
+                    {
+                        "message": {
+                            "content": canonical_json(
+                                {
+                                    "description": "Composed OpenRouter description.",
+                                    "disposition": "ready",
+                                }
+                            )
+                        }
+                    }
+                ],
+            },
+        )
+
+    monkeypatch.setattr(
+        composition,
+        "OpenRouterReviewer",
+        lambda key, model: OpenRouterReviewer(
+            key, model, transport=httpx.MockTransport(transport)
+        ),
+    )
+
+    def forbidden(*_args, **_kwargs):
+        pytest.fail("OpenRouter description must not use contained or cover dispatch")
+
+    monkeypatch.setattr(composition, "run_description_reviewer", forbidden)
+    monkeypatch.setattr(composition, "run_cover_packet_reviewer", forbidden)
+    review = _pipeline_configuration().review
+    assert review is not None
+    access = composition._compose_reviewer_access(repository, review)
+    selected = access.configure_openrouter(
+        expected_revision=2,
+        api_key="synthetic-secret",
+        model="example/text",
+        task="description_rewrite",
+    )
+    fresh = binding.model_copy(update={"access_revision": selected.revision})
+    report = MetadataReport.from_json(
+        repository.get_review_case_report(binding.review_case_id)
+    )
+    candidate = DescriptionAdviceService(
+        store, access, store.current_settings, lambda: 20
+    ).prepare(report, fresh, lambda: store.binding_is_current(fresh))
+    assert len(posted) == 1
+    assert posted[0]["model"] == "example/text"
+    assert posted[0]["provider"] == {
+        "require_parameters": True,
+        "allow_fallbacks": False,
+    }
+    assert "image_url" not in json.dumps(posted)
+    assert "synthetic-secret" not in json.dumps(posted)
+    if wrong_model:
+        assert candidate is None
+        assert store.read(binding.review_case_id)["state"] == "failed"
+    else:
+        assert candidate is not None
+        assert candidate.engine == "openrouter" and candidate.model == "example/text"
+        assert candidate.access_revision == selected.revision
+        assert (
+            store.admit(
+                candidate.candidate_id, fresh, "human", "e" * 64, 21
+            ).candidate_id
+            == candidate.candidate_id
+        )
+    access.close()
+    repository.close()
+
+
+@pytest.mark.parametrize("outcome", ["planned", "target_failure", "readback_failure"])
+def test_unverified_effect_does_not_retire_description_binding(
+    tmp_path: Path,
+    outcome: str,
+) -> None:
+    from tests.unit.test_field_effects import CAPABILITY
+
+    repository, store, binding, candidate, _ = _prepared(tmp_path)
+    decision = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(decision)
+    application, target = _guarded_application(repository, tmp_path, authority)
+    operation = application.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    if outcome != "planned":
+        if outcome == "target_failure":
+            target.fail_next = True
+        else:
+            target.fail_read_after_apply_for.add(operation.plan.plan_id)
+        result = application.apply(operation.plan.plan_id)
+        assert result.state in {"retryable", "reconciling"}
+        assert result.failure is not None
+    assert store.binding_is_current(binding)
+    assert store.read(binding.review_case_id)["application_outcome"] is None
+    assert len(target._effects) == (1 if outcome == "readback_failure" else 0)
+    repository.close()
+
+
+def test_guarded_runtime_composition_binds_its_reopened_description_store(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from dataclasses import replace
+    from unittest.mock import Mock
+
+    from mechanical_librarian.adapters.field_effect_fakes import (
+        FakeCapabilityObserver,
+        FakeTargetService,
+    )
+    from mechanical_librarian.bootstrap import composition
+    from tests.support.description_advice import _contained_profile
+    from tests.unit.test_field_effects import CAPABILITY
+    from tests.unit.test_shadow_outcome_persistence import _pipeline_configuration
+
+    profile = _contained_profile(tmp_path)
+    repository, _, binding, _, _ = _prepared(
+        tmp_path, contained_identity=lambda: ("synthetic-model", profile.read_bytes())
+    )
+    reopened = open_repository(
+        tmp_path / "reports.sqlite", authority=repository.authority
+    )
+    assert (
+        reopened.description_advice_store().read(binding.review_case_id)["current"]
+        is False
+    )
+    configuration = _pipeline_configuration()
+    assert configuration.review is not None
+    configuration = replace(
+        configuration,
+        review=replace(
+            configuration.review,
+            cover_reviewer_profile_file=str(profile),
+            description_automatic_application=True,
+        ),
+    )
+    target = FakeTargetService()
+    monkeypatch.setattr(
+        composition,
+        "compose_audiobookshelf_field_effect_target",
+        lambda *_args, **_kwargs: target,
+    )
+    monkeypatch.setattr(
+        composition,
+        "compose_audiobookshelf_field_effect_capabilities",
+        lambda *_args, **_kwargs: FakeCapabilityObserver(CAPABILITY),
+    )
+    recovery = composition.SQLiteProviderRecoveryStore.open(
+        tmp_path / "guarded-provider-recovery.sqlite"
+    )
+    try:
+        composition.compose_continuous_guarded_application(
+            configuration,
+            reopened,
+            tmp_path / "reports.sqlite",
+            tmp_path / "guarded-artifacts",
+            Mock(),
+            provider_recovery=recovery,
+        )
+        assert (
+            reopened.description_advice_store().read(binding.review_case_id)["current"]
+            is True
+        )
+        profile.unlink()
+        assert (
+            reopened.description_advice_store().read(binding.review_case_id)["current"]
+            is False
+        )
+        assert target._effects == {}
+    finally:
+        recovery.close()
+        reopened.close()
+        repository.close()
+
+
+@pytest.mark.parametrize("scope", ["other_field", "other_target"])
+def test_other_verified_fake_service_write_preserves_description_binding(
+    tmp_path: Path,
+    scope: str,
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.adapters.field_effect_fakes import (
+        FakeAuthorityCurrentness,
+    )
+    from mechanical_librarian.domain.field_effect import field_value_version
+    from tests.unit.test_field_effects import CAPABILITY, DEPENDENCY
+    from tests.unit.test_field_effects import decision as fake_decision
+
+    repository, store, binding, _, _ = _prepared(tmp_path)
+    destination = "title" if scope == "other_field" else "description"
+    work_id = "item-1" if scope == "other_field" else "other-synthetic-work"
+    decision = replace(
+        fake_decision(destination, {"kind": "text", "value": "Control value"}),
+        review_case_id=binding.review_case_id,
+        target_fingerprint=binding.target_fingerprint,
+    )
+    authority = FakeAuthorityCurrentness()
+    version = field_value_version(destination, "Before")
+    authority.bind(
+        decision,
+        connection="primary",
+        library="ebooks",
+        work_id=work_id,
+        target_version=version,
+    )
+    application, target = _guarded_application(repository, tmp_path, authority)
+    repository.grant_field_effect_consents("primary", ("ebooks",), (destination,), 12)
+    operation = application.plan(
+        decision,
+        connection="primary",
+        library="ebooks",
+        work_id=work_id,
+        destination=destination,
+        pre_value="Before",
+        desired_value=decision.selected_value,
+        target_fingerprint=binding.target_fingerprint,
+        target_version=version,
+        dependency_digests=(DEPENDENCY,),
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    assert application.apply(operation.plan.plan_id).state == "verified"
+    assert target.read(operation.plan).value == "Control value"
+    assert store.binding_is_current(binding)
+    assert store.read(binding.review_case_id)["current"] is True
+    repository.close()
+
+
+@pytest.mark.parametrize("claimed", [False, True])
+def test_authored_admission_replaces_pending_but_not_claimed_deterministic_effect(
+    tmp_path: Path, claimed: bool
+) -> None:
+    from mechanical_librarian.domain.metadata_report import (
+        TargetField,
+        TargetFieldState,
+    )
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.proposal_evidence import _report
+    from tests.unit.test_field_effects import CAPABILITY
+
+    base, *_ = _automatic_no_change_inputs("description_preserved")
+    report = _report(
+        fields=tuple(
+            TargetField(field.destination, TargetFieldState.EMPTY, None)
+            if field.destination.value == "description"
+            else field
+            for field in base.target.fields
+        ),
+        local_claims=base.local_claims,
+        providers=base.providers,
+    )
+    repository, store, binding, candidate, deterministic = _prepared(
+        tmp_path, report_override=report
+    )
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(deterministic)
+    application, target = _guarded_application(repository, tmp_path, authority)
+    operation = application.plan(
+        deterministic,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    if claimed:
+        repository.claim_field_effect(
+            operation.plan.plan_id, "planned", "b" * 64, application._clock()
+        )
+        with pytest.raises(ValueError, match="description effect is in flight"):
+            store.admit(
+                candidate.candidate_id, binding, "automatic_policy", "e" * 64, 20
+            )
+        assert store.read(binding.review_case_id)["selection"] is None
+        assert authority.current(operation.plan.authority)
+    else:
+        selected = store.admit(
+            candidate.candidate_id, binding, "automatic_policy", "e" * 64, 20
+        )
+        assert selected.to_json() in repository.pending_field_effect_decision_documents(
+            100
+        )
+        assert not authority.current(operation.plan.authority)
+    assert target._effects == {}
+    assert store.read(binding.review_case_id)["current"] is True
     repository.close()

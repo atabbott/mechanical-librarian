@@ -812,10 +812,8 @@ it('saves description preferences independently next to Cover guidance and keeps
   expect(
     within(region).getByRole('checkbox', { name: 'Automatically apply ready description advice' }),
   ).not.toBeChecked()
-  expect(
-    screen.getByRole('region', { name: 'Cover' }).compareDocumentPosition(region) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy()
+  expect(screen.getByRole('region', { name: 'Cover' }).nextElementSibling).toBe(region)
+  expect(region.nextElementSibling).toHaveAccessibleName('ASIN')
   await userEvent.setup().click(marketing)
   expect(within(region).getByRole('status')).toHaveTextContent(
     'Policy draft changes are saved separately',
@@ -848,4 +846,18 @@ it('shows locked description cleanup preferences without enabling edits', async 
   expect(
     screen.getByText('These preferences are managed by deployment configuration.'),
   ).toBeVisible()
+})
+
+it('focuses the description preferences heading from its direct setup link', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  window.history.replaceState({}, '', '/policy?section=curation#description-advice')
+  try {
+    renderRoute('/policy?section=curation#description-advice', http)
+    const heading = await screen.findByRole('heading', { name: 'Description advice' })
+    await waitFor(() => expect(heading).toHaveFocus())
+    expect(heading.scrollIntoView).toHaveBeenCalledWith({ block: 'start' })
+  } finally {
+    window.history.replaceState({}, '', '/')
+  }
 })

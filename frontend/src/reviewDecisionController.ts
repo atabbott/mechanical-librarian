@@ -12,7 +12,9 @@ export const actionable = (field: CaseDetailView['fields'][number]) =>
   (field.decisionActions.length > 0 ||
     (field.destination === 'cover' && field.editable && field.coverConsideration?.current !== true))
 export const choiceAvailable = (field: CaseDetailView['fields'][number]) =>
-  field.editable && field.decisionActions.length > 0
+  field.editable &&
+  (field.decisionActions.length > 0 ||
+    Boolean(field.descriptionAdvice?.current && field.descriptionAdvice.candidate))
 export const reconciliationKey = (id: string) => ['decision-reconciliation', id] as const
 const decisionStatusKey = (id: string) => ['decision-status', id] as const
 export type DecisionFailure = 'permanent' | 'retryable' | 'stale' | 'uncertain'

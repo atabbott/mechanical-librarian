@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -678,6 +679,16 @@ def _server(
         )
         reviewer_access.select_codex(expected_revision=1, task="description_rewrite")
         store = repository.description_advice_store()
+        store.bind_identity(
+            lambda engine, _model: (
+                (
+                    "synthetic-contained-model",
+                    hashlib.sha256(description_profile).hexdigest(),
+                )
+                if engine == "codex"
+                else None
+            )
+        )
         preferences = store.current_settings()
         binding = DescriptionAdviceBinding(
             review_case_id=case_id,
@@ -5115,36 +5126,87 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                 page.goto(
                     f"{origin}/library?lens=all&preview={case_id}&field=description"
                 )
-                card = page.get_by_role("article", name="Advised description")
-                expect(card).to_be_visible()
+                chooser = page.locator("section.direct-choice")
+                expect(chooser).to_be_visible()
                 expect(
-                    card.get_by_text("codex · synthetic-contained-model")
-                ).to_be_visible()
-                select = card.get_by_role("button", name="Use advised description")
+                    page.get_by_role("article", name="Advised description")
+                ).to_have_count(0)
+                current = chooser.get_by_role(
+                    "button", name="Choose current value: Existing description."
+                )
+                provider = chooser.get_by_role(
+                    "button", name="Choose proposed value: A qualified description."
+                )
+                expect(current).to_be_enabled()
+                expect(provider).to_be_enabled()
+                select = chooser.get_by_role(
+                    "button", name=re.compile("^Choose advised value:")
+                )
                 if state == "failed":
-                    expect(
-                        card.get_by_text("could not be prepared", exact=False)
-                    ).to_be_visible()
-                    expect(select).to_be_disabled()
-                elif state in {"automatic", "no_change"}:
-                    expect(card.get_by_role("status")).to_contain_text(
-                        "Advised description selected"
+                    expect(chooser.get_by_role("status")).to_contain_text(
+                        "could not be prepared"
                     )
-                    expect(select).to_be_disabled()
+                    expect(select).to_have_count(0)
                 else:
-                    expect(select).to_be_enabled()
-                    expect(card.locator("strong")).to_have_count(0)
-                    expect(
-                        card.get_by_text(
-                            "<strong>Authored text stays text.</strong>", exact=False
+                    expect(select).to_be_visible()
+                    expect(select).to_contain_text("Advised · Authored content")
+                    expect(select).to_contain_text("codex · synthetic-contained-model")
+                    if state in {"automatic", "no_change"}:
+                        expect(select).to_have_attribute("aria-pressed", "true")
+                        expect(current).to_have_attribute("aria-pressed", "false")
+                        expect(select).to_contain_text(
+                            "Applied and verified"
+                            if state == "automatic"
+                            else "No change needed"
                         )
-                    ).to_be_visible()
-                    if state == "needs_review":
-                        expect(
-                            card.get_by_text(
-                                "It cannot apply automatically.", exact=False
+                        if state == "automatic":
+                            expect(select).to_be_disabled()
+                    else:
+                        expect(select).to_be_enabled()
+                        expect(select).to_contain_text(
+                            "<strong>Authored text stays text.</strong>"
+                        )
+                        expect(select.locator("strong strong")).to_have_count(0)
+                        if state == "needs_review":
+                            expect(select).to_contain_text("cannot apply automatically")
+                        selection_requests = []
+                        page.on(
+                            "request",
+                            lambda request: (
+                                selection_requests.append(request.post_data_json)
+                                if request.method == "POST"
+                                and request.url.endswith(
+                                    "/description-advice/selection"
+                                )
+                                else None
+                            ),
+                        )
+                        select.focus()
+                        with page.expect_response(
+                            lambda response: (
+                                response.request.method == "POST"
+                                and response.url.endswith(
+                                    "/description-advice/selection"
+                                )
                             )
-                        ).to_be_visible()
+                        ) as selection_response:
+                            select.press("Enter")
+                        assert selection_response.value.ok
+                        page.wait_for_url(
+                            lambda url: (
+                                "field=" in url and "field=description" not in url
+                            )
+                        )
+                        page.get_by_role(
+                            "button", name=re.compile("^Description ")
+                        ).click()
+                        expect(select).to_have_attribute("aria-pressed", "true")
+                        assert len(selection_requests) == 1
+                        assert set(selection_requests[0]) == {"candidate_id", "binding"}
+                        assert (
+                            selection_requests[0]["binding"]["review_case_id"]
+                            == case_id
+                        )
                 presentations: tuple[tuple[int, Literal["light", "dark"]], ...] = (
                     (1280, "light"),
                     (390, "dark"),
@@ -5152,14 +5214,55 @@ def test_description_advice_displays_real_persisted_outcomes(state):
                 for width, theme in presentations:
                     page.set_viewport_size({"width": width, "height": 800})
                     page.emulate_media(color_scheme=theme)
-                    expect(card).to_be_visible()
+                    expect(chooser).to_be_visible()
                     assert page.evaluate(
                         "document.documentElement.scrollWidth <= window.innerWidth"
                     )
-                card.get_by_role("button", name="Retry description advice").click()
+                chooser.get_by_role("button", name="Retry description advice").click()
                 expect(
-                    card.get_by_role("status").filter(
+                    chooser.get_by_role("status").filter(
                         has_text="Description preparation requested"
                     )
                 ).to_be_visible()
+                page.get_by_role("link", name="History", exact=True).click()
+                expect(
+                    page.get_by_role("heading", name="History", exact=True)
+                ).to_be_visible()
+                expect(
+                    page.get_by_role(
+                        "button", name=re.compile("Choose advised|Retry description")
+                    )
+                ).to_have_count(0)
+                expect(
+                    page.get_by_role(
+                        "heading", name="Advised description · Authored content"
+                    ).first
+                ).to_be_visible()
+                if state == "automatic":
+                    expect(
+                        page.get_by_text(
+                            "Applied and verified in the library.", exact=False
+                        )
+                    ).to_be_visible()
+                if state == "no_change":
+                    expect(
+                        page.get_by_text(
+                            "No change needed; the library already had this text.",
+                            exact=False,
+                        )
+                    ).to_be_visible()
+                page.get_by_role("link", name="Evidence", exact=True).click()
+                expect(
+                    page.get_by_role("heading", name="Evidence", exact=True)
+                ).to_be_visible()
+                expect(
+                    page.get_by_role(
+                        "button", name=re.compile("Choose advised|Retry description")
+                    )
+                ).to_have_count(0)
+                expect(
+                    page.get_by_text(
+                        "<strong>Authored text stays text.</strong>", exact=False
+                    )
+                ).to_have_count(0)
             browser.close()

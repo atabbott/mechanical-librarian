@@ -138,7 +138,9 @@ OpenRouter credentials remain shared, atomic, write-only authority. Replacing
 or clearing a credential invalidates both tasks' captured revisions, including
 A→B→A. Deselecting one task preserves its sibling. Description setup adds
 price/text-capability disclosure without changing cover capability admission.
-Generic reads remain engine-neutral; contained profile inspection is explicit.
+Task setup explicitly discloses the contained profile/model. Authored candidate
+currentness also performs a passive bounded profile check through composition,
+without authentication, transport, engine creation or another database read.
 
 Description advice uses the existing pre-projection preparation hook and
 workers. Its durable attempts and immutable authored candidates are separate
@@ -148,6 +150,13 @@ existing EffectAuthority origins and every guarded-write requirement; a model
 response alone is never authority. No second classifier or fill-empty policy
 is introduced. The bounded task, defaults, retry and clean-rebuild contracts
 are in the [configuration reference](../../reference/configuration.md).
+
+A verified changing Description effect retires its original case binding,
+including an authored write itself. The selected decision still exposes its
+actual verified or no-change outcome from durable effect history. A successor
+case may reuse the immutable exact-request candidate after fresh validation.
+The original provider material remains evidence; authored choices belong in
+Library and permanent generation/selection/application provenance in History.
 
 The extension requires `owner-settings-v4`, `reviewer-access-v2`, and a clean
 application database under ADR-0013. Setup-state, config-v9 and bootstrap-v2

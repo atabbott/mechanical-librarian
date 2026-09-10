@@ -34,6 +34,15 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         self._revoke = revoke
         self._manual_hold = manual_hold
         self._settings = DescriptionAdviceSettings()
+        self._identity: Callable[[str, str | None], tuple[str, str] | None] = (
+            lambda _engine, _model: None
+        )
+
+    def bind_identity(
+        self, identity: Callable[[str, str | None], tuple[str, str] | None]
+    ) -> None:
+        """Bind a passive model/profile check without transport or another store."""
+        self._identity = identity
 
     def bind_settings(self, settings: DescriptionAdviceSettings) -> None:
         self._settings = settings
@@ -73,6 +82,41 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             and row[2] == binding.policy_generation
             and description_digest(self.current_settings().model_dump())
             == binding.preferences_digest
+            and self._target_unchanged(binding)
+        )
+
+    def _target_unchanged(self, binding: DescriptionAdviceBinding) -> bool:
+        """A verified changing write retires its original description binding."""
+        from mechanical_librarian.domain.field_effect import FieldEffectOperation
+        from mechanical_librarian.domain.review_case import ReviewCase
+
+        row = self._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (binding.review_case_id,),
+        ).fetchone()
+        if row is None:
+            return False
+        case = ReviewCase.from_json(row[0])
+        target = case.target
+        changed = self._connection.execute(
+            "SELECT document FROM field_effects WHERE connection_name=? AND library_name=? "
+            "AND work_id=? AND destination='description' AND state='verified' "
+            "AND json_extract(document,'$.plan.authority.review_case_id')=? "
+            "AND json_extract(document,'$.plan.pre_value') IS NOT json_extract(document,'$.plan.desired_value') LIMIT 1",
+            (
+                target["connection"],
+                target["library"],
+                target["item"],
+                binding.review_case_id,
+            ),
+        ).fetchone()
+        if changed is None:
+            return True
+        operation = FieldEffectOperation.from_json(changed[0])
+        return not (
+            operation.state == "verified"
+            and operation.plan.authority.review_case_id == binding.review_case_id
+            and operation.plan.pre_value != operation.plan.desired_value
         )
 
     def _candidate_is_current(
@@ -99,6 +143,16 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         selection = ReviewerAccessDocument.model_validate_json(
             access_row[0]
         ).description_rewrite
+        if selection is None:
+            return False
+        try:
+            identity = self._identity(
+                selection.engine, getattr(selection, "model", None)
+            )
+        except (OSError, ValueError, RuntimeError):
+            return False
+        if identity != (candidate.model, candidate.profile_digest):
+            return False
         preferences = self.current_settings().cleanup()
         request = ContainedReviewRequest(
             DESCRIPTION_INSTRUCTION,
@@ -361,7 +415,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         transaction = self._transaction("description_attempt")
         try:
             transaction.begin()
-            if not current():
+            if not current() or not self._target_unchanged(binding):
                 transaction.commit()
                 return None
             prior = self._connection.execute(
@@ -427,7 +481,15 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         transaction = self._transaction("description_start")
         try:
             transaction.begin()
-            if not current():
+            row = self._connection.execute(
+                "SELECT binding_document FROM description_advice_attempts WHERE attempt_id=?",
+                (attempt_id,),
+            ).fetchone()
+            if row is None:
+                transaction.commit()
+                return False
+            binding = DescriptionAdviceBinding.model_validate_json(row[0])
+            if not current() or not self._target_unchanged(binding):
                 self._connection.execute(
                     "UPDATE description_advice_attempts SET state='interrupted',failure='interrupted',updated_at=? WHERE attempt_id=? AND state='requested'",
                     (now, attempt_id),
@@ -493,7 +555,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                     attempt_id,
                 ),
             )
-            admitted = current()
+            admitted = current() and self._target_unchanged(binding)
             if candidate is not None and admitted:
                 self._connection.execute(
                     "UPDATE current_description_advice SET candidate_id=? WHERE review_case_id=? AND attempt_id=? AND binding_document=?",
@@ -581,9 +643,21 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             or selection.candidate_id != candidate.candidate_id
         ):
             selection = None
+        application_outcome = None
+        if selection is not None:
+            applied = self._connection.execute(
+                "SELECT 'verified' FROM field_effects WHERE decision_id=? AND state='verified' "
+                "UNION ALL SELECT 'no_change_required' FROM field_effect_no_changes WHERE decision_id=? LIMIT 1",
+                (selection.decision_id, selection.decision_id),
+            ).fetchone()
+            if applied is not None:
+                application_outcome = applied[0]
         return {
-            "current": self.binding_is_current(binding),
+            "current": self.binding_is_current(binding)
+            if candidate is None
+            else self._candidate_is_current(candidate, binding),
             "selection": None if selection is None else selection.model_dump(),
+            "application_outcome": application_outcome,
             "state": row[0],
             "failure": row[1],
             "engine": row[2],

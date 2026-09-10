@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -243,7 +244,10 @@ from mechanical_librarian.application.reviewer_access import (
     CodexAuth,
     ReviewerAccessOperations,
 )
-from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
+from mechanical_librarian.application.reviewer_contracts import (
+    CodexDeviceAuthState,
+    openrouter_profile,
+)
 from mechanical_librarian.application.reviewer_host import (
     ReviewerHostStatus,
     reviewer_host_status,
@@ -644,6 +648,7 @@ def compose_continuous_guarded_application(
     credentials: dict[str, str] | None = None,
 ) -> ContinuousGuardedApplication:
     """Activate one configured Audiobookshelf instance across its libraries."""
+    _bind_description_authority(repository, configuration.review)
     configured = tuple(
         (library.connection, library.name) for library in configuration.libraries
     )
@@ -723,6 +728,7 @@ def compose_field_effect_activity_projection(
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
 ) -> ContinuousGuardedApplication:
     """Compose the shared Activity projection without write-capable adapters."""
+    _bind_description_authority(repository, configuration.review)
     configured = tuple(
         (library.connection, library.name) for library in configuration.libraries
     )
@@ -2261,17 +2267,21 @@ def create_review_pipeline(
         raise ConfigurationError("provider recovery store is unavailable")
 
     def repository_factory() -> SQLiteMetadataReportRepository:
-        return open_repository(
+        repository = open_repository(
             database_path, create=False, authority=database_authority
         )
+        _bind_description_authority(repository, configuration.review)
+        return repository
 
     def observation_repository_factory() -> SQLiteMetadataReportRepository:
-        return open_repository(
+        repository = open_repository(
             database_path,
             create=False,
             authority=database_authority,
             cross_thread=True,
         )
+        _bind_description_authority(repository, configuration.review)
+        return repository
 
     def retry_resolver(
         connection_name: str,
@@ -4053,11 +4063,46 @@ class _CodexAuthLeaseCoordinator:
                     self._lease += 1
 
 
+def _bind_description_authority(
+    repository: SQLiteMetadataReportRepository,
+    review: ReviewWebConfiguration | None,
+) -> None:
+    """Bind each connection to passive, bounded current profile reads."""
+
+    def identity(engine: str, model: str | None) -> tuple[str, str] | None:
+        if engine == "openrouter" and model is not None:
+            return model, hashlib.sha256(openrouter_profile(model)).hexdigest()
+        if (
+            engine != "codex"
+            or review is None
+            or review.cover_reviewer_profile_file is None
+        ):
+            return None
+        payload = read_contained_reviewer_profile(
+            Path(review.cover_reviewer_profile_file)
+        )
+        profile = load_contained_reviewer_profile_bytes(payload)
+        return profile.identity.model, hashlib.sha256(payload).hexdigest()
+
+    store = repository.description_advice_store()
+    store.bind_identity(identity)
+    if review is not None:
+        store.bind_settings(
+            DescriptionAdviceSettings(
+                remove_marketing=review.description_remove_marketing,
+                remove_sales_boasts=review.description_remove_sales_boasts,
+                remove_praise=review.description_remove_praise,
+                automatic_application=review.description_automatic_application,
+            )
+        )
+
+
 def _compose_reviewer_access(
     repository: SQLiteMetadataReportRepository,
     review: ReviewWebConfiguration,
     coordinator: _CodexAuthLeaseCoordinator | None = None,
 ) -> ReviewerAccessOperations:
+    _bind_description_authority(repository, review)
     codex_auth: CodexAuth
     codex_reviewer = run_cover_packet_reviewer
     profile_file = review.cover_reviewer_profile_file
