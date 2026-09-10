@@ -1885,7 +1885,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(diagnostic_links.get_by_role("link", name="History")).to_be_visible()
         diagnostic_links.get_by_role("link", name="Evidence").click()
         expect(page).to_have_url(
-            "https://react-platform.invalid/review/case-1?lens=needs_attention&subview=evidence&field=title"
+            "https://react-platform.invalid/review/case-1?field=title&lens=needs_attention&subview=evidence"
         )
         page.get_by_role("heading", name="Evidence").wait_for()
         route = page.locator(".diagnostic-route")

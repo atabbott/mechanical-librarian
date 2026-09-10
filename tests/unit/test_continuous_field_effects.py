@@ -788,10 +788,10 @@ def _prior_qualification_decision(prior_digest: str) -> AutomaticDecision:
             ).encode("utf-8")
         ).hexdigest()
 
-    f19a = (
-        prior_digest
-        == "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6"
-    )
+    f19a = prior_digest in {
+        "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
+        "62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014",
+    }
     current = AutomaticDecision.create(
         review_case_id="review_case_" + "1" * 64,
         report_id="report_" + "2" * 64,
@@ -922,6 +922,9 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
         "901e25432750d3f02df1cd311f5a7146e56d5686bd4b6bc0ac589e5db3eb221a",
         "10b10aa37008e6cfeb01745ebe75eed15913ca2e7c325517e110dbaf30bbdb74",
         "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
+        "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd",
+        "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",
+        "62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014",
     ),
 )
 def test_schedule_skips_prior_qualification_before_no_change_authority_or_capability(

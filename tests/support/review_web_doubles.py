@@ -434,6 +434,7 @@ class FakeReviewRepository:
             ),
             override_blocked_destinations=self.override_blocked_destinations,
             policy_attention_destinations=self.policy_attention_destinations,
+            resolved_policy_document=None,
         )
 
     def field_effect_capability_suspension(

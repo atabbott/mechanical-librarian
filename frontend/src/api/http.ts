@@ -175,6 +175,11 @@ export interface AttentionSearch {
   cursor?: string
 }
 export interface DetailSearch {
+  q?: string
+  cursor?: string
+  attentionCursor?: string
+  attention?: 'open'
+  preparation?: string
   field?: string
   lens: LibraryLens
   subview: DetailSubview
@@ -331,6 +336,7 @@ export interface ReviewFieldView {
   inventoryRole?: 'primary' | 'contextual'
   automaticDecision:
     Schema<'_AutomaticDecisionProjection'> | Schema<'_CoverAutomaticDecisionProjection'> | null
+  automaticWithheldReason: string | null
   automaticSelectionSources?: readonly string[]
   notices: readonly string[]
   provenance: readonly string[]
@@ -2361,6 +2367,10 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
         humanDecision: field.human_decision,
         inventoryRole: inventoryRole(field.inventory_role),
         automaticDecision: field.automatic_decision,
+        automaticWithheldReason:
+          field.automatic_withheld_reason == null
+            ? null
+            : boundedStringValue(field.automatic_withheld_reason, 'automatic_withheld_reason', 512),
         automaticSelectionSources: stringArray(
           field.automatic_selection_sources,
           'automatic_selection_sources',

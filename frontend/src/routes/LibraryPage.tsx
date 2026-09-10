@@ -1,6 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
@@ -25,6 +25,7 @@ import {
   PreparationNotice,
   usePreparation,
   useReviewContext,
+  normalizeDetailSearch,
 } from '../router'
 import { WriteReadyNotice } from '../components/WriteReadyNotice'
 import { actionable, requestKey, useReviewDecisionController } from '../reviewDecisionController'
@@ -72,21 +73,22 @@ const chapterSpan = (start: number, end: number) => {
 // The static map is exercised directly by the source-status content proof.
 // eslint-disable-next-line react-refresh/only-export-components
 export const sourceStatusLabel = (status: string) =>
-  status === 'candidates'
-    ? 'Match'
-    : status === 'no_match'
-      ? 'No match'
-      : status === 'candidate_limit_exceeded'
-        ? 'Too many candidates'
-        : status === 'rate_limited' || status === 'unavailable'
-          ? 'Retry scheduled'
-          : status === 'disabled'
-            ? 'Not enabled'
-            : status === 'insufficient_input'
-              ? 'Not enough identity'
-              : status === 'query_limit_exceeded'
-                ? 'Query allowance reached'
-                : 'Provider failure'
+  ({
+    __proto__: null,
+    candidates: 'Candidates found',
+    no_match: 'No match',
+    disabled: 'Not enabled',
+    insufficient_input: 'Not enough identity',
+    authentication: 'Authentication failed',
+    authorization: 'Access denied',
+    rate_limited: 'Rate limited',
+    unavailable: 'Unavailable',
+    incomplete: 'Incomplete evidence',
+    malformed: 'Malformed evidence',
+    oversized: 'Response too large',
+    candidate_limit_exceeded: 'Too many candidates',
+    query_limit_exceeded: 'Query allowance reached',
+  })[status] ?? 'Provider failure'
 const reviewerUnavailableDetail = (reason: string | null) =>
   reason === 'profile contract requires memory_bytes=1073741824'
     ? 'The reviewer profile must set memory_bytes to 1073741824. Regenerate the profile for the current contract, replace the configured profile, then restart the service.'
@@ -482,6 +484,35 @@ const comparisonNotices = (field: ReviewField) =>
   )
     ? []
     : field.notices.filter((notice) => materialComparisonReasons.has(notice))
+
+// Match the persisted Library ordering; recovery eligibility is a separate contract.
+const limitingProviderStatuses = new Set([
+  'authentication',
+  'authorization',
+  'rate_limited',
+  'unavailable',
+  'incomplete',
+  'malformed',
+  'oversized',
+  'candidate_limit_exceeded',
+  'query_limit_exceeded',
+])
+const providerGroup = (work: LibraryWorkView) =>
+  work.attentionCount === 0
+    ? 'No attention needed'
+    : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
+      ? 'Provider evidence limited'
+      : 'Provider evidence complete'
+const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
+  const counts = new Map<string, number>()
+  for (const outcome of outcomes) {
+    const label = sourceStatusLabel(outcome.status)
+    counts.set(label, (counts.get(label) ?? 0) + 1)
+  }
+  return [...counts]
+    .map(([label, count]) => `${label}${count > 1 ? ` × ${String(count)}` : ''}`)
+    .join(' · ')
+}
 
 // Two surfaces, one disclosure. The review comparison carries the protected
 // evidence footer -- one line, no subtitle -- while the work summary, which is
@@ -1878,7 +1909,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     retry: false,
   })
   const attentionItems = useMemo(
-    () => attention.data?.pages.flatMap((page) => page.items) ?? [],
+    () =>
+      attention.data?.pages.flatMap((page, pageIndex) => {
+        const cursor = attention.data.pageParams[pageIndex]
+        return page.items.map((item) => ({
+          ...item,
+          attentionCursor: typeof cursor === 'string' ? cursor : undefined,
+        }))
+      }) ?? [],
     [attention.data],
   )
   const selectedIdentity = useMemo(
@@ -2229,17 +2267,22 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
     return () => cancelAnimationFrame(frame)
   }, [preparationSelected, presentation?.run_id])
+  const identityPending = !displayedIdentity && attention.isPending
+  const identityError = !displayedIdentity && attention.isError
+  const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
+  const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
   const selectedDetailReady =
     !preparationSelected &&
     Boolean(search.preview) &&
     search.attention !== 'open' &&
-    !detail.isPending &&
-    !detail.isError
+    Boolean(displayedIdentity) &&
+    !selectedReadPending &&
+    !selectedReadError
   useEffect(() => {
     selectedDetailRetry.current = null
   }, [search.preview])
   useEffect(() => {
-    const selectedDetailSettled = selectedDetailReady || detail.isError
+    const selectedDetailSettled = selectedDetailReady || selectedReadError
     if (!selectedDetailSettled) return
     const workspace = document.querySelector<HTMLElement>('#main-content .workspace-detail')
     const active = document.activeElement
@@ -2248,12 +2291,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     if (workspace && active === workspace && selectedDetailReady)
       workspace.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
     else if (restoreAfterRetry) {
-      if (detail.isError) selectedDetailRetryButton.current?.focus({ preventScroll: true })
+      if (selectedReadError) selectedDetailRetryButton.current?.focus({ preventScroll: true })
       else
         workspace?.querySelector<HTMLElement>('[data-route-focus]')?.focus({ preventScroll: true })
     }
     selectedDetailRetry.current = null
-  }, [detail.isError, search.preview, selectedDetailReady])
+  }, [selectedReadError, search.preview, selectedDetailReady])
   useEffect(() => {
     currentSearch.current = search
   }, [search])
@@ -2356,7 +2399,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     return () => media.removeEventListener('change', selectWideDefault)
   }, [data.works, navigate])
 
-  const selectCase = (reviewCaseId: string, field?: string) => {
+  const selectCase = (
+    reviewCaseId: string,
+    field?: string,
+    attentionOrigin?: { cursor: string | undefined },
+  ) => {
     workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
@@ -2370,6 +2417,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         const next = { ...current, preview: reviewCaseId }
         delete next.work
         delete next.preparation
+        if (attentionOrigin) {
+          if (attentionOrigin.cursor) next.attentionCursor = attentionOrigin.cursor
+          else delete next.attentionCursor
+        }
         if (field) next.field = field
         else delete next.field
         return next
@@ -2510,7 +2561,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       },
     })
   }
-  const selectFromQueue = (reviewCaseId: string, field: string) => {
+  const selectFromQueue = (
+    reviewCaseId: string,
+    field: string,
+    attentionCursor: string | undefined,
+  ) => {
     workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
@@ -2520,6 +2575,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     void navigate({
       search: (current) => {
         const next = { ...current, preview: reviewCaseId, field }
+        if (attentionCursor) next.attentionCursor = attentionCursor
+        else delete next.attentionCursor
         delete next.work
         delete next.attention
         delete next.preparation
@@ -2703,7 +2760,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 ) : null}
               </div>
             ) : (
-              data.works.map((work) => {
+              data.works.map((work, index) => {
                 const selectedWorkRow =
                   !preparationSelected &&
                   (work.reviewCaseId
@@ -2731,6 +2788,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         : `${String(work.attentionCount)} fields need attention`
                       : 'No attention needed'
                 const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
+                const group = providerGroup(work)
+                const previousWork = data.works[index - 1]
+                const showGroup =
+                  search.lens !== 'no_attention_needed' &&
+                  (!previousWork || providerGroup(previousWork) !== group)
+                const summary = providerSummary(work.preparationOutcomes)
+                const summaryId = summary ? `provider-summary-${work.id}` : undefined
                 const preparation = work.preparation
                 const preparationId = preparation ? `preparation-${work.id}` : undefined
                 const row = (
@@ -2744,6 +2808,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       <span className="library-work-origin">
                         {work.library} · {fieldLabel(work.mediaKind)}
                       </span>
+                      {summary ? (
+                        <span id={summaryId} className="library-provider-summary">
+                          {summary}
+                        </span>
+                      ) : null}
                       <span className="library-work-status">
                         <span
                           className={
@@ -2764,26 +2833,44 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     </span>
                   </>
                 )
-                return terminalFailure ? (
-                  <article
-                    key={work.id}
-                    className="library-work-row is-terminal"
-                    aria-label="Terminal preparation failure"
-                  >
-                    {row}
-                  </article>
-                ) : (
-                  <button
-                    key={work.id}
-                    type="button"
-                    className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
-                    aria-current={selectedWorkRow ? 'true' : undefined}
-                    aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
-                    aria-describedby={preparationId}
-                    onClick={() => void select(work)}
-                  >
-                    {row}
-                  </button>
+                return (
+                  <Fragment key={work.id}>
+                    {showGroup ? (
+                      <div className="library-provider-group">
+                        <h3>{group}</h3>
+                        {group !== 'No attention needed' ? (
+                          <p>
+                            {group === 'Provider evidence complete'
+                              ? 'Lookups completed or did not apply; a match is not guaranteed.'
+                              : 'Some lookups did not supply usable evidence. Recoverable lookups can change this group when new evidence arrives.'}
+                          </p>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {terminalFailure ? (
+                      <article
+                        key={work.id}
+                        className="library-work-row is-terminal"
+                        aria-label="Terminal preparation failure"
+                      >
+                        {row}
+                      </article>
+                    ) : (
+                      <button
+                        key={work.id}
+                        type="button"
+                        className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
+                        aria-current={selectedWorkRow ? 'true' : undefined}
+                        aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
+                        aria-describedby={
+                          [preparationId, summaryId].filter(Boolean).join(' ') || undefined
+                        }
+                        onClick={() => void select(work)}
+                      >
+                        {row}
+                      </button>
+                    )}
+                  </Fragment>
                 )
               })
             )}
@@ -2816,7 +2903,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           {...(!selectedWork &&
           search.preview &&
           search.attention !== 'open' &&
-          (!displayedIdentity || detail.isPending || detail.isError)
+          (!displayedIdentity || selectedReadPending || selectedReadError)
             ? { 'data-route-focus': 'true' }
             : {})}
         >
@@ -2845,11 +2932,28 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               </p>
             </div>
           ) : !displayedIdentity ? (
-            <div className="library-selection">
-              <h2>Selected work</h2>
-              <p>Readable work identity is not available on this Library page.</p>
-              <p role="status">This work is not available in the current Library result.</p>
-            </div>
+            identityPending ? (
+              <p role="status">Loading selected work…</p>
+            ) : identityError ? (
+              <p role="alert">
+                Selected work could not be loaded.{' '}
+                <button
+                  ref={selectedDetailRetryButton}
+                  onClick={() => {
+                    selectedDetailRetry.current = search.preview ?? null
+                    void attention.refetch()
+                  }}
+                >
+                  Try again
+                </button>
+              </p>
+            ) : (
+              <div className="library-selection">
+                <h2>Selected work</h2>
+                <p>Readable work identity is not available on this Library page.</p>
+                <p role="status">This work is not available in the current Library result.</p>
+              </div>
+            )
           ) : detail.isPending ? (
             <p role="status">Loading selected work…</p>
           ) : detail.isError && staleCoverNotice ? (
@@ -2920,22 +3024,22 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 <nav className="selected-work-diagnostics" aria-label="Read-only work diagnostics">
                   <Link
                     params={{ reviewCaseId: detail.data.id }}
-                    search={{
-                      lens: search.lens,
+                    search={normalizeDetailSearch({
+                      ...search,
                       subview: 'evidence',
-                      ...(selected ? { field: selected.destination } : {}),
-                    }}
+                      field: selected?.destination,
+                    })}
                     to="/review/$reviewCaseId"
                   >
                     Evidence
                   </Link>
                   <Link
                     params={{ reviewCaseId: detail.data.id }}
-                    search={{
-                      lens: search.lens,
+                    search={normalizeDetailSearch({
+                      ...search,
                       subview: 'history',
-                      ...(selected ? { field: selected.destination } : {}),
-                    }}
+                      field: selected?.destination,
+                    })}
                     to="/review/$reviewCaseId"
                   >
                     History
@@ -3060,7 +3164,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         onClick={() => {
                           setComplete(null)
                           setCompletionInspection(null)
-                          selectCase(nextWork.id, nextWork.destination)
+                          selectCase(nextWork.id, nextWork.destination, {
+                            cursor: nextWork.attentionCursor,
+                          })
                         }}
                       >
                         Review next work →
@@ -3101,7 +3207,14 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           : fieldLabel(selected.destination)}
                       </h2>
                       {selectedActionable ? (
-                        <p>{`${fieldLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
+                        <>
+                          <p>{`${fieldLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
+                          {selected.automaticWithheldReason ? (
+                            <p className="automatic-withheld-reason">
+                              {selected.automaticWithheldReason}
+                            </p>
+                          ) : null}
+                        </>
                       ) : selectedRevisitable ? (
                         <p>
                           The recorded outcome is marked below. You can select another eligible
@@ -3474,7 +3587,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                     aria-current={
                       item.id === search.preview && item.destination === selected?.destination
                     }
-                    onClick={() => selectFromQueue(item.id, item.destination)}
+                    onClick={() => selectFromQueue(item.id, item.destination, item.attentionCursor)}
                   >
                     <span className="attention-position">{String(index + 1)}</span>
                     <span className="attention-queue-copy">

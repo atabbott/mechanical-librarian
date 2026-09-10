@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+- Library explains provider evidence groups, lookup states, and field-local automatic withholding (#891).
+
 - Audiobook decisions now apply through the existing guarded Audiobookshelf path,
   with narrators joining the write-capable destinations on both media. Because
   the consent envelope covers the whole destination set, every library consent

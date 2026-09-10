@@ -1,16 +1,16 @@
-"""The review web projections: one consistent snapshot over five aggregates.
+"""The review web projections: one consistent snapshot over six aggregates.
 
 Every method here owns no table. Each opens one deferred snapshot through
 `_consistent_review_read` and assembles a browser-facing view from the review
-case, decision, cover-consideration, field-effect suspension and preparation
-aggregates, so the answer a reader gets is internally consistent even while a
+case, decision, cover-consideration, field-effect suspension, preparation and
+metadata-policy aggregates, so the answer a reader gets is internally consistent even while a
 writer is committing.
 
 Splitting these out is what makes `CurrentReviewCaseStore` and
 `ReviewLibraryStore` narrow enough for the composition root to satisfy without
 handing the whole repository to the application layer.
 
-Eleven seams cross the boundary and every one arrives as a callable resolved
+Every seam crosses the boundary as a callable resolved
 through the composing repository at call time. That is load-bearing rather than
 stylistic: five review-web tests substitute `get_review_case`,
 `list_current_review_case_documents` and `list_current_attention_documents` on
@@ -54,6 +54,7 @@ from mechanical_librarian.application.review_web import (
     ReviewLibrarySnapshot,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
@@ -99,6 +100,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         ],
         count_current_attention_fields: Callable[[str | None], int],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
+        current_resolved_metadata_policy: Callable[
+            [str], ResolvedMetadataPolicy | None
+        ],
     ) -> None:
         super().__init__(connection, binding)
         self._require_staged_shadow_projection_current = (
@@ -115,6 +119,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.list_current_attention_documents = list_current_attention_documents
         self.count_current_attention_fields = count_current_attention_fields
         self._current_cover_authority = current_cover_authority
+        self.current_resolved_metadata_policy = current_resolved_metadata_policy
 
     @contextmanager
     def _consistent_review_read(self) -> Iterator[None]:
@@ -196,9 +201,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         ):
             raise MetadataReportError("review case snapshot is unavailable")
         with self._consistent_review_read():
+            case_document = self.get_review_case(review_case_id)
+            report_document = self.get_review_case_report(review_case_id)
+            report = MetadataReport.from_json(report_document)
+            policy = self.current_resolved_metadata_policy(report.target.library)
             snapshot = CurrentReviewCaseSnapshot(
-                case_document=self.get_review_case(review_case_id),
-                report_document=self.get_review_case_report(review_case_id),
+                case_document=case_document,
+                report_document=report_document,
+                resolved_policy_document=None
+                if policy is None
+                else policy.canonical_json,
                 decision_documents=self.get_review_case_decisions(review_case_id),
                 automatic_source_outcome_documents=(
                     self._automatic_source_outcome_documents(review_case_id)
