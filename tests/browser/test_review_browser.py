@@ -5519,8 +5519,14 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                         ).click()
                     assert refreshed.value.status == 200
                     expect(adviser).to_contain_text("synthetic/description-b. usable.")
-                    expect(adviser).to_contain_text(
-                        "Prices in USD: 0.000001 per input token"
+                    prices = adviser.locator("dt").filter(
+                        has_text=re.compile(r"^Prices in USD$")
+                    )
+                    expect(prices).to_have_count(1)
+                    price_value = prices.locator("..").locator("dd")
+                    expect(price_value).to_have_count(1)
+                    expect(price_value).to_have_text(
+                        "0.000001 per input token, 0.000002 per output token, 0 per request."
                     )
                     expect(
                         page.get_by_role("textbox", name="Model ID", exact=True)
