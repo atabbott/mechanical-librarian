@@ -198,9 +198,14 @@ bounded cover pipeline an ebook's use, each behind its own `cover_enabled`
 switch, and the retained cover evidence records where two independent
 authorities picture the same art. Its covers stay evidence only, so no cover consideration is prepared
 for one and no cover it carries is elected. What follows the report depends on
-what the report says. When the runtime corroboration band admits some
-candidate the report retains -- one stating this recording's own running time
--- preparation queues the proposal stage exactly as an ebook's does, and the
+what the report says. The runtime corroboration gate is a tight band of 90
+whole seconds, measured and owned by the corroboration rules
+([ADR-0064](../architecture/decisions/0064-audiobook-provider-evidence-vocabularies.md));
+the report's own duration comparison, which decides whether a stated claim
+links to a local one at all, states the same number today but is a separate
+parameter that is retuned separately. When the runtime corroboration band
+admits some candidate the report retains -- one stating this recording's own
+running time -- preparation queues the proposal stage exactly as an ebook's does, and the
 recording becomes a review case the owner decides
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
 Those decisions are applied through the same guarded path an ebook's take

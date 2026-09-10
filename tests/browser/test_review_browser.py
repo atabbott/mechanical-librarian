@@ -4588,6 +4588,72 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 )
                 assert saved_inventaire["enabled"] is True
                 assert saved_inventaire["cover_enabled"] is True
+
+                # #967: the two audiobook sources that state a cover asset of
+                # their own carry an owner-visible switch; the two that restate
+                # Audible's carry none, and the heading names the provider
+                # while the instance name stays beside it.
+                page.get_by_role("button", name="Add Audible").click()
+                page.get_by_role("button", name="Add Audnexus").click()
+                expect(
+                    page.get_by_role("heading", name="Audible audible_catalog")
+                ).to_be_visible()
+                expect(
+                    page.get_by_role("heading", name="Audnexus audnexus")
+                ).to_be_visible()
+                expect(
+                    page.get_by_role(
+                        "checkbox", name="Cover evidence Use audnexus covers"
+                    )
+                ).to_have_count(0)
+                audible_enabled = page.get_by_role(
+                    "checkbox", name="Provider state Enable audible catalog"
+                )
+                audible_cover = page.get_by_role(
+                    "checkbox", name="Cover evidence Use audible catalog covers"
+                )
+                expect(audible_enabled).not_to_be_checked()
+                expect(audible_cover).to_be_disabled()
+                expect(audible_cover).not_to_be_checked()
+                audible_enabled.click()
+                expect(audible_cover).to_be_enabled()
+                audible_cover.focus()
+                page.keyboard.press("Space")
+                expect(audible_cover).to_be_checked()
+                # Turning the provider off turns the evidence off with it and
+                # puts the control out of reach again.
+                audible_enabled.click()
+                expect(audible_cover).not_to_be_checked()
+                expect(audible_cover).to_be_disabled()
+                audible_enabled.click()
+                audible_cover.focus()
+                page.keyboard.press("Space")
+                expect(audible_cover).to_be_checked()
+                page.get_by_role("button", name="Save settings").click()
+                expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
+                saved_audible = next(
+                    item
+                    for item in page.request.get(origin + "/api/v1/settings").json()[
+                        "document"
+                    ]["providers"]
+                    if item["adapter"] == "audible_catalog"
+                )
+                assert saved_audible["enabled"] is True
+                assert saved_audible["cover_enabled"] is True
+                # The saved value survives a fresh read of the document. The
+                # field is a live one, so the reload shows what the runtime
+                # already holds rather than a restart-pending value.
+                page.reload()
+                compact_group = page.locator("label.settings-mobile-group select")
+                compact_group.select_option("providers")
+                expect(
+                    page.get_by_role(
+                        "checkbox", name="Cover evidence Use audible catalog covers"
+                    )
+                ).to_be_checked()
+                expect(page.get_by_text("Applies after restart")).to_have_count(0)
+                assert not errors
+
                 compact_group.select_option("connection")
                 expect(page.get_by_text("Configured · ····cret")).to_be_visible()
                 page.get_by_role("button", name="Clear primary access key").click()
@@ -4776,6 +4842,17 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(page.get_by_text("Managed by /data/config.json")).to_be_visible()
                 assert page.locator(".settings-sheet input").count() == 0
                 assert page.get_by_role("button", name="Save settings").count() == 0
+                page.locator("label.settings-mobile-group select").select_option(
+                    "providers"
+                )
+                expect(
+                    page.get_by_role("heading", name="Audible audible_catalog")
+                ).to_be_visible()
+                expect(
+                    page.locator(".settings-field-row").filter(
+                        has_text="Cover evidence"
+                    )
+                ).to_contain_text("On")
                 page.unroute("**/api/v1/settings")
                 assert not errors
 

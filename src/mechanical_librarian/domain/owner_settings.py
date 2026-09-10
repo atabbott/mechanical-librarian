@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import re
-from typing import Annotated, Literal, get_args
+from collections.abc import Mapping
+from types import MappingProxyType
+from typing import Annotated, Final, Literal, get_args
 
 from pydantic import (
     BaseModel,
@@ -139,73 +141,66 @@ ProviderSettings = Annotated[
 ]
 
 
+ProviderAdapter = Literal[
+    "open_library",
+    "inventaire",
+    "hardcover",
+    "google_books",
+    "audible_catalog",
+    "audnexus",
+    "audiosilo",
+    "itunes_search",
+]
+Credential = Literal["none", "contact_email", "api_key"]
+# One display name per adapter. The capability list reads it directly; the
+# browser vocabulary ships the same map to setup and to Settings, and
+# `review_web._provider_label` restates it because that module is byte-bound by
+# the F19a association re-qualification record. A test holds all four to the
+# same word, because none of them can import the others. The instance name
+# stays the owner's own identifier throughout: a label never reaches a field
+# id, a `provider_connections` entry, or a capability `name`.
+PROVIDER_LABELS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "audible_catalog": "Audible",
+        "audiosilo": "AudioSilo",
+        "audnexus": "Audnexus",
+        "google_books": "Google Books",
+        "hardcover": "Hardcover",
+        "inventaire": "Inventaire",
+        "itunes_search": "iTunes",
+        "open_library": "Open Library",
+    }
+)
+
+
 class ProviderCapability(_Closed):
     """One fixed adapter the owner may configure when it is not yet present."""
 
     name: Name
-    adapter: Literal[
-        "open_library",
-        "inventaire",
-        "hardcover",
-        "google_books",
-        "audible_catalog",
-        "audnexus",
-        "audiosilo",
-        "itunes_search",
-    ]
+    adapter: ProviderAdapter
     label: StrictStr
-    credential: Literal["none", "contact_email", "api_key"]
+    credential: Credential
 
 
-_PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = (
+# The order the owner sees an unconfigured provider offered in.
+_PROVIDER_CREDENTIALS: tuple[tuple[ProviderAdapter, Credential], ...] = (
+    ("audible_catalog", "none"),
+    ("audiosilo", "none"),
+    ("audnexus", "none"),
+    ("google_books", "api_key"),
+    ("hardcover", "api_key"),
+    ("itunes_search", "none"),
+    ("inventaire", "none"),
+    ("open_library", "contact_email"),
+)
+_PROVIDER_CAPABILITIES: tuple[ProviderCapability, ...] = tuple(
     ProviderCapability(
-        name="audible_catalog",
-        adapter="audible_catalog",
-        label="Audible",
-        credential="none",
-    ),
-    ProviderCapability(
-        name="audiosilo",
-        adapter="audiosilo",
-        label="AudioSilo",
-        credential="none",
-    ),
-    ProviderCapability(
-        name="audnexus",
-        adapter="audnexus",
-        label="Audnexus",
-        credential="none",
-    ),
-    ProviderCapability(
-        name="google_books",
-        adapter="google_books",
-        label="Google Books",
-        credential="api_key",
-    ),
-    ProviderCapability(
-        name="hardcover",
-        adapter="hardcover",
-        label="Hardcover",
-        credential="api_key",
-    ),
-    ProviderCapability(
-        name="itunes_search",
-        adapter="itunes_search",
-        label="iTunes",
-        credential="none",
-    ),
-    ProviderCapability(
-        name="inventaire",
-        adapter="inventaire",
-        label="Inventaire",
-        credential="none",
-    ),
-    ProviderCapability(
-        name="open_library",
-        adapter="open_library",
-        label="Open Library",
-        credential="contact_email",
-    ),
+        name=adapter,
+        adapter=adapter,
+        label=PROVIDER_LABELS[adapter],
+        credential=credential,
+    )
+    for adapter, credential in _PROVIDER_CREDENTIALS
 )
 
 
@@ -496,6 +491,7 @@ def file_field_metadata(
 
 
 __all__ = [
+    "PROVIDER_LABELS",
     "AudibleCatalogProviderSettings",
     "AudioSiloProviderSettings",
     "AudnexusProviderSettings",
@@ -507,6 +503,7 @@ __all__ = [
     "OpenLibraryProviderSettings",
     "OwnerSettingsDocument",
     "OwnerSettingsError",
+    "ProviderAdapter",
     "ProviderCapability",
     "ReportLimitSettings",
     "SecretPresence",

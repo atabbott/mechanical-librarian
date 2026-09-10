@@ -17,6 +17,7 @@ from mechanical_librarian.application.reviewer_access import (
 )
 from mechanical_librarian.application.setup_connection import SetupConnectionError
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
+from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
     SetupStateDocument,
@@ -913,7 +914,7 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "name:row.dataset.name" in SETUP_JS
     assert "Preparation will begin in the workspace." in SETUP_JS
     assert "className='provider-access'" in SETUP_JS
-    assert "['inventaire','inventaire','Inventaire']" in SETUP_JS
+    assert "['inventaire','inventaire']" in SETUP_JS
     assert "enabled.checked=adapter==='inventaire'" in SETUP_JS
     assert "cover_enabled:row.adapter==='inventaire'" in SETUP_JS
     assert "`${evidence?.name||humanName(item.library)}:" in SETUP_JS
@@ -1004,10 +1005,20 @@ def test_setup_admits_the_keyless_audiobook_providers_with_no_credential() -> No
 
 
 def test_setup_providers_step_offers_the_audiobook_providers_without_a_key() -> None:
-    assert "['audible','audible_catalog','Audible']" in SETUP_JS
-    assert "['audnexus','audnexus','Audnexus']" in SETUP_JS
-    assert "['audiosilo','audiosilo','AudioSilo']" in SETUP_JS
-    assert "['itunes','itunes_search','iTunes']" in SETUP_JS
+    assert "['audible','audible_catalog']" in SETUP_JS
+    assert "['audnexus','audnexus']" in SETUP_JS
+    assert "['audiosilo','audiosilo']" in SETUP_JS
+    assert "['itunes','itunes_search']" in SETUP_JS
+    # The step names a provider from the one shared label map (#967), so no
+    # spec row, account link, or heading carries a display name of its own.
+    assert (
+        "for(const [name,adapter] of specs){"
+        "const label=settingsVocabulary.provider_labels[adapter];" in SETUP_JS
+    )
+    _, separator, authored = SETUP_JS.partition(";const settingsTextValid=")
+    assert separator
+    for label in PROVIDER_LABELS.values():
+        assert label not in authored, label
     # No credential control and no account link is constructed for one.
     assert (
         "const key=adapter==='open_library'||settingsProviderKeyless(adapter)"
