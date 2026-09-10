@@ -6,9 +6,11 @@ import type { DescriptionModelMetadata, ReviewHttp, ReviewerAccessView } from '.
 export const DescriptionReviewerSettings = ({
   http,
   view,
+  codexUsable,
 }: {
   http: ReviewHttp
   view: ReviewerAccessView
+  codexUsable: boolean
 }) => {
   const cache = useQueryClient()
   const [model, setModel] = useState(
@@ -83,7 +85,7 @@ export const DescriptionReviewerSettings = ({
           </p>
         ) : null}
         <button
-          disabled={busy || !contained.data || view.codex.state !== 'usable'}
+          disabled={busy || !contained.data || !codexUsable}
           onClick={() => selection.mutate('codex')}
         >
           Use Codex for descriptions

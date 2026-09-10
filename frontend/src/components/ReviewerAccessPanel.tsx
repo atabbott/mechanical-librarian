@@ -488,7 +488,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       {mutation.isError && mutation.variables.kind === 'without' ? (
         <p role="alert">{mutationFailure}</p>
       ) : null}
-      <DescriptionReviewerSettings http={http} view={view} />
+      <DescriptionReviewerSettings http={http} view={view} codexUsable={codexUsable} />
     </section>
   )
 }

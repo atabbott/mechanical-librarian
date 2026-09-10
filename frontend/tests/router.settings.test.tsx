@@ -1118,3 +1118,53 @@ it('inspects the exact contained description model before selection without star
   expect(use).toBeEnabled()
   expect(http.selectReviewer).not.toHaveBeenCalled()
 })
+
+it.each([false, true])(
+  'shares refreshed Codex availability with descriptions while host blocked=%s',
+  async (hostBlocked) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      codex: {
+        ...reviewerView.codex,
+        state: hostBlocked ? ('host_unsupported' as const) : ('ready' as const),
+      },
+    }))
+    http.describeContainedDescription = vi.fn(async () => ({
+      model: 'contained-model',
+      profile_sha256: 'a'.repeat(64),
+    }))
+    const device = {
+      state: 'usable' as const,
+      failure: null,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+    }
+    http.recheckCodex = vi.fn(async () => device)
+    const { queryClient } = renderRoute('/settings?group=reviewer', http)
+    const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
+    const user = userEvent.setup()
+    await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
+    expect(await screen.findByText(/Model: contained-model/)).toBeVisible()
+    expect(use).toBeDisabled()
+    if (hostBlocked) {
+      act(() => queryClient.setQueryData(['reviewer-access', 'codex-device'], device))
+      expect(use).toBeDisabled()
+      expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toBeDisabled()
+    } else {
+      await user.click(screen.getByRole('button', { name: 'Check existing Codex sign-in' }))
+      await waitFor(() => expect(use).toBeEnabled())
+      await user.click(use)
+      await waitFor(() =>
+        expect(http.selectReviewer).toHaveBeenCalledWith(
+          'codex',
+          reviewerView.revision,
+          undefined,
+          'description_rewrite',
+        ),
+      )
+    }
+  },
+)

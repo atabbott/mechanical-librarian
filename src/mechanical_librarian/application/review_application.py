@@ -432,7 +432,9 @@ class ReviewApplication:
         if self._preparation is not None:
             for connection, library, *_ in self._preparation.libraries:
                 self._preparation.request(connection, library)
-        self._updates.publish("settings")
+        self._updates.publish("preparation")
+        self._updates.publish("case")
+        self._updates.publish("library")
 
     @property
     def updates(self) -> LiveUpdateChannel:

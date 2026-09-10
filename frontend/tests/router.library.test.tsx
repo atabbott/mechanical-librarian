@@ -3997,7 +3997,7 @@ describe('Library route', () => {
       'aria-pressed',
       'false',
     )
-    expect(screen.queryByText('Recorded. Opening the next field…')).toBeNull()
+    expect(screen.queryByText('Choice recorded.')).toBeNull()
     expect(document.body.textContent).not.toContain('Recording accept…')
     expect(document.body.textContent).not.toContain('Recording choice…')
     expect(screen.getByText('1 remaining · field 1 of 1')).toBeVisible()
@@ -7328,6 +7328,14 @@ it('offers advised text in the ordinary Description chooser with its immutable a
     binding: field.descriptionAdvice!.binding,
   })
   expect(command.idempotencyKey).toBeTruthy()
+  await screen.findByRole('heading', { name: 'Review complete' })
+  await userEvent.setup().click(
+    within(screen.getByRole('navigation', { name: 'Review fields' })).getByRole('button', {
+      name: /^Description/,
+    }),
+  )
+  expect(await screen.findByText('Choice recorded.')).toBeVisible()
+  expect(screen.queryByText('Recorded. Opening the next field…')).toBeNull()
 })
 
 it('renders hostile multiline advice as text and refuses stale selection while ordinary choices remain', async () => {
@@ -7425,5 +7433,53 @@ it.each(['verified', 'no_change_required'] as const)(
     expect(
       screen.getByRole('button', { name: 'Choose proposed value: A qualified description.' }),
     ).toHaveAttribute('aria-pressed', 'false')
+  },
+)
+
+it.each([
+  { origin: 'human', current: true, outcome: null, recorded: true },
+  { origin: 'human', current: false, outcome: null, recorded: false },
+  { origin: 'human', current: false, outcome: 'verified', recorded: true },
+  { origin: 'human', current: true, outcome: 'no_change_required', recorded: true },
+  { origin: 'automatic_policy', current: true, outcome: null, recorded: false },
+] as const)(
+  'labels only valid authored owner selections as recorded: %j',
+  async ({ origin, current, outcome, recorded }) => {
+    const authored = mapCaseDetail(descriptionAdviceFixture)
+    const field = authored.fields.find((item) => item.destination === 'description')!
+    const advice = field.descriptionAdvice!
+    field.descriptionAdvice = {
+      ...advice,
+      current,
+      application_outcome: outcome,
+      selection: {
+        schema_version: 'authored-description-decision-v1',
+        decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
+        candidate_id: advice.candidate!.candidate_id,
+        binding: advice.binding,
+        origin,
+        resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+        qualification_manifest_sha256: 'c'.repeat(64),
+        idempotency_digest: 'd'.repeat(64),
+        occurred_at: 10,
+        destination: 'description',
+        outcome: 'accept',
+        application: 'guarded',
+      },
+    }
+    renderRoute('/library?lens=all&preview=case-1&field=description', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
+    })
+    await screen.findByRole('button', { name: /^Choose advised value:/ })
+    const rail = screen.getByRole('navigation', { name: 'Review fields' })
+    expect(
+      within(rail)
+        .getByRole('button', { name: /^Description/ })
+        .querySelector('span'),
+    ).toHaveAttribute(
+      'aria-label',
+      recorded ? 'Decision recorded' : 'Handled automatically; inspect or override',
+    )
   },
 )

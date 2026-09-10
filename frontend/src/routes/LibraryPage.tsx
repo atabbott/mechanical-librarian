@@ -2657,7 +2657,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     selectedProgress?.phase === 'recording'
       ? 'Recording choice…'
       : selectedProgress?.phase === 'confirmed'
-        ? 'Recorded. Opening the next field…'
+        ? 'Choice recorded.'
         : selectedActionable && frozenDestinations.indexOf(selected.destination) === 0
           ? 'One tap records and opens the next field'
           : ''
@@ -3112,7 +3112,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         aria-label={
                           actionable(field)
                             ? 'Needs review'
-                            : field.humanDecision
+                            : field.humanDecision ||
+                                ((field.descriptionAdvice?.current ||
+                                  field.descriptionAdvice?.application_outcome) &&
+                                  field.descriptionAdvice?.selection?.origin === 'human')
                               ? 'Decision recorded'
                               : field.classification === 'automatic_recorded'
                                 ? 'Handled automatically; inspect or override'

@@ -829,3 +829,63 @@ def test_connection_probe_does_not_hold_the_global_application_gate(
     browse.join(1)
     assert not probe.is_alive()
     assert not browse.is_alive()
+
+
+def test_attached_reviewer_selection_returns_success_and_supported_invalidations(
+    repository: FakeReviewRepository, tmp_path
+) -> None:
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessOperations,
+    )
+    from tests.support.description_advice import _prepared
+
+    captured: list[ReviewerAccessOperations] = []
+    persisted, _store, binding, _candidate, _deterministic = _prepared(
+        tmp_path,
+        pipeline_probe=lambda _repository, _report, _decision, access, _calls: (
+            captured.append(access)
+        ),
+    )
+    access = captured[0]
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _value: False,
+        session_digest=lambda value: hashlib.sha256(value.encode()).hexdigest(),
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        reviewer_access=access,
+    )
+    subscription = application.updates.subscribe(application.updates.sequence)
+    try:
+        removed = access.select_none(
+            expected_revision=binding.access_revision, task="description_rewrite"
+        )
+        assert removed.revision == binding.access_revision + 1
+        assert removed.description_mapping is None
+        assert removed.mapping is None
+        assert access.read().revision == removed.revision
+        selected = access.select_codex(
+            expected_revision=removed.revision, task="description_rewrite"
+        )
+        assert selected.revision == removed.revision + 1
+        assert selected.description_mapping is not None
+        assert selected.description_mapping.engine == "codex"
+        assert selected.mapping is None
+        assert access.read().description_mapping == selected.description_mapping
+        assert persisted._connection.execute(
+            "SELECT review_case_id FROM description_preparation_pending"
+        ).fetchall() == [(binding.review_case_id,)]
+        assert {event.topic for event in subscription.take()} == {
+            "preparation",
+            "case",
+            "library",
+        }
+    finally:
+        application.updates.release(subscription)
+        persisted.close()
