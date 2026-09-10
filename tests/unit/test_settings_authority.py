@@ -11,7 +11,14 @@ from mechanical_librarian.application.configuration import (
     ConfigurationError,
     ProviderConnectionConfiguration,
 )
-from mechanical_librarian.application.review_web import _provider_label
+from mechanical_librarian.application.cover_consideration import (
+    _COVER_EVIDENCE_STATEMENTS,
+    _UNNAMED_COVER_EVIDENCE_STATEMENT,
+)
+from mechanical_librarian.application.review_web import (
+    _choice_source_label,
+    _provider_label,
+)
 from mechanical_librarian.domain.metadata_report import AUDIOBOOK_MARKETPLACES
 from mechanical_librarian.domain.owner_settings import (
     PROVIDER_LABELS,
@@ -383,19 +390,17 @@ def test_a_disabled_audiobook_source_may_not_carry_cover_evidence(
 
 
 def test_every_surface_states_one_canonical_provider_label() -> None:
-    """One label table, its readers, and no leak into an identifier.
+    """One label table, every reader of it, and no leak into an identifier.
 
-    The capability list, the review report's provider label, the browser
-    vocabulary that setup and Settings share, and the closed adapter set all
-    name a provider with the same word; the instance name stays the owner's own
-    identifier (#967). Cover-evidence statements
-    (`application/cover_consideration.py`) still name their own sources and are
-    deliberately outside this claim.
+    The capability list, the browser vocabulary setup and Settings share, the
+    review report's provider label, the choice-source label beside a proposed
+    value and the cover-evidence source row all name a provider with the same
+    word, and the closed adapter set is exactly what the table covers. The
+    instance name stays the owner's own identifier (#967).
 
-    `review_web._provider_label` restates the table in place rather than
-    reading it: that module is byte-bound by the F19a association
-    re-qualification record, so this test is what holds it to the canonical
-    word until a re-pin lets it read the table directly.
+    Every reader now reads `PROVIDER_LABELS` directly rather than restating it,
+    so this test proves one table rather than four agreeing copies; what it
+    still holds is the fallback wording, which each surface owns.
     """
     assert set(PROVIDER_LABELS) == set(get_args(ProviderAdapter))
     assert _settings_vocabulary()["provider_labels"] == dict(PROVIDER_LABELS)
@@ -408,8 +413,26 @@ def test_every_surface_states_one_canonical_provider_label() -> None:
     }
     for adapter, label in PROVIDER_LABELS.items():
         assert _provider_label(adapter) == label
+        assert (
+            _choice_source_label({"provider": adapter, "source": "provider"}) == label
+        )
     assert _provider_label(None) == "Provider (name unavailable)"
     assert _provider_label("unknown_adapter") == "Provider (name unavailable)"
+    assert _choice_source_label({"provider": None, "source": "local"}) == (
+        "Local library record"
+    )
+    assert _choice_source_label({"provider": None, "source": "provider"}) == (
+        "Retained observation (provider name unavailable)"
+    )
+    cover_sources = {label for label, _, _ in _COVER_EVIDENCE_STATEMENTS.values()}
+    assert {
+        PROVIDER_LABELS["audible_catalog"],
+        PROVIDER_LABELS["hardcover"],
+        PROVIDER_LABELS["inventaire"],
+        PROVIDER_LABELS["itunes_search"],
+        PROVIDER_LABELS["open_library"],
+    } < cover_sources
+    assert "Provider evidence" == _UNNAMED_COVER_EVIDENCE_STATEMENT[0]
 
 
 def test_store_authority_carries_the_order_only_while_audible_is_enabled() -> None:

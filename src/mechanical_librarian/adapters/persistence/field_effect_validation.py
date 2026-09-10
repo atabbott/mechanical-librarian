@@ -14,6 +14,9 @@ import sqlite3
 from typing import cast
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    audiobook_identity,
+)
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
 )
@@ -340,10 +343,22 @@ def _automatic_decision_value(
         "isbn_form",
         "subtitle",
     }:
+        # A recording's authority is the whole F46 identity, and it stays on
+        # the decision: that identity is what the authority check above
+        # matched against the source outcome, and what the envelope binds.
+        # Only the shape of the projected value is asked for here, and that
+        # shape is the base option's rule -- the audiobook segment names which
+        # shape a record qualified, not a different one. Translating it for
+        # this one call is what lets an activated tranche project at all; an
+        # unqualified identity never reaches here, because it is never
+        # minted (#967).
+        projected_option = decision.policy_option
+        if audiobook_identity(decision.policy_category, decision.policy_option):
+            projected_option = decision.policy_option.rsplit(":", 1)[0]
         try:
             value = project_f20_automatic_decision_value(
                 decision.policy_category,
-                decision.policy_option,
+                projected_option,
                 value,
                 pre_value,
             )

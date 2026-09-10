@@ -48,6 +48,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFacts,
 )
+from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.proposal_set import (
     canonical_target_fields,
     evaluate_report,
@@ -558,7 +559,8 @@ class InspectCurrentReviewCase:
                             proposal,
                             snapshot.automatic_attention_destinations,
                             policy_attention_destinations=snapshot.policy_attention_destinations,
-                            owner_only=case.media_kind == "audiobook",
+                            owner_only=case.media_kind == "audiobook"
+                            and automatic_decision is None,
                         )
                     )
                     or (
@@ -1822,15 +1824,9 @@ def _choice_evidence(
 
 
 def _choice_source_label(evidence: dict[str, str | None]) -> str:
-    labels = {
-        "google_books": "Google Books",
-        "hardcover": "Hardcover",
-        "inventaire": "Inventaire",
-        "open_library": "Open Library",
-    }
     provider = evidence["provider"]
-    if provider in labels:
-        return labels[provider]
+    if provider in PROVIDER_LABELS:
+        return PROVIDER_LABELS[cast("str", provider)]
     if _choice_is_local(evidence):
         return "Local library record"
     return "Retained observation (provider name unavailable)"
@@ -2106,10 +2102,12 @@ def _needs_attention(
 ) -> bool:
     """Whether one proposal is the owner's to answer rather than settled.
 
-    A settled `propose_change` waits unless its bound policy routes it to Ask. No
-    automatic authority ever reaches a recording, so on one there is nothing
-    to wait for and every proposal is the owner's. The action list beside this
-    decides whether a choice exists at all (#966).
+    A settled `propose_change` waits unless its bound policy routes it to Ask.
+    On a recording an undecided field has nothing to wait for, so it is the
+    owner's; a field an F46 record did decide leaves the attention lens
+    because the membership query excludes it, and reads exactly as an ebook's
+    does elsewhere. The action list beside this decides whether a choice
+    exists at all (#966, #967).
     """
     result = proposal["result"]
     assert type(result) is dict
@@ -2200,19 +2198,9 @@ def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
 
 
 def _provider_label(authority: str | None) -> str:
-    return cast(
-        "dict[str | None, str]",
-        {
-            "audible_catalog": "Audible",
-            "audiosilo": "AudioSilo",
-            "audnexus": "Audnexus",
-            "google_books": "Google Books",
-            "hardcover": "Hardcover",
-            "itunes_search": "iTunes",
-            "inventaire": "Inventaire",
-            "open_library": "Open Library",
-        },
-    ).get(authority, "Provider (name unavailable)")
+    if authority is None or authority not in PROVIDER_LABELS:
+        return "Provider (name unavailable)"
+    return PROVIDER_LABELS[authority]
 
 
 def _provider_comparison_notices(report: MetadataReport) -> list[str]:
@@ -2614,11 +2602,12 @@ def _attention_item(
         return None
     classification = classify_review_field(
         attention_candidate=(
-            # The attention lens answers for the same field the library row
-            # counted, so it asks the question the same way: a recording's
-            # proposal is the owner's whatever the automatic lane would have
-            # made of it, and dropping it here would page short of the count
-            # the row reports (#966).
+            # The lens mirrors the query rather than second-guessing it: the
+            # membership predicate already excludes every field a durable
+            # automatic decision settled, so a row that reached here has none
+            # and a recording's proposal is the owner's. Re-deciding that here
+            # from a shadow disposition would page short of the count the same
+            # query reports (#966, #967).
             _needs_attention(proposal, owner_only=case.media_kind == "audiobook")
             or policy_attention
             or cause == "automatic_safety_suspended"

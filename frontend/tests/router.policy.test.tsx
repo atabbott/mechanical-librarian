@@ -3,9 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
-import type { PolicyStateView, ReviewHttp } from '../src/api/http'
+import type { PolicyStateView, ReviewHttp, ShadowPostureView } from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
-import { createHttp, renderRoute } from './fixtures'
+import { createHttp, inertAudiobookQualification, renderRoute } from './fixtures'
 import { view } from './settingsFixtures'
 
 describe('Policy route', () => {
@@ -128,6 +128,56 @@ describe('Policy route', () => {
     expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeDisabled()
   })
 
+  it('opens Automatic for the ASIN only once an audiobook record qualifies it', async () => {
+    // The inert summary the API states today leaves every audiobook tranche
+    // unqualified, so the page reads exactly the ebook records and the ASIN
+    // stays unsupported — which the notebook test below pins with the same
+    // inert payload. A published record makes that category routable with no
+    // further frontend change, which is the activation path unit C needs, and
+    // it moves nothing else: the narrators tranche stays unqualified here and
+    // Contributor names keeps the ebook answer (#967).
+    renderRoute('/policy?section=curation', {
+      ...createHttp(),
+      getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
+        schema_version: 'shadow-posture-v1',
+        posture: 'preview',
+        authority: 'none',
+        can_leave_preview: false,
+      })),
+      getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
+        schema_version: 'metadata-policy-notebook-v1',
+        policy_id: 'policy-1',
+        profile: {
+          schema_version: 'metadata-policy-profile-v2',
+          name: 'Default',
+          options: {},
+          destinations: {},
+        },
+        rich_qualification: [],
+        audiobook_qualification: [
+          {
+            automatic_available: true,
+            destination: 'asin',
+            field: 'asin',
+            identity: 'asin:preserve_exact:audiobook_gate_corroborated',
+            option: 'preserve_exact',
+            record_sha256: 'c'.repeat(64),
+          },
+          ...inertAudiobookQualification.filter((entry) => entry.field !== 'asin'),
+        ],
+      })),
+    })
+    const user = userEvent.setup()
+    const asin = await screen.findByRole('region', { name: 'ASIN' })
+    expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
+    expect(within(asin).queryByText('Automatic mode not supported')).toBeNull()
+    // The record qualified one option, so the other one this field offers is
+    // still the owner's.
+    await user.click(within(asin).getByRole('combobox', { name: 'ASIN representation' }))
+    await user.click(screen.getByRole('option', { name: 'Ebook manifestation' }))
+    expect(within(asin).getByText('Automatic mode not supported')).toBeVisible()
+  })
+
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
     const user = userEvent.setup()
     const options = {
@@ -202,6 +252,7 @@ describe('Policy route', () => {
           options,
           destinations,
         },
+        audiobook_qualification: inertAudiobookQualification,
         rich_qualification: [
           {
             automatic_available: true,

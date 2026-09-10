@@ -59,11 +59,10 @@ off. `audnexus` and `audiosilo` restate Audible's art and carry no switch, and
 Hardcover, Open Library and Inventaire keep exactly the controls they had.
 Guided setup still records `cover_enabled: false` for Audible and iTunes, so
 their covers start off and become evidence only when the owner turns them on.
-Setup, Settings and the review report's provider label state one canonical name
-per provider; cover-evidence statements still name their own sources. The
-instance `name` remains the owner's own identifier and never becomes a display
-label, so field ids, `provider_connections` entries and adapter keys are
-unaffected by what is shown.
+Setup, Settings and the review surfaces state one canonical name per provider,
+from one table every one of them reads. The instance `name` remains the owner's
+own identifier and never becomes a display label, so field ids,
+`provider_connections` entries and adapter keys are unaffected by what is shown.
 
 `provider_recovery_generation` is a required positive operator generation for
 provider recovery. After correcting a provider credential, authorization, or

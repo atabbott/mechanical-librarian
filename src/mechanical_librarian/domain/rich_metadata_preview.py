@@ -11,6 +11,9 @@ from dataclasses import dataclass
 import re
 from typing import Final
 
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    qualified_policy_bases,
+)
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
@@ -237,6 +240,13 @@ def _project(
     if (
         destination == "automatic"
         and f"{field}:{option}" not in F20_PASSING_AUTOMATIC_OPTIONS
+        # A recording's authority is its own. An option the ebook envelope
+        # never qualified is projectable here only while an F46 record
+        # qualifies it for audiobooks, and only on one (#967).
+        and not (
+            proposal.media_kind == "audiobook"
+            and f"{field}:{option}" in qualified_policy_bases()
+        )
     ):
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "automatic_unqualified")
     if target.state not in _EMPTY and target.state is not TargetFieldState.VALUE:
@@ -954,7 +964,14 @@ def _asin(
         )
     ):
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
-    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", candidate.value.value, None)
+    # The elected alternative and the evidence it cites travel with the
+    # preview, because a qualified audiobook ASIN decision is minted from this
+    # projection and has to name what it acted on (#967).
+    return RichFieldPreview(
+        field, option, target.state.value, _data_value(target.value), "projected",
+        candidate.value.value, None, False, None,
+        candidate.alternative_id, candidate.evidence_references, (),
+    )
 
 
 def _identifier_reference(

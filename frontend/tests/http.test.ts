@@ -9,6 +9,7 @@ import {
   mapActivity,
   mapAttention,
   derivePolicyDraftDisplay,
+  policyAutomaticQualification,
   SessionExpiredError,
   mapLibrary,
   mapEvidence,
@@ -19,6 +20,7 @@ import {
   mapReportDetail,
   mapReviewerAccess,
 } from '../src/api/http'
+import type { PolicyStateView } from '../src/api/http'
 
 const token = 'a'.repeat(32)
 const renewedToken = 'b'.repeat(32)
@@ -1628,6 +1630,88 @@ describe('ReviewApiClient', () => {
       }),
     ).toThrow(ApiError)
     expect(() => mapActivity({ ...activity, example: { after: 'After' } })).toThrow(ApiError)
+  })
+
+  it('offers Automatic only for an audiobook tranche a record qualifies', () => {
+    // While no record is published the page must read exactly the rich
+    // records, so the ASIN the ebook envelope leaves unqualified stays
+    // unqualified. Publishing one makes the same category routable without a
+    // further change here (#967).
+    const rich = [
+      {
+        automatic_available: false,
+        candidate_sha256: 'a'.repeat(64),
+        disposition: 'insufficient_coverage',
+        field: 'asin',
+        option: 'preserve_exact',
+      },
+      {
+        automatic_available: true,
+        candidate_sha256: 'a'.repeat(64),
+        disposition: 'passing_automatic',
+        field: 'series',
+        option: 'primary_narrative',
+      },
+    ]
+    const state = {
+      schema_version: 'metadata-policy-notebook-v1',
+      policy_id: 'policy-1',
+      profile: {
+        schema_version: 'metadata-policy-profile-v2',
+        name: 'Active',
+        options: {},
+        destinations: {},
+      },
+      rich_qualification: rich,
+      audiobook_qualification: [
+        {
+          automatic_available: false,
+          destination: 'asin',
+          field: 'asin',
+          identity: 'asin:preserve_exact:audiobook_gate_corroborated',
+          option: 'preserve_exact',
+          record_sha256: null,
+        },
+        {
+          automatic_available: false,
+          destination: 'narrators',
+          field: 'contributor_names',
+          identity: 'contributor_names:canonical:audiobook_narrators_fill_empty',
+          option: 'canonical',
+          record_sha256: null,
+        },
+      ],
+    } as never
+    expect(policyAutomaticQualification(state)).toEqual(rich)
+    const qualified = {
+      ...(state as unknown as PolicyStateView),
+      audiobook_qualification: [
+        {
+          automatic_available: true,
+          destination: 'asin',
+          field: 'asin',
+          identity: 'asin:preserve_exact:audiobook_gate_corroborated',
+          option: 'preserve_exact',
+          record_sha256: 'b'.repeat(64),
+        },
+        {
+          automatic_available: false,
+          destination: 'narrators',
+          field: 'contributor_names',
+          identity: 'contributor_names:canonical:audiobook_narrators_fill_empty',
+          option: 'canonical',
+          record_sha256: null,
+        },
+      ],
+    } as never
+    const entries = policyAutomaticQualification(qualified)
+    expect(entries.filter((entry) => entry.field === 'asin')).toEqual([
+      { automatic_available: true, field: 'asin', option: 'preserve_exact' },
+    ])
+    // The ebook record it overrode is replaced, not doubled, and no other
+    // record moves.
+    expect(entries).toHaveLength(rich.length)
+    expect(entries.filter((entry) => entry.field === 'series')).toEqual([rich[1]])
   })
 
   it('distinguishes matching active policy values from a changed local draft', () => {

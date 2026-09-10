@@ -12,6 +12,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from mechanical_librarian.adapters.persistence.owner_settings import _settings_view
+from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
@@ -1644,6 +1645,10 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         return {
             "schema_version": "metadata-policy-notebook-v1",
             "policy_id": "policy-active-1",
+            "audiobook_qualification": [
+                dict(value)
+                for value in audiobook_decision_qualification.public_summary()
+            ],
             "rich_qualification": list(_RICH_QUALIFICATION),
             "profile": {
                 "schema_version": "metadata-policy-profile-v2",

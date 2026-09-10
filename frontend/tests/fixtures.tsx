@@ -166,6 +166,35 @@ export const activity = (
   }
 }
 
+// Exactly what the API states while no F46 record is published: every
+// audiobook tranche named, none of them qualified, no digest.
+export const inertAudiobookQualification: PolicyStateView['audiobook_qualification'] = [
+  {
+    automatic_available: false,
+    destination: 'asin',
+    field: 'asin',
+    identity: 'asin:preserve_exact:audiobook_gate_corroborated',
+    option: 'preserve_exact',
+    record_sha256: null,
+  },
+  {
+    automatic_available: false,
+    destination: 'narrators',
+    field: 'contributor_names',
+    identity: 'contributor_names:canonical:audiobook_narrators_fill_empty',
+    option: 'canonical',
+    record_sha256: null,
+  },
+  {
+    automatic_available: false,
+    destination: 'series',
+    field: 'series',
+    identity: 'series:primary_narrative:audiobook_fill_empty',
+    option: 'primary_narrative',
+    record_sha256: null,
+  },
+]
+
 export const createHttp = (): ReviewHttp => ({
   getReportDetail: vi.fn(async () => {
     throw new Error('not configured')
@@ -275,6 +304,7 @@ export const createHttp = (): ReviewHttp => ({
       destinations: {},
     },
     rich_qualification: [],
+    audiobook_qualification: inertAudiobookQualification,
   })),
   getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
     schema_version: 'shadow-posture-v1',

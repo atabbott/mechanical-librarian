@@ -43,6 +43,7 @@ from tests.support.metadata_report_doubles import single_track_audio_facts
 
 __all__ = [
     "admitted_audiobook_report",
+    "corroborated_audiobook_report",
     "asin_lane_observation",
     "asserted_asin_report",
     "audio_local_claims",
@@ -109,6 +110,7 @@ def audiobook_candidate(
     duration: str = "58200.000",
     provider: str = "catalogue",
     chapters: ProviderChapterStructure | None = None,
+    series: tuple[str, str] | None = None,
 ) -> ProviderCandidate:
     """One candidate shaped exactly as the audiobook adapters build it."""
     specifications: tuple[tuple[ClaimKind, str, ClaimScope, str | None], ...] = (
@@ -117,6 +119,14 @@ def audiobook_candidate(
         (ClaimKind.ASIN, asin, ClaimScope.EDITION, None),
         (ClaimKind.DURATION, duration, ClaimScope.EDITION, None),
         (ClaimKind.CONTRIBUTOR, "Ray Porter", ClaimScope.WORK, "narrator"),
+        *(
+            ()
+            if series is None
+            else (
+                (ClaimKind.SERIES, series[0], ClaimScope.WORK, None),
+                (ClaimKind.SERIES_SEQUENCE, series[1], ClaimScope.WORK, None),
+            )
+        ),
     )
     claims = tuple(
         ProviderClaim.create(
@@ -168,15 +178,23 @@ def qualified_audiobook(
     duration: str = "58200.000",
     candidates: tuple[ProviderCandidate, ...] | None = None,
     chapters: ProviderChapterStructure | None = None,
+    provider: str = "catalogue",
 ) -> ProviderObservation:
     admitted = (
-        (audiobook_candidate(local_claims, duration=duration, chapters=chapters),)
+        (
+            audiobook_candidate(
+                local_claims,
+                duration=duration,
+                chapters=chapters,
+                provider=provider,
+            ),
+        )
         if candidates is None
         else candidates
     )
     return qualify_provider_observation(
         ProviderObservation(
-            "catalogue",
+            provider,
             ProviderStatus.CANDIDATES,
             (),
             admitted,
@@ -363,3 +381,49 @@ def retained_recorded_only_decision(
         )
     )
     return HumanDecision.from_json(human_decision._canonical(document))
+
+
+def corroborated_audiobook_report(
+    *,
+    connection: str = "primary",
+    library: str = "audio",
+    item: str = "item-1",
+    identity: str = "a" * 64,
+    content_digest: str = "b" * 64,
+    series: tuple[str, str] | None = ("Reading Order", "2"),
+) -> MetadataReport:
+    """One recording two independent audiobook authorities agree about.
+
+    F46's tranches are measured on recordings whose narrator, series and ASIN
+    claims two authorities state alike, so the case that asks what a qualified
+    tranche does starts from one of those rather than from the single-authority
+    report F45's sentinels use (#967).
+    """
+    claims = audio_local_claims()
+    providers = tuple(
+        sorted(
+            (
+                qualified_audiobook(
+                    claims,
+                    authority=authority,
+                    provider=provider,
+                    candidates=(
+                        audiobook_candidate(claims, provider=provider, series=series),
+                    ),
+                )
+                for provider, authority in (
+                    ("catalogue", "audible_catalog"),
+                    ("registry", "audnexus"),
+                )
+            ),
+            key=lambda value: value.provider,
+        )
+    )
+    return MetadataReport.create(
+        target=TargetFacts(connection, library, item, audio_target_fields()),
+        file=FileFacts(0, identity, content_digest, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=providers,
+        audio=single_track_audio_facts(content_digest),
+    )

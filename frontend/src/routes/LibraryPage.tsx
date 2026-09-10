@@ -971,6 +971,10 @@ function ContextValue({
   )
 }
 
+function emptyCurrentValue(field: ReviewField) {
+  return field.currentRaw == null || (Array.isArray(field.currentRaw) && !field.currentRaw.length)
+}
+
 function ProviderConsensusAutomaticStatement({ field }: { field: ReviewField }) {
   const decision = field.automaticDecision
   if (
@@ -1023,7 +1027,7 @@ function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
     field.destination !== 'series' ||
     field.automaticDecision?.outcome !== 'candidate' ||
     !providers.length ||
-    !(field.currentRaw == null || (Array.isArray(field.currentRaw) && !field.currentRaw.length))
+    !emptyCurrentValue(field)
   ) {
     return null
   }
@@ -1044,6 +1048,44 @@ function SeriesAutomaticStatement({ field }: { field: ReviewField }) {
       {hasNumber
         ? 'Numbering is supplied by the provider and is not independently verified for this book.'
         : 'No series number was supplied.'}
+    </p>
+  )
+}
+
+function NarratorsAutomaticStatement({ field }: { field: ReviewField }) {
+  const providers = field.automaticSelectionSources ?? []
+  if (
+    field.humanDecision !== null ||
+    field.destination !== 'narrators' ||
+    field.automaticDecision?.outcome !== 'candidate' ||
+    !providers.length ||
+    !emptyCurrentValue(field)
+  ) {
+    return null
+  }
+  return (
+    <p>
+      Selected from {providers.join(' and ')} — the same cast in each — to fill an empty Narrators
+      field under a qualified automatic policy.
+    </p>
+  )
+}
+
+function AsinAutomaticStatement({ field }: { field: ReviewField }) {
+  const providers = field.automaticSelectionSources ?? []
+  if (
+    field.humanDecision !== null ||
+    field.destination !== 'asin' ||
+    field.automaticDecision?.outcome !== 'candidate' ||
+    !providers.length ||
+    !emptyCurrentValue(field)
+  ) {
+    return null
+  }
+  return (
+    <p>
+      Selected from {providers.join(' and ')} to fill an empty ASIN field under a qualified
+      automatic policy; the runtime gate corroborated that this recording is that product.
     </p>
   )
 }
@@ -1101,6 +1143,8 @@ function RecordedOutcome({
       <ProviderConsensusAutomaticStatement field={field} />
       <DescriptionAutomaticStatement field={field} />
       <SeriesAutomaticStatement field={field} />
+      <NarratorsAutomaticStatement field={field} />
+      <AsinAutomaticStatement field={field} />
       <VerifiedManifestationIsbnAutomaticStatement field={field} />
       <button
         type="button"
@@ -3358,6 +3402,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                             <ProviderConsensusAutomaticStatement field={selected} />
                             <DescriptionAutomaticStatement field={selected} />
                             <SeriesAutomaticStatement field={selected} />
+                            <NarratorsAutomaticStatement field={selected} />
+                            <AsinAutomaticStatement field={selected} />
                             <VerifiedManifestationIsbnAutomaticStatement field={selected} />
                           </>
                         ) : null}

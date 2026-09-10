@@ -40,6 +40,7 @@ from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asserted_asin_report,
+    corroborated_audiobook_report,
     retained_recorded_only_decision,
 )
 from tests.support.proposal_evidence import _fields as _proposal_fields
@@ -318,3 +319,39 @@ def test_the_attention_lens_lists_the_field_the_library_row_counted() -> None:
     assert TargetDestination.ASIN.value == item["destination"]
     assert 2 == item["work_attention_count"]
     assert "m4b" == item["media_kind"]
+
+
+def test_a_shadow_disposition_never_drops_a_recording_from_the_attention_lens() -> None:
+    """The lens pages exactly the rows the membership query counted.
+
+    `automatic_outcome` here is the latest shadow disposition the projection
+    wrote, not a durable decision: it carries `manual`, `ignore`,
+    `unsupported`, `keep_current`, `candidate` or `abstention`. The query that
+    selected this row already excluded every field a durable automatic
+    decision settled, so none of those dispositions may remove a recording's
+    field from the page -- doing so would report a total the page is shorter
+    than (#967).
+    """
+    report = corroborated_audiobook_report()
+    case = _case(report)
+    destination = TargetDestination.ASIN.value
+
+    assert _attention_item(case.to_json(), report.to_json(), destination, 2) is not None
+    for disposition in (
+        "abstention",
+        "candidate",
+        "ignore",
+        "keep_current",
+        "manual",
+        "unsupported",
+    ):
+        assert (
+            _attention_item(
+                case.to_json(),
+                report.to_json(),
+                destination,
+                2,
+                automatic_outcome=disposition,
+            )
+            is not None
+        ), disposition

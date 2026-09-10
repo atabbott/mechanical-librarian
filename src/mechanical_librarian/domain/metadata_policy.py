@@ -12,6 +12,9 @@ import re
 from dataclasses import dataclass
 from typing import Final, Mapping
 
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    F46_PASSING_AUTOMATIC_OPTIONS,
+)
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
     F20_RICH_FIELDS,
@@ -66,6 +69,8 @@ QUALIFIED_AUTOMATIC: Final[frozenset[str]] = frozenset({
     "contributor_names", "publisher_preference",
 }) | frozenset(
     identity.split(":", 1)[0] for identity in F20_PASSING_AUTOMATIC_OPTIONS
+) | frozenset(
+    identity.split(":", 1)[0] for identity in F46_PASSING_AUTOMATIC_OPTIONS
 )
 _POLICY_ID: Final = re.compile(r"^policy_[0-9a-f]{64}$")
 

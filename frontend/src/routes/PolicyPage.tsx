@@ -7,6 +7,7 @@ import {
   ApiError,
   BuildMismatchError,
   derivePolicyDraftDisplay,
+  policyAutomaticQualification,
 } from '../api/http'
 import type {
   PolicyActivationView,
@@ -850,6 +851,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     )
   }
   const automaticAllowed = shadow.posture === 'preview' || shadow.posture === 'automatic'
+  const qualification = policyAutomaticQualification(data.state)
   const draftDisplay = derivePolicyDraftDisplay(data.state, draft, fieldDefaults)
   const fieldChanged = (field: FieldDefinition) => {
     const fallback = fieldDefaults[field.key]
@@ -1140,7 +1142,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               const option = draft.options[field.key] ?? field.options[0] ?? ''
               const destination =
                 draft.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
-              const qualified = automaticQualified(field, option, data.state.rich_qualification)
+              const qualified = automaticQualified(field, option, qualification)
               const automaticAvailable = qualified && automaticAllowed
               const changed = fieldChanged(field)
               return [
@@ -1253,7 +1255,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           onChange={(nextOption) => {
                             const movesToAsk =
                               destination === 'automatic' &&
-                              !automaticQualified(field, nextOption, data.state.rich_qualification)
+                              !automaticQualified(field, nextOption, qualification)
                             editDraft({
                               ...draft,
                               options: { ...draft.options, [field.key]: nextOption },

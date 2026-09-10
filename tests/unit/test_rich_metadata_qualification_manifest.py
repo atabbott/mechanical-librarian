@@ -1987,8 +1987,23 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
     # move again.
     expected = dict.fromkeys(sources, "unchanged")
     expected["src/mechanical_librarian/domain/automatic_decision.py"] = (
-        "historical_reader_only"
+        "historical_reader_and_audiobook_tranche_wiring"
     )
+    # V24 is re-pinned in place over the inert F46 audiobook tranche wiring, so
+    # its delta against v23 states the media-health projection and that wiring
+    # together. The wiring grants no identity while no audiobook record is
+    # published, so v24 keeps its options, scoring and every authority rule
+    # (#967).
+    for name in (
+        "adapters/persistence/field_effect_validation.py",
+        "adapters/persistence/metadata_reports.py",
+        "application/metadata_policy.py",
+        "domain/metadata_policy.py",
+        "domain/rich_metadata_preview.py",
+        "domain/shadow_outcome.py",
+    ):
+        expected["src/mechanical_librarian/" + name] = "audiobook_tranche_wiring"
+    expected["src/mechanical_librarian/domain/metadata_report.py"] = "comment_only"
     assert closure["bound_source_classification"] == expected
     for name, category in expected.items():
         assert (sources[name] == prior_sources[name]) is (category == "unchanged")
@@ -1998,6 +2013,11 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
         "states the delta against v23 alone and is not cumulative" in closure["proof"]
     )
     assert "media_health_projection" in closure["proof"]
+    assert "no rescoring or fresh holdout is claimed" in closure["proof"]
+    # The byte binding is rotated twice over: the media-health observation
+    # view, and the policy state's audiobook qualification summary the owner's
+    # routing surface reads (#967).
+    assert "audiobook qualification summary" in closure["proof"]
     provider = current["provider_contract_source_closure"]
     projection = current["review_projection_source_closure"]
     assert provider == prior["provider_contract_source_closure"]
@@ -2010,7 +2030,14 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
         name
         for name, digest in projection["behavior_sources"].items()
         if digest != prior["review_projection_source_closure"]["behavior_sources"][name]
-    } == {"src/mechanical_librarian/application/review_web.py"}
+    } == {
+        "src/mechanical_librarian/" + name
+        for name in (
+            "adapters/persistence/metadata_policy.py",
+            "adapters/persistence/metadata_reports.py",
+            "application/review_web.py",
+        )
+    }
     assert projection["issue"] == 144
     for retained in (provider, projection):
         assert retained["fresh_scoring_run"] is False
@@ -2052,8 +2079,28 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
         title["prior_manifest_sha256"]
         == hashlib.sha256(V9_F19A_MANIFEST.read_bytes()).hexdigest()
     )
-    rotated = {"prior_manifest_sha256", "review_projection_source_closure"}
+    rotated = {
+        "association_requalification",
+        "prior_manifest_sha256",
+        "review_projection_source_closure",
+    }
     assert {k: v for k, v in title.items() if k not in rotated} == {
         k: v for k, v in prior_title.items() if k not in rotated
     }
+    # The association evidence v9 measured is inherited exactly. Only the
+    # projection follow-up's scope is restated, because the tranche wiring
+    # reshaped those sources: the claim the retained measurements carry on is
+    # byte-identical ebook output, not an unchanged Python AST (#967).
+    association = title["association_requalification"]
+    prior_association = prior_title["association_requalification"]
+    followup = "review_projection_followup"
+    assert {k: v for k, v in association.items() if k != followup} == {
+        k: v for k, v in prior_association.items() if k != followup
+    }
+    assert {k: v for k, v in association[followup].items() if k != "scope"} == {
+        k: v for k, v in prior_association[followup].items() if k != "scope"
+    }
+    assert "the Python AST is unchanged" in prior_association[followup]["scope"]
+    assert "the Python AST is unchanged" not in association[followup]["scope"]
+    assert "ebook output is byte-identical" in association[followup]["scope"]
     assert title["review_projection_source_closure"] == projection
