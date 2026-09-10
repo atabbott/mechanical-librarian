@@ -2129,7 +2129,8 @@ describe('PageCsrfTokenStore', () => {
 it('maps an actual persisted authored description separately from provider alternatives', async () => {
   const { default: payload } = await import('./descriptionAdviceFixture.json')
   const mapped = mapCaseDetail(payload)
-  const description = mapped.fields.find((field) => field.destination === 'description')!
+  const description = mapped.fields.find((field) => field.destination === 'description')
+  if (!description) throw new Error('description fixture requires its field')
   expect(description.descriptionAdvice?.candidate?.provenance).toBe('authored_content')
   expect(description.descriptionAdvice?.candidate?.advised).toBe(true)
   expect(description.descriptionAdvice?.candidate?.output.description).toBe(
@@ -2140,8 +2141,11 @@ it('maps an actual persisted authored description separately from provider alter
 
 it('sends an ordinary chooser authored command only to the bound authored selection endpoint', async () => {
   const { default: payload } = await import('./descriptionAdviceFixture.json')
-  const field = mapCaseDetail(payload).fields.find((item) => item.destination === 'description')!
-  const advice = field.descriptionAdvice!
+  const field = mapCaseDetail(payload).fields.find((item) => item.destination === 'description')
+  if (!field?.descriptionAdvice?.candidate)
+    throw new Error('description fixture requires its candidate')
+  const advice = field.descriptionAdvice
+  const candidate = field.descriptionAdvice.candidate
   const fetchMock = vi.fn<typeof fetch>(async () =>
     Response.json({
       schema_version: 'description-selection-ack-v1',
@@ -2156,17 +2160,19 @@ it('sends an ordinary chooser authored command only to the bound authored select
     outcome: 'accept',
     proposalId: field.proposalId,
     targetFingerprint: field.targetFingerprint,
-    selectedValue: { kind: 'text', value: advice.candidate!.output.description },
+    selectedValue: { kind: 'text', value: candidate.output.description },
     idempotencyKey: 'owner-choice-idempotency',
-    authoredDescription: { candidateId: advice.candidate!.candidate_id, binding: advice.binding },
+    authoredDescription: { candidateId: candidate.candidate_id, binding: advice.binding },
   })
-  const [url, options] = fetchMock.mock.calls[0]!
+  const call = fetchMock.mock.calls[0]
+  if (!call?.[1]) throw new Error('description request was not sent')
+  const [url, options] = call
   expect(url).toBe('/api/v1/review-cases/case-1/description-advice/selection')
-  expect(JSON.parse(options!.body as string)).toEqual({
-    candidate_id: advice.candidate!.candidate_id,
+  expect(JSON.parse(options.body as string)).toEqual({
+    candidate_id: candidate.candidate_id,
     binding: advice.binding,
   })
-  expect(new Headers(options!.headers).get('idempotency-key')).toBe('owner-choice-idempotency')
+  expect(new Headers(options.headers).get('idempotency-key')).toBe('owner-choice-idempotency')
 })
 
 it.each([undefined, 'applying', 'verified'])(
@@ -2187,3 +2193,20 @@ it.each([undefined, 'applying', 'verified'])(
     expect(() => mapCaseDetail(changed)).toThrow(ApiError)
   },
 )
+
+it.each([
+  { failure: ['invalid_output'] },
+  { failure: { failure: 'invalid_output' } },
+  { failure: 1 },
+])('rejects non-string description failure values without coercion: %j', async ({ failure }) => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const changed = {
+    ...payload,
+    fields: payload.fields.map((field) =>
+      field.destination === 'description'
+        ? { ...field, description_advice: { ...field.description_advice, failure } }
+        : field,
+    ),
+  }
+  expect(() => mapCaseDetail(changed)).toThrow(ApiError)
+})

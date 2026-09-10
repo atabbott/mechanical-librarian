@@ -2537,7 +2537,8 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
     !['requested', 'running', 'succeeded', 'failed', 'interrupted'].includes(String(value.state)) ||
     !(
       value.failure === null ||
-      ['unavailable', 'invalid_output', 'interrupted'].includes(String(value.failure))
+      (typeof value.failure === 'string' &&
+        ['unavailable', 'invalid_output', 'interrupted'].includes(value.failure))
     ) ||
     !['codex', 'openrouter'].includes(String(value.engine)) ||
     !record(value.binding)
@@ -2545,7 +2546,8 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
     throw new ApiError(502, 'invalid_description_advice')
   if (
     value.application_outcome !== null &&
-    (!['verified', 'no_change_required'].includes(String(value.application_outcome)) ||
+    (typeof value.application_outcome !== 'string' ||
+      !['verified', 'no_change_required'].includes(value.application_outcome) ||
       value.selection === null)
   )
     throw new ApiError(502, 'invalid_description_application_outcome')

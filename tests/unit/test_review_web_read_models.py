@@ -27,7 +27,6 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
 )
 from mechanical_librarian.application.review_web import (
-    CurrentReviewCaseSnapshot,
     InspectCurrentReviewCase,
     ReviewWebError,
     _attention_item,
@@ -1356,68 +1355,75 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
     )
 
 
-def test_automatic_history_values_require_an_exact_decision_identity() -> None:
-    exact = "automatic_decision_" + "a" * 64
-    other = "automatic_decision_" + "b" * 64
-    detail = {
-        "fields": [
-            {
-                "automatic_decision": {
-                    "decision_id": exact,
-                    "outcome": "candidate",
-                    "selected_value": {"kind": "text", "value": "New title"},
-                },
-                "current": {
-                    "destination": "title",
-                    "state": "value",
-                    "value": "Old title",
-                },
-                "destination": "title",
-            }
-        ]
-    }
-    snapshot = CurrentReviewCaseSnapshot(
-        case_document="{}",
-        report_document="{}",
-        decision_documents=(),
-        history=(
-            {
-                "decision_id": exact,
-                "destination": "title",
-                "kind": "automatic_decision_recorded",
-                "occurred_at": 2,
-                "origin": "automatic_policy",
-                "outcome": "candidate",
-                "review_case_id": "review_case_" + "c" * 64,
-                "schema_version": "automatic-decision-history-event-v1",
-            },
-            {
-                "decision_id": other,
-                "destination": "title",
-                "kind": "automatic_decision_recorded",
-                "occurred_at": 1,
-                "origin": "automatic_policy",
-                "outcome": "candidate",
-                "review_case_id": "review_case_" + "c" * 64,
-                "schema_version": "automatic-decision-history-event-v1",
-            },
-        ),
-    )
-    cases = InspectCurrentReviewCase(Mock())
-    with patch.object(cases, "_read", return_value=(detail, Mock(), snapshot)):
-        history = cases.history("review_case_" + "c" * 64)
+@pytest.mark.parametrize(
+    "mismatch",
+    [
+        None,
+        "missing",
+        "review_case_id",
+        "report_id",
+        "proposal_set_id",
+        "target_fingerprint",
+        "proposal_id",
+        "candidate_id",
+    ],
+)
+def test_automatic_history_values_require_an_exact_decision_identity(
+    tmp_path, mismatch
+) -> None:
+    from dataclasses import asdict, replace
 
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+    from tests.support.description_advice import _prepared
+
+    repository, _store, binding, _candidate, automatic = _prepared(
+        tmp_path, automatic=False
+    )
+    cases = InspectCurrentReviewCase(repository)
+    detail, report, snapshot = cases._read(binding.review_case_id, 50)
+    event = next(
+        value
+        for value in snapshot.history
+        if value.get("decision_id") == automatic.decision_id
+    )
+    other = {**event, "decision_id": "automatic_decision_" + "b" * 64, "occurred_at": 0}
+    documents = snapshot.decision_documents
+    if mismatch is not None:
+        documents = tuple(
+            value
+            for value in documents
+            if json.loads(value)["decision_id"] != automatic.decision_id
+        )
+        if mismatch != "missing":
+            values = asdict(automatic)
+            for key in ("decision_id", "idempotency_digest"):
+                values.pop(key)
+            prefix = {
+                "review_case_id": "review_case_",
+                "report_id": "report_",
+                "proposal_set_id": "proposal_set_",
+                "proposal_id": "review_proposal_",
+                "target_fingerprint": "",
+                "candidate_id": "alternative_",
+            }[mismatch]
+            values[mismatch] = prefix + "f" * 64
+            if mismatch == "candidate_id":
+                values["outcome"] = "candidate"
+            changed = AutomaticDecision.create(**values)
+            documents += (changed.to_json(),)
+            event = {**event, "decision_id": changed.decision_id}
+    snapshot = replace(snapshot, decision_documents=documents, history=(event, other))
+    with patch.object(cases, "_read", return_value=(detail, report, snapshot)):
+        history = cases.history(binding.review_case_id)
+    expected = (
+        {"kind": "text", "value": "Existing description."} if mismatch is None else None
+    )
     assert history["schema_version"] == "review-case-history-v2"
-    assert history["items"][0]["previous_value"] == {
-        "kind": "text",
-        "value": "Old title",
-    }
-    assert history["items"][0]["selected_value"] == {
-        "kind": "text",
-        "value": "New title",
-    }
+    assert history["items"][0]["previous_value"] == expected
+    assert history["items"][0]["selected_value"] == expected
     assert history["items"][1]["previous_value"] is None
     assert history["items"][1]["selected_value"] is None
+    repository.close()
 
 
 def test_choice_projection_is_bounded_and_never_leaks_unknown_provider_names() -> None:

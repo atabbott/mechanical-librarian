@@ -928,8 +928,9 @@ it.each(['evidence', 'history'])(
   'keeps %s diagnostic-only while retaining authored history',
   async (subview) => {
     const authored = mapCaseDetail(descriptionAdviceFixture)
-    const candidate = authored.fields.find((field) => field.destination === 'description')!
-      .descriptionAdvice!.candidate!
+    const candidate = authored.fields.find((field) => field.destination === 'description')
+      ?.descriptionAdvice?.candidate
+    if (!candidate) throw new Error('description fixture requires its candidate')
     const http = createHttp()
     http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1' }))
     http.getHistory = vi.fn(async () => ({

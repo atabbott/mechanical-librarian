@@ -1184,6 +1184,333 @@ def test_verified_deterministic_fill_retires_advice_before_successor_scan(
     repository.close()
 
 
+def test_running_request_successor_waits_for_durable_cached_continuation(tmp_path):
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
+    from mechanical_librarian.domain.metadata_report import TargetField
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.proposal_evidence import _report
+
+    original, *_ = _automatic_no_change_inputs("description_preserved")
+    successor = _report(
+        fields=tuple(
+            TargetField(field.destination, field.state, "Observed successor text.")
+            if field.destination.value == "description"
+            else field
+            for field in original.target.fields
+        ),
+        local_claims=original.local_claims,
+        providers=original.providers,
+    )
+    joined = []
+
+    def coalesce(repository, access, binding, _deterministic):
+        resolved = repository.current_resolved_metadata_policy(successor.target.library)
+        proposal = evaluate_report(
+            successor, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.publish(successor, lambda: True, expected_current=original.report_id)
+        repository.publish_proposal(proposal)
+        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        fresh = binding.model_copy(
+            update={
+                "review_case_id": case_id,
+                "report_id": successor.report_id,
+                "proposal_set_id": proposal.proposal_set_id,
+                "target_fingerprint": successor.target.fingerprint,
+            }
+        )
+        store = repository.description_advice_store()
+        service = DescriptionAdviceService(
+            store, access, store.current_settings, lambda: 11
+        )
+        assert (
+            service.prepare(successor, fresh, lambda: store.binding_is_current(fresh))
+            is None
+        )
+        joined.append((fresh, service))
+
+    repository, store, _binding, candidate, _ = _prepared(
+        tmp_path, automatic=False, during_dispatch=coalesce, result_current=False
+    )
+    fresh, service = joined[0]
+    before = store.read(fresh.review_case_id)
+    assert before["candidate"]["candidate_id"] == candidate.candidate_id
+    assert before["current"] is False
+    assert repository._connection.execute(
+        "SELECT retry FROM description_preparation_pending WHERE review_case_id=?",
+        (fresh.review_case_id,),
+    ).fetchone() == (0,)
+    with pytest.raises(ValueError, match="description advice is stale"):
+        store.admit(candidate.candidate_id, fresh, "human", "e" * 64, 12)
+    assert (
+        service.prepare(successor, fresh, lambda: store.binding_is_current(fresh))
+        == candidate
+    )
+    assert store.read(fresh.review_case_id)["current"] is True
+    assert (
+        repository._connection.execute(
+            "SELECT 1 FROM description_preparation_pending WHERE review_case_id=?",
+            (fresh.review_case_id,),
+        ).fetchone()
+        is None
+    )
+    assert (
+        store.admit(candidate.candidate_id, fresh, "human", "f" * 64, 13).binding
+        == fresh
+    )
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_advice_attempts"
+    ).fetchone() == (1,)
+    repository.close()
+
+
+@pytest.mark.parametrize("before_cutover", [False, True])
+@pytest.mark.parametrize("automatic", [False, True])
+def test_coalesced_successor_continues_through_real_projection(
+    tmp_path, before_cutover, automatic
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from dataclasses import replace
+    from threading import Event
+
+    from mechanical_librarian.bootstrap import composition
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
+    from mechanical_librarian.domain.metadata_report import TargetField
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.description_advice import _contained_profile
+    from tests.support.proposal_evidence import _report
+    from tests.unit.test_shadow_outcome_persistence import (
+        _pipeline_configuration,
+        _run_qualified_cover_pipeline,
+    )
+
+    profile = _contained_profile(tmp_path)
+    original, *_ = _automatic_no_change_inputs("description_preserved")
+    successor = _report(
+        fields=tuple(
+            TargetField(field.destination, field.state, "Observed successor text.")
+            if field.destination.value == "description"
+            else field
+            for field in original.target.fields
+        ),
+        local_claims=original.local_claims,
+        providers=original.providers,
+    )
+    entered, release, finished, cleanup = Event(), Event(), Event(), Event()
+    captured = []
+    results = []
+
+    def block(repository, access, binding, _decision):
+        captured.append((repository.authority, access, binding))
+        entered.set()
+        assert release.wait(10)
+
+    def prepare():
+        result = None
+        try:
+            result = _prepared(
+                tmp_path,
+                automatic=automatic,
+                contained_identity=lambda: ("synthetic-model", profile.read_bytes()),
+                during_dispatch=block,
+                result_current=False,
+            )
+            results.append(result[3])
+            finished.set()
+            assert cleanup.wait(10)
+            return result[3]
+        finally:
+            finished.set()
+            if result is not None:
+                result[0].close()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(prepare)
+        assert entered.wait(10)
+        authority, _worker_access, original_binding = captured[0]
+        access_repository = open_repository(
+            tmp_path / "reports.sqlite", authority=authority
+        )
+        access = ReviewerAccessOperations(
+            access_repository.reviewer_access_store(),
+            codex_auth=_Auth("usable"),
+            codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+            codex_identity=lambda: ("synthetic-model", profile.read_bytes()),
+            codex_binding=lambda: pytest.fail("unexpected cover dispatch"),
+            codex_description_binding=lambda: pytest.fail(
+                "continuation dispatched again"
+            ),
+            openrouter_factory=lambda *_: pytest.fail("unexpected external transport"),
+        )
+        configuration = _pipeline_configuration()
+        assert configuration.review is not None
+        configuration = replace(
+            configuration,
+            review=replace(
+                configuration.review,
+                description_automatic_application=automatic,
+                cover_reviewer_profile_file=str(profile),
+            ),
+        )
+        recovery = composition.SQLiteProviderRecoveryStore.open(
+            tmp_path / "recovery.sqlite"
+        )
+        supervisor = composition.create_review_pipeline(
+            configuration,
+            tmp_path / "reports.sqlite",
+            tmp_path / "catalogue.sqlite",
+            tmp_path / "artifacts",
+            access,
+            database_authority=authority,
+            provider_recovery=recovery,
+        )
+        repository = supervisor._pipeline._repository_factory()
+        resolved = repository.current_resolved_metadata_policy(successor.target.library)
+        proposal = evaluate_report(
+            successor, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        pipeline = _run_qualified_cover_pipeline(
+            repository,
+            tmp_path,
+            successor,
+            proposal,
+            supervisor,
+            repository_factory=supervisor._pipeline._repository_factory,
+        )
+
+        def extract_successor(bound, action, claim_next):
+            bound.publish(
+                successor,
+                lambda: True,
+                expected_current=original.report_id,
+                after_publication=lambda current, published: (
+                    current.complete_review_extraction_publication(
+                        action, published.report_id, 10, 0, None, claim_next, None
+                    )
+                ),
+            )
+            return successor.report_id, True
+
+        pipeline._extract = extract_successor
+        supervisor._pipeline = pipeline
+        original_prepare = pipeline._before_projection
+        joined: list[str] = []
+
+        def join(bound, action):
+            original_prepare(bound, action)
+            assert action.review_case_id is not None
+            if not joined:
+                joined.append(action.review_case_id)
+                for name in ("_extract", "_providers", "_propose", "_admit"):
+                    setattr(
+                        pipeline,
+                        name,
+                        lambda *_: pytest.fail(
+                            "cached continuation repeated upstream work"
+                        ),
+                    )
+                assert bound._connection.execute(
+                    "SELECT candidate_id FROM current_description_advice WHERE review_case_id=?",
+                    (action.review_case_id,),
+                ).fetchone() == (None,)
+                if before_cutover:
+                    release.set()
+                    assert finished.wait(10)
+                    assert bound._connection.execute(
+                        "SELECT rescan_requested FROM review_preparation_scans WHERE scan_id=?",
+                        (action.scan_id,),
+                    ).fetchone() == (1,)
+
+        pipeline._before_projection = join
+        try:
+            for _ in range(64):
+                if not pipeline.run_next(1):
+                    break
+            else:
+                pytest.fail("successor projection did not settle")
+            assert len(joined) == 1
+            case_id = joined[0]
+            assert case_id != original_binding.review_case_id
+            if before_cutover:
+                assert repository._connection.execute(
+                    "SELECT state FROM review_preparation_scans"
+                ).fetchone() == ("queued",)
+                for _ in range(64):
+                    if not pipeline.run_next(1):
+                        break
+                else:
+                    pytest.fail("coalesced rescan did not settle")
+            else:
+                supervisor.set_paused(True)
+                release.set()
+                assert finished.wait(10)
+                assert repository._connection.execute(
+                    "SELECT retry FROM description_preparation_pending WHERE review_case_id=?",
+                    (case_id,),
+                ).fetchone() == (0,)
+                assert pipeline.run_next(1) is False
+                repository.close()
+                repository = supervisor._pipeline._repository_factory()
+                assert (
+                    repository.description_advice_store().read(case_id)["current"]
+                    is False
+                )
+                for name in ("_extract", "_providers", "_propose", "_admit"):
+                    setattr(
+                        pipeline,
+                        name,
+                        lambda *_: pytest.fail(
+                            "cached continuation repeated upstream work"
+                        ),
+                    )
+                pipeline._clock = lambda: 30
+                supervisor.set_paused(False)
+                for _ in range(64):
+                    if not pipeline.run_next(1):
+                        break
+                else:
+                    pytest.fail("reopened paused continuation did not settle")
+            assert finished.is_set()
+            assert len(results) == 1
+            candidate = results[0]
+            advice = repository.description_advice_store().read(case_id)
+            assert advice["current"] is True
+            assert advice["candidate"]["candidate_id"] == candidate.candidate_id
+            assert (advice["selection"] is not None) is automatic
+            if not automatic:
+                from mechanical_librarian.domain.description_advice import (
+                    DescriptionAdviceBinding,
+                )
+
+                fresh = DescriptionAdviceBinding.model_validate(advice["binding"])
+                assert (
+                    repository.description_advice_store()
+                    .admit(candidate.candidate_id, fresh, "human", "d" * 64, 31)
+                    .binding
+                    == fresh
+                )
+            assert repository._connection.execute(
+                "SELECT count(*) FROM description_advice_attempts"
+            ).fetchone() == (1,)
+            assert (
+                repository._connection.execute(
+                    "SELECT 1 FROM description_preparation_pending WHERE review_case_id=?",
+                    (case_id,),
+                ).fetchone()
+                is None
+            )
+        finally:
+            release.set()
+            supervisor.stop()
+            recovery.close()
+            repository.close()
+            access_repository.close()
+            cleanup.set()
+            future.result(timeout=10)
+
+
 def test_composed_contained_description_uses_image_free_port_and_exact_profile(
     tmp_path: Path,
     monkeypatch,
@@ -1844,3 +2171,78 @@ def test_attempt_transition_drift_never_publishes_or_admits_stale_request(
     with pytest.raises(ValueError):
         store.admit(candidate.candidate_id, binding, "human", "f" * 64, 31)
     repository.close()
+
+
+@pytest.mark.parametrize("automatic_outcome", ["keep_current", "candidate"])
+def test_automatic_history_values_survive_authored_selection_reversal_and_reopen(
+    tmp_path, automatic_outcome
+):
+    from mechanical_librarian.application.review_web import (
+        InspectCurrentReviewCase,
+        RecordHumanDecision,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        TargetField,
+        TargetFieldState,
+    )
+    from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.proposal_evidence import _report
+
+    original, *_ = _automatic_no_change_inputs("description_preserved")
+    report = (
+        original
+        if automatic_outcome == "keep_current"
+        else _report(
+            fields=tuple(
+                TargetField(field.destination, TargetFieldState.EMPTY, None)
+                if field.destination.value == "description"
+                else field
+                for field in original.target.fields
+            ),
+            local_claims=original.local_claims,
+            providers=original.providers,
+        )
+    )
+    repository, store, binding, candidate, automatic = _prepared(
+        tmp_path, automatic=False, report_override=report
+    )
+    assert automatic.outcome == automatic_outcome
+
+    def event(bound):
+        return next(
+            item
+            for item in InspectCurrentReviewCase(bound).history(binding.review_case_id)[
+                "items"
+            ]
+            if item.get("decision_id") == automatic.decision_id
+        )
+
+    before = event(repository)
+    assert before["previous_value"] == (
+        {"kind": "text", "value": "Existing description."}
+        if automatic_outcome == "keep_current"
+        else None
+    )
+    assert before["selected_value"] == {
+        "kind": "text",
+        "value": "Existing description."
+        if automatic_outcome == "keep_current"
+        else "A qualified description.",
+    }
+    store.admit(candidate.candidate_id, binding, "human", "c" * 64, 20)
+    assert event(repository) == before
+    RecordHumanDecision(repository, clock=lambda: 21).run(
+        binding.review_case_id,
+        proposal_id=automatic.proposal_id,
+        target_fingerprint=binding.target_fingerprint,
+        destination="description",
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="retain-description-after-authored-selection",
+    )
+    assert event(repository) == before
+    repository.close()
+    reopened = open_repository(tmp_path / "reports.sqlite", create=False)
+    assert event(reopened) == before
+    reopened.close()

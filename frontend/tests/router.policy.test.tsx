@@ -796,7 +796,10 @@ it('saves description preferences independently next to Cover guidance and keeps
   const http = createHttp()
   const initial = view()
   http.getSettings = vi.fn(async () => initial)
-  http.writeSettings = vi.fn(async (write) => ({ ...initial, document: write.document }))
+  http.writeSettings = vi.fn<ReviewHttp['writeSettings']>(async (write) => ({
+    ...initial,
+    document: write.document,
+  }))
   renderRoute('/policy?section=curation', http)
   const region = await screen.findByRole('region', { name: 'Description advice' })
   const marketing = await within(region).findByRole('checkbox', {

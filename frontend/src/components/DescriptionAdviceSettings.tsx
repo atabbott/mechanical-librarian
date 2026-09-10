@@ -4,12 +4,6 @@ import { useState } from 'react'
 import type { ReviewHttp, SettingsView } from '../api/http'
 
 type Preferences = NonNullable<SettingsView['document']['description_advice']>
-const defaults: Preferences = {
-  remove_marketing: true,
-  remove_sales_boasts: true,
-  remove_praise: true,
-  automatic_application: false,
-}
 const labels: Readonly<Record<keyof Preferences, string>> = {
   remove_marketing: 'Remove marketing material',
   remove_sales_boasts: 'Remove sales figures and bestseller boasts',
@@ -56,7 +50,7 @@ export const DescriptionAdviceSettings = ({ http }: { http: ReviewHttp }) => {
 const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   const cache = useQueryClient()
   const [base, setBase] = useState(view.document)
-  const [draft, setDraft] = useState<Preferences>(view.document.description_advice ?? defaults)
+  const [draft, setDraft] = useState<Preferences>(view.document.description_advice)
   const mutation = useMutation({
     mutationFn: () =>
       http.writeSettings({
@@ -72,14 +66,14 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
   })
   const locked = view.authority === 'file'
   const stale = view.document.revision !== base.revision
-  const changed = JSON.stringify(draft) !== JSON.stringify(base.description_advice ?? defaults)
+  const changed = JSON.stringify(draft) !== JSON.stringify(base.description_advice)
   const reload = useMutation({
     mutationFn: () => http.getSettings(),
     retry: false,
     onSuccess: (fresh) => {
       cache.setQueryData(['settings'], fresh)
       setBase(fresh.document)
-      setDraft(fresh.document.description_advice ?? defaults)
+      setDraft(fresh.document.description_advice)
       mutation.reset()
     },
   })

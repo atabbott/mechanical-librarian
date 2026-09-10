@@ -150,7 +150,7 @@ decisions into qualified automatic decisions.
 | F40 Series fill-empty decision | #895 | An empty series field fills automatically from one qualified work-scope authority. | Ready. |
 | F41 Title decoration equivalence | #896 | Decorated title variants collapse to the plain canonical form, qualifying applicable tidy and subtitle tranches and the explicit author-prefix-plus-underscores WORK-identity compound without admitting either part alone; genuine conflicts survive. | Delivered. |
 | F42 Verified-manifestation ISBN decision | #897 | Competing edition ISBNs fill an empty field only when the already-verified manifestation identity decides them. | Ready. |
-| F39 Advised description rewrite | #892 | The configured reviewer engine offers one rewritten or fused description as marked authored content; an explicit owner policy may apply in-policy rewrites automatically, and otherwise candidates park for owner review. | Ready. |
+| F39 Advised description rewrite | #892 | The configured reviewer engine offers one rewritten or fused description as marked authored content; an explicit owner policy may apply in-policy rewrites automatically, and otherwise candidates park for owner review. | Delivered. |
 
 Focused work remains outside the slice sequence, each using `Delivery slice:
 Not applicable`. #954 is complete; it restored the exact-head delivery gate

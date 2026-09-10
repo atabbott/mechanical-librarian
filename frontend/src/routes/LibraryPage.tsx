@@ -1,7 +1,5 @@
-import {
-  DescriptionAdvicePreparation,
-  descriptionAdviceStatus,
-} from '../components/DescriptionAdvice'
+import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
+import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -38,6 +36,9 @@ import { ownerChoiceCount } from '../reviewChoiceCounts'
 import { advancePresentationSettled } from '../reviewAdvancePresentation'
 
 type ReviewField = CaseDetailView['fields'][number]
+const authoredOwnerRecorded = (field: ReviewField) =>
+  field.descriptionAdvice?.selection?.origin === 'human' &&
+  Boolean(field.descriptionAdvice.current || field.descriptionAdvice.application_outcome)
 const searchNavigationDelay = 150
 // Live Library invalidation batches the documented fifty-work burst for 120 ms.
 // Keep each distinct subject from that bounded batch long enough to compare it
@@ -430,8 +431,9 @@ const recordedSelected = (
   outcome: DecisionCommand['outcome'],
   selectedValue: DecisionCommand['selectedValue'] = null,
 ) =>
-  (field.descriptionAdvice?.current || field.descriptionAdvice?.application_outcome) &&
-  field.descriptionAdvice?.selection
+  field.descriptionAdvice &&
+  (field.descriptionAdvice.current || field.descriptionAdvice.application_outcome !== null) &&
+  field.descriptionAdvice.selection
     ? false
     : field.humanDecision !== null
       ? humanChoiceSelected(field.humanDecision, outcome, selectedValue)
@@ -2620,8 +2622,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     (selected.humanDecision !== null ||
       selected.automaticDecision !== null ||
       Boolean(
-        (selected.descriptionAdvice?.current || selected.descriptionAdvice?.application_outcome) &&
-        selected.descriptionAdvice?.selection,
+        selected.descriptionAdvice &&
+        (selected.descriptionAdvice.current ||
+          selected.descriptionAdvice.application_outcome !== null) &&
+        selected.descriptionAdvice.selection,
       ))
   const selectedActionable = selected !== undefined && actionable(selected)
   const selectedRevisitable =
@@ -2656,7 +2660,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const teachingLine =
     selectedProgress?.phase === 'recording'
       ? 'Recording choice…'
-      : selectedProgress?.phase === 'confirmed'
+      : selectedProgress?.phase === 'confirmed' ||
+          (!selectedProgress && selected && authoredOwnerRecorded(selected))
         ? 'Choice recorded.'
         : selectedActionable && frozenDestinations.indexOf(selected.destination) === 0
           ? 'One tap records and opens the next field'
@@ -3112,10 +3117,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                         aria-label={
                           actionable(field)
                             ? 'Needs review'
-                            : field.humanDecision ||
-                                ((field.descriptionAdvice?.current ||
-                                  field.descriptionAdvice?.application_outcome) &&
-                                  field.descriptionAdvice?.selection?.origin === 'human')
+                            : field.humanDecision || authoredOwnerRecorded(field)
                               ? 'Decision recorded'
                               : field.classification === 'automatic_recorded'
                                 ? 'Handled automatically; inspect or override'
@@ -3402,7 +3404,6 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                                     !selected.editable ||
                                     !selectedAdvice.current ||
                                     controller.recording ||
-                                    controller.reloadRequired ||
                                     selectedAdvice.state === 'requested' ||
                                     selectedAdvice.state === 'running'
                                   }

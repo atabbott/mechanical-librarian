@@ -201,28 +201,14 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         'The reviewer change was refused. Reload and try again.')
       : 'The reviewer change was not applied. Reload and try again.'
   return (
-    <section className="settings-reviewer" aria-labelledby="reviewer-access-heading">
-      <div>
-        <h2 id="reviewer-access-heading">Optional cover reviewer</h2>
-        <p>
-          Reviews are advice only. You can keep using Mechanical Librarian without configuring an
-          engine, and your choice remains final.
-        </p>
-        <p>
-          Current selection: <strong>{view.mapping ? view.mapping.engine : 'No reviewer'}</strong>
-        </p>
-        <button
-          type="button"
-          disabled={mutation.isPending || view.mapping === null}
-          onClick={() => mutation.mutate({ kind: 'without', revision: view.revision })}
-        >
-          Continue without a reviewer
-        </button>
-      </div>
-
+    <div className="settings-reviewer">
       <div className="settings-field-row">
         <div>
-          <h3>Codex device sign-in</h3>
+          <h3>Shared Codex sign-in</h3>
+          <p>
+            One sign-in serves cover observations and description advice. Select each task
+            separately below.
+          </p>
           <p aria-live="polite">Status: {codexState.replaceAll('_', ' ')}</p>
           {codexReason ? <p role="alert">{codexReason}</p> : null}
           {view.codex.host_headroom_bytes !== null ? (
@@ -261,20 +247,17 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             <>
               <button
                 type="button"
-                disabled={mutation.isPending || !codexUsable || view.mapping?.engine === 'codex'}
-                onClick={() => mutation.mutate({ kind: 'codex', revision: view.revision })}
-              >
-                Use Codex for cover observations
-              </button>
-              <button
-                type="button"
                 disabled={mutation.isPending || hostUnsupported}
                 onClick={() => mutation.mutate({ kind: 'codex-recheck' })}
               >
                 Check existing Codex sign-in
               </button>
               {confirmReplace === 'codex' ? (
-                <div role="group" aria-label="Confirm replace Codex sign-in">
+                <div
+                  className="settings-reviewer-actions"
+                  role="group"
+                  aria-label="Confirm replace Codex sign-in"
+                >
                   <button
                     type="button"
                     autoFocus
@@ -299,7 +282,11 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                 </button>
               )}
               {confirmClear === 'codex' ? (
-                <div role="group" aria-label="Confirm clear Codex sign-in">
+                <div
+                  className="settings-reviewer-actions"
+                  role="group"
+                  aria-label="Confirm clear Codex sign-in"
+                >
                   <button
                     type="button"
                     autoFocus
@@ -350,145 +337,193 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         </div>
       </div>
 
-      <div className="settings-field-row">
-        <div>
-          <h3>OpenRouter</h3>
-          <p>Choose a vision model that currently supports strict structured output.</p>
-          <p>{view.free_tier_caveat}</p>
-          <p>{view.data_use_caveat}</p>
-          <p>Evidence-qualified paid model on the delivered real-cover corpus:</p>
-          <ul>
-            {view.recommendations.map((recommendation) => (
-              <li key={recommendation}>
-                <button type="button" onClick={() => setModel(recommendation)}>
-                  Use {recommendation}
-                </button>{' '}
-                (paid; evidence-qualified on the delivered real-cover corpus)
-              </li>
-            ))}
-          </ul>
-          <p>Catalogue-capability-only free option:</p>
-          <ul>
-            {view.candidates.map((candidate) => (
-              <li key={candidate.model}>
-                <button type="button" onClick={() => setModel(candidate.model)}>
-                  Use {candidate.model}
-                </button>{' '}
-                ({candidate.tier}; catalogue capability only, not yet qualified)
-                {candidate.requests_per_minute === null
-                  ? null
-                  : ` — ${String(candidate.requests_per_minute)} RPM; ${candidate.requests_per_day ?? ''} RPD`}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <div className="settings-field-control">
-          <label htmlFor="reviewer-openrouter-model">Model ID</label>
-          <input
-            id="reviewer-openrouter-model"
-            value={model}
-            placeholder={
-              view.mapping?.engine === 'openrouter' ? view.mapping.model : 'provider/model'
-            }
-            maxLength={256}
-            onChange={(event) => setModel(event.currentTarget.value)}
-          />
-          <label htmlFor="reviewer-openrouter-key">API key</label>
-          <input
-            id="reviewer-openrouter-key"
-            type="password"
-            autoComplete="new-password"
-            value={key}
-            maxLength={2048}
-            onChange={(event) => setKey(event.currentTarget.value)}
-          />
-          <small>The key is write-only and is never returned to this page.</small>
-          <button
-            ref={openrouterReplaceTrigger}
-            type="button"
-            disabled={mutation.isPending || !effectiveModel || !key}
-            onClick={() => {
-              if (view.openrouter_key_configured && confirmReplace !== 'openrouter') {
-                setConfirmReplace('openrouter')
-                return
-              }
-              mutation.mutate({
-                kind: 'openrouter',
-                revision: view.revision,
-                key,
-                model: effectiveModel,
-              })
-            }}
-          >
-            {view.openrouter_key_configured
-              ? confirmReplace === 'openrouter'
-                ? 'Confirm replace OpenRouter key'
-                : 'Replace OpenRouter key'
-              : 'Validate and use OpenRouter'}
-          </button>
-          {confirmReplace === 'openrouter' ? (
-            <button type="button" onClick={() => cancelReplace('openrouter')}>
-              Keep existing OpenRouter key
+      <section aria-labelledby="reviewer-access-heading">
+        <div className="settings-field-row">
+          <div>
+            <h3 id="reviewer-access-heading">Optional cover reviewer</h3>
+            <p>
+              Reviews are advice only. You can keep using Mechanical Librarian without configuring
+              an engine, and your choice remains final.
+            </p>
+          </div>
+          <div className="settings-field-control">
+            <p>
+              Current selection:{' '}
+              <strong>{view.mapping ? view.mapping.engine : 'No reviewer'}</strong>
+            </p>
+            <button
+              type="button"
+              disabled={mutation.isPending || view.mapping === null}
+              onClick={() => mutation.mutate({ kind: 'without', revision: view.revision })}
+            >
+              Continue without a reviewer
             </button>
-          ) : null}
-          {view.openrouter_key_configured ? (
-            <>
+          </div>
+        </div>
+
+        {codexManaged && !waiting ? (
+          <div className="settings-field-row">
+            <div>
+              <h4>Contained Codex</h4>
+              <p>Use the shared sign-in above for cover observations.</p>
+            </div>
+            <div className="settings-field-control">
               <button
                 type="button"
-                disabled={mutation.isPending}
-                onClick={() => mutation.mutate({ kind: 'openrouter-refresh' })}
+                disabled={mutation.isPending || !codexUsable || view.mapping?.engine === 'codex'}
+                onClick={() => mutation.mutate({ kind: 'codex', revision: view.revision })}
               >
-                Refresh current status
+                Use Codex for cover observations
               </button>
-              {confirmClear === 'openrouter' ? (
-                <div role="group" aria-label="Confirm clear OpenRouter key">
-                  <button
-                    type="button"
-                    autoFocus
-                    disabled={mutation.isPending}
-                    onClick={() =>
-                      mutation.mutate({ kind: 'openrouter-clear', revision: view.revision })
-                    }
-                  >
-                    Confirm clear OpenRouter key
+            </div>
+          </div>
+        ) : null}
+        <div className="settings-field-row">
+          <div>
+            <h4>OpenRouter</h4>
+            <p>Choose a vision model that currently supports strict structured output.</p>
+            <p>{view.free_tier_caveat}</p>
+            <p>{view.data_use_caveat}</p>
+            <p>Evidence-qualified paid model on the delivered real-cover corpus:</p>
+            <ul className="settings-reviewer-suggestions">
+              {view.recommendations.map((recommendation) => (
+                <li key={recommendation}>
+                  <button type="button" onClick={() => setModel(recommendation)}>
+                    Use {recommendation}
                   </button>
-                  <button type="button" onClick={() => cancelClear('openrouter')}>
-                    Keep OpenRouter key
+                  <small>Paid; evidence-qualified on the delivered real-cover corpus.</small>
+                </li>
+              ))}
+            </ul>
+            <p>Catalogue-capability-only free option:</p>
+            <ul className="settings-reviewer-suggestions">
+              {view.candidates.map((candidate) => (
+                <li key={candidate.model}>
+                  <button type="button" onClick={() => setModel(candidate.model)}>
+                    Use {candidate.model}
                   </button>
-                </div>
-              ) : (
+                  <small>
+                    {candidate.tier}; catalogue capability only, not yet qualified
+                    {candidate.requests_per_minute === null
+                      ? null
+                      : ` — ${String(candidate.requests_per_minute)} RPM; ${candidate.requests_per_day ?? ''} RPD`}
+                  </small>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="settings-field-control">
+            <label htmlFor="reviewer-openrouter-model">Model ID</label>
+            <input
+              id="reviewer-openrouter-model"
+              value={model}
+              placeholder={
+                view.mapping?.engine === 'openrouter' ? view.mapping.model : 'provider/model'
+              }
+              maxLength={256}
+              onChange={(event) => setModel(event.currentTarget.value)}
+            />
+            <label htmlFor="reviewer-openrouter-key">API key</label>
+            <input
+              id="reviewer-openrouter-key"
+              type="password"
+              autoComplete="new-password"
+              value={key}
+              maxLength={2048}
+              onChange={(event) => setKey(event.currentTarget.value)}
+            />
+            <small>The key is write-only and is never returned to this page.</small>
+            <button
+              ref={openrouterReplaceTrigger}
+              type="button"
+              disabled={mutation.isPending || !effectiveModel || !key}
+              onClick={() => {
+                if (view.openrouter_key_configured && confirmReplace !== 'openrouter') {
+                  setConfirmReplace('openrouter')
+                  return
+                }
+                mutation.mutate({
+                  kind: 'openrouter',
+                  revision: view.revision,
+                  key,
+                  model: effectiveModel,
+                })
+              }}
+            >
+              {view.openrouter_key_configured
+                ? confirmReplace === 'openrouter'
+                  ? 'Confirm replace OpenRouter key'
+                  : 'Replace OpenRouter key'
+                : 'Validate and use OpenRouter'}
+            </button>
+            {confirmReplace === 'openrouter' ? (
+              <button type="button" onClick={() => cancelReplace('openrouter')}>
+                Keep existing OpenRouter key
+              </button>
+            ) : null}
+            {view.openrouter_key_configured ? (
+              <>
                 <button
-                  ref={openrouterClearTrigger}
                   type="button"
-                  onClick={() => setConfirmClear('openrouter')}
+                  disabled={mutation.isPending}
+                  onClick={() => mutation.mutate({ kind: 'openrouter-refresh' })}
                 >
-                  Clear OpenRouter key
+                  Refresh current status
                 </button>
-              )}
-            </>
-          ) : null}
-          <p
-            aria-live="polite"
-            role={
-              ['usable', 'configured', 'unconfigured'].includes(view.openrouter.state)
-                ? 'status'
-                : 'alert'
-            }
-          >
-            Status:{' '}
-            {mutation.isPending && mutation.variables.kind === 'openrouter'
-              ? 'validating'
-              : view.openrouter.state.replaceAll('_', ' ')}
-          </p>
-          {mutation.isError && mutation.variables.kind.startsWith('openrouter') ? (
-            <p role="alert">{mutationFailure}</p>
-          ) : null}
+                {confirmClear === 'openrouter' ? (
+                  <div
+                    className="settings-reviewer-actions"
+                    role="group"
+                    aria-label="Confirm clear OpenRouter key"
+                  >
+                    <button
+                      type="button"
+                      autoFocus
+                      disabled={mutation.isPending}
+                      onClick={() =>
+                        mutation.mutate({ kind: 'openrouter-clear', revision: view.revision })
+                      }
+                    >
+                      Confirm clear OpenRouter key
+                    </button>
+                    <button type="button" onClick={() => cancelClear('openrouter')}>
+                      Keep OpenRouter key
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    ref={openrouterClearTrigger}
+                    type="button"
+                    onClick={() => setConfirmClear('openrouter')}
+                  >
+                    Clear OpenRouter key
+                  </button>
+                )}
+              </>
+            ) : null}
+            <p
+              aria-live="polite"
+              role={
+                ['usable', 'configured', 'unconfigured'].includes(view.openrouter.state)
+                  ? 'status'
+                  : 'alert'
+              }
+            >
+              Status:{' '}
+              {mutation.isPending && mutation.variables.kind === 'openrouter'
+                ? 'validating'
+                : view.openrouter.state.replaceAll('_', ' ')}
+            </p>
+            {mutation.isError && mutation.variables.kind.startsWith('openrouter') ? (
+              <p role="alert">{mutationFailure}</p>
+            ) : null}
+          </div>
         </div>
-      </div>
-      {mutation.isError && mutation.variables.kind === 'without' ? (
-        <p role="alert">{mutationFailure}</p>
-      ) : null}
+        {mutation.isError && mutation.variables.kind === 'without' ? (
+          <p role="alert">{mutationFailure}</p>
+        ) : null}
+      </section>
       <DescriptionReviewerSettings http={http} view={view} codexUsable={codexUsable} />
-    </section>
+    </div>
   )
 }

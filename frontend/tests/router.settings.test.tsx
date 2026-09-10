@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -1081,7 +1081,9 @@ it('discloses description prices before activation and preserves the cover task 
   )
   await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
   expect(await screen.findByText(/Maximum-size input estimate/)).toBeVisible()
-  expect(screen.getByText(/Metadata observed/)).toHaveTextContent(metadata.model)
+  expect(screen.getByText(metadata.model, { selector: 'dd' })).toBeVisible()
+  expect(screen.getByText('Metadata observed', { selector: 'dt' })).toBeVisible()
+  expect(screen.getByText(/0.000001 per input token/)).toBeVisible()
   expect(http.configureOpenRouter).not.toHaveBeenCalled()
   await user.click(enable)
   await waitFor(() =>
@@ -1113,7 +1115,7 @@ it('inspects the exact contained description model before selection without star
   await userEvent
     .setup()
     .click(screen.getByRole('button', { name: 'Inspect contained description model' }))
-  expect(await screen.findByText(/Model: contained-model/)).toBeVisible()
+  expect(await screen.findByText('contained-model', { selector: 'dd' })).toBeVisible()
   expect(screen.getByText(/per-request monetary estimate is unavailable/)).toBeVisible()
   expect(use).toBeEnabled()
   expect(http.selectReviewer).not.toHaveBeenCalled()
@@ -1147,10 +1149,12 @@ it.each([false, true])(
     const use = await screen.findByRole('button', { name: 'Use Codex for descriptions' })
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: 'Inspect contained description model' }))
-    expect(await screen.findByText(/Model: contained-model/)).toBeVisible()
+    expect(await screen.findByText('contained-model', { selector: 'dd' })).toBeVisible()
     expect(use).toBeDisabled()
     if (hostBlocked) {
-      act(() => queryClient.setQueryData(['reviewer-access', 'codex-device'], device))
+      await act(async () => {
+        queryClient.setQueryData(['reviewer-access', 'codex-device'], device)
+      })
       expect(use).toBeDisabled()
       expect(screen.getByRole('button', { name: 'Check existing Codex sign-in' })).toBeDisabled()
     } else {
@@ -1168,3 +1172,32 @@ it.each([false, true])(
     }
   },
 )
+
+it('presents peer reviewer tasks with one shared sign-in and labelled description disclosure', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => reviewerView)
+  renderRoute('/settings?group=reviewer', http)
+  const cover = await screen.findByRole('region', { name: 'Optional cover reviewer' })
+  const description = screen.getByRole('region', { name: 'Optional description adviser' })
+  expect(
+    within(cover).getByRole('heading', { level: 3, name: 'Optional cover reviewer' }),
+  ).toBeVisible()
+  expect(
+    within(description).getByRole('heading', { level: 3, name: 'Optional description adviser' }),
+  ).toBeVisible()
+  expect(cover.contains(description)).toBe(false)
+  expect(within(cover).queryByRole('heading', { name: 'Shared Codex sign-in' })).toBeNull()
+  expect(within(description).queryByRole('heading', { name: 'Shared Codex sign-in' })).toBeNull()
+  expect(screen.getAllByRole('heading', { name: 'Shared Codex sign-in' })).toHaveLength(1)
+  expect(screen.getAllByRole('button', { name: 'Check existing Codex sign-in' })).toHaveLength(1)
+  expect(
+    within(description).getByLabelText('Shared OpenRouter API key'),
+  ).toHaveAccessibleDescription(/Leave the key blank to use the saved credential/)
+  expect(
+    within(description).getByRole('textbox', { name: 'OpenRouter description model' }),
+  ).toBeVisible()
+  expect(
+    within(description).getByRole('button', { name: 'Use this OpenRouter model for descriptions' }),
+  ).toBeDisabled()
+})

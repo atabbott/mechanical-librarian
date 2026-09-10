@@ -2632,7 +2632,6 @@ def create_review_pipeline(
                 case.review_case_id
             ),
         )
-        repository.description_advice_store().consume_pending(case.review_case_id)
 
     def admit_description(
         pipeline_repository: ReviewPipelineRepository, action: PipelineAction

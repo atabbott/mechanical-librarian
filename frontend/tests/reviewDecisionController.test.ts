@@ -56,14 +56,15 @@ describe('review decision failure contract', () => {
 it('keeps a current authored choice available without treating it as a provider action', () => {
   const field = mapCaseDetail(descriptionAdviceFixture).fields.find(
     (item) => item.destination === 'description',
-  )!
+  )
+  if (!field?.descriptionAdvice) throw new Error('description fixture requires advice')
   const authored = { ...field, decisionActions: [], needsAttention: false }
   expect(choiceAvailable(authored)).toBe(true)
   expect(actionable(authored)).toBe(false)
   expect(
     choiceAvailable({
       ...authored,
-      descriptionAdvice: { ...authored.descriptionAdvice!, current: false },
+      descriptionAdvice: { ...field.descriptionAdvice, current: false },
     }),
   ).toBe(false)
   expect(choiceAvailable({ ...authored, editable: false })).toBe(false)

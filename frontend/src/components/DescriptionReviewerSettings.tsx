@@ -54,53 +54,82 @@ export const DescriptionReviewerSettings = ({
   const selected = view.description_mapping
   const disclosure = metadata ?? view.description_metadata
   return (
-    <section className="settings-section" aria-labelledby="description-reviewer-heading">
-      <h3 id="description-reviewer-heading">Optional description adviser</h3>
-      <p>
-        Only provider-backed description alternatives and your cleanup choices are sent. Titles,
-        item identifiers, paths, owner choices and service credentials are excluded. Ordinary
-        description choices remain available without an adviser.
-      </p>
-      <a href="/policy?section=curation#description-advice">
-        Review cleanup preferences and the separate automatic application switch
-      </a>
-      <p role="status">
-        {selected
-          ? `Selected: ${selected.engine === 'openrouter' ? selected.model : 'contained Codex'}. ${view.description?.state ?? 'unavailable'}.`
-          : 'No description adviser selected.'}
-      </p>
-      <div>
-        <h4>Contained Codex</h4>
-        <p>
-          Uses the installed contained profile and its exact model. Usage consumes the signed-in
-          plan allowance; a per-request monetary estimate is unavailable. Shared sign-in is managed
-          above.
-        </p>
-        <button disabled={busy} onClick={() => contained.mutate()}>
-          Inspect contained description model
-        </button>
-        {contained.data ? (
+    <section aria-labelledby="description-reviewer-heading">
+      <div className="settings-field-row">
+        <div>
+          <h3 id="description-reviewer-heading">Optional description adviser</h3>
           <p>
-            Model: {contained.data.model}. Contained profile: {contained.data.profile_sha256}.
+            Only provider-backed description alternatives and your cleanup choices are sent. Titles,
+            item identifiers, paths, owner choices and service credentials are excluded. Ordinary
+            description choices remain available without an adviser.
           </p>
-        ) : null}
-        <button
-          disabled={busy || !contained.data || !codexUsable}
-          onClick={() => selection.mutate('codex')}
-        >
-          Use Codex for descriptions
-        </button>
+        </div>
+        <div className="settings-field-control">
+          <p role="status">
+            {selected
+              ? `Selected: ${selected.engine === 'openrouter' ? selected.model : 'contained Codex'}. ${view.description?.state ?? 'unavailable'}.`
+              : 'No description adviser selected.'}
+          </p>
+          <a href="/policy?section=curation#description-advice">
+            Review cleanup preferences and the separate automatic application switch
+          </a>
+          <button disabled={busy || selected === null} onClick={() => selection.mutate(null)}>
+            Continue without description advice
+          </button>
+          {selection.isSuccess ? (
+            <p role="status">
+              Description adviser selection saved. Automatic application is controlled separately in
+              Policy Curation.
+            </p>
+          ) : null}
+        </div>
       </div>
-      <div>
-        <h4>OpenRouter</h4>
-        <p>
-          Destination: OpenRouter (https://openrouter.ai/api/v1). The exact model below is used with
-          provider fallback disabled. Upstream retention and training practices vary and are not
-          verified by this application.
-        </p>
-        <label>
-          OpenRouter description model
+      <div className="settings-field-row">
+        <div>
+          <h4>Contained Codex</h4>
+          <p>
+            Uses the installed contained profile and its exact model. Usage consumes the signed-in
+            plan allowance; a per-request monetary estimate is unavailable. Shared sign-in is
+            managed above.
+          </p>
+        </div>
+        <div className="settings-field-control">
+          <button disabled={busy} onClick={() => contained.mutate()}>
+            Inspect contained description model
+          </button>
+          {contained.data ? (
+            <dl className="settings-reviewer-facts" aria-live="polite">
+              <div>
+                <dt>Model</dt>
+                <dd>{contained.data.model}</dd>
+              </div>
+              <div>
+                <dt>Contained profile</dt>
+                <dd>{contained.data.profile_sha256}</dd>
+              </div>
+            </dl>
+          ) : null}
+          <button
+            disabled={busy || !contained.data || !codexUsable}
+            onClick={() => selection.mutate('codex')}
+          >
+            Use Codex for descriptions
+          </button>
+        </div>
+      </div>
+      <div className="settings-field-row">
+        <div>
+          <h4>OpenRouter</h4>
+          <p>
+            Destination: OpenRouter (https://openrouter.ai/api/v1). The exact model below is used
+            with provider fallback disabled. Upstream retention and training practices vary and are
+            not verified by this application.
+          </p>
+        </div>
+        <div className="settings-field-control">
+          <label htmlFor="description-openrouter-model">OpenRouter description model</label>
           <input
+            id="description-openrouter-model"
             value={model}
             disabled={busy}
             onChange={(event) => {
@@ -110,13 +139,13 @@ export const DescriptionReviewerSettings = ({
             }}
             autoComplete="off"
           />
-        </label>
-        <label>
-          Shared OpenRouter API key
+          <label htmlFor="description-openrouter-key">Shared OpenRouter API key</label>
           <input
+            id="description-openrouter-key"
             type="password"
             value={key}
             disabled={busy}
+            aria-describedby="description-openrouter-key-help"
             onChange={(event) => {
               setKey(event.target.value)
               setMetadata(null)
@@ -124,73 +153,78 @@ export const DescriptionReviewerSettings = ({
             }}
             autoComplete="new-password"
           />
-        </label>
-        <p>
-          Leave the key blank to use the saved credential. Cover and description models share this
-          credential. Saving a replacement key preserves both model selections and invalidates prior
-          dispatch snapshots.
-        </p>
-        <button
-          disabled={busy || (!key && !view.openrouter_key_configured) || !model}
-          onClick={() => test.mutate()}
-        >
-          {test.isPending ? 'Testing description model…' : 'Test description model and prices'}
-        </button>
-        {disclosure ? (
-          <div aria-live="polite">
-            <p>
-              Model: {disclosure.model}. Text input, text output and structured output supported.
-              Metadata observed {new Date(disclosure.observed_at * 1000).toLocaleString()}.
-            </p>
-            <p>
-              Prices in USD: {disclosure.prompt_price} per input token,{' '}
-              {disclosure.completion_price} per output token, {disclosure.request_price} per
-              request.
-            </p>
-            <p>
-              Maximum-size input estimate: $
-              {(
-                262144 * Number(disclosure.prompt_price) +
-                8192 * Number(disclosure.completion_price) +
-                Number(disclosure.request_price)
-              ).toFixed(6)}{' '}
-              per request, based on about 262,144 input tokens and an 8,192 output-token cap. Actual
-              tokenization, output length and charges vary; this is an estimate, not a quote.
-            </p>
-          </div>
-        ) : (
-          <p>
-            Price and text capability metadata must be available before this task can be selected.
-          </p>
-        )}
-        <button
-          disabled={busy || !metadata || metadata.model !== model}
-          onClick={() => selection.mutate('openrouter')}
-        >
-          Use this OpenRouter model for descriptions
-        </button>
-        {selected?.engine === 'openrouter' ? (
-          <button disabled={busy} onClick={() => refresh.mutate()}>
-            Refresh description model status and prices
+          <small id="description-openrouter-key-help">
+            Leave the key blank to use the saved credential. Cover and description models share this
+            credential. Saving a replacement key preserves both model selections and invalidates
+            prior dispatch snapshots.
+          </small>
+          <button
+            disabled={busy || (!key && !view.openrouter_key_configured) || !model}
+            onClick={() => test.mutate()}
+          >
+            {test.isPending ? 'Testing description model…' : 'Test description model and prices'}
           </button>
-        ) : null}
+          {disclosure ? (
+            <dl className="settings-reviewer-facts" aria-live="polite">
+              <div>
+                <dt>Model</dt>
+                <dd>{disclosure.model}</dd>
+              </div>
+              <div>
+                <dt>Capabilities</dt>
+                <dd>Text input, text output and structured output supported.</dd>
+              </div>
+              <div>
+                <dt>Metadata observed</dt>
+                <dd>{new Date(disclosure.observed_at * 1000).toLocaleString()}</dd>
+              </div>
+              <div>
+                <dt>Prices in USD</dt>
+                <dd>
+                  {disclosure.prompt_price} per input token, {disclosure.completion_price} per
+                  output token, {disclosure.request_price} per request.
+                </dd>
+              </div>
+              <div>
+                <dt>Maximum-size input estimate</dt>
+                <dd>
+                  $
+                  {(
+                    262144 * Number(disclosure.prompt_price) +
+                    8192 * Number(disclosure.completion_price) +
+                    Number(disclosure.request_price)
+                  ).toFixed(6)}{' '}
+                  per request, based on about 262,144 input tokens and an 8,192 output-token cap.
+                  Actual tokenization, output length and charges vary; this is an estimate, not a
+                  quote.
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p>
+              Price and text capability metadata must be available before this task can be selected.
+            </p>
+          )}
+          <button
+            disabled={busy || metadata?.model !== model}
+            onClick={() => selection.mutate('openrouter')}
+          >
+            Use this OpenRouter model for descriptions
+          </button>
+          {selected?.engine === 'openrouter' ? (
+            <button disabled={busy} onClick={() => refresh.mutate()}>
+              Refresh description model status and prices
+            </button>
+          ) : null}
+          {contained.isError || test.isError || selection.isError || refresh.isError ? (
+            <p role="alert">
+              Description adviser setup could not complete. Check the model, key and available
+              pricing, then retry. Reload the current status before retrying a selection whose
+              result is uncertain.
+            </p>
+          ) : null}
+        </div>
       </div>
-      <button disabled={busy || selected === null} onClick={() => selection.mutate(null)}>
-        Continue without description advice
-      </button>
-      {contained.isError || test.isError || selection.isError || refresh.isError ? (
-        <p role="alert">
-          Description adviser setup could not complete. Check the model, key and available pricing,
-          then retry. Reload the current status before retrying a selection whose result is
-          uncertain.
-        </p>
-      ) : null}
-      {selection.isSuccess ? (
-        <p role="status">
-          Description adviser selection saved. Automatic application is controlled separately in
-          Policy Curation.
-        </p>
-      ) : null}
     </section>
   )
 }

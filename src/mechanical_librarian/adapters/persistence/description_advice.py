@@ -457,8 +457,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ):
                 transaction.commit()
                 return None
+            self.consume_pending(binding.review_case_id)
             prior = self._connection.execute(
-                "SELECT attempt_id,state FROM description_advice_attempts WHERE request_identity=? ORDER BY rowid DESC LIMIT 1",
+                "SELECT attempt_id,state,binding_document FROM description_advice_attempts WHERE request_identity=? ORDER BY rowid DESC LIMIT 1",
                 (request_identity,),
             ).fetchone()
             if prior is not None and (
@@ -466,6 +467,13 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 or prior[1] in {"requested", "running"}
             ):
                 self._bind(binding, prior[0], None)
+                if prior[1] in {"requested", "running"} and prior[
+                    2
+                ] != description_document(binding.model_dump()):
+                    self._connection.execute(
+                        "INSERT INTO description_preparation_pending VALUES(?,0,?)",
+                        (binding.review_case_id, now),
+                    )
                 transaction.commit()
                 return None
             candidate_row = self._connection.execute(
@@ -611,6 +619,13 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                         row[1],
                     ),
                 )
+            for (case_id,) in self._connection.execute(
+                "SELECT review_case_id FROM current_description_advice WHERE attempt_id=? AND candidate_id IS NULL AND binding_document<>?",
+                (attempt_id, row[1]),
+            ).fetchall():
+                request_description_preparation(
+                    self._connection, now, review_case_id=case_id, preserve_pending=True
+                )
             transaction.commit()
             return admitted
         except BaseException:
@@ -662,7 +677,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
 
     def read(self, review_case_id: str) -> dict[str, object] | None:
         row = self._connection.execute(
-            "SELECT a.state,a.failure,a.engine,a.model,a.attempt_id,c.document,p.binding_document "
+            "SELECT a.state,a.failure,a.engine,a.model,a.attempt_id,c.document,p.binding_document,p.candidate_id "
             "FROM current_description_advice p JOIN description_advice_attempts a ON a.attempt_id=p.attempt_id "
             "LEFT JOIN description_advice_candidates c ON c.attempt_id=p.attempt_id WHERE p.review_case_id=?",
             (review_case_id,),
@@ -700,7 +715,8 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         return {
             "current": self.binding_is_current(binding)
             if candidate is None
-            else self._candidate_is_current(candidate, binding),
+            else row[7] == candidate.candidate_id
+            and self._candidate_is_current(candidate, binding),
             "selection": None if selection is None else selection.model_dump(),
             "application_outcome": application_outcome,
             "state": row[0],
@@ -721,6 +737,7 @@ def request_description_preparation(
     *,
     review_case_id: str | None = None,
     retry: bool = False,
+    preserve_pending: bool = False,
 ) -> None:
     """Record intent and request only existing scans in the caller's transaction."""
     from mechanical_librarian.adapters.persistence.review_scans import (
@@ -731,14 +748,24 @@ def request_description_preparation(
         "SELECT c.review_case_id,c.connection_name,c.library_name,s.library_id,s.producer_fingerprint "
         "FROM current_review_case_lineages c LEFT JOIN review_preparation_scans s "
         "ON s.connection_name=c.connection_name AND s.library_name=c.library_name "
-        "WHERE c.review_case_id IS NOT NULL AND (? IS NULL OR c.review_case_id=?)",
-        (review_case_id, review_case_id),
+        "WHERE c.review_case_id IS NOT NULL AND (? IS NULL OR c.review_case_id=?) "
+        "UNION SELECT w.review_case_id,w.connection_name,w.library_name,s.library_id,s.producer_fingerprint "
+        "FROM review_preparation_work w JOIN review_preparation_scans s ON s.scan_id=w.scan_id "
+        "JOIN current_description_advice p ON p.review_case_id=w.review_case_id "
+        "AND json_extract(p.binding_document,'$.report_id')=w.report_id "
+        "AND json_extract(p.binding_document,'$.proposal_set_id')=w.proposal_set_id "
+        "WHERE w.stage='projection' AND w.state='running' AND w.review_case_id=?",
+        (review_case_id, review_case_id, review_case_id),
     ).fetchall()
     scans = set()
     for case_id, target, library, library_id, producer in rows:
         connection.execute(
             "INSERT INTO description_preparation_pending VALUES(?,?,?) "
-            "ON CONFLICT(review_case_id) DO UPDATE SET retry=max(retry,excluded.retry),requested_at=excluded.requested_at",
+            + (
+                "ON CONFLICT(review_case_id) DO NOTHING"
+                if preserve_pending
+                else "ON CONFLICT(review_case_id) DO UPDATE SET retry=max(retry,excluded.retry),requested_at=excluded.requested_at"
+            ),
             (case_id, int(retry), now),
         )
         if library_id is not None and producer is not None:

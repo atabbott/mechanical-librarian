@@ -7299,7 +7299,10 @@ it.each(['Evidence', 'History'] as const)(
 
 it('offers advised text in the ordinary Description chooser with its immutable authored binding', async () => {
   const authored = mapCaseDetail(descriptionAdviceFixture)
-  const field = authored.fields.find((item) => item.destination === 'description')!
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const advice = field.descriptionAdvice
+  if (!advice?.candidate) throw new Error('description fixture requires its candidate')
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
   renderRoute('/library?lens=all&preview=case-1&field=description', http)
@@ -7308,24 +7311,27 @@ it('offers advised text in the ordinary Description chooser with its immutable a
   })
   expect(option).toHaveTextContent('Advised · Authored content')
   expect(option).toHaveTextContent('codex · synthetic-model')
-  const chooser = option.closest('section.direct-choice')!
+  const chooser = option.closest('section.direct-choice')
+  if (!(chooser instanceof HTMLElement)) throw new Error('description choice area is missing')
   expect(
-    within(chooser as HTMLElement).getByRole('button', {
+    within(chooser).getByRole('button', {
       name: 'Choose current value: Existing description.',
     }),
   ).toBeVisible()
   expect(
-    within(chooser as HTMLElement).getByRole('button', {
+    within(chooser).getByRole('button', {
       name: 'Choose proposed value: A qualified description.',
     }),
   ).toBeVisible()
   expect(screen.queryByRole('article', { name: 'Advised description' })).toBeNull()
   await userEvent.setup().click(option)
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
-  const command = vi.mocked(http.recordDecision).mock.calls[0]![1]
+  const call = vi.mocked(http.recordDecision).mock.calls[0]
+  if (!call) throw new Error('description choice was not recorded')
+  const command = call[1]
   expect(command.authoredDescription).toEqual({
-    candidateId: field.descriptionAdvice!.candidate!.candidate_id,
-    binding: field.descriptionAdvice!.binding,
+    candidateId: advice.candidate.candidate_id,
+    binding: advice.binding,
   })
   expect(command.idempotencyKey).toBeTruthy()
   await screen.findByRole('heading', { name: 'Review complete' })
@@ -7340,13 +7346,15 @@ it('offers advised text in the ordinary Description chooser with its immutable a
 
 it('renders hostile multiline advice as text and refuses stale selection while ordinary choices remain', async () => {
   const authored = mapCaseDetail(descriptionAdviceFixture)
-  const field = authored.fields.find((item) => item.destination === 'description')!
-  const advice = field.descriptionAdvice!
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const advice = field.descriptionAdvice
+  if (!advice?.candidate) throw new Error('description fixture requires its candidate')
   field.descriptionAdvice = {
     ...advice,
     current: false,
     candidate: {
-      ...advice.candidate!,
+      ...advice.candidate,
       output: { description: '<img src=x onerror=alert(1)>\nSecond line', disposition: 'ready' },
     },
   }
@@ -7370,7 +7378,10 @@ it('renders hostile multiline advice as text and refuses stale selection while o
 
 it('retries an advised selection through the ordinary controller with the same authored binding and idempotency key', async () => {
   const authored = mapCaseDetail(descriptionAdviceFixture)
-  const field = authored.fields.find((item) => item.destination === 'description')!
+  const field = authored.fields.find((item) => item.destination === 'description')
+  if (!field) throw new Error('description fixture requires its field')
+  const advice = field.descriptionAdvice
+  if (!advice?.candidate) throw new Error('description fixture requires its candidate')
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
   http.recordDecision = vi.fn(async () => {
@@ -7387,16 +7398,20 @@ it('retries an advised selection through the ordinary controller with the same a
   await user.click(retry)
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalledTimes(2))
   const calls = vi.mocked(http.recordDecision).mock.calls
-  expect(calls[1]![1]).toEqual(calls[0]![1])
-  expect(calls[0]![1].authoredDescription?.binding).toEqual(field.descriptionAdvice!.binding)
+  const [first, retried] = calls
+  if (!first || !retried) throw new Error('description retry was not recorded')
+  expect(retried[1]).toEqual(first[1])
+  expect(first[1].authoredDescription?.binding).toEqual(advice.binding)
 })
 
 it.each(['verified', 'no_change_required'] as const)(
   'shows the exact authored %s outcome without renewing a stale binding',
   async (outcome) => {
     const authored = mapCaseDetail(descriptionAdviceFixture)
-    const field = authored.fields.find((item) => item.destination === 'description')!
-    const advice = field.descriptionAdvice!
+    const field = authored.fields.find((item) => item.destination === 'description')
+    if (!field) throw new Error('description fixture requires its field')
+    const advice = field.descriptionAdvice
+    if (!advice?.candidate) throw new Error('description fixture requires its candidate')
     field.descriptionAdvice = {
       ...advice,
       current: outcome === 'no_change_required',
@@ -7404,7 +7419,7 @@ it.each(['verified', 'no_change_required'] as const)(
       selection: {
         schema_version: 'authored-description-decision-v1',
         decision_id: `automatic_decision_${'a'.repeat(64)}`,
-        candidate_id: advice.candidate!.candidate_id,
+        candidate_id: advice.candidate.candidate_id,
         binding: advice.binding,
         origin: 'automatic_policy',
         resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
@@ -7446,8 +7461,10 @@ it.each([
   'labels only valid authored owner selections as recorded: %j',
   async ({ origin, current, outcome, recorded }) => {
     const authored = mapCaseDetail(descriptionAdviceFixture)
-    const field = authored.fields.find((item) => item.destination === 'description')!
-    const advice = field.descriptionAdvice!
+    const field = authored.fields.find((item) => item.destination === 'description')
+    if (!field) throw new Error('description fixture requires its field')
+    const advice = field.descriptionAdvice
+    if (!advice?.candidate) throw new Error('description fixture requires its candidate')
     field.descriptionAdvice = {
       ...advice,
       current,
@@ -7455,7 +7472,7 @@ it.each([
       selection: {
         schema_version: 'authored-description-decision-v1',
         decision_id: `${origin === 'human' ? 'human' : 'automatic'}_decision_${'a'.repeat(64)}`,
-        candidate_id: advice.candidate!.candidate_id,
+        candidate_id: advice.candidate.candidate_id,
         binding: advice.binding,
         origin,
         resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
@@ -7467,10 +7484,12 @@ it.each([
         application: 'guarded',
       },
     }
-    renderRoute('/library?lens=all&preview=case-1&field=description', {
+    const http = {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] })),
-    })
+    }
+    const url = '/library?lens=all&preview=case-1&field=description'
+    const first = renderRoute(url, http)
     await screen.findByRole('button', { name: /^Choose advised value:/ })
     const rail = screen.getByRole('navigation', { name: 'Review fields' })
     expect(
@@ -7481,5 +7500,19 @@ it.each([
       'aria-label',
       recorded ? 'Decision recorded' : 'Handled automatically; inspect or override',
     )
+    expect(Boolean(screen.queryByText('Choice recorded.'))).toBe(recorded)
+    const user = userEvent.setup()
+    for (const departure of ['Evidence', 'History']) {
+      await user.click(screen.getByRole('link', { name: departure }))
+      await screen.findByRole('heading', { name: departure })
+      await user.click(screen.getByRole('link', { name: 'Back to work' }))
+      await screen.findByRole('button', { name: /^Choose advised value:/ })
+      expect(Boolean(screen.queryByText('Choice recorded.'))).toBe(recorded)
+    }
+    cleanup()
+    const fresh = renderRoute(url, http)
+    expect(fresh.queryClient).not.toBe(first.queryClient)
+    await screen.findByRole('button', { name: /^Choose advised value:/ })
+    expect(Boolean(screen.queryByText('Choice recorded.'))).toBe(recorded)
   },
 )
