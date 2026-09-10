@@ -831,7 +831,8 @@ def _required_executable(name: str, environment: dict[str, str]) -> str:
     resolved = shutil.which(name, path=environment.get("PATH"))
     if resolved is None:
         raise QualificationFailure("qualification_tool_unavailable")
-    executable = Path(resolved).resolve()
+    # Preserve the invocation name used by multi-call version-manager shims.
+    executable = Path(resolved).absolute()
     if not executable.is_file() or not os.access(executable, os.X_OK):
         raise QualificationFailure("qualification_tool_unavailable")
     return str(executable)

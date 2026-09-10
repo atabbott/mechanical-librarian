@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Exact-artifact qualification supports mise's `uv` shim without a PATH
+  workaround (#924).
+
 - Automatic rich-metadata decisions now bind the local-transport qualification.
   Earlier qualification decisions remain readable but cannot authorize new
   effects; qualified options and scoring are unchanged (#844).
