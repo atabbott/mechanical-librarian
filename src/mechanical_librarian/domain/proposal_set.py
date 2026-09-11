@@ -1686,6 +1686,25 @@ def _has_uncorroborated_subtitle_segment(
     )
 
 
+def _title_variant_identities(
+    claims: tuple[tuple[ClaimKind, str | None, str], ...],
+) -> dict[str, frozenset[str]]:
+    """Retain explicit variant identities; absent and overlapping sets do not dissent."""
+    identities: dict[str, set[str]] = {}
+    for kind, role, value in claims:
+        if kind is ClaimKind.LANGUAGE:
+            language = language_identity(value)
+            if language is not None:
+                identities.setdefault("language", set()).add(language.base)
+        elif kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR} and role in {
+            "translator",
+            "adapter",
+            "abridger",
+        }:
+            identities.setdefault(role, set()).add(creator_comparison_key(value))
+    return {role: frozenset(values) for role, values in identities.items()}
+
+
 def _evidence_led_title_election(
     report: MetadataReport, result: ProposalResult
 ) -> ProposalResult:
@@ -1706,30 +1725,26 @@ def _evidence_led_title_election(
     isbn_bound = False
     conflict = False
     titles: set[str] = set()
-    variant_claims: dict[str, set[frozenset[str]]] = {}
+    variant_claims = {
+        role: {values}
+        for role, values in _title_variant_identities(
+            tuple(
+                (c.kind, c.role, c.canonical)
+                for c in report.local_claims
+                if c.state is FieldState.VALID
+                and type(c.canonical) is str
+                and c.basis in {"package_metadata", "opening_matter"}
+            )
+        ).items()
+    }
     for provider in report.providers:
         works: set[str] = set()
         for candidate in provider.candidates:
             claims = tuple(c for c in candidate.claims if c.state is FieldState.VALID)
-            candidate_variants: dict[str, set[str]] = {}
-            for claim in claims:
-                if type(claim.value) is not str:
-                    continue
-                if claim.kind is ClaimKind.LANGUAGE:
-                    language = language_identity(claim.value)
-                    if language is not None:
-                        candidate_variants.setdefault("language", set()).add(
-                            language.base
-                        )
-                elif claim.kind in {
-                    ClaimKind.CREATOR,
-                    ClaimKind.CONTRIBUTOR,
-                } and claim.role in {"translator", "adapter", "abridger"}:
-                    candidate_variants.setdefault(claim.role, set()).add(
-                        creator_comparison_key(claim.value)
-                    )
-            for role, identities in candidate_variants.items():
-                variant_claims.setdefault(role, set()).add(frozenset(identities))
+            for role, identities in _title_variant_identities(
+                tuple((c.kind, c.role, c.value) for c in claims if type(c.value) is str)
+            ).items():
+                variant_claims.setdefault(role, set()).add(identities)
             titles.update(
                 title_identity_key(c.value)
                 for c in claims
@@ -1788,7 +1803,12 @@ def _evidence_led_title_election(
     conflict = (
         conflict
         or len(titles) > 1
-        or any(len(values) > 1 for values in variant_claims.values())
+        or any(
+            first.isdisjoint(second)
+            for values in variant_claims.values()
+            for first in values
+            for second in values
+        )
     )
     title = next(iter(titles)) if len(titles) == 1 else ""
     # Content title disagreement is material; package and target strings are

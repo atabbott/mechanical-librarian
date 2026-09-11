@@ -2014,12 +2014,12 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
                 (MANIFEST.parents[2] / relative_source).read_bytes()
             ).hexdigest()
         )
-    assert title["new_title_measurement"]["synthetic"]["candidate_predictions"] == 13
+    assert title["new_title_measurement"]["synthetic"]["candidate_predictions"] == 19
     assert (
         title["durable_title_measurement"]["synthetic_positive"]["durable_predictions"]
-        == 13
+        == 19
     )
-    assert title["durable_title_measurement"]["synthetic_negative"]["withheld"] == 12
+    assert title["durable_title_measurement"]["synthetic_negative"]["withheld"] == 15
     assert title["durable_title_measurement"]["retained"]["durable_predictions"] == 2
 
 

@@ -8,10 +8,10 @@ This document defines product intent. Exact thresholds remain versioned configur
 
 The current title qualification is
 [F19a v11](../reference/f19a-qualification-manifest-v11.json) (#1007).
-Its new ISBN-and-creator title option is measured separately: thirteen synthetic
+Its new ISBN-and-creator title option is measured separately: nineteen synthetic
 positive opportunities and two independently labelled retained real positives
-reach correct candidates and durable Automatic decisions; twelve synthetic
-negative controls are withheld. All twenty-seven cases remain owner-reachable.
+reach correct candidates and durable Automatic decisions; fifteen synthetic
+negative controls are withheld. All thirty-six cases remain owner-reachable.
 One retained truth comparison treats straight and curly apostrophes as
 equivalent without changing the provider title. F35's 50 and F41's 75 historical
 constructor controls retain their expected decisions through current consumers.

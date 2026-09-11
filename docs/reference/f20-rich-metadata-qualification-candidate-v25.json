@@ -116,11 +116,11 @@
   "measurement_artifacts": {
     "candidate-evaluator": {
       "evidence_mode": "current_candidate_and_continuity_consumer",
-      "sha256": "128dc6014010902c10162f865d0f0e9441f7bff58419cf78dd82d73b4db5e5c5"
+      "sha256": "4a3dd93620a9f8a38987fe83e7fb0afeb37205fe105ad11a87bf5fd82d8fb7ee"
     },
     "candidate-results": {
       "evidence_mode": "new_candidate_and_current_continuity_measurement",
-      "sha256": "3ac87558180b785a7654d020e1ed10dfd2b3f22ae98b7ac38d719792f6e9deb8"
+      "sha256": "9653589dfbca83fea94aeae78669f0a594d2d4cdf6836e02117037721366809b"
     },
     "durable-evaluator": {
       "evidence_mode": "actual_repository_admission_and_owner_projection",
@@ -128,11 +128,11 @@
     },
     "durable-results": {
       "evidence_mode": "new_actual_durable_decision_measurement",
-      "sha256": "26f0fb6e6ec9dd35fa7cc42285be146526273b21f8ffc256bb17cc5fc202fc85"
+      "sha256": "24f5b661ae9d10182dcb3103911bdc8589f304c3bea3616bbfed8c0f4d66b530"
     },
     "f20-persistence-effect-result": {
       "evidence_mode": "executed_current_thirteen_option_assertions",
-      "sha256": "1a66abe03b6728e6f464afeaafc29f0b4ee7a563d2b6a2dc77c82c9c357a9fe3"
+      "sha256": "a4f4eee5c3cfd4d66ed0e5640986e5fdcdc04bcae931e493f824f1968c722867"
     },
     "f20-persistence-effect-test": {
       "evidence_mode": "thirteen_option_persisted_effect_authority_assertions",
@@ -148,11 +148,11 @@
     },
     "synthetic-report-builder": {
       "evidence_mode": "current_retained_lane_constructor",
-      "sha256": "c5b4d17824d09d0e1dcd26bba1bdc6487fe476a8370cd4617720c42323d7ba4f"
+      "sha256": "f9ad4adc0d9a88a49e40b20ea41ea849ef937f7eab1c94857c902c1677633f8c"
     },
     "synthetic-title-inputs": {
       "evidence_mode": "finite_synthetic_reports_and_declared_truth",
-      "sha256": "7c579bc8bb316662505e18f96b359be16a51964f767c7522d9089241bd1c378e"
+      "sha256": "a3666301043643ad8d0747205c1c40d774f049c4ecdedef35ac19022efc6c7eb"
     }
   },
   "network_requests": 0,
@@ -287,7 +287,7 @@
     "src/mechanical_librarian/application/provider_retry_successor.py": "dcb2c0bb585c2483e9e9402c8d068080c9f2b74a69c6b6a27186b40e1edc6e00",
     "src/mechanical_librarian/application/review_web.py": "f19b6cbca71b9db79f0990733d263af19fd467295e8466369dd4ebb444f5cfa2",
     "src/mechanical_librarian/domain/audio_inspection.py": "10eb3766b9b609053f85ed354fedc3fcbd3a32d2ec1b055ce2ee82cc51f9f28f",
-    "src/mechanical_librarian/domain/automatic_decision.py": "9248ec7f3c72e3e65f2c6c52a15c5fc077efe4519471d2d483e8cc34ef9dca68",
+    "src/mechanical_librarian/domain/automatic_decision.py": "518271947f26c9755408557980db1a5b70e78ae2656daab7901def73f6554c95",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
     "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
@@ -301,7 +301,7 @@
     "src/mechanical_librarian/domain/identifiers.py": "ab8862f3259921b9cd5e00bf2bf636c846b810db79c58c293c8cf12bd1c54f6a",
     "src/mechanical_librarian/domain/metadata_policy.py": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0",
     "src/mechanical_librarian/domain/metadata_report.py": "1f0f06d4852a0bfbbd24ab7295db42fe2527a523d8684cdae38f37a394cc969c",
-    "src/mechanical_librarian/domain/proposal_set.py": "a8b47f1780b32a21885eaede6e125f8b9b9816d582d91b63cceb5647366d726c",
+    "src/mechanical_librarian/domain/proposal_set.py": "d10d5ca90fbb74b911973c3ddc41673b3244dfdb566f9b12315d520a07142a36",
     "src/mechanical_librarian/domain/review_case.py": "f2dc706bada3fa10f20018a050c99a3f9266c5224c6f556602ba0c43595f627a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "8cce34dd6a49afdb34e74fb893dcaddcace7f609205fc1af627df1f473216367",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "40696bad9423d43a27676b020140a6cb868c960a8b1ee88f1c9e6e114474eea2",

@@ -236,6 +236,44 @@ def test_same_title_with_competing_variant_creators_is_withheld(role):
     assert result.reasons == ("isbn_title_material_conflict",)
 
 
+@pytest.mark.parametrize("role", ["translator", "adapter", "abridger"])
+@pytest.mark.parametrize(
+    "local_variant", [None, "Bea Contributor", "Different Contributor"]
+)
+@pytest.mark.parametrize("additional_variant", [None, "Another Contributor"])
+def test_local_variant_identity_is_retained_and_only_explicit_disagreement_withholds(
+    role, local_variant, additional_variant
+):
+    report = MetadataReport.from_json(
+        isbn_title_report(
+            role=role,
+            local_variant=local_variant,
+            additional_variant=additional_variant,
+        ).to_json()
+    )
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    assert ShadowReviewPacket.from_json(packet.to_json(), report, proposal) == packet
+    decision = next(
+        d for d in decide_shadow_packet(packet).decisions if d.destination == "title"
+    )
+    assert decision.recommendation == (
+        "manual" if local_variant == "Different Contributor" else "recommend_candidate"
+    )
+    assert any(
+        c.role == role and c.value == "Bea Contributor"
+        for p in report.providers
+        for v in p.candidates
+        for c in v.claims
+    )
+    if local_variant is not None:
+        assert any(
+            c.role == role and c.canonical == local_variant for c in report.local_claims
+        )
+
+
 def test_independent_title_keeps_a_meaningful_subtitle_source_association():
     report = isbn_title_report(
         current="Example Title: A Subtitle", subtitle="A Subtitle"

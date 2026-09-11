@@ -88,6 +88,8 @@ def isbn_title_report(
     rear_isbn: bool = False,
     variant_conflict: bool = False,
     subtitle: str | None = None,
+    local_variant: str | None = None,
+    additional_variant: str | None = None,
 ) -> MetadataReport:
     local = [
         consensus_local_title(current),
@@ -104,6 +106,22 @@ def isbn_title_report(
             applicability_basis="not_applicable",
         ),
     ]
+    if local_variant is not None:
+        assert role in {"translator", "adapter", "abridger"}
+        local.append(
+            LocalClaim.create(
+                kind=ClaimKind.CREATOR,
+                observed=local_variant,
+                canonical=local_variant,
+                excerpt=f"{role}: {local_variant}",
+                scope=ClaimScope.WORK,
+                role=role,
+                basis="opening_matter",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+            )
+        )
     local.extend(
         LocalClaim.create(
             kind=ClaimKind.ISBN,
@@ -200,6 +218,19 @@ def isbn_title_report(
                         scope=ClaimScope.EDITION,
                         applicability="ebook",
                         order=4,
+                    )
+                )
+            if additional_variant is not None:
+                assert role is not None
+                claims.append(
+                    _claim(
+                        name,
+                        identity,
+                        ClaimKind.CONTRIBUTOR,
+                        additional_variant,
+                        scope=ClaimScope.WORK,
+                        role=role,
+                        order=5,
                     )
                 )
             source = _provider(name, identity, tuple(claims), authority=name)
