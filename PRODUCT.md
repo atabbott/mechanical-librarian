@@ -26,6 +26,30 @@ action; unchanged items do not produce repeated changes; failures stop safely;
 and every decision or effect remains understandable, auditable, and
 recoverable.
 
+## Decision quality and human attention
+
+Optimize for useful metadata and little routine human interaction. Metadata
+that is good enough for a person using the library is a successful outcome;
+perfect bibliographic certainty is not a prerequisite for every automatic
+improvement. Accept reasonable, evidence-supported choices with an explainable
+basis and a practical correction path. Evaluate decision policies against both
+metadata quality and the human attention they consume.
+
+Reserve human review for material competing evidence or consequential ambiguity
+where a person's judgment is likely to improve the result. Human review has a
+cost and is not inherently more accurate than a supported deterministic or
+reviewer-advised decision. Missing data, an unavailable provider, or residual
+uncertainty alone does not establish a conflict or justify an owner choice.
+Keep work-level evidence sufficient for work-level fields; require edition
+specificity where it materially affects the field being changed.
+
+This tolerance concerns bibliographic uncertainty. Credential, consent,
+currentness, backup, supported-write, verification, and recovery boundaries
+remain mandatory, as do owner-final decisions and explicit Ask me or Ignore
+policy. The [automation policy](docs/product/automation-policy.md) applies this
+standard to field-level decisions and distinguishes accepted direction from
+the currently qualified implementation.
+
 ## Positioning
 
 Mechanical Librarian is evidence-first and safety-gated rather than AI-first.

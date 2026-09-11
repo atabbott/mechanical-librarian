@@ -5,7 +5,19 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Cover-choice source rotation (#999)
+## Current title-consumer qualification (#1007)
+
+The current [v25 candidate](../reference/f20-rich-metadata-qualification-candidate-v25.json)
+binds #1007's title and packet consumer changes. Its current continuity proof is
+the 13-option actual persistence/effect-authority test and two retained current
+reports composed across all 13 options (26 previews). The historical 49-report
+v34 and 15-report v37 corpora do not parse under the current report contract;
+they were neither relabelled nor replayed for this successor. Earlier metrics
+below remain historical evidence, not a current full-corpus equivalence claim.
+The option dispositions remain unchanged. Exact current source bindings are
+recorded separately from historical measurements.
+
+## Historical cover-choice source rotation (#999)
 
 The [v17 candidate](../reference/f20-rich-metadata-qualification-candidate-v17.json)
 binds the incumbent-artifact and live cover-currentness follow-up. All 35 F20

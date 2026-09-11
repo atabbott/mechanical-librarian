@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Ebook titles supported by retained ISBN and creator evidence can be corrected
+  independently of subtitle or series choices. Automatic decisions remain
+  visible and reversible by the owner; Ask and Ignore remain authoritative.
+  Existing application state requires a clean rebuild. (#1007)
+
 - An audiobook's evidence view, its review case and the rows a stopped
   preparation leaves behind now state a closed set of typed media-health
   observations, each naming the track or provider evidence it was read from and

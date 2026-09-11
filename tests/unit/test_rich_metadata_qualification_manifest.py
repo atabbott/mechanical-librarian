@@ -55,14 +55,16 @@ TRANSPORT_V21_MANIFEST = MANIFEST.with_name(
 )
 V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22.json")
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
+V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v24.json"
+    "f20-rich-metadata-qualification-candidate-v25.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
+V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v11.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1164,6 +1166,7 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "publisher_preference:publisher",
         "title:replace_target:provider_consensus_noise",
         "title:replace_target:decoration_tidy",
+        "title:replace_target:isbn_creator_supported",
         "description_fill:safe_plain_text",
         "genres:fill_empty",
         "genres:add",
@@ -1399,9 +1402,7 @@ def test_association_successors_bind_current_sources_and_retained_scoring():
     )
     evidence = rich["evidence_method"]["title_component_associations"]
     assert title["association_requalification"] == evidence
-    latest_projection = json.loads(LATEST_MANIFEST.read_text())[
-        "review_projection_source_closure"
-    ]["behavior_sources"]
+    latest_projection = json.loads(LATEST_MANIFEST.read_text())["source_closure"]
     assert set(evidence["review_projection_followup"]["behavior_sources"]) < set(
         latest_projection
     )
@@ -1482,17 +1483,17 @@ def test_inventaire_f19a_successor_preserves_historical_measurements_and_options
         }
     } == {k: v for k, v in prior.items() if k != "prior_manifest_sha256"}
     closure = current["inventaire_source_closure"]
-    assert closure["qualified_policy_options"] == sorted(F19A_QUALIFIED_POLICY_OPTIONS)
+    assert closure["qualified_policy_options"] == sorted(
+        F19A_QUALIFIED_POLICY_OPTIONS - {"title:replace_target:isbn_creator_supported"}
+    )
     assert len(closure["qualified_policy_options"]) == 11
     assert closure["all_evaluator_bodies_unchanged"] is True
     assert closure["fresh_holdout_claim"] is False
     assert closure["fresh_scoring_run"] is False
     assert current["historical_evidence"]["measurements_reexecuted"] is False
-    for name, digest in closure["behavior_sources"].items():
-        assert (
-            hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
-            == digest
-        )
+    assert set(closure["behavior_sources"]) <= set(
+        json.loads(LATEST_F19A_MANIFEST.read_bytes())["source_closure"]
+    )
 
 
 def test_provider_contract_rotation_binds_complete_sources_without_rescoring():
@@ -1944,12 +1945,45 @@ def test_f39_successors_preserve_history_and_exhaustive_live_source_closure() ->
         assert projection["fresh_holdout_claim"] is False
 
 
+def test_current_title_successors_bind_complete_consumer_source_inventory() -> None:
+    rich = json.loads(LATEST_MANIFEST.read_bytes())
+    title = json.loads(LATEST_F19A_MANIFEST.read_bytes())
+    prior = json.loads(V24_MANIFEST.read_bytes())
+    expected = (
+        set(prior["frozen_contract"]["behavior_sources"])
+        | set(prior["provider_contract_source_closure"]["behavior_sources"])
+        | set(prior["review_projection_source_closure"]["behavior_sources"])
+        | set(prior["authority_rotation"]["source_closure"]["current_byte_bindings"])
+        | {
+            "src/mechanical_librarian/adapters/persistence/schema.py",
+            "src/mechanical_librarian/adapters/persistence/decisions.py",
+            "src/mechanical_librarian/application/decision_preview.py",
+        }
+    )
+    assert set(rich["source_closure"]) == expected
+    assert set(title["source_closure"]) == expected - {
+        "src/mechanical_librarian/domain/automatic_decision.py"
+    }
+    for manifest, path, digest in (
+        (rich, LATEST_MANIFEST, F20_QUALIFICATION_CANDIDATE_SHA256),
+        (title, LATEST_F19A_MANIFEST, F19A_QUALIFICATION_MANIFEST_SHA256),
+    ):
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        assert manifest["proposal_policy_version"] == "fixed-conservative-v24"
+        for name, source_digest in manifest["source_closure"].items():
+            assert (
+                hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+                == source_digest
+            )
+    assert title["qualified_policy_options"] == sorted(F19A_QUALIFIED_POLICY_OPTIONS)
+
+
 def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
-    current = json.loads(LATEST_MANIFEST.read_bytes())
+    current = json.loads(V24_MANIFEST.read_bytes())
     prior = json.loads(V23_MANIFEST.read_bytes())
     assert (
-        hashlib.sha256(LATEST_MANIFEST.read_bytes()).hexdigest()
-        == F20_QUALIFICATION_CANDIDATE_SHA256
+        hashlib.sha256(V24_MANIFEST.read_bytes()).hexdigest()
+        == "679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321"
     )
     assert current["schema"] == "f20-rich-metadata-qualification-candidate-v24"
     rotation = current["authority_rotation"]
@@ -2024,17 +2058,8 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
     assert {
         name for name, value in additional.items() if value != prior_additional[name]
     } == {"frontend/src/api/http.ts"}
-    for bindings in (
-        sources,
-        provider["behavior_sources"],
-        projection["behavior_sources"],
-        additional,
-    ):
-        for name, digest in bindings.items():
-            assert (
-                hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
-                == digest
-            )
+    # These immutable bindings describe v24. The successor test below owns
+    # current source equality; historical bytes never acquire current authority.
     history = rotation["historical_reader_delta"]
     assert (
         history["identity"] == "src/mechanical_librarian/domain/automatic_decision.py"
@@ -2042,11 +2067,11 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
     assert history["measured_sha256"] == prior_sources[history["identity"]]
     assert history["current_sha256"] == sources[history["identity"]]
 
-    title = json.loads(LATEST_F19A_MANIFEST.read_bytes())
+    title = json.loads(V10_F19A_MANIFEST.read_bytes())
     prior_title = json.loads(V9_F19A_MANIFEST.read_bytes())
     assert (
-        hashlib.sha256(LATEST_F19A_MANIFEST.read_bytes()).hexdigest()
-        == F19A_QUALIFICATION_MANIFEST_SHA256
+        hashlib.sha256(V10_F19A_MANIFEST.read_bytes()).hexdigest()
+        == "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523"
     )
     assert (
         title["prior_manifest_sha256"]

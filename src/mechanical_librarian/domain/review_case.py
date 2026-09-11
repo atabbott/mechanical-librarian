@@ -14,6 +14,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
 )
 from mechanical_librarian.domain.proposal_set import (
+    EVIDENCE_LED_TITLE_REASON,
     MEDIA_KINDS,
     BibliographicSelectionKind,
     ProposalOutcome,
@@ -96,7 +97,10 @@ def review_proposals(
     return tuple(
         {
             "destination": result["destination"],
-            "manual_required": result["destination"] in manual_destinations,
+            "manual_required": (
+                result["destination"] in manual_destinations
+                and result["reasons"] != [EVIDENCE_LED_TITLE_REASON]
+            ),
             "proposal_id": "review_proposal_"
             + hashlib.sha256(
                 _canonical(

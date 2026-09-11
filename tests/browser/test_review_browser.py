@@ -288,6 +288,7 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    isbn_title_fixture: str | None = None,
     description_fixture: Literal[
         "ready",
         "needs_review",
@@ -445,7 +446,29 @@ def _server(
         )
     else:
         report = _report()
-    if description_fixture is not None:
+    if isbn_title_fixture is not None:
+        from tests.support.evidence_led_titles import (
+            isbn_title_report,
+            publish_title_case,
+        )
+
+        report = isbn_title_report(
+            titles=("Example Title", "Another Work")
+            if isbn_title_fixture == "conflict"
+            else ("Example Title",),
+            failed=isbn_title_fixture == "unavailable",
+            current=(
+                "A very long local title with repeated source context " * 8
+            ).strip()
+            if isbn_title_fixture == "long"
+            else "Example Series 03 - Example Title",
+        )
+        case_id, proposal_set = publish_title_case(
+            repository,
+            report,
+            "automatic" if isbn_title_fixture == "automatic" else "ask",
+        )
+    elif description_fixture is not None:
         case_id = ""  # The real description producer below owns case admission.
     elif provider_recovery:
         from tests.support.provider_recovery_rail import publish_provider_failure_case
@@ -4955,6 +4978,60 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(
                     page.get_by_role("heading", name="Settings", exact=True)
                 ).to_be_visible()
+                assert not errors
+            browser.close()
+
+
+@pytest.mark.parametrize(
+    "mode", ("automatic", "ask", "conflict", "unavailable", "long")
+)
+def test_isbn_title_reaches_real_library_with_retained_sources(mode):
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": 1280, "height": 800}
+            )
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    isbn_title_fixture=mode,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                page = context.new_page()
+                errors: list[str] = []
+                page.on("pageerror", partial(_record_page_error, errors))
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&case={case_id}")
+                page.get_by_role("button", name=re.compile("^Title ")).click()
+                expect(
+                    page.get_by_text("Example Title", exact=True).first
+                ).to_be_visible()
+                expect(
+                    page.get_by_text(
+                        "The sources disagree about the work or title; choose the title yourself"
+                        if mode == "conflict"
+                        else "ISBN and author evidence support this title",
+                        exact=True,
+                    ).first
+                ).to_be_visible()
+                for width in (1280, 390, 320):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
                 assert not errors
             browser.close()
 

@@ -122,3 +122,9 @@ obligations and may coexist.
 - A development-only exposed corpus may measure implementation recall, but no
   provider qualification claim is made from it. Fresh frozen model-free gates
   must pass before downstream provider experiments resume.
+
+## Independent title amendment
+
+[ADR-0073](0073-independent-evidence-led-titles.md) adds a candidate-specific
+ISBN-linked title exception in packet-v7 and action policy v2. Its elected title
+requires no companion action; all other combination rules remain in force.

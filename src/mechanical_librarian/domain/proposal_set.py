@@ -87,7 +87,7 @@ PROPOSAL_SCHEMA = "proposal-set-v7"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v23"
+POLICY_VERSION = "fixed-conservative-v24"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -250,6 +250,7 @@ SUBTITLE_SEGMENT_UNCORROBORATED_REASON = "subtitle_segment_uncorroborated"
 SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON = "subtitle_segment_provider_dissent"
 SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON = "subtitle_segment_decorated_consensus"
 PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON = "provider_consensus_contributor_display"
+EVIDENCE_LED_TITLE_REASON = "isbn_creator_supported_title"
 VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
 
@@ -257,6 +258,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.PROPOSE_CHANGE: frozenset(
         {
             ("unique_safe_cover",),
+            (EVIDENCE_LED_TITLE_REASON,),
             ("unique_typed_candidate",),
             ("explicit_author_corroborates_untyped_creator",),
             ("local_attested_subtitle",),
@@ -270,6 +272,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
     ProposalOutcome.UNRESOLVED_CHOICE: frozenset(
         {
             ("competing_evidence",),
+            ("isbn_title_material_conflict",),
             (MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON,),
             (
                 "competing_evidence",
@@ -723,8 +726,14 @@ class ProposalResult:
                 (
                     len(self.alternatives) != 1
                     and not (
-                        self.destination is TargetDestination.ISBN
-                        and self.reasons == (VERIFIED_MANIFESTATION_ISBN_REASON,)
+                        (
+                            self.destination is TargetDestination.ISBN
+                            and self.reasons == (VERIFIED_MANIFESTATION_ISBN_REASON,)
+                        )
+                        or (
+                            self.destination is TargetDestination.TITLE
+                            and self.reasons == (EVIDENCE_LED_TITLE_REASON,)
+                        )
                     )
                 )
                 or self.selected_alternative_id is None
@@ -1230,6 +1239,8 @@ def evaluate_report(
             and result.alternatives
         ):
             result = _verified_manifestation_isbn_election(report, result)
+        if destination is TargetDestination.TITLE:
+            result = _evidence_led_title_election(report, result)
         if (
             destination is TargetDestination.TITLE
             and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
@@ -1276,7 +1287,7 @@ def evaluate_report(
     )
     for destination in unresolved:
         result = results[destination]
-        if result.alternatives:
+        if result.alternatives and result.reasons != (EVIDENCE_LED_TITLE_REASON,):
             results[destination] = _bibliographic_unresolved(result)
     ordered = tuple(results[value] for value in TargetDestination)
     if resolved_policy_id is None:
@@ -1671,6 +1682,151 @@ def _has_uncorroborated_subtitle_segment(
             for segment in subtitle_segment_evidence(report, alternative.value.value)
         )
         for alternative in alternatives
+    )
+
+
+def _evidence_led_title_election(
+    report: MetadataReport, result: ProposalResult
+) -> ProposalResult:
+    """Test the ISBN-linked title boundary independently of companion elections."""
+    if report.file.format in AUDIO_FILE_FORMATS or not result.alternatives:
+        return result
+    local_authors = {
+        creator_comparison_key(claim.canonical)
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.role == "author"
+        and claim.state is FieldState.VALID
+        and claim.canonical
+    }
+    if not local_authors:
+        return result
+    supported: set[str] = set()
+    isbn_bound = False
+    conflict = False
+    titles: set[str] = set()
+    variant_claims: dict[str, set[frozenset[str]]] = {}
+    for provider in report.providers:
+        works: set[str] = set()
+        for candidate in provider.candidates:
+            claims = tuple(c for c in candidate.claims if c.state is FieldState.VALID)
+            candidate_variants: dict[str, set[str]] = {}
+            for claim in claims:
+                if type(claim.value) is not str:
+                    continue
+                if claim.kind is ClaimKind.LANGUAGE:
+                    language = language_identity(claim.value)
+                    if language is not None:
+                        candidate_variants.setdefault("language", set()).add(
+                            language.base
+                        )
+                elif claim.kind in {
+                    ClaimKind.CREATOR,
+                    ClaimKind.CONTRIBUTOR,
+                } and claim.role in {"translator", "adapter", "abridger"}:
+                    candidate_variants.setdefault(claim.role, set()).add(
+                        creator_comparison_key(claim.value)
+                    )
+            for role, identities in candidate_variants.items():
+                variant_claims.setdefault(role, set()).add(frozenset(identities))
+            titles.update(
+                c.value
+                for c in claims
+                if c.kind is ClaimKind.TITLE and type(c.value) is str
+            )
+            authors = {
+                creator_comparison_key(c.value)
+                for c in claims
+                if c.kind is ClaimKind.CREATOR
+                and c.role == "author"
+                and type(c.value) is str
+            }
+            # Missing evidence does not dissent, but cannot support election.
+            if authors and authors != local_authors:
+                conflict = True
+            if candidate.work_identity != "unresolved":
+                works.add(candidate.work_identity)
+            for lane in provider.lanes:
+                if (
+                    lane.kind is not ProviderQueryKind.ISBN
+                    or not _target_backed_lookup_contains(
+                        report, provider, candidate, required_lane=lane
+                    )
+                ):
+                    continue
+                if not any(
+                    c.state is FieldState.VALID
+                    and c.checksum in {"valid_isbn_10", "valid_isbn_13"}
+                    and c.basis in {"package_metadata", "opening_matter"}
+                    and c.applicability in {"ebook", "print", "unknown"}
+                    for c in _isbn_family_claims(report, lane.matched_family)
+                ):
+                    continue
+                if not any(
+                    c.kind is ClaimKind.ISBN
+                    and type(c.value) is str
+                    and isbn_family(c.value) == lane.matched_family
+                    for c in claims
+                ):
+                    continue
+                isbn_bound = True
+                if (
+                    provider.authority is None
+                    or authors != local_authors
+                    or candidate.work_identity == "unresolved"
+                ):
+                    continue
+                supported.update(
+                    c.reference
+                    for c in claims
+                    if c.kind is ClaimKind.TITLE and c.scope is ClaimScope.WORK
+                )
+        conflict = conflict or len(works) > 1
+    if not isbn_bound:
+        return result
+    conflict = (
+        conflict
+        or len(titles) > 1
+        or any(len(values) > 1 for values in variant_claims.values())
+    )
+    title = next(iter(titles)) if len(titles) == 1 else ""
+    # Content title disagreement is material; package and target strings are
+    # correctable observations rather than work-identity vetoes.
+    conflict = conflict or any(
+        c.kind is ClaimKind.TITLE
+        and c.state is FieldState.VALID
+        and c.basis == "opening_matter"
+        and c.canonical
+        and normalize_title(c.canonical).casefold() != normalize_title(title).casefold()
+        for c in report.local_claims
+    )
+    if conflict:
+        return ProposalResult(
+            result.destination,
+            ProposalOutcome.UNRESOLVED_CHOICE,
+            result.alternatives,
+            None,
+            ("isbn_title_material_conflict",),
+            result.dependencies,
+        )
+    if not supported or not title:
+        return result
+    selected = tuple(
+        a
+        for a in result.alternatives
+        if a.value.value == title
+        and supported.intersection(a.evidence_references)
+        and a.assessment is not ProposalAssessment.PRESERVES_TARGET
+    )
+    if len(selected) != 1:
+        return result
+    return ProposalResult(
+        TargetDestination.TITLE,
+        ProposalOutcome.PROPOSE_CHANGE,
+        result.alternatives,
+        selected[0].alternative_id,
+        (EVIDENCE_LED_TITLE_REASON,),
+        result.dependencies,
     )
 
 

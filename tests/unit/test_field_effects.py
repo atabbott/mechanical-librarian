@@ -2520,6 +2520,101 @@ def test_every_supported_shape_plans_and_no_ops_do_not_mutate(
     )
 
 
+@pytest.mark.parametrize(
+    "guard", (None, "backup", "target", "readback", "consent", "authority")
+)
+def test_isbn_title_uses_persisted_authority_for_only_title_effect(
+    effects: _EffectEnvironment,
+    guard: str | None,
+) -> None:
+    from tests.support.evidence_led_titles import isbn_title_report, publish_title_case
+
+    publish_title_case(effects.repository, isbn_title_report())
+    document = effects.repository._connection.execute(
+        "SELECT document FROM automatic_decisions WHERE destination='title'"
+    ).fetchone()[0]
+    decision = AutomaticDecision.from_json(document)
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    snapshot = authority.resolve(decision)
+    effects.repository.grant_field_effect_consents(
+        snapshot.connection, (snapshot.library,), ("title",), 5
+    )
+    service = GuardedFieldApplication(
+        effects.repository,
+        effects.target,
+        effects.backup,
+        effects.capabilities,
+        authority,
+        effects.dependencies,
+        PersistedEffectConsent(effects.repository),
+        effects.recovery,
+        effects.reevaluation,
+        effects.clock,
+        effects.preclaim,
+        effects.claim_hook,
+        effects.recovery_hook,
+    )
+    result = service.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination="title",
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert result is not None
+    assert result.plan.authority.origin == "automatic_policy"
+    effects.target.seed(result.plan)
+    if guard == "backup":
+        effects.backup.ready_value = False
+    elif guard == "target":
+        effects.target.drift(result.plan, "Owner changed title")
+    elif guard == "readback":
+        effects.target.fail_read_after_apply_for.add(result.plan.plan_id)
+    elif guard == "consent":
+        effects.repository.revoke_field_effect_consent(
+            result.plan.consent.consent_id, effects.clock()
+        )
+    elif guard == "authority":
+        effects.repository.revoke_field_effect_authority(
+            decision.decision_id, effects.clock()
+        )
+    before = dict(effects.target._values)
+    applied = service.apply(result.plan.plan_id)
+    if guard in {"consent", "authority"}:
+        assert (applied.state, applied.failure) == (
+            "superseded",
+            "consent_revoked" if guard == "consent" else "authority_superseded",
+        )
+        assert effects.target._values == before
+        return
+    if guard in {"backup", "target"}:
+        assert (applied.state, applied.failure) == (
+            "stale",
+            "target_changed" if guard == "target" else guard,
+        )
+        assert effects.target._values == before
+        return
+    if guard == "readback":
+        assert (applied.state, applied.failure) == ("reconciling", "target_failure")
+        assert effects.target._values != before
+        return
+    assert applied.state == "verified"
+    assert service.apply(result.plan.plan_id).state == "verified"
+    changed = {
+        key for key, value in effects.target._values.items() if before.get(key) != value
+    }
+    assert changed == {
+        (snapshot.connection, snapshot.library, snapshot.work_id, "title")
+    }
+    assert effects.target._values[next(iter(changed))] == "Example Title"
+
+
 def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
     effects: _EffectEnvironment,
 ) -> None:

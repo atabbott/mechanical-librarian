@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 ACTION_CATALOGUE_SCHEMA = "shadow-review-action-catalogue-v1"
-ACTION_POLICY_VERSION = "shadow-review-action-policy-v1"
+ACTION_POLICY_VERSION = "shadow-review-action-policy-v2"
 _ACTION_KINDS = frozenset({"manual", "recommend_candidate", "recommend_keep_current"})
 _ASSESSMENTS = frozenset({"fills_empty", "preserves_target", "replaces_target"})
 _BIBLIOGRAPHIC_DESTINATIONS = frozenset({"title", "subtitle", "series"})
@@ -339,6 +339,8 @@ def _candidate_combination_ids(
     raw = summary.get("bibliographic_compatibility_ids")
     if type(raw) is not list or any(type(value) is not str for value in raw):
         reasons.add("bibliographic_combination_binding_unknown")
+        return set()
+    if summary.get("independent_title") is True:
         return set()
     combination_ids = set(raw)
     if not combination_ids.issubset(known):

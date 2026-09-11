@@ -1389,3 +1389,13 @@ Schema creation, exact object inventory, immutable triggers and cross-row
 validation enforce the clean-rebuild boundary. See the
 [configuration contract](../reference/configuration.md) and
 [reviewer-access decision](decisions/0062-owner-managed-reviewer-access.md).
+
+## Independently supported ebook titles
+
+The ISBN-linked title election (#1007) uses only retained report evidence and
+selects an existing alternative. Packet-v7 binds the independent-title fact to
+that candidate; it cannot grant the same exception to dissenting alternatives.
+The reason-specific current F19a option is decision-only, and old manifests
+cannot authorize it. The existing title-layout pause/suspension, owner-final,
+consent, backup, currentness, read-back and audit boundaries remain unchanged.
+No new external call, parser, provider or write capability is introduced.

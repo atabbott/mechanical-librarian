@@ -17,6 +17,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import (
+    EVIDENCE_LED_TITLE_REASON,
     ProposalOutcome,
     ProposalSet,
 )
@@ -108,6 +109,7 @@ def validate_candidate_decision_summary(
         != {
             "bibliographic_compatibility_ids",
             "creator_roles",
+            "independent_title",
             "evidence_scope",
             "publication",
             "selected_manifestation_binding",
@@ -128,6 +130,13 @@ def validate_candidate_decision_summary(
         or any(
             type(value) is not str or _COMBINATION_ID.fullmatch(value) is None
             for value in summary["bibliographic_compatibility_ids"]
+        )
+    ):
+        raise DecisionSummaryValueError("candidate decision summary is invalid")
+    if type(summary["independent_title"]) is not bool or (
+        summary["independent_title"]
+        and (
+            destination != "title" or candidate.get("assessment") == "preserves_target"
         )
     ):
         raise DecisionSummaryValueError("candidate decision summary is invalid")
@@ -498,6 +507,12 @@ def candidate_decision_summary(
             # ProposalAlternative.to_data always projects a str identity.
             cast("str", alternative["alternative_id"]),
             [],
+        ),
+        "independent_title": (
+            destination == "title"
+            and results[destination]["reasons"] == [EVIDENCE_LED_TITLE_REASON]
+            and results[destination]["selected_alternative_id"]
+            == alternative["alternative_id"]
         ),
         "creator_roles": creator_roles,
         "evidence_scope": alternative["scope"],

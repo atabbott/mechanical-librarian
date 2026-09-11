@@ -192,7 +192,8 @@ def test_prior_policy_store_schema_is_rejected_without_mutation() -> None:
 
 
 @pytest.mark.parametrize(
-    "prior_policy", ("fixed-conservative-v20", "fixed-conservative-v22")
+    "prior_policy",
+    ("fixed-conservative-v20", "fixed-conservative-v22", "fixed-conservative-v23"),
 )
 def test_persisted_prior_proposal_state_is_rejected_during_bootstrap(
     prior_policy,

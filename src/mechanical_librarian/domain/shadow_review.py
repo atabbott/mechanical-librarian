@@ -48,7 +48,7 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
     validate_proposal_decision_summary,
 )
 
-PACKET_SCHEMA = "shadow-review-packet-v6"
+PACKET_SCHEMA = "shadow-review-packet-v7"
 MAX_PACKET_BYTES = 1_048_576
 # The generated schema is ASCII-only. Embedding it as a JSON string can add at
 # most one escape byte per schema byte; the remaining allowance covers the
@@ -322,6 +322,11 @@ class ShadowReviewPacket:
                         "shadow-review packet is invalid"
                     ) from error
                 decision_role_references.update(role_references)
+                if candidate["decision_summary"]["independent_title"] and (
+                    proposal["reasons"] != ["isbn_creator_supported_title"]
+                    or proposal["outcome"] != "propose_change"
+                ):
+                    raise ShadowReviewValueError("shadow-review packet is invalid")
                 candidate_compatibility[candidate["candidate_id"]] = compatibility_ids
                 proposal_evidence_references.update(candidate["evidence_references"])
                 if destination in {
@@ -334,7 +339,9 @@ class ShadowReviewPacket:
                         if reference.startswith(("provider_", "evidence_"))
                     )
             if (
-                any(
+                sum(c["decision_summary"]["independent_title"] for c in candidates)
+                != int(proposal["reasons"] == ["isbn_creator_supported_title"])
+                or any(
                     type(value) is not str or _ALTERNATIVE_ID.fullmatch(value) is None
                     for value in candidate_ids
                 )

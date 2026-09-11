@@ -188,7 +188,7 @@ def test_equivalent_language_forms_replay_as_one_candidate() -> None:
         "evidence_sufficiency": "candidate",
         "target_only_preservation": 0,
     } == language["decision_summary"]
-    assert "shadow-review-packet-v6" == PACKET_SCHEMA
+    assert "shadow-review-packet-v7" == PACKET_SCHEMA
     assert packet == ShadowReviewPacket.from_json(packet.to_json(), report)
     prior = json.loads(packet.to_json())
     prior["schema_version"] = "shadow-review-packet-v5"
