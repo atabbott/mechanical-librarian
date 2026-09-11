@@ -236,6 +236,74 @@ def test_same_title_with_competing_variant_creators_is_withheld(role):
     assert result.reasons == ("isbn_title_material_conflict",)
 
 
+def test_independent_title_keeps_a_meaningful_subtitle_source_association():
+    report = isbn_title_report(
+        current="Example Title: A Subtitle", subtitle="A Subtitle"
+    )
+    proposal = evaluate_report(report)
+    results = {r.destination.value: r for r in proposal.results}
+    title_id = results["title"].selected_alternative_id
+    subtitle_id = results["subtitle"].selected_alternative_id
+    assert subtitle_id is not None
+    association = next(
+        c
+        for c in proposal.bibliographic_combinations
+        if any(s.alternative_id == subtitle_id for s in c.selections)
+    )
+    assert association.source_representations
+    assert any(s.alternative_id == title_id for s in association.selections)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    field = next(p for p in packet.proposals if p["destination"] == "title")
+    action = compile_shadow_review_actions(packet).action_for(
+        field["proposal_id"], "recommend_candidate", title_id
+    )
+    assert action is not None and action.combination_ids == ()
+    assert any(
+        c["combination_id"] == association.combination_id
+        for c in packet.bibliographic_combinations
+    )
+
+
+@pytest.mark.parametrize(
+    "titles",
+    [("Example Title", "example title"), ("The Author's Work", "The Author’s Work")],
+)
+def test_cosmetic_title_variation_preserves_one_original_independent_of_order(titles):
+    selected = []
+    for reverse in (False, True):
+        report = isbn_title_report(titles=titles, reverse=reverse)
+        proposal = evaluate_report(report)
+        result = next(r for r in proposal.results if r.destination.value == "title")
+        assert result.reasons == (EVIDENCE_LED_TITLE_REASON,)
+        chosen = next(
+            a
+            for a in result.alternatives
+            if a.alternative_id == result.selected_alternative_id
+        )
+        assert chosen.value.value in titles
+        selected.append((chosen.alternative_id, chosen.value.value))
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report), proposal, report
+        )
+        decision = next(
+            d
+            for d in decide_shadow_packet(packet).decisions
+            if d.destination == "title"
+        )
+        assert decision.recommendation == "recommend_candidate"
+        assert decision.candidate_id == chosen.alternative_id
+        assert {
+            c.value
+            for p in report.providers
+            for v in p.candidates
+            for c in v.claims
+            if c.kind.value == "title"
+        } == set(titles)
+    assert selected[0] == selected[1]
+
+
 @pytest.mark.parametrize(
     "mutation", ["missing", "integer", "removed", "other", "reason"]
 )

@@ -20,11 +20,11 @@
       "withheld": 12
     },
     "synthetic_positive": {
-      "cases": 9,
-      "correct": 9,
-      "durable_predictions": 9,
+      "cases": 13,
+      "correct": 13,
+      "durable_predictions": 13,
       "incorrect": 0,
-      "owner_reachable": 9,
+      "owner_reachable": 13,
       "withheld": 0
     }
   },
@@ -40,6 +40,72 @@
   },
   "historical_measurements": "The predecessor retains earlier metrics. They do not measure the new ISBN-linked title option. Current F35/F41 constructor controls rebuild report, proposal, packet and decision identities without changing historical bytes.",
   "issue": 1007,
+  "measurement_artifacts": {
+    "candidate-evaluator": {
+      "evidence_mode": "current_candidate_and_continuity_consumer",
+      "sha256": "128dc6014010902c10162f865d0f0e9441f7bff58419cf78dd82d73b4db5e5c5"
+    },
+    "candidate-results": {
+      "evidence_mode": "new_candidate_and_current_continuity_measurement",
+      "sha256": "3ac87558180b785a7654d020e1ed10dfd2b3f22ae98b7ac38d719792f6e9deb8"
+    },
+    "durable-evaluator": {
+      "evidence_mode": "actual_repository_admission_and_owner_projection",
+      "sha256": "2614d5141d135f599ff74eed67ba27f41679f2277cc762f58a8b7dcb623c1b1c"
+    },
+    "durable-results": {
+      "evidence_mode": "new_actual_durable_decision_measurement",
+      "sha256": "26f0fb6e6ec9dd35fa7cc42285be146526273b21f8ffc256bb17cc5fc202fc85"
+    },
+    "f20-persistence-effect-result": {
+      "evidence_mode": "executed_current_thirteen_option_assertions",
+      "sha256": "1a66abe03b6728e6f464afeaafc29f0b4ee7a563d2b6a2dc77c82c9c357a9fe3"
+    },
+    "f20-persistence-effect-test": {
+      "evidence_mode": "thirteen_option_persisted_effect_authority_assertions",
+      "sha256": "c6d9de53273c25daf945db135633f8488525738cc4f4b03cb0d95b8ced847b6d"
+    },
+    "f35-constructor": {
+      "evidence_mode": "immutable_historical_constructor_control",
+      "sha256": "824fab83b86ba9b8031ce182afd66f67763ad968525a4ebb4fa1fe21e8d9bab8"
+    },
+    "f35-inputs": {
+      "evidence_mode": "immutable_historical_constructor_control",
+      "sha256": "594b3f86f4ed30238c387b165f23ccbd9b53019831247499201cd185f7689295"
+    },
+    "f35-truth": {
+      "evidence_mode": "immutable_historical_constructor_control",
+      "sha256": "42cce6f686090b25126838eed12f221867a2e4c028fa5640f551fddb16d39ba4"
+    },
+    "f41-constructor": {
+      "evidence_mode": "immutable_historical_constructor_control",
+      "sha256": "13a8e7cb55cbf07885d07ce591318754aa25c77db2b8ace2f70a0c3a2132e924"
+    },
+    "f41-inputs": {
+      "evidence_mode": "immutable_historical_constructor_control",
+      "sha256": "ab55a5fbee4beb6d5f3bcb05db836f54ae954092afe89ce7a9d7d757d50a5958"
+    },
+    "f41-truth": {
+      "evidence_mode": "immutable_historical_constructor_control",
+      "sha256": "cfd18e1cce87b86c822c86467d742db3d892b1201fa30450bb1f8bc0d1beb9ad"
+    },
+    "retained-independent-title-labels": {
+      "evidence_mode": "independently_labelled_real_truth",
+      "sha256": "eb470e551dde49b712549a79f03276c47bb954c7151bcbd9aca87f65e5e3469d"
+    },
+    "retained-report-store": {
+      "evidence_mode": "immutable_current_report_inputs",
+      "sha256": "2ea7ee568151450e625955584c08e77db147a8352628be74e6a642ae08c84765"
+    },
+    "synthetic-report-builder": {
+      "evidence_mode": "current_retained_lane_constructor",
+      "sha256": "c5b4d17824d09d0e1dcd26bba1bdc6487fe476a8370cd4617720c42323d7ba4f"
+    },
+    "synthetic-title-inputs": {
+      "evidence_mode": "finite_synthetic_reports_and_declared_truth",
+      "sha256": "7c579bc8bb316662505e18f96b359be16a51964f767c7522d9089241bd1c378e"
+    }
+  },
   "network_requests": 0,
   "new_title_measurement": {
     "retained": {
@@ -51,11 +117,11 @@
       "reports": 2
     },
     "synthetic": {
-      "candidate_predictions": 9,
-      "correct": 9,
+      "candidate_predictions": 13,
+      "correct": 13,
       "incorrect": 0,
       "negative_controls": 12,
-      "positive_opportunities": 9,
+      "positive_opportunities": 13,
       "withheld": 12
     }
   },
@@ -125,12 +191,12 @@
     "src/mechanical_librarian/domain/failure_diagnostics.py": "90adc37a72a0dcad63ab8833da1c9a071bedacd0c4d84911a5c5d79c069b06b7",
     "src/mechanical_librarian/domain/field_effect.py": "380a7fc3915b951bae2514d12468aba092aa7452fcfd3567cd2421416693635d",
     "src/mechanical_librarian/domain/field_outcomes.py": "e8f989da95c8a6527cb49c55e4c0cc25f0e6d148a9a47edb678cd24c78818772",
-    "src/mechanical_librarian/domain/field_value_comparison.py": "000f661e9c24585e51465bfd43998d1ff13edb3af7375225125436d53bf14f36",
+    "src/mechanical_librarian/domain/field_value_comparison.py": "9e16b0e1c2b473f4a40983aa5905ad265367003fa832dbd290d19d3b7d2d62c7",
     "src/mechanical_librarian/domain/human_decision.py": "949761de7fc75c5635da9c75c3c4e435564a5a9ca26479583a731da5c432353a",
     "src/mechanical_librarian/domain/identifiers.py": "ab8862f3259921b9cd5e00bf2bf636c846b810db79c58c293c8cf12bd1c54f6a",
     "src/mechanical_librarian/domain/metadata_policy.py": "b5a1b61fc8dde0c6e08936a28661f4b57ea41fdd1d80bc3e1f249dc307f4a1b0",
     "src/mechanical_librarian/domain/metadata_report.py": "1f0f06d4852a0bfbbd24ab7295db42fe2527a523d8684cdae38f37a394cc969c",
-    "src/mechanical_librarian/domain/proposal_set.py": "f76789692eade25a537763716508fd353994253c7bdebaddd8232dcd130f2040",
+    "src/mechanical_librarian/domain/proposal_set.py": "a8b47f1780b32a21885eaede6e125f8b9b9816d582d91b63cceb5647366d726c",
     "src/mechanical_librarian/domain/review_case.py": "f2dc706bada3fa10f20018a050c99a3f9266c5224c6f556602ba0c43595f627a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "8cce34dd6a49afdb34e74fb893dcaddcace7f609205fc1af627df1f473216367",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "40696bad9423d43a27676b020140a6cb868c960a8b1ee88f1c9e6e114474eea2",

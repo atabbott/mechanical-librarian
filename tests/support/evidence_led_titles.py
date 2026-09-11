@@ -87,6 +87,7 @@ def isbn_title_report(
     content_title: str | None = None,
     rear_isbn: bool = False,
     variant_conflict: bool = False,
+    subtitle: str | None = None,
 ) -> MetadataReport:
     local = [
         consensus_local_title(current),
@@ -187,6 +188,18 @@ def isbn_title_report(
                         scope=ClaimScope.WORK,
                         role=role,
                         order=3,
+                    )
+                )
+            if subtitle is not None:
+                claims.append(
+                    _claim(
+                        name,
+                        identity,
+                        ClaimKind.SUBTITLE,
+                        subtitle,
+                        scope=ClaimScope.EDITION,
+                        applicability="ebook",
+                        order=4,
                     )
                 )
             source = _provider(name, identity, tuple(claims), authority=name)

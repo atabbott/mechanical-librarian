@@ -1976,6 +1976,51 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
                 == source_digest
             )
     assert title["qualified_policy_options"] == sorted(F19A_QUALIFIED_POLICY_OPTIONS)
+    common = {
+        "retained-report-store",
+        "retained-independent-title-labels",
+        "synthetic-title-inputs",
+        "candidate-evaluator",
+        "durable-evaluator",
+        "candidate-results",
+        "durable-results",
+        "synthetic-report-builder",
+        "f20-persistence-effect-test",
+        "f20-persistence-effect-result",
+    }
+    assert set(rich["measurement_artifacts"]) == common
+    assert set(title["measurement_artifacts"]) == common | {
+        f"{control}-{part}"
+        for control in ("f35", "f41")
+        for part in ("inputs", "truth", "constructor")
+    }
+    for name, binding in title["measurement_artifacts"].items():
+        assert set(binding) == {"sha256", "evidence_mode"}
+        assert len(binding["sha256"]) == 64
+        assert all(c in "0123456789abcdef" for c in binding["sha256"])
+        assert binding["evidence_mode"]
+        if name in common:
+            assert rich["measurement_artifacts"][name] == binding
+    for name, relative_source in (
+        ("synthetic-report-builder", "tests/support/evidence_led_titles.py"),
+        (
+            "f20-persistence-effect-test",
+            "tests/unit/test_shadow_outcome_persistence.py",
+        ),
+    ):
+        assert (
+            title["measurement_artifacts"][name]["sha256"]
+            == hashlib.sha256(
+                (MANIFEST.parents[2] / relative_source).read_bytes()
+            ).hexdigest()
+        )
+    assert title["new_title_measurement"]["synthetic"]["candidate_predictions"] == 13
+    assert (
+        title["durable_title_measurement"]["synthetic_positive"]["durable_predictions"]
+        == 13
+    )
+    assert title["durable_title_measurement"]["synthetic_negative"]["withheld"] == 12
+    assert title["durable_title_measurement"]["retained"]["durable_predictions"] == 2
 
 
 def test_v24_binds_the_media_health_projection_without_rescoring() -> None:

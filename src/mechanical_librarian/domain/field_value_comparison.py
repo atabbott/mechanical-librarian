@@ -33,6 +33,14 @@ def canonical_text(destination: TargetDestination, value: str) -> str:
     return normalize_title(value).casefold()
 
 
+def title_identity_key(value: str) -> str:
+    """Compare title identity without treating a possessive apostrophe as dissent.
+
+    This comparison form never replaces an original candidate's stored text.
+    """
+    return canonical_text(TargetDestination.TITLE, value.replace("’", "'"))
+
+
 def values_match(
     destination: TargetDestination,
     current: object,

@@ -29,6 +29,7 @@ from mechanical_librarian.domain.field_outcomes import (
 )
 from mechanical_librarian.domain.field_value_comparison import (
     canonical_text,
+    title_identity_key,
     values_match,
 )
 from mechanical_librarian.domain.metadata_policy import OPTION_CATALOGUE
@@ -1730,7 +1731,7 @@ def _evidence_led_title_election(
             for role, identities in candidate_variants.items():
                 variant_claims.setdefault(role, set()).add(frozenset(identities))
             titles.update(
-                c.value
+                title_identity_key(c.value)
                 for c in claims
                 if c.kind is ClaimKind.TITLE and type(c.value) is str
             )
@@ -1797,7 +1798,7 @@ def _evidence_led_title_election(
         and c.state is FieldState.VALID
         and c.basis == "opening_matter"
         and c.canonical
-        and normalize_title(c.canonical).casefold() != normalize_title(title).casefold()
+        and title_identity_key(c.canonical) != title
         for c in report.local_claims
     )
     if conflict:
@@ -1814,17 +1815,18 @@ def _evidence_led_title_election(
     selected = tuple(
         a
         for a in result.alternatives
-        if a.value.value == title
+        if type(a.value.value) is str
+        and title_identity_key(a.value.value) == title
         and supported.intersection(a.evidence_references)
         and a.assessment is not ProposalAssessment.PRESERVES_TARGET
     )
-    if len(selected) != 1:
+    if not selected:
         return result
     return ProposalResult(
         TargetDestination.TITLE,
         ProposalOutcome.PROPOSE_CHANGE,
         result.alternatives,
-        selected[0].alternative_id,
+        min(a.alternative_id for a in selected),
         (EVIDENCE_LED_TITLE_REASON,),
         result.dependencies,
     )
