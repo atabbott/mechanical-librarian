@@ -287,7 +287,7 @@
     "src/mechanical_librarian/application/provider_retry_successor.py": "dcb2c0bb585c2483e9e9402c8d068080c9f2b74a69c6b6a27186b40e1edc6e00",
     "src/mechanical_librarian/application/review_web.py": "f19b6cbca71b9db79f0990733d263af19fd467295e8466369dd4ebb444f5cfa2",
     "src/mechanical_librarian/domain/audio_inspection.py": "10eb3766b9b609053f85ed354fedc3fcbd3a32d2ec1b055ce2ee82cc51f9f28f",
-    "src/mechanical_librarian/domain/automatic_decision.py": "28876dc3e071df448756bfb450d90a9f8939d2d75c8e085cdf8add5f6d60ef6d",
+    "src/mechanical_librarian/domain/automatic_decision.py": "11458014c65f2b444343ba987767d900be3580eb366ca2f52ee5067032066fc8",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
     "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
