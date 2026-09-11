@@ -57,14 +57,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v25.json"
+    "f20-rich-metadata-qualification-candidate-v26.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v11.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v12.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1975,6 +1975,30 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
                 hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
                 == source_digest
             )
+    for current, filename, expected_digest in (
+        (
+            title,
+            "f19a-qualification-manifest-v11.json",
+            "f9f172406ddb2a8b5ca282cad3fa25c29148ac7e04100caccc567c6648d6098b",
+        ),
+        (
+            rich,
+            "f20-rich-metadata-qualification-candidate-v25.json",
+            "cbdffb1fe38afa6eb03c2a3b9be05bd8ffe8930a884710b96cc25d0fa14f6c5c",
+        ),
+    ):
+        assert (
+            hashlib.sha256(MANIFEST.with_name(filename).read_bytes()).hexdigest()
+            == expected_digest
+        )
+        assert current["prior_manifest_sha256"] == expected_digest
+        assert current["prior_manifest_path"] == "docs/reference/" + filename
+    assert title["new_title_measurement"]["matrix_inventory"] == {
+        "retained_synthetic_positives": 19,
+        "retained_synthetic_negatives": 15,
+        "r1_positive_controls": 6,
+        "r1_negative_controls": 10,
+    }
     assert title["qualified_policy_options"] == sorted(F19A_QUALIFIED_POLICY_OPTIONS)
     common = {
         "retained-report-store",
@@ -2014,12 +2038,12 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
                 (MANIFEST.parents[2] / relative_source).read_bytes()
             ).hexdigest()
         )
-    assert title["new_title_measurement"]["synthetic"]["candidate_predictions"] == 19
+    assert title["new_title_measurement"]["synthetic"]["candidate_predictions"] == 25
     assert (
         title["durable_title_measurement"]["synthetic_positive"]["durable_predictions"]
-        == 19
+        == 25
     )
-    assert title["durable_title_measurement"]["synthetic_negative"]["withheld"] == 15
+    assert title["durable_title_measurement"]["synthetic_negative"]["withheld"] == 25
     assert title["durable_title_measurement"]["retained"]["durable_predictions"] == 2
 
 

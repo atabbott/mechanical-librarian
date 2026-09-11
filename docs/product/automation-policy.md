@@ -7,17 +7,21 @@ This document defines product intent. Exact thresholds remain versioned configur
 ## Operating posture
 
 The current title qualification is
-[F19a v11](../reference/f19a-qualification-manifest-v11.json) (#1007).
-Its new ISBN-and-creator title option is measured separately: nineteen synthetic
+[F19a v12](../reference/f19a-qualification-manifest-v12.json) (#1007).
+Its new ISBN-and-creator title option is measured separately: twenty-five synthetic
 positive opportunities and two independently labelled retained real positives
-reach correct candidates and durable Automatic decisions; fifteen synthetic
-negative controls are withheld. All thirty-six cases remain owner-reachable.
+reach correct candidates and durable Automatic decisions; twenty-five synthetic
+negative controls are withheld. All fifty-two cases remain owner-reachable.
+The original nineteen synthetic positives, fifteen negatives and two real
+positives remain covered; six positive and ten negative controls cover populated
+targets, complete ordered creators and repeated opening observations.
 One retained truth comparison treats straight and curly apostrophes as
 equivalent without changing the provider title. F35's 50 and F41's 75 historical
 constructor controls retain their expected decisions through current consumers.
 These finite checks make no population accuracy or full-library savings claim.
-Historical qualification manifests retain their original option sets and cannot
-authorize this new option. The current companion F20 continuity boundary is
+Historical qualification manifests retain their original option sets. Published
+v11 remains readable but cannot grant current authority; pre-option manifests
+still reject the new option. The current companion F20 continuity boundary is
 documented in [rich-metadata qualification](rich-metadata-qualification.md).
 
 The initial production profile is **decisive non-destructive**:

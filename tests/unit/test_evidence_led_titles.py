@@ -19,6 +19,81 @@ from mechanical_librarian.domain.shadow_review_actions import (
 from tests.support.evidence_led_titles import isbn_title_report
 
 
+@pytest.mark.parametrize(
+    "options,eligible",
+    [
+        ({"empty_target_title": True}, False),
+        ({"target_authors": ("Other Author",)}, False),
+        ({"target_authors": ("Ada Author", "Ada Author")}, False),
+        (
+            {
+                "local_authors": ("Ada Author", "Bea Author"),
+                "provider_authors": ("Bea Author", "Ada Author"),
+                "target_authors": ("Ada Author", "Bea Author"),
+            },
+            False,
+        ),
+        (
+            {
+                "local_authors": ("Ada Author", "Bea Author"),
+                "provider_authors": ("Ada Author", "Bea Author"),
+                "target_authors": ("Bea Author", "Ada Author"),
+            },
+            False,
+        ),
+        ({"provider_authors": ("Ada Author", "Ada Author")}, False),
+        ({"local_authors": ("Ada Author", "Ada Author")}, False),
+        ({"local_authors": ()}, False),
+        ({"opening_authors": ("Other Author",)}, False),
+        ({"local_authors": (), "opening_authors": ("Ada Author",)}, False),
+        ({"opening_authors": ("ADA AUTHOR", "Ada Author")}, True),
+        ({"target_authors": ()}, True),
+        ({"target_authors": ("ADA  AUTHOR",)}, True),
+        ({"target_authors": ("Author, Ada",)}, True),
+        ({"provider_authors": ("Author, Ada",)}, True),
+        (
+            {
+                "local_authors": ("Ada Author", "Bea Author"),
+                "provider_authors": ("Ada Author", "Bea Author"),
+                "target_authors": ("Ada Author", "Bea Author"),
+            },
+            True,
+        ),
+    ],
+)
+def test_title_replacement_preserves_complete_creator_identity(
+    tmp_path, options, eligible
+):
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+    from tests.support.evidence_led_titles import publish_title_case
+
+    report = MetadataReport.from_json(isbn_title_report(**options).to_json())
+    repository = open_repository(tmp_path / "state.sqlite3")
+    try:
+        case_id, proposal = publish_title_case(repository, report)
+        title = next(r for r in proposal.results if r.destination.value == "title")
+        assert (EVIDENCE_LED_TITLE_REASON in title.reasons) is eligible
+        rows = repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination='title'"
+        ).fetchall()
+        assert len(rows) == int(eligible)
+        if eligible:
+            assert (
+                AutomaticDecision.from_json(rows[0][0]).policy_option
+                == "replace_target:isbn_creator_supported"
+            )
+        assert any(
+            f["destination"] == "title"
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+        )
+    finally:
+        repository.close()
+
+
 @pytest.mark.parametrize("mode", ["automatic", "ask", "ignore"])
 @pytest.mark.parametrize("owner_outcome", ["keep_current", "accept"])
 def test_title_policy_reaches_durable_authority_and_owner_choice(

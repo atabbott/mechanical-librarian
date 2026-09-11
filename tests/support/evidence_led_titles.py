@@ -90,20 +90,33 @@ def isbn_title_report(
     subtitle: str | None = None,
     local_variant: str | None = None,
     additional_variant: str | None = None,
+    local_authors: tuple[str, ...] = ("Ada Author",),
+    opening_authors: tuple[str, ...] = (),
+    provider_authors: tuple[str, ...] | None = None,
+    target_authors: tuple[str, ...] = ("Ada Author",),
+    empty_target_title: bool = False,
 ) -> MetadataReport:
     local = [
         consensus_local_title(current),
-        LocalClaim.create(
-            kind=ClaimKind.CREATOR,
-            observed="Ada Author",
-            canonical="Ada Author",
-            excerpt="Ada Author",
-            scope=ClaimScope.WORK,
-            role="author",
-            basis="package_metadata",
-            applicability="not_applicable",
-            checksum="not_applicable",
-            applicability_basis="not_applicable",
+        *(
+            LocalClaim.create(
+                kind=ClaimKind.CREATOR,
+                observed=name,
+                canonical=name,
+                excerpt=name,
+                scope=ClaimScope.WORK,
+                role="author",
+                basis=basis,
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                occurrence=index,
+            )
+            for basis, names in (
+                ("package_metadata", local_authors),
+                ("opening_matter", opening_authors),
+            )
+            for index, name in enumerate(names)
         ),
     ]
     if local_variant is not None:
@@ -159,9 +172,18 @@ def isbn_title_report(
     fields = _fields(
         current,
         authors=TargetField(
-            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Ada Author",)
+            TargetDestination.AUTHORS,
+            TargetFieldState.VALUE if target_authors else TargetFieldState.EMPTY,
+            target_authors if target_authors else None,
         ),
     )
+    if empty_target_title:
+        fields = tuple(
+            TargetField(f.destination, TargetFieldState.EMPTY, None)
+            if f.destination is TargetDestination.TITLE
+            else f
+            for f in fields
+        )
     plan = metadata_discovery_plan(
         TargetSnapshot("ebook", current, (), fields=fields), tuple(local)
     )
@@ -175,14 +197,19 @@ def isbn_title_report(
             identity = f"{name}-edition-{n}"
             claims = [
                 _claim(name, identity, ClaimKind.TITLE, title, scope=ClaimScope.WORK),
-                _claim(
-                    name,
-                    identity,
-                    ClaimKind.CREATOR,
-                    author,
-                    scope=ClaimScope.WORK,
-                    role="author",
-                    order=1,
+                *(
+                    _claim(
+                        name,
+                        identity,
+                        ClaimKind.CREATOR,
+                        author_name,
+                        scope=ClaimScope.WORK,
+                        role="author",
+                        order=1 + author_index,
+                    )
+                    for author_index, author_name in enumerate(
+                        provider_authors if provider_authors is not None else (author,)
+                    )
                 ),
                 _claim(
                     name,

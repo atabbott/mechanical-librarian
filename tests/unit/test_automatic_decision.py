@@ -443,7 +443,7 @@ def _f19a_title_decision_document(prior_digest: str, policy_option: str) -> str:
     return json.dumps(document, separators=(",", ":"), sort_keys=True)
 
 
-def test_only_current_manifest_can_rehydrate_or_admit_isbn_title_option() -> None:
+def test_only_current_manifest_can_admit_isbn_title_option() -> None:
     option = "replace_target:isbn_creator_supported"
     current = AutomaticDecision.from_json(
         _f19a_title_decision_document(F19A_QUALIFICATION_MANIFEST_SHA256, option)
@@ -453,12 +453,20 @@ def test_only_current_manifest_can_rehydrate_or_admit_isbn_title_option() -> Non
     )
     for (
         prior_digest,
-        _options,
+        options,
     ) in automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS:
-        with pytest.raises(AutomaticDecisionError):
-            AutomaticDecision.from_json(
+        if "title:" + option in options:
+            historical = AutomaticDecision.from_json(
                 _f19a_title_decision_document(prior_digest, option)
             )
+            assert not qualification_manifest_is_current(
+                "title", option, historical.qualification_manifest_sha256
+            )
+        else:
+            with pytest.raises(AutomaticDecisionError):
+                AutomaticDecision.from_json(
+                    _f19a_title_decision_document(prior_digest, option)
+                )
         with pytest.raises(AutomaticDecisionError):
             AutomaticDecision.create(
                 **{

@@ -61,6 +61,7 @@ from mechanical_librarian.domain.metadata_report import (
     canonical_json,
     complete_creator_identity_bindings,
     creator_comparison_key,
+    creator_sequence_methods,
     isbn_family,
     manifestation_publication_compatible,
     normalize_date_value,
@@ -1711,16 +1712,40 @@ def _evidence_led_title_election(
     """Test the ISBN-linked title boundary independently of companion elections."""
     if report.file.format in AUDIO_FILE_FORMATS or not result.alternatives:
         return result
-    local_authors = {
-        creator_comparison_key(claim.canonical)
+    local_author_claims = tuple(
+        claim
         for claim in report.local_claims
         if claim.kind is ClaimKind.CREATOR
         and claim.role == "author"
+        and claim.scope is ClaimScope.WORK
+        and claim.basis == "package_metadata"
+    )
+    if not local_author_claims or any(
+        claim.state is not FieldState.VALID or not claim.canonical
+        for claim in local_author_claims
+    ):
+        return result
+    local_authors = tuple(claim.observed for claim in local_author_claims)
+    # Opening occurrences are observations, not a complete ordered author list.
+    opening_authors = tuple(
+        claim.observed
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.CREATOR
+        and claim.role == "author"
+        and claim.scope is ClaimScope.WORK
+        and claim.basis == "opening_matter"
         and claim.state is FieldState.VALID
         and claim.canonical
-    }
-    if not local_authors:
-        return result
+    )
+    target_authors = next(
+        (
+            cast(tuple[str, ...], field.value)
+            for field in report.target.fields
+            if field.destination is TargetDestination.AUTHORS
+            and field.state is TargetFieldState.VALUE
+        ),
+        None,
+    )
     supported: set[str] = set()
     isbn_bound = False
     conflict = False
@@ -1750,15 +1775,36 @@ def _evidence_led_title_election(
                 for c in claims
                 if c.kind is ClaimKind.TITLE and type(c.value) is str
             )
-            authors = {
-                creator_comparison_key(c.value)
-                for c in claims
+            author_claims = tuple(
+                c
+                for c in candidate.claims
                 if c.kind is ClaimKind.CREATOR
                 and c.role == "author"
-                and type(c.value) is str
-            }
+                and c.scope is ClaimScope.WORK
+            )
+            authors = (
+                tuple(c.value for c in author_claims if type(c.value) is str)
+                if all(
+                    c.state is FieldState.VALID and type(c.value) is str
+                    for c in author_claims
+                )
+                else ()
+            )
             # Missing evidence does not dissent, but cannot support election.
-            if authors and authors != local_authors:
+            if authors and (
+                not creator_sequence_methods(authors, local_authors)
+                or any(
+                    not any(
+                        creator_sequence_methods((author,), (observed,))
+                        for author in authors
+                    )
+                    for observed in opening_authors
+                )
+                or (
+                    type(target_authors) is tuple
+                    and not creator_sequence_methods(authors, target_authors)
+                )
+            ):
                 conflict = True
             if candidate.work_identity != "unresolved":
                 works.add(candidate.work_identity)
@@ -1788,7 +1834,7 @@ def _evidence_led_title_election(
                 isbn_bound = True
                 if (
                     provider.authority is None
-                    or authors != local_authors
+                    or not creator_sequence_methods(authors, local_authors)
                     or candidate.work_identity == "unresolved"
                 ):
                     continue
@@ -1838,7 +1884,7 @@ def _evidence_led_title_election(
         if type(a.value.value) is str
         and title_identity_key(a.value.value) == title
         and supported.intersection(a.evidence_references)
-        and a.assessment is not ProposalAssessment.PRESERVES_TARGET
+        and a.assessment is ProposalAssessment.REPLACES_TARGET
     )
     if not selected:
         return result

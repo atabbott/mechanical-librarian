@@ -7,8 +7,10 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Current title-consumer qualification (#1007)
 
-The current [v25 candidate](../reference/f20-rich-metadata-qualification-candidate-v25.json)
-binds #1007's title and packet consumer changes. Its current continuity proof is
+The current [v26 candidate](../reference/f20-rich-metadata-qualification-candidate-v26.json)
+binds #1007's title and packet consumers, including replacement-only and
+complete ordered creator corrections. Published v25 remains immutable historical
+evidence. Its current continuity proof is
 the 13-option actual persistence/effect-authority test and two retained current
 reports composed across all 13 options (26 previews). The historical 49-report
 v34 and 15-report v37 corpora do not parse under the current report contract;

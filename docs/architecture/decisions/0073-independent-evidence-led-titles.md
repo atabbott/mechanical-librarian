@@ -19,6 +19,14 @@ title or variant claim remains. One independent provider is sufficient. Several
 same-work print and ebook ISBNs are permitted; duplicate records do not add
 authority. Provider failure and missing evidence are not invented dissent.
 
+This replacement option requires a populated target title; filling an empty
+title retains its existing policy. Complete package and provider author lists
+use the existing ordered lexical comparison, preserving cardinality and duplicate
+rejection. Populated target Authors can veto a conflict but never supply positive
+identity authority. Opening-matter author occurrences are separate observations:
+each explicit name must match a supported author, while repeated observations
+add no authority. Opening observations alone cannot establish a complete list.
+
 The exact elected candidate carries a closed `independent_title` fact in packet
 v7. Only that candidate can compile and reach a title-only deterministic action
 under action policy v2 and decision policy v12. Other alternatives remain visible;
@@ -28,8 +36,9 @@ requirement and amends ADR-0022's candidate summary contract. All other election
 and coupled actions retain their existing rules.
 
 Current title qualification admits the reason-specific
-`title:replace_target:isbn_creator_supported` option. Historical manifests do
-not acquire it. Ask, Ignore, owner-final decisions, pause and title-layout
+`title:replace_target:isbn_creator_supported` option. Pre-option historical manifests do
+not acquire it. Published v11 remains readable with its original option set, but
+only the current v12 qualification grants current authority. Ask, Ignore, owner-final decisions, pause and title-layout
 suspension remain authoritative. Consent, backup, currentness, read-back, audit
 and recovery remain prerequisites for any guarded effect. Reviewers remain
 advisory and receive no write or credential authority.
