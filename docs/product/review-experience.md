@@ -326,6 +326,10 @@ locked until a later authoritative current-case read proves a safe state.
 Every field exposes one closed server-owned interaction classification. Owner
 attention and automatic abstention are queued; an ordinary automatic outcome is
 inspectable and may be deliberately overridden but is not ordinary next work.
+A recording reads the same way. Until an F46 record qualifies an audiobook
+identity every field on it is the owner's; a field a record did decide states
+its candidate, the authorities behind it and the gate that admitted it, and
+leaves the attention queue like any other settled field.
 Recorded owner outcomes remain inspectable. Unsupported or suspended fields
 retain their current value and a specific explanation, never a selectable
 ``Not set`` placeholder. Equal current and proposed values render as one

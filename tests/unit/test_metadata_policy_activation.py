@@ -28,6 +28,8 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyNotebook,
 )
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.automatic_decision import QUALIFIED_POLICY_OPTIONS
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -438,6 +440,63 @@ def test_policy_contention_is_read_from_the_condition_not_the_message(
     # The condition vocabulary is closed, so a seam cannot invent one.
     with pytest.raises(MetadataReportError):
         PolicyContentionError("wedged", "state moved")
+    repository.close()
+
+
+def test_asin_automatic_routing_waits_for_the_audiobook_record(
+    state_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Routing `asin` to Automatic is reachable only through an F46 record.
+
+    The ebook envelope leaves `asin` unqualified, so the draft, the notebook
+    and the activation all refuse it today. The audiobook record admits the
+    same `asin:preserve_exact` routing without adding a single ebook option:
+    what an ebook does under that routing is decided by the ebook envelope,
+    which still says Ask (#967).
+    """
+    repository = open_repository(state_path)
+    destinations = {
+        category: "unsupported" if category == "explicit" else "ask"
+        for category in OPTION_CATALOGUE
+    }
+    destinations["asin"] = "automatic"
+    profile = MetadataPolicyProfile.create(
+        "ASIN automatic intent", dict(DEFAULT_OPTIONS), destinations
+    )
+    notebook = PolicyNotebook(repository, ("audio",), {})
+
+    assert "asin" not in QUALIFIED_AUTOMATIC
+    with pytest.raises(MetadataReportError, match="automatic intent is unqualified"):
+        repository.create_metadata_policy_draft(profile.canonical_json)
+    with pytest.raises(MetadataPolicyApplicationError, match="automatic unqualified"):
+        notebook.validate(profile)
+
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        frozenset({audiobook_decision_qualification.F46_ASIN_IDENTITY}),
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_QUALIFICATION_MANIFEST_SHA256",
+        "7" * 64,
+    )
+    assert profile == notebook.validate(profile)
+    assert profile.policy_id == repository.create_metadata_policy_draft(
+        profile.canonical_json
+    )
+    repository.enter_shadow_preview(1)
+    resolved = resolve_policy(profile, "audio")
+    transition = repository.activate_metadata_policy(
+        profile.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        (("audio", resolved.resolved_id, resolved.canonical_json),),
+        2,
+    )
+    assert transition is not None and "completed" == transition.state
+    # The record widened routing, not the ebook option catalogue.
+    assert "asin:preserve_exact" not in QUALIFIED_POLICY_OPTIONS
+    assert ("preserve_exact", "ebook_manifestation") == OPTION_CATALOGUE["asin"]
     repository.close()
 
 

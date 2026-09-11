@@ -8,7 +8,8 @@ import re
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Literal, Protocol, cast
+from types import MappingProxyType
+from typing import Final, Literal, Mapping, Protocol, cast
 
 from mechanical_librarian.application.contained_reviewer_contract import (
     is_cover_profile_contract_reason,
@@ -75,6 +76,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFieldState,
 )
+from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 
 SCHEMA_VERSION = "cover-consideration-v4"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
@@ -371,6 +373,57 @@ def _validated_cover_consideration(
     ) as error:
         raise ValueError("cover consideration evidence is invalid") from error
     return value, report
+
+
+# One statement per retained cover source. The provider rows read the one
+# label table every other surface reads, so a source is named with the same
+# word wherever the owner meets it (#967).
+_COVER_EVIDENCE_STATEMENTS: Final[Mapping[CoverSourceKind, tuple[str, str, str]]] = (
+    MappingProxyType(
+        {
+            CoverSourceKind.ABS: (
+                "Local library record",
+                "local_presence",
+                "Local library cover retained.",
+            ),
+            CoverSourceKind.EPUB: (
+                "Local EPUB package",
+                "local_presence",
+                "Local EPUB cover retained.",
+            ),
+            CoverSourceKind.HARDCOVER: (
+                PROVIDER_LABELS["hardcover"],
+                "external_corroboration",
+                "Retained catalogue cover supports this choice.",
+            ),
+            CoverSourceKind.OPEN_LIBRARY: (
+                PROVIDER_LABELS["open_library"],
+                "external_corroboration",
+                "Retained catalogue cover supports this choice.",
+            ),
+            CoverSourceKind.INVENTAIRE: (
+                PROVIDER_LABELS["inventaire"],
+                "external_corroboration",
+                "Retained catalogue cover supports this choice.",
+            ),
+            CoverSourceKind.AUDIBLE_CATALOG: (
+                PROVIDER_LABELS["audible_catalog"],
+                "external_corroboration",
+                "Retained catalogue cover supports this choice.",
+            ),
+            CoverSourceKind.ITUNES_SEARCH: (
+                PROVIDER_LABELS["itunes_search"],
+                "external_corroboration",
+                "Retained catalogue cover supports this choice.",
+            ),
+        }
+    )
+)
+_UNNAMED_COVER_EVIDENCE_STATEMENT: Final = (
+    "Provider evidence",
+    "external_corroboration",
+    "Retained cover evidence supports this choice.",
+)
 
 
 def cover_consideration_currentness(
@@ -1482,49 +1535,8 @@ def _cover_choice_contexts(
             source = sources.get(binding.get("reference"))
             if source is None:
                 continue
-            label, role, observation = {
-                CoverSourceKind.ABS: (
-                    "Local library record",
-                    "local_presence",
-                    "Local library cover retained.",
-                ),
-                CoverSourceKind.EPUB: (
-                    "Local EPUB package",
-                    "local_presence",
-                    "Local EPUB cover retained.",
-                ),
-                CoverSourceKind.HARDCOVER: (
-                    "Hardcover",
-                    "external_corroboration",
-                    "Retained catalogue cover supports this choice.",
-                ),
-                CoverSourceKind.OPEN_LIBRARY: (
-                    "Open Library",
-                    "external_corroboration",
-                    "Retained catalogue cover supports this choice.",
-                ),
-                CoverSourceKind.INVENTAIRE: (
-                    "Inventaire",
-                    "external_corroboration",
-                    "Retained catalogue cover supports this choice.",
-                ),
-                CoverSourceKind.AUDIBLE_CATALOG: (
-                    "Audible catalog",
-                    "external_corroboration",
-                    "Retained catalogue cover supports this choice.",
-                ),
-                CoverSourceKind.ITUNES_SEARCH: (
-                    "iTunes Store",
-                    "external_corroboration",
-                    "Retained catalogue cover supports this choice.",
-                ),
-            }.get(
-                source.kind,
-                (
-                    "Provider evidence",
-                    "external_corroboration",
-                    "Retained cover evidence supports this choice.",
-                ),
+            label, role, observation = _COVER_EVIDENCE_STATEMENTS.get(
+                source.kind, _UNNAMED_COVER_EVIDENCE_STATEMENT
             )
             rows.append({"source": label, "role": role, "observation": observation})
         return rows or (

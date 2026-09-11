@@ -46,6 +46,7 @@ from mechanical_librarian.application.review_web import (
     _provider_comparison_notices,
     _provider_label,
 )
+from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.audio_health import (
     AUDIO_HEALTH_BOUNDS,
     AudioHealthKind,
@@ -55,6 +56,9 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioEvidenceSurface,
     AudioInspectionLimits,
     AudioTrackDigest,
+)
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    F46_ASIN_IDENTITY,
 )
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
@@ -787,6 +791,75 @@ def test_policy_mutations_return_specific_bounded_problems_and_fail_closed(
     )
     assert 403 == denied.status_code
     assert "csrf" == denied.json()["error"]["code"]
+
+
+def test_the_policy_state_names_every_audiobook_tranche_and_a_record_opens_one(
+    web: ReviewWebContext[_CloseRecordingRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The owner's routing surface can see an audiobook record.
+
+    Routing is one library-wide owner choice, so the page that offers
+    Automatic has to read the audiobook envelope as well as the ebook one.
+    While no record is published every tranche states itself unavailable and
+    names no digest, which is what keeps the page rendering exactly what it
+    renders today. Publishing one record makes exactly that identity's own
+    category and option routable and moves no ebook record and no other
+    tranche, so activation needs no further change on any surface (#967).
+    """
+    web.login()
+    inert = web.client.get("/api/v1/metadata-policy/state").json()
+    assert [
+        {
+            "automatic_available": False,
+            "destination": "asin",
+            "field": "asin",
+            "identity": F46_ASIN_IDENTITY,
+            "option": "preserve_exact",
+            "record_sha256": None,
+        },
+        {
+            "automatic_available": False,
+            "destination": "narrators",
+            "field": "contributor_names",
+            "identity": "contributor_names:canonical:audiobook_narrators_fill_empty",
+            "option": "canonical",
+            "record_sha256": None,
+        },
+        {
+            "automatic_available": False,
+            "destination": "series",
+            "field": "series",
+            "identity": "series:primary_narrative:audiobook_fill_empty",
+            "option": "primary_narrative",
+            "record_sha256": None,
+        },
+    ] == inert["audiobook_qualification"]
+
+    record = "7" * 64
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        frozenset({F46_ASIN_IDENTITY}),
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", record
+    )
+    qualified = web.client.get("/api/v1/metadata-policy/state").json()
+    assert {
+        (entry["field"], entry["option"], entry["record_sha256"])
+        for entry in qualified["audiobook_qualification"]
+        if entry["automatic_available"]
+    } == {("asin", "preserve_exact", record)}
+    # The ebook records are the same bytes either way: an audiobook record
+    # never speaks for one, and the ASIN it names is exactly the option the
+    # ebook envelope still leaves unqualified.
+    assert inert["rich_qualification"] == qualified["rich_qualification"]
+    assert {
+        (entry["field"], entry["option"], entry["automatic_available"])
+        for entry in qualified["rich_qualification"]
+        if entry["field"] == "asin"
+    } == {("asin", "preserve_exact", False), ("asin", "ebook_manifestation", False)}
 
 
 def test_policy_routes_are_closed_read_only_and_schema_deterministic(

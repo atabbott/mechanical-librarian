@@ -87,6 +87,12 @@ F47` where the owner reads it. Nothing automatic is ever offered a recording:
 the shadow projection abstains before it reads policy, so no shadow outcome
 exists for an automatic decision to be minted from.
 
+> Superseded by
+> [ADR-0073](0073-audiobook-decision-qualification.md): a recording's field may
+> now be decided automatically, but only under an F46 record that qualified
+> that exact audiobook identity. Every destination no record names is still the
+> owner's, by the same abstention.
+
 ## Consequences
 
 ### Positive

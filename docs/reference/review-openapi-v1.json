@@ -2590,6 +2590,70 @@
         "title": "_AttentionResponse",
         "type": "object"
       },
+      "_AudiobookQualification": {
+        "additionalProperties": false,
+        "description": "One audiobook decision tranche and whether a record qualified it.\n\n`field` and `option` are the owner's existing policy category and option,\nso a routing surface can read this exactly as it reads the rich records;\n`identity` names the audiobook shape the record qualified and never\nspeaks for an ebook. Availability and the digest move together when unit\nC publishes a record, so the shape is closed but neither is a `Literal`.",
+        "properties": {
+          "automatic_available": {
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "destination": {
+            "enum": [
+              "asin",
+              "narrators",
+              "series"
+            ],
+            "title": "Destination",
+            "type": "string"
+          },
+          "field": {
+            "enum": [
+              "asin",
+              "contributor_names",
+              "series"
+            ],
+            "title": "Field",
+            "type": "string"
+          },
+          "identity": {
+            "maxLength": 128,
+            "pattern": "^[a-z_]+:[a-z_]+:[a-z_]+$",
+            "title": "Identity",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "canonical",
+              "preserve_exact",
+              "primary_narrative"
+            ],
+            "title": "Option",
+            "type": "string"
+          },
+          "record_sha256": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Record Sha256"
+          }
+        },
+        "required": [
+          "automatic_available",
+          "destination",
+          "field",
+          "identity",
+          "option"
+        ],
+        "title": "_AudiobookQualification",
+        "type": "object"
+      },
       "_AutomaticDecisionProjection": {
         "additionalProperties": false,
         "properties": {
@@ -5982,6 +6046,13 @@
       "_PolicyProfileResponse": {
         "additionalProperties": false,
         "properties": {
+          "audiobook_qualification": {
+            "items": {
+              "$ref": "#/components/schemas/_AudiobookQualification"
+            },
+            "title": "Audiobook Qualification",
+            "type": "array"
+          },
           "policy_id": {
             "title": "Policy Id",
             "type": "string"
@@ -6041,6 +6112,7 @@
           }
         },
         "required": [
+          "audiobook_qualification",
           "policy_id",
           "profile",
           "rich_qualification"

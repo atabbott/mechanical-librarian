@@ -52,7 +52,7 @@ from mechanical_librarian.application.metadata_policy import (
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.cover_qualification_policy import (
-    COVER_AWARE_QUALIFIED_POLICY_OPTIONS,
+    cover_aware_qualified_policy_options,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
@@ -68,8 +68,6 @@ from mechanical_librarian.domain.review_case import (
     ReviewCaseValueError,
     ReviewTransition,
 )
-
-_QUALIFIED_POLICY_OPTIONS = COVER_AWARE_QUALIFIED_POLICY_OPTIONS
 
 
 class SQLiteMetadataPolicyRepository(ConnectionScoped):
@@ -202,7 +200,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 for field, option in policy.options
                 if dict(policy.destinations)[field] == "automatic"
             }
-            if not requested or not requested.issubset(_QUALIFIED_POLICY_OPTIONS):
+            if not requested or not requested.issubset(
+                cover_aware_qualified_policy_options()
+            ):
                 raise MetadataReportError(
                     "automatic posture qualification is unavailable"
                 )
@@ -255,7 +255,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 for category, destination in profile.destinations
                 if destination == "automatic"
             }
-            if not requested_automatic.issubset(_QUALIFIED_POLICY_OPTIONS):
+            if not requested_automatic.issubset(cover_aware_qualified_policy_options()):
                 raise MetadataReportError(
                     "metadata policy automatic intent is unqualified"
                 )
@@ -484,7 +484,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 state[0] == 1
                 and state[1] == profile.policy_id
                 and requested
-                and not requested.issubset(_QUALIFIED_POLICY_OPTIONS)
+                and not requested.issubset(cover_aware_qualified_policy_options())
             ):
                 raise MetadataReportError(
                     "active metadata policy resolution is unqualified"
@@ -612,7 +612,9 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             }
             if automatic_options and (
                 state[2] not in {"preview", "automatic"}
-                or not automatic_options.issubset(_QUALIFIED_POLICY_OPTIONS)
+                or not automatic_options.issubset(
+                    cover_aware_qualified_policy_options()
+                )
             ):
                 raise PolicyContentionError(
                     "unqualified",
@@ -647,7 +649,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                                 f"{category}:{dict(resolved.options)[category]}"
                                 for category, destination in resolved.destinations
                                 if destination == "automatic"
-                            }.issubset(_QUALIFIED_POLICY_OPTIONS)
+                            }.issubset(cover_aware_qualified_policy_options())
                         )
                     )
                 ):

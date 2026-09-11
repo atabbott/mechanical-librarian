@@ -93,8 +93,10 @@ MAX_PROVIDER_CHAPTER_DURATIONS = 1_024
 MAX_AUDIO_SIDECARS = AudioInspectionLimits.HARD_CAPS["sidecar_documents"]
 # Whole seconds. Provider runtimes arrive minute-granular, so an agreement band
 # rather than equality is the only comparison that can be true of both sides.
-# The corroboration module names this same parameter
-# `RUNTIME_BAND_TIGHT_SECONDS`; it is measured at slice-2 qualification.
+# This decides whether a stated duration claim links to a local one at all.
+# The corroboration gate's own `RUNTIME_BAND_TIGHT_SECONDS` is a separate
+# parameter that states the same number today and is retuned separately
+# (ADR-0064, #967).
 DURATION_AGREEMENT_BAND_SECONDS = 90
 # The marketplaces an ASIN lookup may resolve in, US first. ADR-0061 makes ASIN
 # a marketplace-scoped identifier, so the resolving marketplace travels with the

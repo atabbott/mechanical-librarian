@@ -104,6 +104,7 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
+from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
@@ -1451,6 +1452,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             outcome.policy_generation,
             report,
             proposal,
+            media_kind=case.media_kind,
         )
         if expected.to_json() != row[7]:
             raise MetadataReportError("shadow outcome persistence is invalid")
@@ -1483,13 +1485,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             if raw_case is None:
                 raise MetadataReportError("shadow outcome source is unavailable")
             case_for_recovery = ReviewCase.from_json(raw_case[0])
-            if case_for_recovery.media_kind == "audiobook":
-                # Nothing automatic may act on a recording. F47 owns audiobook
-                # writes, so the projection abstains here rather than deciding
-                # and holding the decision back: no shadow outcome is
-                # published and no automatic decision can be minted from one.
-                # The work still completes, because abstaining is an answer
-                # (#966).
+            if case_for_recovery.media_kind == "audiobook" and not (
+                audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+            ):
+                # While no audiobook tranche is qualified the projection
+                # abstains here rather than deciding and holding the decision
+                # back: no shadow outcome is published and no automatic
+                # decision can be minted from one. The work still completes,
+                # because abstaining is an answer (#966). Once a record
+                # qualifies one identity the ordinary projection runs and
+                # withdraws Automatic from every destination that record does
+                # not name (#967).
                 transaction.commit()
                 return "inactive"
             if staged_action is not None:
@@ -1529,7 +1535,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ):
                 raise ReviewAdmissionStaleError
             outcome = ShadowOutcomeSet.create(
-                case, decide_shadow_packet(packet), policy, state[0], report, proposal
+                case,
+                decide_shadow_packet(packet),
+                policy,
+                state[0],
+                report,
+                proposal,
+                media_kind=case.media_kind,
             )
             serialized = outcome.to_json()
             existing = self._connection.execute(

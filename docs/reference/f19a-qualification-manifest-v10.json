@@ -31,7 +31,7 @@
         "src/mechanical_librarian/application/review_web.py": "ad29ef8c58c5598659916f596946f2a33aedf2b4a8c77e588a7fd5c42aca91b4"
       },
       "retained_measurements_unchanged": true,
-      "scope": "Read the original case-bound Ask destinations for title, subtitle and series consistently across detail, Library and Attention. No change to proposal election, candidate eligibility, option outcomes, decision policy or scorer inputs. Subsequent annotation wrapping is formatting-only: the Python AST is unchanged, so retained measurements carry without rescoring."
+      "scope": "Read the original case-bound Ask destinations for title, subtitle and series consistently across detail, Library and Attention. No change to proposal election, candidate eligibility, option outcomes, decision policy or scorer inputs. Later work reshaped these sources: the inert F46 audiobook tranche wiring changed how a recording's attention is read (#967), so the Python AST is no longer identical to the measured one. The claim these retained measurements carry on is that ebook output is byte-identical, which is the output they were taken over; the behavior-source digests in this block remain the exact bytes v9 measured."
     },
     "series_metrics": {
       "exposed_confirmation": {
@@ -667,17 +667,17 @@
   "replayed_prior_option_count": 12,
   "review_projection_source_closure": {
     "behavior_sources": {
-      "src/mechanical_librarian/adapters/persistence/metadata_policy.py": "56170629caefbffb3ad034c7b0fbd9d287c88794a4b7363dfe95829bab169941",
-      "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "6e5ce811408bd4bf654a5365476fc4f4e120643cd56560676cc7d97e4c8e3fca",
+      "src/mechanical_librarian/adapters/persistence/metadata_policy.py": "83dca6d483294a11102ea61830cf0f1ae11e809b1037353d1095655c3cbf800e",
+      "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "72f2167a00ba71616e599baa8d8e56d3e639408481ce2f40dd525617b63bd6ca",
       "src/mechanical_librarian/adapters/persistence/review_cases.py": "7b4a1a19dfd3e7cfc861351d3143d2de5fc631d3dc17ac88b336b59520bdbb79",
       "src/mechanical_librarian/adapters/persistence/review_projections.py": "2ef1a06397309216f3e5ebb8899116f495f86735cc2b36508d7b16074482bda4",
       "src/mechanical_librarian/adapters/persistence/review_sql.py": "239a1a71befe44e9eb5a71b5514ec1ef27cee5b938b5a89705803320c015f937",
-      "src/mechanical_librarian/application/review_web.py": "f19b6cbca71b9db79f0990733d263af19fd467295e8466369dd4ebb444f5cfa2"
+      "src/mechanical_librarian/application/review_web.py": "ff3bc2e6e377c39aa1347f90f863bcbee262b390d9cd88112344e0f277260e73"
     },
     "fresh_holdout_claim": false,
     "fresh_scoring_run": false,
     "issue": 144,
-    "scope": "Read-time audiobook media-health observations projected over the retained authored description advice (#892); unchanged scoring, options, classification, recovery and authority rules."
+    "scope": "Read-time audiobook media-health observations projected over the retained authored description advice (#892), and the inert F46 audiobook tranche wiring, which reads a field an F46 record decided exactly as an ebook's on case detail, keeps the attention lens reading a recording's attention from its media kind because the membership query it mirrors already excludes a durably decided field, and carries the case media kind through the projection (#967). Ebook projection output is byte-identical. On a recording no record is published, so nothing automatic is minted and its attention is read exactly as before; the one moved string is an audio provider's evidence label, which now states the canonical provider name every surface reads instead of an unavailable one. Scoring, options, classification, recovery and authority rules are unchanged."
   },
   "schema": "f19a-v14-result",
   "split_metrics": {
