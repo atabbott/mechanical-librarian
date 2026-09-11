@@ -8,6 +8,13 @@
 
 ## Unreleased
 
+- An audiobook's media-health section now states what each file's own headers
+  hold: a container that is not the one its file type names, a stream outside
+  the expected codecs, headers that state no running time, and Apple-protected
+  samples. A recording short of the edition it was matched to is stated for
+  every lane, including those whose provider runtime publication does not
+  retain. Existing installs require a clean rebuild. (#144)
+
 - An audiobook decision class can now earn automatic authority through its own
   qualification record, one tranche at a time, and no ebook record ever speaks
   for a recording. No record is published yet, so every audiobook proposal is

@@ -16,10 +16,13 @@ from mechanical_librarian.domain.audio_composition import (
     compose_audio_inspections,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    ADMITTED_AUDIO_CONTAINERS,
     MAX_CHAPTERS,
     MAX_DURATION_MILLISECONDS,
+    MOV_CONTAINER_FAMILY,
     AudioChapter,
     AudioChapterComposition,
+    AudioContainerFacts,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
     AudioInspection,
@@ -29,6 +32,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioObservationKind,
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
+from mechanical_librarian.domain.metadata_report import AUDIO_FILE_FORMATS
 
 
 def _source(ordinal: int) -> Fingerprint:
@@ -77,12 +81,14 @@ def _track(
     name: str | None = None,
     synthesized: bool = False,
     repaired: bool = False,
+    container_facts: AudioContainerFacts | None = None,
+    file_format: str = "mp3",
 ) -> InspectedTrack:
     return InspectedTrack(
         ordinal,
         f"{ordinal:064x}",
         f"{ordinal + 100:064x}",
-        "mp3",
+        file_format,
         name or f"{ordinal:02d}.mp3",
         AudioInspection(
             AudioInspectionOutcome.SUCCESS,
@@ -94,6 +100,7 @@ def _track(
             else AudioEmbeddedCover(False),
             False,
             title,
+            container_facts,
         ),
         sequence,
         synthesized,
@@ -596,3 +603,149 @@ def test_a_synthesized_or_wholly_repaired_name_titles_no_chapter() -> None:
     )
 
     assert [value.title for value in composed.chapters] == [None, None, "03 \ufffd"]
+
+
+def _facts(
+    *,
+    container: str | None = "mp3",
+    codec: str | None = "mp3",
+    codec_tag: str | None = None,
+    duration_stated: bool = True,
+) -> AudioContainerFacts:
+    return AudioContainerFacts(container, codec, codec_tag, duration_stated)
+
+
+def test_a_file_whose_headers_match_what_this_build_admits_notices_nothing() -> None:
+    """The control: the container facts alone compose no observation.
+
+    Every departure below is a single field away from this, so a case that
+    fired here would mean the composition was reading the presence of the facts
+    rather than what they said.
+    """
+    composed = compose_audio_inspections(
+        (_track(1, (_duration(1, 60_000),), container_facts=_facts()),)
+    )
+
+    assert composed.observations == ()
+
+
+def test_each_departing_header_names_its_tracks_under_its_own_kind() -> None:
+    """Four kinds, one per departure, each naming exactly the files it is about.
+
+    A set whose fourth file is the odd one out is the case this vocabulary
+    exists for: an item-wide statement would send an owner through every file
+    to find the one that is wrong.
+    """
+    composed = compose_audio_inspections(
+        (
+            _track(1, (_duration(1, 60_000),), container_facts=_facts()),
+            _track(
+                2,
+                (_duration(2, 60_000),),
+                container_facts=_facts(container="mov,mp4,m4a,3gp,3g2,mj2"),
+            ),
+            _track(3, (_duration(3, 60_000),), container_facts=_facts(codec="ac3")),
+            _track(
+                4,
+                (_duration(4, 60_000),),
+                container_facts=_facts(codec_tag="drms"),
+            ),
+        )
+    )
+
+    assert [(value.kind, value.tracks) for value in composed.observations] == [
+        (AudioObservationKind.CONTAINER_UNEXPECTED, (2,)),
+        (AudioObservationKind.CODEC_UNEXPECTED, (3,)),
+        (AudioObservationKind.STREAM_ENCRYPTED, (4,)),
+    ]
+    assert all(value.candidate is None for value in composed.observations)
+
+
+def test_an_m4b_holding_the_mov_family_is_the_container_it_declares() -> None:
+    """The bound is the container the admitted extension names, not one family.
+
+    An `.m4b` is expected to hold the MOV family and an `.mp3` to hold MP3, so
+    the same container name is unremarkable under one extension and a departure
+    under the other. Reading only a global admitted set would have let an
+    `.m4b` that is really an MP3 pass silently, which is the case an owner most
+    needs told.
+    """
+    composed = compose_audio_inspections(
+        (
+            _track(
+                1,
+                (_duration(1, 60_000),),
+                container_facts=_facts(
+                    container="mov,mp4,m4a,3gp,3g2,mj2", codec="aac"
+                ),
+                file_format="m4b",
+                name="book.m4b",
+            ),
+        )
+    )
+
+    assert composed.observations == ()
+
+
+def test_a_track_stating_no_duration_is_named_once_by_the_kind_that_says_why() -> None:
+    """The precedence between the two duration kinds, settled in composition.
+
+    A container that states no running time also composes no `DURATION` claim,
+    so the older set-level kind is true of the same file. Stating both tells an
+    owner one thing twice; the kind that names the cause is kept, and the older
+    kind is left for the track that stated a running time this domain could not
+    hold.
+    """
+    composed = compose_audio_inspections(
+        (
+            _track(
+                1,
+                (_duration(1, 60_000),),
+                container_facts=_facts(),
+            ),
+            _track(2, (), container_facts=_facts(duration_stated=False)),
+            _track(3, (), container_facts=_facts()),
+        )
+    )
+
+    assert [(value.kind, value.tracks) for value in composed.observations] == [
+        (AudioObservationKind.DURATION_UNSTATED, (2,)),
+        (AudioObservationKind.TRACK_DURATION_UNAVAILABLE, (3,)),
+    ]
+
+
+def test_a_track_that_stated_no_container_facts_states_no_departure() -> None:
+    """Absent facts are an absent statement, never an unexpected one.
+
+    A failed inspection carries no container facts at all, and neither does a
+    report written by a child that predates them. Reading that silence as a
+    departure would accuse every such file of holding the wrong container.
+    """
+    composed = compose_audio_inspections(
+        (_track(1, (_duration(1, 60_000),), container_facts=None),)
+    )
+
+    assert composed.observations == ()
+
+
+def test_every_admitted_file_format_names_the_container_it_should_hold() -> None:
+    """The two admitted sets are the same set, or the bound accuses everything.
+
+    `AUDIO_FILE_FORMATS` decides which files this build will inspect at all;
+    `ADMITTED_AUDIO_CONTAINERS` decides what each of them is expected to hold.
+    A fourth extension admitted into the first without the second would be
+    read as an extension naming no expected container, and every file of that
+    type would be stated `container_unexpected` on the strength of a table
+    nobody remembered to extend. The failure would be silent, owner-facing,
+    and wrong about every such item, so the two are pinned equal here.
+    """
+    assert set(ADMITTED_AUDIO_CONTAINERS) == AUDIO_FILE_FORMATS
+    # Read-only at runtime, not merely un-rebindable. `Final` is a promise to
+    # the type checker and nothing to the interpreter, so an exported plain
+    # dict could be edited by any importer and would silently redefine what
+    # `container_unexpected` means for every item the process inspects after.
+    with pytest.raises(TypeError):
+        ADMITTED_AUDIO_CONTAINERS["m4b"] = "mp3"
+    with pytest.raises(TypeError):
+        del ADMITTED_AUDIO_CONTAINERS["m4b"]
+    assert ADMITTED_AUDIO_CONTAINERS["m4b"] == MOV_CONTAINER_FAMILY

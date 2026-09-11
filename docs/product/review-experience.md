@@ -381,6 +381,15 @@ health beneath the row rather than dropping it with the terminal card.
 The vocabulary is closed and read-only: nothing in it is a claim, a proposal,
 or a decision, and no observation offers an action.
 
+The section states what the files themselves hold as well as what the evidence
+compared: a container that is not the one the file type names, an audio stream
+outside the two codecs this build expects, headers that state no running time,
+and samples a rights-management scheme protects. Each names the track it was
+read from and refuses nothing — a recording this build did not expect is still
+the owner's recording. A running time short of the matched edition's is now
+stated for every lane, including those whose provider runtime publication does
+not retain, and it is stated once per edition however it was arrived at.
+
 Cover review remains advisory: small eligible sets compare current and
 candidates equally; larger sets retain the incumbent while exposing the full
 eligible gallery. Below 900px the incumbent becomes the first item of the same

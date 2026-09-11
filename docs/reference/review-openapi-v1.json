@@ -2859,7 +2859,7 @@
             "items": {
               "$ref": "#/components/schemas/_MediaHealthObservation"
             },
-            "maxItems": 4608,
+            "maxItems": 6656,
             "title": "Media Health",
             "type": "array"
           },
@@ -2868,7 +2868,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v2",
+            "const": "review-case-detail-v3",
             "title": "Schema Version",
             "type": "string"
           },
@@ -5246,6 +5246,7 @@
             "title": "Query"
           },
           "schema_version": {
+            "const": "review-library-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -5474,6 +5475,10 @@
               "chapter_atoms_partial",
               "tag_disagrees_across_tracks",
               "asin_disagrees_across_tracks",
+              "container_unexpected",
+              "codec_unexpected",
+              "duration_unstated",
+              "stream_encrypted",
               "media_unreadable"
             ],
             "title": "Kind",
@@ -6954,7 +6959,7 @@
             "items": {
               "$ref": "#/components/schemas/_MediaHealthObservation"
             },
-            "maxItems": 4608,
+            "maxItems": 6656,
             "title": "Media Health",
             "type": "array"
           },

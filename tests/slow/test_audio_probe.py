@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import tempfile
 from collections.abc import Iterator
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -41,6 +42,7 @@ from mechanical_librarian.domain.audio_inspection import (
 )
 from mechanical_librarian.domain.metadata_report import ClaimKind
 from tests.support.audio_containers import (
+    AC3_OBJECT_TYPE,
     Mp4Fixture,
     hostile_container,
     mp3_audiobook,
@@ -349,3 +351,139 @@ def test_a_zero_byte_file_is_unreadable_not_refused(media_root: Path) -> None:
     assert raised.value.outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE
     assert raised.value.track == 2
     assert audio_inspection_failure_code(raised.value.outcome) == "unreadable_media"
+
+
+def _observed_kinds(result: AudioInspectionResult) -> set[AudioObservationKind]:
+    return {value.kind for value in result.audio.observations}
+
+
+# What every container case below departs from: an ordinary generated audiobook
+# that states one thing this build did not expect, and nothing else.
+_HEALTHY_FIXTURE = Mp4Fixture(
+    milliseconds=4_000,
+    well_known={"CDEK": "B0CW1KL2QD", "©nam": "Recorded Title"},
+)
+
+
+def test_a_healthy_container_states_no_media_departure(media_root: Path) -> None:
+    """The control the four cases below are read against.
+
+    Every one of them changes exactly one header, so this proves the change is
+    what the observation came from rather than something the generator does.
+    """
+    (media_root / "book.m4b").write_bytes(mp4_audiobook(_HEALTHY_FIXTURE))
+
+    result = _inspect(media_root, "book.m4b")
+
+    assert result.audio.observations == ()
+    facts = result.audio.tracks[0]
+    assert facts.format == "m4b"
+
+
+@pytest.mark.parametrize(
+    ("case", "name", "written", "kind"),
+    (
+        pytest.param(
+            "codec",
+            "book.m4b",
+            None,
+            AudioObservationKind.CODEC_UNEXPECTED,
+            id="an-esds-naming-a-codec-this-build-did-not-expect",
+        ),
+        pytest.param(
+            "container",
+            "book.m4b",
+            None,
+            AudioObservationKind.CONTAINER_UNEXPECTED,
+            id="an-m4b-that-is-really-an-mp3",
+        ),
+        pytest.param(
+            "duration",
+            "book.m4b",
+            None,
+            AudioObservationKind.DURATION_UNSTATED,
+            id="headers-that-state-no-running-time",
+        ),
+        pytest.param(
+            "encrypted",
+            "book.m4b",
+            None,
+            AudioObservationKind.STREAM_ENCRYPTED,
+            id="a-protected-sample-entry",
+        ),
+    ),
+)
+def test_one_departing_header_states_exactly_one_observation_and_no_claim(
+    media_root: Path,
+    case: str,
+    name: str,
+    written: None,
+    kind: AudioObservationKind,
+) -> None:
+    """Each class, proved against real bytes through the real probe.
+
+    Headers only: no sample is decoded for any of these, and each container
+    differs from the healthy one in a single field. The assertion is deliberately
+    exact -- one kind and no other -- because a class that also fired a second
+    observation would tell an owner two things where one is true.
+
+    Nothing here becomes a claim. A container this build did not expect is a
+    statement about the file, so an unexpected codec must not reach the
+    evidence set as a fact about the work, and an encrypted stream must not
+    silently drop the tags the container still carries.
+    """
+    bodies = {
+        "codec": lambda: mp4_audiobook(
+            replace(_HEALTHY_FIXTURE, object_type=AC3_OBJECT_TYPE)
+        ),
+        "container": lambda: mp3_audiobook(
+            seconds=4.0, frames={"TIT2": "Recorded Title"}
+        ),
+        "duration": lambda: mp4_audiobook(
+            replace(_HEALTHY_FIXTURE, duration_stated=False)
+        ),
+        "encrypted": lambda: mp4_audiobook(
+            replace(_HEALTHY_FIXTURE, sample_entry="drms")
+        ),
+    }
+    (media_root / name).write_bytes(bodies[case]())
+
+    result = _inspect(media_root, name)
+
+    assert _observed_kinds(result) == {kind}
+    assert [value.tracks for value in result.audio.observations] == [(1,)]
+    assert all(value.candidate is None for value in result.audio.observations)
+    assert result.claims, "the departing container still yields its ordinary claims"
+    assert all(
+        value.kind
+        in {
+            ClaimKind.ASIN,
+            ClaimKind.DURATION,
+            ClaimKind.LANGUAGE,
+            ClaimKind.TITLE,
+        }
+        for value in result.claims
+    )
+
+
+def test_a_container_stating_no_running_time_is_not_also_called_unavailable(
+    media_root: Path,
+) -> None:
+    """The precedence rule, proved on the bytes that raise both questions.
+
+    A file whose headers state no running time composes no `DURATION` claim
+    either, so the older `track_duration_unavailable` kind is true of it as
+    well. Telling an owner both would be telling them one thing twice in two
+    vocabularies, so the kind that names the cause is the one stated.
+    """
+    (media_root / "book.m4b").write_bytes(
+        mp4_audiobook(replace(_HEALTHY_FIXTURE, duration_stated=False))
+    )
+
+    result = _inspect(media_root, "book.m4b")
+
+    assert _observed_kinds(result) == {AudioObservationKind.DURATION_UNSTATED}
+    assert AudioObservationKind.TRACK_DURATION_UNAVAILABLE not in _observed_kinds(
+        result
+    )
+    assert all(value.kind is not ClaimKind.DURATION for value in result.claims)

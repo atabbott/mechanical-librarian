@@ -280,6 +280,7 @@ def main(argv: list[str] | None = None) -> int:
                 result.embedded_cover,
                 result.chapters_truncated,
                 result.title,
+                result.container_facts,
             )
         )
         return 0

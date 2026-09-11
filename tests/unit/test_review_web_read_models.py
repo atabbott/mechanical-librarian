@@ -49,6 +49,7 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.audio_health import (
     AUDIO_HEALTH_BOUNDS,
+    MAX_HEALTH_OBSERVATIONS,
     AudioHealthKind,
 )
 from mechanical_librarian.domain.audio_inspection import (
@@ -86,8 +87,10 @@ from mechanical_librarian.domain.preparation_presentation import PreparationTrig
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web.app import (
+    _CaseDetailResponse,
     _CoverOmission,
     _MediaHealthObservation,
+    _ReportDetailResponse,
 )
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
@@ -2373,7 +2376,7 @@ def test_an_audiobook_case_states_its_media_health_beside_its_fields() -> None:
 
 
 def test_the_media_health_wire_vocabulary_is_the_closed_domain_vocabulary() -> None:
-    """The wire admits the nine kinds the domain states, and nothing else.
+    """The wire admits the thirteen kinds the domain states, and nothing else.
 
     A bounded string would let a build widen the vocabulary without the client
     ever being told, so the response model closes it and this pins the two sets
@@ -2404,6 +2407,22 @@ def test_the_media_health_wire_vocabulary_is_the_closed_domain_vocabulary() -> N
     # domain shape refuses to build one; the wire refuses to carry one.
     with pytest.raises(ValidationError):
         _MediaHealthObservation.model_validate({**observation, "cited": []})
+
+
+def test_the_media_health_transport_cap_is_the_domain_ceiling() -> None:
+    """The wire carries every observation the domain can state, and no fewer.
+
+    The domain truncates at one observation per kind per track and stops there,
+    so a transport bound below that ceiling would not protect anything -- it
+    would turn a report the domain built legally into a 500 at response
+    validation, on exactly the crowded item whose health the owner most needs
+    to read. The two bounds are read from one constant here so that widening
+    the vocabulary moves them together.
+    """
+    for model in (_ReportDetailResponse, _CaseDetailResponse):
+        field = model.model_fields["media_health"]
+        (constraint,) = [item for item in field.metadata if hasattr(item, "max_length")]
+        assert constraint.max_length == MAX_HEALTH_OBSERVATIONS
 
 
 def _claim_rich_report(count: int) -> MetadataReport:
@@ -2643,6 +2662,8 @@ def test_a_terminal_unreadable_item_states_the_track_it_could_not_read() -> None
     refused = _library_item(None, _terminal("parser_refused", "track_2"), ())
     malformed = _library_item(None, _terminal("unreadable_media", "shredded"), ())
     past_bound = _library_item(None, _terminal("unreadable_media", "track_600"), ())
+    padded = _library_item(None, _terminal("unreadable_media", "track_007"), ())
+    zeroed = _library_item(None, _terminal("unreadable_media", "track_0"), ())
 
     assert cast(dict[str, Any], unreadable["preparation"])["media_health"] == [
         {
@@ -2673,6 +2694,17 @@ def test_a_terminal_unreadable_item_states_the_track_it_could_not_read() -> None
     # would turn a corrupt row into an accusation about every file of the item.
     assert cast(dict[str, Any], malformed["preparation"])["media_health"] == []
     assert cast(dict[str, Any], past_bound["preparation"])["media_health"] == []
+    # The reader admits exactly the grammar the writer emits -- `track_{ordinal}`
+    # from an integer that is never zero and never zero-padded -- so a row
+    # naming `track_007` or `track_0` names no file this build ever wrote. The
+    # observation and the refusing-file sentence agree by construction because
+    # both are read through that one grammar.
+    assert cast(dict[str, Any], padded["preparation"])["media_health"] == []
+    assert cast(dict[str, Any], zeroed["preparation"])["media_health"] == []
+    for corrupt in (padded, zeroed):
+        assert "refusing file" not in str(
+            cast(dict[str, Any], corrupt["preparation"])["reason"]
+        )
 
 
 def test_a_package_row_pointing_at_another_work_serves_no_evidence(

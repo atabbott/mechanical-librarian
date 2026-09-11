@@ -40,11 +40,24 @@ def _descriptor(tag: int, payload: bytes) -> bytes:
     return struct.pack(">BB", tag, len(payload)) + payload
 
 
-def _esds() -> bytes:
+# The MPEG-4 object type an `esds` names for AAC audio, and the one the codec
+# case states instead.  ffprobe reads the byte and names the codec from it
+# without decoding a sample, so an `.m4b` whose stream is AC-3 is a fact its
+# headers already carry.
+AAC_OBJECT_TYPE = 0x40
+AC3_OBJECT_TYPE = 0xA5
+# The ISO marker for "this header states no duration".  Writing zero does not
+# work: ffprobe computes a running time from the sample tables instead and
+# states that, so the only container that truthfully states none is one whose
+# headers say the value is unknown.
+_UNKNOWN_DURATION = 0xFFFFFFFF
+
+
+def _esds(object_type: int = AAC_OBJECT_TYPE) -> bytes:
     specific = _descriptor(0x05, _AAC_AUDIO_SPECIFIC_CONFIG)
     config = _descriptor(
         0x04,
-        struct.pack(">BB", 0x40, 0x15) + b"\x00" * 3 + b"\x00" * 8 + specific,
+        struct.pack(">BB", object_type, 0x15) + b"\x00" * 3 + b"\x00" * 8 + specific,
     )
     element = _descriptor(
         0x03,
@@ -53,22 +66,29 @@ def _esds() -> bytes:
     return _full_box("esds", 0, 0, element)
 
 
-def _sample_entry() -> bytes:
+def _sample_entry(name: str = "mp4a", object_type: int = AAC_OBJECT_TYPE) -> bytes:
+    """One audio sample entry, under the four-character code it declares.
+
+    The name is a parameter because it is the entry's whole meaning to a
+    reader: `mp4a` is an ordinary stream and `drms` is one Apple protected,
+    and the protection is stated in the four-CC itself rather than anywhere a
+    decoder would have to look.
+    """
     return _box(
-        "mp4a",
+        name,
         b"\x00" * 6,
         struct.pack(">H", 1),
         b"\x00" * 8,
         struct.pack(">HHHH", 2, 16, 0, 0),
         struct.pack(">I", 44_100 << 16),
-        _esds(),
+        _esds(object_type),
     )
 
 
-def _stbl(samples: int, offset: int) -> bytes:
+def _stbl(samples: int, offset: int, entry: bytes) -> bytes:
     return _box(
         "stbl",
-        _full_box("stsd", 0, 0, struct.pack(">I", 1), _sample_entry()),
+        _full_box("stsd", 0, 0, struct.pack(">I", 1), entry),
         _full_box("stts", 0, 0, struct.pack(">III", 1, samples, 1024)),
         _full_box("stsc", 0, 0, struct.pack(">IIII", 1, 1, samples, 1)),
         _full_box("stsz", 0, 0, struct.pack(">II", 8, samples)),
@@ -76,7 +96,7 @@ def _stbl(samples: int, offset: int) -> bytes:
     )
 
 
-def _minf(samples: int, offset: int) -> bytes:
+def _minf(samples: int, offset: int, entry: bytes) -> bytes:
     return _box(
         "minf",
         _full_box("smhd", 0, 0, struct.pack(">HH", 0, 0)),
@@ -84,11 +104,13 @@ def _minf(samples: int, offset: int) -> bytes:
             "dinf",
             _full_box("dref", 0, 0, struct.pack(">I", 1), _full_box("url ", 0, 1)),
         ),
-        _stbl(samples, offset),
+        _stbl(samples, offset, entry),
     )
 
 
-def _mdia(samples: int, offset: int, language: str) -> bytes:
+def _mdia(
+    samples: int, offset: int, language: str, entry: bytes, duration: int
+) -> bytes:
     packed = 0
     for character in language[:3].ljust(3, "u"):
         packed = (packed << 5) | ((ord(character) - 0x60) & 0x1F)
@@ -98,7 +120,7 @@ def _mdia(samples: int, offset: int, language: str) -> bytes:
             "mdhd",
             0,
             0,
-            struct.pack(">IIII", 0, 0, 44_100, samples * 1024),
+            struct.pack(">IIII", 0, 0, 44_100, duration),
             struct.pack(">HH", packed, 0),
         ),
         _full_box(
@@ -110,24 +132,44 @@ def _mdia(samples: int, offset: int, language: str) -> bytes:
             b"\x00" * 12,
             b"\x00",
         ),
-        _minf(samples, offset),
+        _minf(samples, offset, entry),
     )
 
 
-def _trak(samples: int, offset: int, milliseconds: int, language: str) -> bytes:
+def _trak(
+    samples: int,
+    offset: int,
+    milliseconds: int,
+    language: str,
+    entry: bytes,
+    stated: bool,
+) -> bytes:
     return _box(
         "trak",
         _full_box(
             "tkhd",
             0,
             7,
-            struct.pack(">IIIII", 0, 0, 1, 0, milliseconds),
+            struct.pack(
+                ">IIIII",
+                0,
+                0,
+                1,
+                0,
+                milliseconds if stated else _UNKNOWN_DURATION,
+            ),
             b"\x00" * 8,
             struct.pack(">hhhh", 0, 0, 0x0100, 0),
             _MATRIX,
             struct.pack(">II", 0, 0),
         ),
-        _mdia(samples, offset, language),
+        _mdia(
+            samples,
+            offset,
+            language,
+            entry,
+            samples * 1024 if stated else _UNKNOWN_DURATION,
+        ),
     )
 
 
@@ -228,6 +270,17 @@ class Mp4Fixture:
     freeform: dict[tuple[str, str], str] = field(default_factory=dict)
     chapters: tuple[tuple[int, str], ...] = ()
     embedded_cover: bool = False
+    # The four-character code of the audio sample entry.  `drms` is Apple's
+    # protected entry, which the probe surfaces verbatim as the stream's codec
+    # tag: it is the one encryption marker readable from headers alone.
+    sample_entry: str = "mp4a"
+    # The MPEG-4 object type the `esds` names, which is what ffprobe reads the
+    # codec from.  Not AAC means a codec this build did not expect.
+    object_type: int = AAC_OBJECT_TYPE
+    # Whether the movie, track and media headers state a running time at all.
+    # `False` writes the ISO unknown-duration marker into all three, which is
+    # how a real container states that it does not know.
+    duration_stated: bool = True
 
 
 _DEFAULT_MP4_FIXTURE = Mp4Fixture()
@@ -254,7 +307,17 @@ def mp4_audiobook(fixture: Mp4Fixture = _DEFAULT_MP4_FIXTURE) -> bytes:
     # position, which is only known once ``moov`` has its final length.
     offset = 0
     for _ in range(2):
-        tracks = [_trak(samples, offset, fixture.milliseconds, fixture.language)]
+        entry = _sample_entry(fixture.sample_entry, fixture.object_type)
+        tracks = [
+            _trak(
+                samples,
+                offset,
+                fixture.milliseconds,
+                fixture.language,
+                entry,
+                fixture.duration_stated,
+            )
+        ]
         if fixture.embedded_cover:
             tracks.append(_cover_trak(fixture.milliseconds, offset))
         moov = _box(
@@ -263,7 +326,15 @@ def mp4_audiobook(fixture: Mp4Fixture = _DEFAULT_MP4_FIXTURE) -> bytes:
                 "mvhd",
                 0,
                 0,
-                struct.pack(">IIII", 0, 0, 1_000, fixture.milliseconds),
+                struct.pack(
+                    ">IIII",
+                    0,
+                    0,
+                    1_000,
+                    fixture.milliseconds
+                    if fixture.duration_stated
+                    else _UNKNOWN_DURATION,
+                ),
                 struct.pack(">IH", 0x00010000, 0x0100),
                 b"\x00" * 10,
                 _MATRIX,
@@ -354,6 +425,8 @@ def hostile_container() -> bytes:
 
 
 __all__ = [
+    "AAC_OBJECT_TYPE",
+    "AC3_OBJECT_TYPE",
     "Mp4Fixture",
     "hostile_container",
     "mp3_audiobook",

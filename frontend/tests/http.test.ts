@@ -654,7 +654,7 @@ describe('ReviewApiClient', () => {
       ],
     ) =>
       mapCaseDetail({
-        schema_version: 'review-case-detail-v2',
+        schema_version: 'review-case-detail-v3',
         review_case_id: 'case-1',
         current: true,
         comparison_notices: [],
@@ -706,7 +706,7 @@ describe('ReviewApiClient', () => {
 
   it('requires exact creator corroboration source lists in case-detail responses', () => {
     const response = (corroboration_sources: unknown) => ({
-      schema_version: 'review-case-detail-v2',
+      schema_version: 'review-case-detail-v3',
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
@@ -770,7 +770,7 @@ describe('ReviewApiClient', () => {
   it('uses Unicode code point bounds for readable case identity', () => {
     const astral = '📚'
     const response = (target: Record<string, unknown>) => ({
-      schema_version: 'review-case-detail-v2',
+      schema_version: 'review-case-detail-v3',
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
@@ -836,7 +836,7 @@ describe('ReviewApiClient', () => {
       ...overrides,
     })
     const response = (fields: readonly unknown[]) => ({
-      schema_version: 'review-case-detail-v2',
+      schema_version: 'review-case-detail-v3',
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
@@ -1257,7 +1257,7 @@ describe('ReviewApiClient', () => {
   it('maps exact library DTOs into presentation-safe view models', async () => {
     const fetchMock = vi.fn<typeof fetch>(async () =>
       Response.json({
-        schema_version: 'review.v1',
+        schema_version: 'review-library-v2',
         lens: 'all',
         query: null,
         next_cursor: null,
@@ -2163,7 +2163,10 @@ describe('ReviewApiClient', () => {
     const client = new ReviewApiClient({
       csrf,
       fetch: vi.fn(async () =>
-        Response.json({ schema_version: 'review.v1', error: { code: 'busy' } }, { status: 503 }),
+        Response.json(
+          { schema_version: 'review-library-v2', error: { code: 'busy' } },
+          { status: 503 },
+        ),
       ),
     })
     await expect(client.getLibrary({ lens: 'all' })).rejects.toMatchObject({
@@ -2171,7 +2174,7 @@ describe('ReviewApiClient', () => {
       code: 'busy',
     })
     expect(() =>
-      mapLibrary({ items: [], counts: {}, lens: '__proto__', schema_version: 'review.v1' }),
+      mapLibrary({ items: [], counts: {}, lens: '__proto__', schema_version: 'review-library-v2' }),
     ).toThrow(ApiError)
     const work = {
       review_case_id: null,
@@ -2195,9 +2198,25 @@ describe('ReviewApiClient', () => {
       counts: { needs_attention: 0, all: 1, no_attention_needed: 1 },
       lens: 'all',
       page: 1,
-      schema_version: 'review.v1',
+      schema_version: 'review-library-v2',
     }
     expect(() => mapLibrary(page)).toThrow(new ApiError(502, 'invalid_detail_kind'))
+  })
+
+  it('refuses a library document served under any token but its own', () => {
+    // The library gained a required media-health member and moved to v2. A
+    // client that reads whatever token arrives would render a v1 document as
+    // though the member were simply absent, which is the reading the server
+    // moved the token to prevent.
+    const page = {
+      items: [],
+      counts: { needs_attention: 0, all: 0, no_attention_needed: 0 },
+      lens: 'all',
+      page: 1,
+      schema_version: 'review-library-v1',
+    }
+    expect(() => mapLibrary(page)).toThrow(new ApiError(502, 'invalid_library_response'))
+    expect(() => mapLibrary({ ...page, schema_version: 'review-library-v2' })).not.toThrow()
   })
 })
 
@@ -2269,7 +2288,7 @@ describe('mapReportDetail', () => {
   })
 
   it('accepts every media-health kind and refuses one outside the vocabulary', () => {
-    expect(MEDIA_HEALTH_KINDS).toHaveLength(9)
+    expect(MEDIA_HEALTH_KINDS).toHaveLength(13)
     for (const kind of MEDIA_HEALTH_KINDS) {
       const mapped = mapReportDetail(
         detail({ media_health: [{ ...detail().media_health[0], kind }] }),

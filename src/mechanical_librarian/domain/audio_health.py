@@ -33,6 +33,7 @@ from enum import StrEnum
 from typing import Final
 
 from mechanical_librarian.domain.audio_inspection import (
+    ADMITTED_AUDIO_CODECS,
     MAX_AUDIO_TRACKS,
     AudioObservation,
     AudioObservationKind,
@@ -82,6 +83,10 @@ class AudioHealthKind(StrEnum):
     CHAPTER_ATOMS_PARTIAL = "chapter_atoms_partial"
     TAG_DISAGREES_ACROSS_TRACKS = "tag_disagrees_across_tracks"
     ASIN_DISAGREES_ACROSS_TRACKS = "asin_disagrees_across_tracks"
+    CONTAINER_UNEXPECTED = "container_unexpected"
+    CODEC_UNEXPECTED = "codec_unexpected"
+    DURATION_UNSTATED = "duration_unstated"
+    STREAM_ENCRYPTED = "stream_encrypted"
     MEDIA_UNREADABLE = "media_unreadable"
 
 
@@ -117,6 +122,20 @@ AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
     AudioHealthKind.ASIN_DISAGREES_ACROSS_TRACKS: (
         "One item states one ASIN across its files."
     ),
+    AudioHealthKind.CONTAINER_UNEXPECTED: (
+        "Each file holds the container its admitted file type names."
+    ),
+    AudioHealthKind.CODEC_UNEXPECTED: (
+        "Each file's audio stream is "
+        + " or ".join(sorted(ADMITTED_AUDIO_CODECS))
+        + "."
+    ),
+    AudioHealthKind.DURATION_UNSTATED: (
+        "Each file's container states the running time of what it holds."
+    ),
+    AudioHealthKind.STREAM_ENCRYPTED: (
+        "No file's samples are protected by a rights-management scheme."
+    ),
     AudioHealthKind.MEDIA_UNREADABLE: (
         "Every file of the item opens and reads within the supported bounds."
     ),
@@ -144,6 +163,10 @@ _SET_OBSERVATION_KINDS: Final[dict[AudioObservationKind, AudioHealthKind]] = {
     AudioObservationKind.ASIN_DISAGREES_ACROSS_TRACKS: (
         AudioHealthKind.ASIN_DISAGREES_ACROSS_TRACKS
     ),
+    AudioObservationKind.CONTAINER_UNEXPECTED: AudioHealthKind.CONTAINER_UNEXPECTED,
+    AudioObservationKind.CODEC_UNEXPECTED: AudioHealthKind.CODEC_UNEXPECTED,
+    AudioObservationKind.DURATION_UNSTATED: AudioHealthKind.DURATION_UNSTATED,
+    AudioObservationKind.STREAM_ENCRYPTED: AudioHealthKind.STREAM_ENCRYPTED,
 }
 
 
@@ -239,7 +262,7 @@ def derive_audio_health(report: MetadataReport) -> tuple[AudioHealthObservation,
     if audio is None:
         return ()
     observations = [
-        *_runtime_observations(report),
+        *_runtime_observations(report, audio),
         *_chapter_observations(report, audio),
         *_set_observations(audio),
     ]
@@ -251,19 +274,40 @@ def derive_audio_health(report: MetadataReport) -> tuple[AudioHealthObservation,
     )
 
 
-def _runtime_observations(report: MetadataReport) -> list[AudioHealthObservation]:
-    """State every retained edition whose running time this recording is short of.
+def _runtime_observations(
+    report: MetadataReport, audio: AudioFacts
+) -> list[AudioHealthObservation]:
+    """State every edition whose running time this recording is short of, once.
 
-    Only a candidate the report still holds an edition-scope ``DURATION`` claim
-    for can be compared: a search or promoted candidate the runtime band did
-    not corroborate was demoted to work scope before publication and states no
-    running time here at all.  So this is stated for the lanes that retain one
-    -- the item's own ASIN lanes, and any candidate the band admitted -- and is
-    silent, rather than reassuring, for the rest.
+    Two lanes reach the same statement and the precedence between them is
+    settled here, in one place, so an owner is never told the same thing twice.
+
+    *Derived* is preferred. A candidate the report still holds an edition-scope
+    ``DURATION`` claim for -- the item's own ASIN lanes, and any candidate the
+    band admitted -- can be compared now, and the comparison carries both
+    running times, which is what makes the statement actionable.
+
+    *Persisted* fills the rest. A search or promoted candidate the band did not
+    corroborate was demoted to work scope before publication and states no
+    running time here at all, so preparation recorded the comparison it made
+    while the claim still existed. That record names the candidate and nothing
+    else: the number belonged to a scope the candidate did not earn, and
+    keeping it would have kept the demoted claim under another name.
+
+    Retained evidence wins outright. Any comparable running time the report
+    still holds for an edition decides that edition, in band or short, and the
+    persisted record for it states nothing -- one provider's demoted answer
+    cannot accuse an edition that a second provider's surviving answer puts
+    within the band. The record is read only where the report has no running
+    time of its own to compare, which is the case it was written for.
+
+    One statement per edition, whichever route reached it. Two providers can
+    answer about the same edition and the report retains both answers under one
+    identity, so the guard is applied to the derived route as well: an owner
+    told twice that this recording is short of one edition learns nothing the
+    second time and has no way to tell the repetition from two real findings.
     """
     local = local_claim_runtime_seconds(report.local_claims)
-    if local is None:
-        return []
     references = tuple(
         sorted(
             claim.reference
@@ -271,19 +315,49 @@ def _runtime_observations(report: MetadataReport) -> list[AudioHealthObservation
             if _stated_local_runtime(claim)
         )
     )
-    if not references:
-        return []
     stated: list[AudioHealthObservation] = []
-    for candidate in _retained_candidates(report):
-        provider = candidate_runtime_seconds(candidate)
-        if provider is None or provider - local <= RUNTIME_BAND_TIGHT_SECONDS:
+    # Editions this report can still compare for itself, whatever the answer,
+    # and editions already stated once.
+    compared: set[str] = set()
+    derived: set[str] = set()
+    if local is not None and references:
+        for candidate in _retained_candidates(report):
+            provider = candidate_runtime_seconds(candidate)
+            if provider is None:
+                continue
+            compared.add(candidate.identity)
+            if (
+                provider - local <= RUNTIME_BAND_TIGHT_SECONDS
+                or candidate.identity in derived
+            ):
+                continue
+            derived.add(candidate.identity)
+            stated.append(
+                AudioHealthObservation(
+                    AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER,
+                    (*references, candidate.identity),
+                    observed=f"{local} seconds of local audio",
+                    expected=f"{provider} seconds stated by the matched edition",
+                )
+            )
+    for observation in audio.observations:
+        if (
+            observation.kind is not AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER
+            or observation.candidate is None
+            or observation.candidate in derived
+            or observation.candidate in compared
+        ):
             continue
+        derived.add(observation.candidate)
         stated.append(
             AudioHealthObservation(
                 AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER,
-                (*references, candidate.identity),
-                observed=f"{local} seconds of local audio",
-                expected=f"{provider} seconds stated by the matched edition",
+                (*references, observation.candidate),
+                observed=(None if local is None else f"{local} seconds of local audio"),
+                expected=(
+                    "a longer running time stated by this edition, which "
+                    "publication did not retain"
+                ),
             )
         )
     return stated
@@ -298,6 +372,14 @@ def _chapter_observations(
     corroborated candidate, so this class fires exactly on the items whose
     identity was settled by structure. A vector either side truncated is not
     comparable and states nothing.
+
+    The two counts are always stated; the diverging cut is stated only when
+    there is one to name. `first_divergent_chapter` answers `None` both when
+    the cuts it could compare all agree and when the two vectors differ in
+    length by more than its skip grid can absorb -- forty chapters against
+    twelve align nowhere -- and in neither case is there a cut an owner could
+    open the file on. The counts alone are what that item is told, which is
+    exactly what the contradiction was made of.
     """
     local = local_chapter_durations_seconds(audio)
     if not local:

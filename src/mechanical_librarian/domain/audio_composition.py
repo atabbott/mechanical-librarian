@@ -18,9 +18,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from mechanical_librarian.domain.audio_inspection import (
+    ADMITTED_AUDIO_CODECS,
+    ADMITTED_AUDIO_CONTAINERS,
     MAX_CHAPTER_TITLE_CHARACTERS,
     MAX_CHAPTERS,
     MAX_DURATION_MILLISECONDS,
+    PROTECTED_SAMPLE_ENTRY_TAGS,
     AudioChapter,
     AudioChapterComposition,
     AudioEmbeddedCover,
@@ -418,10 +421,12 @@ def _observations(
 ) -> tuple[AudioObservation, ...]:
     values: list[AudioObservation] = []
     values.extend(_sequence_observations(tracks))
+    values.extend(_container_observations(tracks))
+    unstated = frozenset(_tracks_stating_no_duration(tracks))
     missing = tuple(
         track.ordinal
         for track, duration in zip(tracks, durations, strict=True)
-        if duration is None
+        if duration is None and track.ordinal not in unstated
     )
     if missing:
         # The observation names the tracks whose running time was unavailable,
@@ -430,6 +435,13 @@ def _observations(
         # the domain's seven-day ceiling -- has no track to name, and the
         # vocabulary is closed: the absent DURATION claim and the absent
         # chapter vector already state it.
+        #
+        # A track whose container stated no running time at all is named by
+        # `duration_unstated` instead and excluded here.  Both kinds are true
+        # of it, and stating both would tell an owner the same thing twice in
+        # two vocabularies; the one that names the cause is the one kept, and
+        # what is left here is the track that stated a running time this domain
+        # could not hold.
         values.append(
             AudioObservation(AudioObservationKind.TRACK_DURATION_UNAVAILABLE, missing)
         )
@@ -442,6 +454,70 @@ def _observations(
         )
     values.extend(_disagreement_observations(facts, provenance))
     return tuple(values)
+
+
+def _tracks_stating_no_duration(tracks: tuple[InspectedTrack, ...]) -> tuple[int, ...]:
+    """Name every track whose container wrote down no running time at all."""
+    return tuple(
+        track.ordinal
+        for track in tracks
+        if track.inspection.container_facts is not None
+        and not track.inspection.container_facts.duration_stated
+    )
+
+
+def _container_observations(
+    tracks: tuple[InspectedTrack, ...],
+) -> tuple[AudioObservation, ...]:
+    """Say where a file's own headers departed from what this build admits.
+
+    The child states the facts and never the kinds: it reads one file and has
+    no ordinal to name, so which track departed and how is composed here, where
+    the whole set is in hand.  A track whose inspection carried no container
+    facts -- a failed one, or a report from a child that predates them -- is
+    silent rather than unexpected.
+
+    Four departures, each with the bound it broke:
+
+    * the container is not the one the admitted extension names, which is how
+      an `.m4b` that is really an MP3 reaches an owner who thinks otherwise;
+    * the stream codec is outside `ADMITTED_AUDIO_CODECS`;
+    * the container stated no running time, so nothing downstream can compare
+      this recording's length to anything;
+    * the sample entry is a protected one, so the bytes are not this build's
+      to read and every other fact about them is provisional.
+
+    None of them refuses the item.  They are statements an owner acts on.
+    """
+    unexpected_container: list[int] = []
+    unexpected_codec: list[int] = []
+    encrypted: list[int] = []
+    for track in tracks:
+        facts = track.inspection.container_facts
+        if facts is None:
+            continue
+        expected = ADMITTED_AUDIO_CONTAINERS.get(track.format.lower())
+        if facts.container is not None and (
+            expected is None or facts.container != expected
+        ):
+            unexpected_container.append(track.ordinal)
+        if facts.codec is not None and facts.codec not in ADMITTED_AUDIO_CODECS:
+            unexpected_codec.append(track.ordinal)
+        if facts.codec_tag is not None and (
+            facts.codec_tag.lower() in PROTECTED_SAMPLE_ENTRY_TAGS
+        ):
+            encrypted.append(track.ordinal)
+    unstated = _tracks_stating_no_duration(tracks)
+    return tuple(
+        AudioObservation(kind, tuple(ordinals))
+        for kind, ordinals in (
+            (AudioObservationKind.CONTAINER_UNEXPECTED, unexpected_container),
+            (AudioObservationKind.CODEC_UNEXPECTED, unexpected_codec),
+            (AudioObservationKind.DURATION_UNSTATED, list(unstated)),
+            (AudioObservationKind.STREAM_ENCRYPTED, encrypted),
+        )
+        if ordinals
+    )
 
 
 def _sequence_observations(
