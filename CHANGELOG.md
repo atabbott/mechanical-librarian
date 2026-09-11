@@ -11,6 +11,7 @@
 - Ebook titles supported by retained ISBN and creator evidence can be corrected
   independently of subtitle or series choices. Automatic decisions remain
   visible and reversible by the owner; Ask and Ignore remain authoritative.
+  Failed workspace loads can be retried without reloading the browser page.
   Existing application state requires a clean rebuild. (#1007)
 
 - An audiobook's evidence view, its review case and the rows a stopped

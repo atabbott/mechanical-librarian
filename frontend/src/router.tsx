@@ -6,6 +6,7 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  useRouter,
   useRouterState,
 } from '@tanstack/react-router'
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -833,8 +834,9 @@ const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
     <h1>Loading {title.toLowerCase()}…</h1>
   </section>
 )
-const RouteFailure = ({ error, reset }: { error: Error; reset: () => void }) =>
-  error instanceof ChunkRecoveryError && error.exhausted ? (
+const RouteFailure = ({ error, reset }: { error: Error; reset: () => void }) => {
+  const router = useRouter()
+  return error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">
       <p className="eyebrow">Application update unavailable</p>
       <h1>The current workspace assets could not be loaded.</h1>
@@ -846,9 +848,10 @@ const RouteFailure = ({ error, reset }: { error: Error; reset: () => void }) =>
       <p className="eyebrow">Review unavailable</p>
       <h1>This workspace could not be loaded.</h1>
       <p role="alert">{error.message}</p>
-      <button onClick={reset}>Try again</button>
+      <button onClick={() => void router.invalidate().then(reset)}>Try again</button>
     </section>
   )
+}
 const DirectEntryFallback = () => (
   <section className="route-state">
     <p className="eyebrow">Page unavailable</p>
