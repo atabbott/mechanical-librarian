@@ -48,6 +48,10 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
+from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
+    qualify_provider_observation,
+)
 from mechanical_librarian.application.owner_settings import OwnerSettingsOperations
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessOperations,
@@ -65,6 +69,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     FileFacts,
     MetadataReport,
+    ProviderQueryKind,
     TargetDestination,
     TargetFacts,
     TargetField,
@@ -78,7 +83,10 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.setup_state import SetupStateDocument
 from mechanical_librarian.interfaces.web.react_assets import ReactAssetLoader
 from mechanical_librarian.interfaces.web.setup import create_setup_app
-from tests.support.audiobook_reports import admitted_audiobook_report
+from tests.support.audiobook_reports import (
+    admitted_audiobook_report,
+    asin_lane_observation,
+)
 from tests.support.metadata_report_doubles import audio_result
 from tests.support.ports import ReservedPort, bind_loopback
 from tests.support.proposal_evidence import _fields as _bibliographic_fields
@@ -200,7 +208,16 @@ def _publish_audiobook(repository: Any) -> None:
         local_reasons=tuple(
             sorted({f"{claim.basis}_{claim.kind.value}" for claim in inspection.claims})
         ),
-        providers=(),
+        # The recording carries its own ASIN, so the per-ASIN answer keeps the
+        # running time it states and the derived media-health section has two
+        # sides to compare. Without it the section renders empty and proves
+        # only that it exists.
+        providers=(
+            qualify_provider_observation(
+                asin_lane_observation(inspection.claims, duration="72000.000"),
+                MetadataLookup(ProviderQueryKind.ASIN, inspection.claims),
+            ),
+        ),
         audio=inspection.audio,
     )
     producer = "f" * 64
@@ -3213,6 +3230,14 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
                 expect(evidence).to_contain_text("Embedded cover art is present")
                 page.get_by_text(re.compile(r"Chapters \(1\)")).click()
                 expect(evidence).to_contain_text("Chapter One")
+                # What is wrong with the media, in its own named region: the
+                # observation, the rule it broke, and what it was read from.
+                health = page.get_by_role("region", name="Media health")
+                expect(health).to_be_visible()
+                expect(health).to_contain_text("Runtime short of provider")
+                expect(health).to_contain_text("43200 seconds of local audio")
+                expect(health).to_contain_text("within 90 seconds")
+                expect(health).to_contain_text("audible-product-B08G9PRS1K")
             browser.close()
         assert errors == []
 

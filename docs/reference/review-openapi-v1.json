@@ -2791,6 +2791,14 @@
             "title": "Fields",
             "type": "array"
           },
+          "media_health": {
+            "items": {
+              "$ref": "#/components/schemas/_MediaHealthObservation"
+            },
+            "maxItems": 4608,
+            "title": "Media Health",
+            "type": "array"
+          },
           "review_case_id": {
             "title": "Review Case Id",
             "type": "string"
@@ -2812,6 +2820,7 @@
           "comparison_notices",
           "current",
           "fields",
+          "media_health",
           "review_case_id",
           "schema_version",
           "target",
@@ -5361,6 +5370,81 @@
         "title": "_LoginRequest",
         "type": "object"
       },
+      "_MediaHealthObservation": {
+        "additionalProperties": false,
+        "description": "One typed statement about an item's media, with its citation and bound.\n\nThe same closed shape on both surfaces that carry it: the report detail\nderives its list from retained evidence, the terminal row from the record\nof what stopped, and a reader switches on `kind` in one vocabulary.",
+        "properties": {
+          "bound": {
+            "maxLength": 256,
+            "title": "Bound",
+            "type": "string"
+          },
+          "cited": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 520,
+            "minItems": 1,
+            "title": "Cited",
+            "type": "array"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected"
+          },
+          "kind": {
+            "enum": [
+              "runtime_short_of_provider",
+              "chapter_structure_mismatch",
+              "track_sequence_gap",
+              "track_sequence_disorder",
+              "track_duration_unavailable",
+              "chapter_atoms_partial",
+              "tag_disagrees_across_tracks",
+              "asin_disagrees_across_tracks",
+              "media_unreadable"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "observed": {
+            "anyOf": [
+              {
+                "maxLength": 256,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed"
+          },
+          "tracks": {
+            "items": {
+              "type": "integer"
+            },
+            "maxItems": 512,
+            "title": "Tracks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bound",
+          "cited",
+          "kind",
+          "tracks"
+        ],
+        "title": "_MediaHealthObservation",
+        "type": "object"
+      },
       "_OpenRouterWriteRequest": {
         "additionalProperties": false,
         "properties": {
@@ -6154,6 +6238,14 @@
             "title": "Diagnostic Reference",
             "type": "string"
           },
+          "media_health": {
+            "items": {
+              "$ref": "#/components/schemas/_MediaHealthObservation"
+            },
+            "maxItems": 512,
+            "title": "Media Health",
+            "type": "array"
+          },
           "provider": {
             "title": "Provider",
             "type": "string"
@@ -6182,6 +6274,7 @@
         "required": [
           "attempt",
           "diagnostic_reference",
+          "media_health",
           "provider",
           "reason",
           "recovery",
@@ -6785,6 +6878,14 @@
             "title": "Library",
             "type": "string"
           },
+          "media_health": {
+            "items": {
+              "$ref": "#/components/schemas/_MediaHealthObservation"
+            },
+            "maxItems": 4608,
+            "title": "Media Health",
+            "type": "array"
+          },
           "media_kind": {
             "maxLength": 32,
             "title": "Media Kind",
@@ -6816,7 +6917,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-report-detail-v2",
+            "const": "review-report-detail-v3",
             "title": "Schema Version",
             "type": "string"
           },
@@ -6836,6 +6937,7 @@
           "item",
           "library",
           "media_kind",
+          "media_health",
           "provider_sources",
           "provider_evidence",
           "provider_evidence_truncated",

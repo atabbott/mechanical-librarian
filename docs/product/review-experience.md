@@ -359,6 +359,24 @@ case at all is not a failure: the library counts it as recorded, and its row
 opens the evidence its report retained
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
 
+That evidence view carries a Media health section above the chapters, in the
+same closed vocabulary an item that stopped before publishing a report states
+under its terminal card. Each observation names its kind, the rule the media
+broke, and what the statement was read from; an opaque local reference stands
+for the evidence it points at rather than being shown. On the evidence view a
+recording with nothing wrong with it reads `No media-health observations were
+recorded.` rather than an absent section, so a checked silence is
+distinguishable from a missing surface. A terminal card carries the section
+only where it has an observation to state, because a row an owner did not open
+is not a place a silence answers a question they asked. An audiobook admitted
+into review opens a case rather than that evidence view, so the case carries
+the same section beside its fields whenever the report it was built from has an
+observation to state. A row whose latest preparation stopped but which still
+retains earlier evidence stays openable, and states its preparation's media
+health beneath the row rather than dropping it with the terminal card.
+The vocabulary is closed and read-only: nothing in it is a claim, a proposal,
+or a decision, and no observation offers an action.
+
 Cover review remains advisory: small eligible sets compare current and
 candidates equally; larger sets retain the incumbent while exposing the full
 eligible gallery. Below 900px the incumbent becomes the first item of the same

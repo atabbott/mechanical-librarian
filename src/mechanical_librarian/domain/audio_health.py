@@ -1,0 +1,407 @@
+"""What is wrong with an audiobook's media, stated as closed observations.
+
+An owner reading an audiobook's evidence could see every field the inspection
+read and still not be told the one thing they can act on: that the recording
+runs an hour short of the edition it was matched to, that its chapter cuts are
+not that edition's, that its declared track order has a hole in it, or that a
+file could not be read at all.  Those are properties of the *media*, not
+evidence about the work, so they are named here in their own closed vocabulary
+rather than added to the claim set.
+
+Three rules hold the separation, and they are why this module exists beside
+``audio_inspection`` rather than inside it:
+
+* an observation is never a claim, a proposal, or a decision -- it names no
+  target field, carries no authority, and nothing downstream reads it;
+* every kind names the bound it violated, held once in ``AUDIO_HEALTH_BOUNDS``
+  so the vocabulary can be enumerated and a projection cannot invent one;
+* every observation cites what it was read from -- a local claim reference, a
+  candidate identity, a composition kind, a declared track sequence, or a
+  track ordinal -- so an owner can check the statement against the report.
+
+``derive_audio_health`` is pure over a published report: it reads what the
+report already retains and computes nothing new about the bytes.  A provider's
+running time survives into the report only for the lanes that keep an
+edition-scope ``DURATION`` claim, so the truncation class is stated for those
+lanes and silent for the rest rather than guessed at.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import StrEnum
+from typing import Final
+
+from mechanical_librarian.domain.audio_inspection import (
+    MAX_AUDIO_TRACKS,
+    AudioObservation,
+    AudioObservationKind,
+)
+from mechanical_librarian.domain.audiobook_corroboration import (
+    RUNTIME_BAND_TIGHT_SECONDS,
+    CorroborationOutcome,
+    candidate_runtime_seconds,
+    chapter_vector_agreement,
+    first_divergent_chapter,
+    local_chapter_durations_seconds,
+    local_claim_runtime_seconds,
+)
+from mechanical_librarian.domain.evidence_bounds import (
+    MAX_SHORT_TEXT_LENGTH,
+    EvidenceValueError,
+    validate_text,
+)
+from mechanical_librarian.domain.metadata_report import (
+    AudioFacts,
+    ClaimKind,
+    FieldState,
+    LocalClaim,
+    MetadataReport,
+    ProviderCandidate,
+    ProviderEvidenceKind,
+)
+
+
+class AudioHealthError(ValueError):
+    """A media-health observation or its input is malformed."""
+
+
+class AudioHealthKind(StrEnum):
+    """Exactly what this build can state about an item's media, and no more.
+
+    The vocabulary is closed so an owner can enumerate what they will ever be
+    told, and so a projection cannot quietly widen it.  Nothing here names a
+    target field: these are statements about files, not about the work.
+    """
+
+    RUNTIME_SHORT_OF_PROVIDER = "runtime_short_of_provider"
+    CHAPTER_STRUCTURE_MISMATCH = "chapter_structure_mismatch"
+    TRACK_SEQUENCE_GAP = "track_sequence_gap"
+    TRACK_SEQUENCE_DISORDER = "track_sequence_disorder"
+    TRACK_DURATION_UNAVAILABLE = "track_duration_unavailable"
+    CHAPTER_ATOMS_PARTIAL = "chapter_atoms_partial"
+    TAG_DISAGREES_ACROSS_TRACKS = "tag_disagrees_across_tracks"
+    ASIN_DISAGREES_ACROSS_TRACKS = "asin_disagrees_across_tracks"
+    MEDIA_UNREADABLE = "media_unreadable"
+
+
+# The one bound each kind violates, in the owner's words. Held in one table
+# because a kind without a stated bound is an accusation without a rule, and a
+# projection that composed its own wording would drift from the rule the
+# derivation actually applied.
+AUDIO_HEALTH_BOUNDS: Final[dict[AudioHealthKind, str]] = {
+    AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER: (
+        "The local running time is within "
+        f"{RUNTIME_BAND_TIGHT_SECONDS} seconds of the running time the "
+        "matched edition states."
+    ),
+    AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH: (
+        "The embedded chapter durations align with the matched edition's, "
+        "allowing one skipped chapter at each end."
+    ),
+    AudioHealthKind.TRACK_SEQUENCE_GAP: (
+        "The declared track sequence runs without a hole."
+    ),
+    AudioHealthKind.TRACK_SEQUENCE_DISORDER: (
+        "The declared track sequence rises with the file order."
+    ),
+    AudioHealthKind.TRACK_DURATION_UNAVAILABLE: (
+        "Every track states its own running time."
+    ),
+    AudioHealthKind.CHAPTER_ATOMS_PARTIAL: (
+        "Either every track carries embedded chapters or none does."
+    ),
+    AudioHealthKind.TAG_DISAGREES_ACROSS_TRACKS: (
+        "One item states one value per tagged field."
+    ),
+    AudioHealthKind.ASIN_DISAGREES_ACROSS_TRACKS: (
+        "One item states one ASIN across its files."
+    ),
+    AudioHealthKind.MEDIA_UNREADABLE: (
+        "Every file of the item opens and reads within the supported bounds."
+    ),
+}
+# One citation per track is the widest an item-wide set observation gets, plus
+# the handful of item-level references a truncation or chapter statement adds.
+MAX_HEALTH_CITATIONS: Final = MAX_AUDIO_TRACKS + 8
+# Every kind of every observation an item can carry, at one observation per
+# kind per track for the set-level ones. The same shape the report's own
+# observation bound uses.
+MAX_HEALTH_OBSERVATIONS: Final = len(AudioHealthKind) * MAX_AUDIO_TRACKS
+
+_SET_OBSERVATION_KINDS: Final[dict[AudioObservationKind, AudioHealthKind]] = {
+    AudioObservationKind.TRACK_SEQUENCE_GAP: AudioHealthKind.TRACK_SEQUENCE_GAP,
+    AudioObservationKind.TRACK_SEQUENCE_DISORDER: (
+        AudioHealthKind.TRACK_SEQUENCE_DISORDER
+    ),
+    AudioObservationKind.TRACK_DURATION_UNAVAILABLE: (
+        AudioHealthKind.TRACK_DURATION_UNAVAILABLE
+    ),
+    AudioObservationKind.CHAPTER_ATOMS_PARTIAL: AudioHealthKind.CHAPTER_ATOMS_PARTIAL,
+    AudioObservationKind.TAG_DISAGREES_ACROSS_TRACKS: (
+        AudioHealthKind.TAG_DISAGREES_ACROSS_TRACKS
+    ),
+    AudioObservationKind.ASIN_DISAGREES_ACROSS_TRACKS: (
+        AudioHealthKind.ASIN_DISAGREES_ACROSS_TRACKS
+    ),
+}
+
+
+@dataclass(frozen=True)
+class AudioHealthObservation:
+    """One typed statement about an item's media, with its citation and bound.
+
+    ``tracks`` names the files the statement is about, empty when it is about
+    the item as a whole.  ``cited`` names what it was read from and is never
+    empty: an observation an owner cannot check against the report is an
+    assertion, and this vocabulary states none.  ``observed`` and ``expected``
+    carry the two values that make the bound concrete where there are two.
+    """
+
+    kind: AudioHealthKind
+    cited: tuple[str, ...]
+    tracks: tuple[int, ...] = ()
+    observed: str | None = None
+    expected: str | None = None
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.kind) is not AudioHealthKind
+            or type(self.tracks) is not tuple
+            or len(self.tracks) > MAX_AUDIO_TRACKS
+            or any(
+                type(value) is not int or not 1 <= value <= MAX_AUDIO_TRACKS
+                for value in self.tracks
+            )
+            or list(self.tracks) != sorted(set(self.tracks))
+        ):
+            raise AudioHealthError("audio health observation is malformed")
+        if (
+            type(self.cited) is not tuple
+            or not self.cited
+            or len(self.cited) > MAX_HEALTH_CITATIONS
+        ):
+            raise AudioHealthError("audio health citation is malformed")
+        try:
+            for value in self.cited:
+                validate_text(value, "audio health citation", MAX_SHORT_TEXT_LENGTH)
+            for stated in (self.observed, self.expected):
+                if stated is not None:
+                    validate_text(stated, "audio health value", MAX_SHORT_TEXT_LENGTH)
+        except EvidenceValueError as error:
+            raise AudioHealthError("audio health observation is malformed") from error
+
+    @property
+    def bound(self) -> str:
+        """The rule this observation says the media broke."""
+        return AUDIO_HEALTH_BOUNDS[self.kind]
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "bound": self.bound,
+            "cited": list(self.cited),
+            "expected": self.expected,
+            "kind": self.kind.value,
+            "observed": self.observed,
+            "tracks": list(self.tracks),
+        }
+
+
+def media_unreadable_observation(track: int | None) -> AudioHealthObservation:
+    """State that a file could not be read, naming it when one is known.
+
+    A terminal item has no report at all, so this is the one class built from
+    the terminal record rather than derived from retained evidence.  A
+    single-file item records no ordinal and cites the item instead.
+    """
+    if track is not None and (
+        type(track) is not int or not 1 <= track <= MAX_AUDIO_TRACKS
+    ):
+        raise AudioHealthError("audio health track ordinal is malformed")
+    return AudioHealthObservation(
+        AudioHealthKind.MEDIA_UNREADABLE,
+        ("this item's audio files",) if track is None else (f"track {track}",),
+        () if track is None else (track,),
+    )
+
+
+def derive_audio_health(report: MetadataReport) -> tuple[AudioHealthObservation, ...]:
+    """Read one published report into the media-health statements it supports.
+
+    Pure and read-only: nothing here opens a file, dispatches a provider, or
+    touches the evaluator, proposal, or decision paths.  A report with no audio
+    section states nothing, and so does one whose retained evidence leaves a
+    class uncomparable -- a silence is an absence of proof, never a pass.
+    """
+    if type(report) is not MetadataReport:
+        raise AudioHealthError("audio health input is invalid")
+    audio = report.audio
+    if audio is None:
+        return ()
+    observations = [
+        *_runtime_observations(report),
+        *_chapter_observations(report, audio),
+        *_set_observations(audio),
+    ]
+    return tuple(
+        sorted(
+            observations[:MAX_HEALTH_OBSERVATIONS],
+            key=lambda value: (value.kind.value, value.cited, value.tracks),
+        )
+    )
+
+
+def _runtime_observations(report: MetadataReport) -> list[AudioHealthObservation]:
+    """State every retained edition whose running time this recording is short of.
+
+    Only a candidate the report still holds an edition-scope ``DURATION`` claim
+    for can be compared: a search or promoted candidate the runtime band did
+    not corroborate was demoted to work scope before publication and states no
+    running time here at all.  So this is stated for the lanes that retain one
+    -- the item's own ASIN lanes, and any candidate the band admitted -- and is
+    silent, rather than reassuring, for the rest.
+    """
+    local = local_claim_runtime_seconds(report.local_claims)
+    if local is None:
+        return []
+    references = tuple(
+        sorted(
+            claim.reference
+            for claim in report.local_claims
+            if _stated_local_runtime(claim)
+        )
+    )
+    if not references:
+        return []
+    stated: list[AudioHealthObservation] = []
+    for candidate in _retained_candidates(report):
+        provider = candidate_runtime_seconds(candidate)
+        if provider is None or provider - local <= RUNTIME_BAND_TIGHT_SECONDS:
+            continue
+        stated.append(
+            AudioHealthObservation(
+                AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER,
+                (*references, candidate.identity),
+                observed=f"{local} seconds of local audio",
+                expected=f"{provider} seconds stated by the matched edition",
+            )
+        )
+    return stated
+
+
+def _chapter_observations(
+    report: MetadataReport, audio: AudioFacts
+) -> list[AudioHealthObservation]:
+    """State every retained edition whose chapter cuts this recording does not have.
+
+    The chapter structure a provider states survives publication only on a
+    corroborated candidate, so this class fires exactly on the items whose
+    identity was settled by structure. A vector either side truncated is not
+    comparable and states nothing.
+    """
+    local = local_chapter_durations_seconds(audio)
+    if not local:
+        return []
+    stated: list[AudioHealthObservation] = []
+    for candidate in _retained_candidates(report):
+        for evidence in candidate.evidence:
+            if (
+                evidence.kind is not ProviderEvidenceKind.CHAPTER_STRUCTURE
+                or evidence.chapters is None
+            ):
+                continue
+            signal = chapter_vector_agreement(
+                local,
+                evidence.chapters,
+                local_truncated=audio.chapters_truncated,
+            )
+            if signal.outcome is not CorroborationOutcome.CONTRADICTED:
+                continue
+            observed = f"{len(local)} embedded chapters"
+            expected = (
+                f"{len(evidence.chapters.durations_seconds)} chapters "
+                "stated by the matched edition"
+            )
+            cut = first_divergent_chapter(local, evidence.chapters.durations_seconds)
+            if cut is not None:
+                ordinal, ran, stated_ordinal, stated_seconds = cut
+                observed += f"; chapter {ordinal} runs {ran} s"
+                expected += f"; chapter {stated_ordinal} runs {stated_seconds} s"
+                # The two ordinals differ when the alignment skipped an end
+                # chapter on one side, which a publisher's branded intro
+                # routinely causes. The side that was skipped says so, because
+                # two bare chapter numbers that disagree read as a muddle
+                # rather than as the comparison that was actually made.
+                if ordinal > stated_ordinal:
+                    observed += ", aligned past this recording's first chapter"
+                elif stated_ordinal > ordinal:
+                    expected += ", aligned past the edition's first chapter"
+            stated.append(
+                AudioHealthObservation(
+                    AudioHealthKind.CHAPTER_STRUCTURE_MISMATCH,
+                    (audio.composition.value, candidate.identity),
+                    observed=observed,
+                    expected=expected,
+                )
+            )
+    return stated
+
+
+def _set_observations(audio: AudioFacts) -> list[AudioHealthObservation]:
+    """Project what composing the track set noticed, with the sequences it read.
+
+    The retained observation names ordinals; what an owner has to see beside
+    them is the sequence each of those files *declared*, because a gap and a
+    disorder are both statements about declared numbering rather than about
+    file order.
+    """
+    sequences = {track.ordinal: track.sequence for track in audio.tracks}
+    return [
+        AudioHealthObservation(
+            _SET_OBSERVATION_KINDS[observation.kind],
+            _set_citations(observation, sequences),
+            observation.tracks,
+        )
+        for observation in audio.observations
+        if observation.kind in _SET_OBSERVATION_KINDS
+    ]
+
+
+def _set_citations(
+    observation: AudioObservation, sequences: dict[int, int | None]
+) -> tuple[str, ...]:
+    field = () if observation.field is None else (observation.field.value,)
+    cited = tuple(
+        f"track {ordinal} declares sequence "
+        + ("none" if sequences.get(ordinal) is None else str(sequences[ordinal]))
+        for ordinal in observation.tracks
+    )
+    return (*field, *cited) or ("this item's audio files",)
+
+
+def _retained_candidates(report: MetadataReport) -> tuple[ProviderCandidate, ...]:
+    return tuple(
+        candidate
+        for observation in report.providers
+        for candidate in observation.candidates
+    )
+
+
+def _stated_local_runtime(claim: LocalClaim) -> bool:
+    return (
+        claim.kind is ClaimKind.DURATION
+        and claim.state is FieldState.VALID
+        and claim.canonical is not None
+    )
+
+
+__all__ = [
+    "AUDIO_HEALTH_BOUNDS",
+    "MAX_HEALTH_CITATIONS",
+    "MAX_HEALTH_OBSERVATIONS",
+    "AudioHealthError",
+    "AudioHealthKind",
+    "AudioHealthObservation",
+    "derive_audio_health",
+    "media_unreadable_observation",
+]

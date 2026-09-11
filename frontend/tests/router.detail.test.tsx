@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -30,6 +30,47 @@ describe('Library review ownership', () => {
         field: 'title',
       }),
     )
+  })
+
+  it('states media health on the case an admitted audiobook opens', async () => {
+    // An audiobook's row opens its case, never the recorded-evidence view, so
+    // a section that existed only there would be invisible for exactly the
+    // items it was built for.
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        mediaHealth: [
+          {
+            bound:
+              'The local running time is within 90 seconds of the running time the matched edition states.',
+            cited: ['local_abc123', 'audible-product-B08G9PRS1K'],
+            expected: '72000 seconds stated by the matched edition',
+            kind: 'runtime_short_of_provider' as const,
+            observed: '43200 seconds of local audio',
+            tracks: [],
+          },
+        ],
+      })),
+    }
+    renderRoute('/review/case-1?subview=evidence', http)
+
+    const section = await screen.findByRole('region', { name: 'Media health' })
+    expect(within(section).getByText('Runtime short of provider')).toBeVisible()
+    expect(
+      within(section).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
+    ).toBeVisible()
+    // The opaque local reference stands for what it points at rather than
+    // being printed at the owner.
+    expect(within(section).getByText(/Read from local evidence, audible-product/u)).toBeVisible()
+    expect(screen.queryByText('local_abc123')).toBeNull()
+  })
+
+  it('states no media-health section on a case with nothing wrong with its media', async () => {
+    renderRoute('/review/case-1?subview=evidence')
+
+    expect(await screen.findByRole('heading', { name: 'Evidence' })).toBeVisible()
+    expect(screen.queryByRole('region', { name: 'Media health' })).toBeNull()
   })
 
   it('cross-links diagnostics with URL-owned state and browser history', async () => {

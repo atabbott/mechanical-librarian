@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
+import { MediaHealth } from '../components/MediaHealth'
 import type { CaseDetailView, EvidenceView, HistoryValueView, HistoryView } from '../api/http'
 import { displayValue } from '../api/http'
 import { fieldLabel, labelWords } from '../labels'
@@ -238,6 +239,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   available. The evidence below is the retained portion only.
                 </p>
               ) : null}
+              {data.mediaHealth.length ? <MediaHealth observations={data.mediaHealth} /> : null}
               <div className="diagnostic-list evidence-fields">
                 {data.fields.map((field) => {
                   const fieldObservations = observations.filter((item) =>

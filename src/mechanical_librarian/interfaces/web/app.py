@@ -547,6 +547,11 @@ class _CaseDetailResponse(_ClosedModel):
     comparison_notices: list[str]
     current: bool
     fields: list[_ReviewField]
+    # The same section the recorded-evidence view carries, under the same
+    # bound: a work with a review case is the one an owner opens first, and a
+    # recording that runs short of its edition is not a field-level finding
+    # any of `fields` could state.
+    media_health: list[_MediaHealthObservation] = Field(max_length=4608)
     review_case_id: str
     schema_version: Literal["review-case-detail-v2"]
     target: _TargetIdentity
@@ -708,9 +713,46 @@ class _ReviewCounts(_ClosedModel):
     no_attention_needed: int
 
 
+class _MediaHealthObservation(_ClosedModel):
+    """One typed statement about an item's media, with its citation and bound.
+
+    The same closed shape on both surfaces that carry it: the report detail
+    derives its list from retained evidence, the terminal row from the record
+    of what stopped, and a reader switches on `kind` in one vocabulary.
+    """
+
+    bound: str = Field(max_length=256)
+    # Never empty: an observation an owner cannot check against the report is
+    # an assertion, and the domain shape refuses to build one. The wire says
+    # the same rather than leaving a reader to discover it.
+    cited: list[str] = Field(min_length=1, max_length=520)
+    expected: str | None = Field(default=None, max_length=256)
+    # Closed on the wire so a client can switch on `kind` exhaustively and a
+    # value outside the vocabulary fails validation here rather than reaching
+    # a reader as a statement it cannot render. The nine values are
+    # transcribed rather than taken from `AudioHealthKind` because this model
+    # validates strictly, which would demand enum members where the projection
+    # hands it strings; `tests/unit/test_review_web_read_models.py` pins this
+    # set equal to the domain's so the two cannot drift.
+    kind: Literal[
+        "runtime_short_of_provider",
+        "chapter_structure_mismatch",
+        "track_sequence_gap",
+        "track_sequence_disorder",
+        "track_duration_unavailable",
+        "chapter_atoms_partial",
+        "tag_disagrees_across_tracks",
+        "asin_disagrees_across_tracks",
+        "media_unreadable",
+    ]
+    observed: str | None = Field(default=None, max_length=256)
+    tracks: list[int] = Field(max_length=512)
+
+
 class _PreparationFailure(_ClosedModel):
     attempt: int
     diagnostic_reference: str
+    media_health: list[_MediaHealthObservation] = Field(max_length=512)
     provider: str
     reason: str
     recovery: str
@@ -797,6 +839,10 @@ class _ReportDetailResponse(_ClosedModel):
     item: str = Field(max_length=512)
     library: str = Field(max_length=512)
     media_kind: str = Field(max_length=32)
+    # What is wrong with the media, separate from what the evidence says about
+    # the work. Bounded by the domain's own ceiling of one observation per kind
+    # per track.
+    media_health: list[_MediaHealthObservation] = Field(max_length=4608)
     # The two provider surfaces: what every configured provider was asked and
     # how it ended, and what the admitted candidates stated. Both are bounded
     # exactly as the local evidence above is.
@@ -804,7 +850,7 @@ class _ReportDetailResponse(_ClosedModel):
     provider_evidence: list[_ReportProviderEvidence] = Field(max_length=1024)
     provider_evidence_truncated: bool
     report_id: str = Field(max_length=128)
-    schema_version: Literal["review-report-detail-v2"]
+    schema_version: Literal["review-report-detail-v3"]
     title: str = Field(max_length=1024)
 
 

@@ -119,6 +119,10 @@ class CaseDetailView:
     comparison_notices: tuple[str, ...]
     current: bool
     fields: tuple[dict[str, object], ...]
+    # What is wrong with the media itself, carried beside the fields rather
+    # than inside one: no target field states it, and nothing here is a
+    # proposal or a decision.
+    media_health: tuple[dict[str, object], ...]
     review_case_id: str
     schema_version: str
     target: dict[str, object]
@@ -134,6 +138,10 @@ class CaseDetailView:
             tuple(
                 dict(item) for item in cast("list[dict[str, object]]", value["fields"])
             ),
+            tuple(
+                dict(item)
+                for item in cast("list[dict[str, object]]", value["media_health"])
+            ),
             str(value["review_case_id"]),
             str(value["schema_version"]),
             dict(cast("dict[str, object]", value["target"])),
@@ -145,6 +153,7 @@ class CaseDetailView:
             "comparison_notices": list(self.comparison_notices),
             "current": self.current,
             "fields": [dict(item) for item in self.fields],
+            "media_health": [dict(item) for item in self.media_health],
             "review_case_id": self.review_case_id,
             "schema_version": self.schema_version,
             "target": dict(self.target),

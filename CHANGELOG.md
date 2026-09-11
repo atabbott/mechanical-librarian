@@ -8,6 +8,13 @@
 
 ## Unreleased
 
+- An audiobook's evidence view, its review case and the rows a stopped
+  preparation leaves behind now state a closed set of typed media-health
+  observations, each naming the track or provider evidence it was read from and
+  the bound it violated. A zero-byte file now ends the item `unreadable_media`
+  rather than `parser_refused`. Current rich-metadata qualification moves to F20
+  v24 and F19a v10, rebinding the changed sources without rescoring. (#144)
+
 - Configure optional description advice independently of cover review, with
   editable cleanup preferences and automatic application off by default.
   Authored text keeps its advised provenance through review, guarded writes,

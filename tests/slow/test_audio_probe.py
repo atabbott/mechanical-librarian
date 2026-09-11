@@ -30,6 +30,9 @@ from mechanical_librarian.application.metadata_report import (
     AudioItemInspectionError,
     TargetFile,
 )
+from mechanical_librarian.application.review_pipeline import (
+    audio_inspection_failure_code,
+)
 from mechanical_librarian.bootstrap.composition import _IsolatedAudioInspector
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapterComposition,
@@ -323,3 +326,26 @@ def test_one_hostile_track_denies_the_whole_item_its_evidence(
         AudioInspectionOutcome.MALFORMED,
     }
     assert raised.value.track == 3
+
+
+def test_a_zero_byte_file_is_unreadable_not_refused(media_root: Path) -> None:
+    """An empty file has nothing to parse, so nothing may say parsing refused.
+
+    The probe binary is real here: handed the empty file it fails, and before
+    this gate that failure reached the owner as `parser_refused` -- advice to
+    supply a file within the supported parsing limits, about a file with no
+    bytes. The gate reads the length the open already returned, so the item
+    ends `unreadable_media` under the empty track's own ordinal.
+    """
+    tracks = multi_track_mp3(2, seconds=1.0)
+    for name, payload in tracks:
+        (media_root / name).write_bytes(payload)
+    empty = tracks[1][0]
+    (media_root / empty).write_bytes(b"")
+
+    with pytest.raises(AudioItemInspectionError) as raised:
+        _inspect_set(media_root, tuple(name for name, _payload in tracks))
+
+    assert raised.value.outcome is AudioInspectionOutcome.UNAVAILABLE_SOURCE
+    assert raised.value.track == 2
+    assert audio_inspection_failure_code(raised.value.outcome) == "unreadable_media"

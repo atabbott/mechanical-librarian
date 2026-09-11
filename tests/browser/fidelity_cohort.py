@@ -133,6 +133,8 @@ TERMINAL_LIBRARY_WORK = _work(
     preparation={
         "attempt": 1,
         "diagnostic_reference": "prep-0123456789abcdef",
+        # A provider-credential terminal says nothing about the media.
+        "media_health": [],
         "provider": "hardcover-main",
         "reason": TERMINAL_FAILURE_COPY,
         "recovery": "Update the configured provider credentials, then scan this library again.",
@@ -514,6 +516,7 @@ def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
             "schema_version": "review-case-detail-v2",
+            "media_health": [],
             "writes_consented": False,
             "review_case_id": case_id,
             "current": False,
@@ -927,6 +930,7 @@ def _case(case_id: str) -> dict[str, object]:
     )
     return {
         "schema_version": "review-case-detail-v2",
+        "media_health": [],
         "writes_consented": False,
         "review_case_id": case_id,
         "current": True,

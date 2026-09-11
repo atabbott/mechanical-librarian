@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   ApiError,
+  MEDIA_HEALTH_KINDS,
   PageCsrfTokenStore,
   ReviewApiClient,
   mapCaseDetail,
@@ -15,6 +16,7 @@ import {
   mapPreparation,
   mapCoverConsideration,
   mapCodexDevice,
+  mapReportDetail,
   mapReviewerAccess,
 } from '../src/api/http'
 
@@ -654,6 +656,7 @@ describe('ReviewApiClient', () => {
         review_case_id: 'case-1',
         current: true,
         comparison_notices: [],
+        media_health: [],
         writes_consented: false,
         target: {
           item: 'internal-item-1',
@@ -705,6 +708,7 @@ describe('ReviewApiClient', () => {
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
+      media_health: [],
       writes_consented: false,
       target: {
         item: 'internal-item-1',
@@ -768,6 +772,7 @@ describe('ReviewApiClient', () => {
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
+      media_health: [],
       writes_consented: false,
       target: {
         item: 'internal-item-1',
@@ -833,6 +838,7 @@ describe('ReviewApiClient', () => {
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
+      media_health: [],
       writes_consented: false,
       target: {
         item: 'internal-item-1',
@@ -2108,6 +2114,161 @@ describe('ReviewApiClient', () => {
       schema_version: 'review.v1',
     }
     expect(() => mapLibrary(page)).toThrow(new ApiError(502, 'invalid_detail_kind'))
+  })
+})
+
+describe('mapReportDetail', () => {
+  const detail = (overrides: Record<string, unknown> = {}) => ({
+    chapters: [],
+    chapters_truncated: false,
+    connection: 'primary',
+    embedded_cover: { present: false, surface: null },
+    evidence: [],
+    evidence_truncated: false,
+    item: 'item-9',
+    library: 'audio',
+    media_health: [
+      {
+        bound: 'The declared track sequence runs without a hole.',
+        cited: ['track 1 declares sequence 1', 'track 2 declares sequence 3'],
+        expected: null,
+        kind: 'track_sequence_gap',
+        observed: null,
+        tracks: [1, 2],
+      },
+    ],
+    media_kind: 'm4b',
+    provider_sources: [],
+    provider_evidence: [],
+    provider_evidence_truncated: false,
+    report_id: `report_${'a'.repeat(64)}`,
+    schema_version: 'review-report-detail-v3',
+    title: 'Recorded work',
+    ...overrides,
+  })
+
+  it('maps the media-health section and refuses an older report detail', () => {
+    const mapped = mapReportDetail(detail())
+
+    expect(mapped.mediaHealth).toEqual([
+      {
+        bound: 'The declared track sequence runs without a hole.',
+        cited: ['track 1 declares sequence 1', 'track 2 declares sequence 3'],
+        expected: null,
+        kind: 'track_sequence_gap',
+        observed: null,
+        tracks: [1, 2],
+      },
+    ])
+    // A v2 document has no media-health section at all, so accepting one would
+    // draw an empty section the server never stated anything about.
+    expect(() => mapReportDetail(detail({ schema_version: 'review-report-detail-v2' }))).toThrow(
+      new ApiError(502, 'invalid_report_detail_response'),
+    )
+  })
+
+  it('refuses a media-health observation that is not the closed shape', () => {
+    expect(() => mapReportDetail(detail({ media_health: {} }))).toThrow(
+      new ApiError(502, 'invalid_report_media_health'),
+    )
+    expect(() => mapReportDetail(detail({ media_health: ['gap'] }))).toThrow(
+      new ApiError(502, 'invalid_report_media_health_0'),
+    )
+    const unbounded = { ...detail().media_health[0], bound: 'x'.repeat(257) }
+    expect(() => mapReportDetail(detail({ media_health: [unbounded] }))).toThrow(
+      new ApiError(502, 'invalid_report_media_health_0_bound'),
+    )
+    const untyped = { ...detail().media_health[0], tracks: ['1'] }
+    expect(() => mapReportDetail(detail({ media_health: [untyped] }))).toThrow(
+      new ApiError(502, 'invalid_report_media_health_0_track_0'),
+    )
+  })
+
+  it('accepts every media-health kind and refuses one outside the vocabulary', () => {
+    expect(MEDIA_HEALTH_KINDS).toHaveLength(9)
+    for (const kind of MEDIA_HEALTH_KINDS) {
+      const mapped = mapReportDetail(
+        detail({ media_health: [{ ...detail().media_health[0], kind }] }),
+      )
+      expect(mapped.mediaHealth[0]?.kind).toBe(kind)
+    }
+    // A kind this build cannot render is a server it does not understand, not
+    // a row to draw blank.
+    const widened = { ...detail().media_health[0], kind: 'media_shredded' }
+    expect(() => mapReportDetail(detail({ media_health: [widened] }))).toThrow(
+      new ApiError(502, 'invalid_report_media_health_0_kind'),
+    )
+  })
+
+  it('refuses a media-health observation with no track list', () => {
+    // `tracks` is required by the schema, so coercing an absent one to no
+    // tracks would print an item-wide statement the server never made.
+    const absent = {
+      bound: 'The declared track sequence runs without a hole.',
+      cited: ['track 1 declares sequence 1'],
+      expected: null,
+      kind: 'track_sequence_gap',
+      observed: null,
+    }
+    expect(() => mapReportDetail(detail({ media_health: [absent] }))).toThrow(
+      new ApiError(502, 'invalid_report_media_health_0_tracks'),
+    )
+    const untracked = { ...detail().media_health[0], tracks: 2 }
+    expect(() => mapReportDetail(detail({ media_health: [untracked] }))).toThrow(
+      new ApiError(502, 'invalid_report_media_health_0_tracks'),
+    )
+  })
+
+  it('refuses a media-health observation that cites nothing', () => {
+    // Every observation names the evidence it read; an empty citation list is
+    // a claim with nothing behind it, so the wire refuses it as the domain
+    // type does.
+    const uncited = { ...detail().media_health[0], cited: [] }
+    expect(() => mapReportDetail(detail({ media_health: [uncited] }))).toThrow(
+      new ApiError(502, 'invalid_report_media_health_0_cited'),
+    )
+  })
+})
+
+describe('mapCaseDetail media health', () => {
+  const observation = {
+    bound: 'The local running time is within 90 seconds of the stated running time.',
+    cited: ['local_abc123', 'audible-product-B08G9PRS1K'],
+    expected: '72000 seconds stated by the matched edition',
+    kind: 'runtime_short_of_provider',
+    observed: '43200 seconds of local audio',
+    tracks: [],
+  }
+  const detail = async (media_health: unknown) => {
+    const { default: payload } = await import('./descriptionAdviceFixture.json')
+    return { ...payload, media_health }
+  }
+
+  it('maps the section the case view draws for an admitted audiobook', async () => {
+    expect(mapCaseDetail(await detail([observation])).mediaHealth).toEqual([observation])
+    expect(mapCaseDetail(await detail([])).mediaHealth).toEqual([])
+  })
+
+  it('refuses a case-detail media-health section that is not the closed shape', async () => {
+    const absent = await detail(undefined)
+    expect(() => mapCaseDetail(absent)).toThrow(new ApiError(502, 'invalid_case_media_health'))
+    const untyped = await detail([{ ...observation, tracks: ['1'] }])
+    expect(() => mapCaseDetail(untyped)).toThrow(
+      new ApiError(502, 'invalid_case_media_health_0_track_0'),
+    )
+    const widened = await detail([{ ...observation, kind: 'media_shredded' }])
+    expect(() => mapCaseDetail(widened)).toThrow(
+      new ApiError(502, 'invalid_case_media_health_0_kind'),
+    )
+  })
+
+  it('refuses a case-detail observation that cites nothing', async () => {
+    // An observation with no citation names a fault without saying what it
+    // read, which is the one thing the domain type refuses to construct.
+    const uncited = await detail([{ ...observation, cited: [] }])
+    expect(() => mapCaseDetail(uncited)).toThrow(
+      new ApiError(502, 'invalid_case_media_health_0_cited'),
+    )
   })
 })
 

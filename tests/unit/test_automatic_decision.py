@@ -282,6 +282,8 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         bundle_id=None,
     )
     prior_digests = (
+        "f69a500950778b6298c2b149326ddd496bdaa501b5e50a593cd61f47558e32bc",
+        "d065def423f5e3316172fae8b378ae2a4407481d6ccd1a9db94427baade2a9d1",
         "aacb6e2ebce0490f58b86c8069963445dcb470ffdd70283b5558dde082449103",
         "1dcf4278d8cbba00df764ea17b13809a42304fece748632c217531296dfcddee",
         "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff",
@@ -372,6 +374,8 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
         bundle_id=None,
     )
     prior_digests = (
+        "01c876cd73706231bf6ab3de9371e0c60b755124d19427a807fc9472b65bbdd0",
+        "15298611ad0b50dc9a8adb924e6e3551a4da0dd641d2600843f3dac260a71dfb",
         "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
         "f7a4493d94f0188e6974aad1b68f9238d9e7733aa1a2e064e5663e385af0fe6e",
         "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",

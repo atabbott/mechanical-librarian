@@ -60,6 +60,7 @@ export const detail: CaseDetailView = {
   authors: [],
   subtitle: 'Books · ebook',
   comparisonNotices: [],
+  mediaHealth: [],
   writesConsented: false,
   fields: [
     {
