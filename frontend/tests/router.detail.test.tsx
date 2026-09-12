@@ -32,6 +32,36 @@ describe('Library review ownership', () => {
     )
   })
 
+  it.each(['/review/case-1?subview=evidence', '/library?lens=all&preview=case-1&field=title'])(
+    'explains chapter recording identity at %s with secondary source attribution',
+    async (route) => {
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({
+          ...detail,
+          recordingIdentityBasis: {
+            basis: 'chapter_runtime_and_structure' as const,
+            provider: 'Audnexus',
+            candidate: 'recording-1',
+          },
+        })),
+      }
+      renderRoute(route, http)
+      const section = await screen.findByRole('region', { name: 'Recording identity evidence' })
+      expect(
+        within(section).getByText(/Chapter timing and structure corroborate this recording/u),
+      ).toBeVisible()
+      expect(
+        within(section).getByText(/Audnexus did not provide a separate book runtime/u),
+      ).toBeVisible()
+      const source = within(section).getByText('Recording source')
+      expect(within(section).getByText(/Candidate reference: recording-1/u)).not.toBeVisible()
+      await userEvent.setup().click(source)
+      expect(within(section).getByText(/Candidate reference: recording-1/u)).toBeVisible()
+      expect(screen.queryByRole('region', { name: 'Media health' })).toBeNull()
+    },
+  )
+
   it('states media health on the case an admitted audiobook opens', async () => {
     // An audiobook's row opens its case, never the recorded-evidence view, so
     // a section that existed only there would be invisible for exactly the
@@ -71,6 +101,7 @@ describe('Library review ownership', () => {
 
     expect(await screen.findByRole('heading', { name: 'Evidence' })).toBeVisible()
     expect(screen.queryByRole('region', { name: 'Media health' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Recording identity evidence' })).toBeNull()
   })
 
   it('cross-links diagnostics with URL-owned state and browser history', async () => {

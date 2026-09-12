@@ -57,14 +57,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v29.json"
+    "f20-rich-metadata-qualification-candidate-v30.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v15.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v16.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1962,6 +1962,23 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
             "scripts/qualify_provider_evidence_replay.py",
         }
     )
+    expected |= {
+        "src/mechanical_librarian/" + name
+        for name in (
+            "adapters/evidence_extractors/audio_local.py",
+            "domain/audiobook_corroboration.py",
+            "domain/audio_composition.py",
+            "bootstrap/audio_child.py",
+            "bootstrap/composition.py",
+            "application/review_application.py",
+            "interfaces/web/app.py",
+        )
+    } | {
+        "tests/unit/test_shadow_outcome_persistence.py",
+        "frontend/src/components/RecordingIdentityBasis.tsx",
+        "frontend/src/routes/LibraryPage.tsx",
+        "frontend/src/routes/DetailPage.tsx",
+    }
     assert set(rich["source_closure"]) == expected
     assert set(title["source_closure"]) == expected - {
         "src/mechanical_librarian/domain/automatic_decision.py"
@@ -1980,13 +1997,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v14.json",
-            "c2b2170b1e7ce6f9b199afbbdf303e72cf2fd011bcaa0b4d3e09ab1cbd577583",
+            "f19a-qualification-manifest-v15.json",
+            "50eaf202ea5d57407714427863634e45abe4be6380616e7d4c0b811e5df033c6",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v28.json",
-            "91ce3c6433fcdcebad2bdb5b6d44a6ac970ad96fe0901f5dae5fc765d54fce62",
+            "f20-rich-metadata-qualification-candidate-v29.json",
+            "694b9bfffd787c097893702990b942012f61f82cd5448ea1f55e7a25c53200d2",
         ),
     ):
         assert (
@@ -2039,19 +2056,25 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
         assert binding["evidence_mode"]
         if name in common:
             assert rich["measurement_artifacts"][name] == binding
-    for name, relative_source in (
-        ("synthetic-report-builder", "tests/support/evidence_led_titles.py"),
-        (
-            "f20-persistence-effect-test",
-            "tests/unit/test_shadow_outcome_persistence.py",
-        ),
-    ):
-        assert (
-            title["measurement_artifacts"][name]["sha256"]
-            == hashlib.sha256(
-                (MANIFEST.parents[2] / relative_source).read_bytes()
-            ).hexdigest()
+    for successor in (title, rich):
+        predecessor = json.loads(
+            (MANIFEST.parents[2] / successor["prior_manifest_path"]).read_bytes()
         )
+        assert (
+            successor["measurement_artifacts"] == predecessor["measurement_artifacts"]
+        )
+        assert (
+            successor["chapter_runtime_increment"][
+                "historical_measurements_reused_without_rescoring"
+            ]
+            is True
+        )
+    assert (
+        title["measurement_artifacts"]["synthetic-report-builder"]["sha256"]
+        == hashlib.sha256(
+            (MANIFEST.parents[2] / "tests/support/evidence_led_titles.py").read_bytes()
+        ).hexdigest()
+    )
     assert title["new_title_measurement"]["synthetic"]["candidate_predictions"] == 25
     assert (
         title["durable_title_measurement"]["synthetic_positive"]["durable_predictions"]

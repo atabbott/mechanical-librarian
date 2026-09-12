@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
+from mechanical_librarian.application.metadata_report import recording_identity_basis
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
@@ -682,8 +683,9 @@ class InspectCurrentReviewCase:
                 # it is derived from the same retained report the fields above
                 # were read from, never from a second source.
                 "media_health": _media_health(report),
+                "recording_identity_basis": recording_identity_basis(report),
                 "review_case_id": case.review_case_id,
-                "schema_version": "review-case-detail-v3",
+                "schema_version": "review-case-detail-v4",
                 # Read models never learn write authority. The composition root
                 # stamps the truth before the view leaves the application, and
                 # the default keeps a surface that never asks honest.
@@ -1529,6 +1531,7 @@ def _report_detail(
         # retains rather than persisted, so the section exists for every report
         # already published and nothing was rebuilt to obtain it.
         "media_health": _media_health(recorded),
+        "recording_identity_basis": recording_identity_basis(recorded),
         # What every configured provider was asked, and how each ended.
         "provider_sources": _provider_outcomes(recorded),
         # What the admitted candidates stated, under the same ceiling and the
@@ -1536,7 +1539,7 @@ def _report_detail(
         "provider_evidence": provider_claims[:_EVIDENCE_CEILING],
         "provider_evidence_truncated": len(provider_claims) > _EVIDENCE_CEILING,
         "report_id": report["report_id"],
-        "schema_version": "review-report-detail-v3",
+        "schema_version": "review-report-detail-v4",
         "title": _report_title(report),
     }
 

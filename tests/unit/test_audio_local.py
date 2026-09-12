@@ -39,7 +39,7 @@ def _probe(
     duration: str | None = "4.000",
     tags: dict[str, str] | None = None,
     streams: list[dict[str, object]] | None = None,
-    chapters: list[dict[str, object]] | None = None,
+    chapters: object = None,
 ) -> str:
     container: dict[str, object] = {"format_name": format_name}
     if duration is not None:
@@ -276,6 +276,7 @@ def test_unreadable_chapter_boundaries_are_skipped_without_renumbering() -> None
 
     assert [value.ordinal for value in interpretation.chapters] == [1, 2]
     assert interpretation.chapters_truncated is False
+    assert interpretation.chapter_rows_omitted is True
 
 
 def test_embedded_cover_is_a_presence_fact_with_its_surface() -> None:
@@ -841,3 +842,58 @@ def test_a_track_title_is_projected_whole_or_not_at_all() -> None:
     assert _read(_probe(tags={"title": "Part One"})).title == "Part One"
     assert _read(_probe(tags={"title": " Part   One "})).title == "Part One"
     assert _read(_probe(tags={"title": "x" * 300})).title is None
+
+
+@pytest.mark.parametrize(
+    "bad_row",
+    (
+        None,
+        {},
+        {"start_time": "bad", "end_time": "3"},
+        {"start_time": "4", "end_time": "3"},
+    ),
+)
+@pytest.mark.parametrize("position", (0, 1, 2))
+def test_partial_chapters_remain_visible_and_record_omission(bad_row, position) -> None:
+    rows: list[object] = [
+        {"start_time": "0", "end_time": "1"},
+        {"start_time": "1", "end_time": "2"},
+    ]
+    rows.insert(position, bad_row)
+    result = _read(_probe(chapters=rows))
+    assert [(c.start_milliseconds, c.end_milliseconds) for c in result.chapters] == [
+        (0, 1000),
+        (1000, 2000),
+    ]
+    assert result.chapter_rows_omitted is True
+    assert result.chapters_truncated is False
+
+
+@pytest.mark.parametrize(
+    "rows",
+    (
+        [],
+        [{"start_time": "0", "end_time": "0"}],
+        [{"start_time": "0", "end_time": "1"}, {"start_time": "2", "end_time": "3"}],
+    ),
+)
+def test_retained_empty_zero_and_gapped_chapters_do_not_invent_omission(rows) -> None:
+    result = _read(_probe(chapters=rows))
+    assert len(result.chapters) == len(rows)
+    assert result.chapter_rows_omitted is False
+
+
+def test_chapter_overflow_and_examined_omission_are_independent() -> None:
+    result = _read(
+        _probe(chapters=[None, {"start_time": "0", "end_time": "1"}, None]),
+        limits=AudioInspectionLimits(chapters=2),
+    )
+    assert len(result.chapters) == 1
+    assert result.chapter_rows_omitted is True
+    assert result.chapters_truncated is True
+    unexamined = _read(
+        _probe(chapters=[{"start_time": "0", "end_time": "1"}, None]),
+        limits=AudioInspectionLimits(chapters=1),
+    )
+    assert unexamined.chapter_rows_omitted is False
+    assert unexamined.chapters_truncated is True

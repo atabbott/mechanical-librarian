@@ -77,7 +77,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v40"
+REPORT_SCHEMA = "metadata-report-v41"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1046,6 +1046,7 @@ class AudioFacts:
     composition: AudioChapterComposition = AudioChapterComposition.SINGLE_FILE
     tracks: tuple[AudioTrackDigest, ...] = ()
     observations: tuple[AudioObservation, ...] = ()
+    chapter_rows_omitted: bool = False
 
     def __post_init__(self) -> None:
         if (
@@ -1053,6 +1054,7 @@ class AudioFacts:
             or len(self.chapters) > MAX_AUDIO_CHAPTERS
             or any(type(value) is not AudioChapter for value in self.chapters)
             or type(self.chapters_truncated) is not bool
+            or type(self.chapter_rows_omitted) is not bool
             or type(self.embedded_cover) is not AudioEmbeddedCover
         ):
             raise ReportValueError("audio facts are invalid")
@@ -1104,6 +1106,7 @@ class AudioFacts:
         return {
             "chapters": [value.to_data() for value in self.chapters],
             "chapters_truncated": self.chapters_truncated,
+            "chapter_rows_omitted": self.chapter_rows_omitted,
             "composition": self.composition.value,
             "embedded_cover": self.embedded_cover.to_data(),
             "observations": [value.to_data() for value in self.observations],
@@ -4797,6 +4800,7 @@ def _audio_facts_from_data(value: object) -> AudioFacts | None:
         {
             "chapters",
             "chapters_truncated",
+            "chapter_rows_omitted",
             "composition",
             "embedded_cover",
             "observations",
@@ -4827,6 +4831,7 @@ def _audio_facts_from_data(value: object) -> AudioFacts | None:
                 _audio_observation_from_data(observation)
                 for observation in _list(item["observations"])
             ),
+            item["chapter_rows_omitted"],
         )
     except ValueError as error:
         raise ReportValueError("audio facts are invalid") from error

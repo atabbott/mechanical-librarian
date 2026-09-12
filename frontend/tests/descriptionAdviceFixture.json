@@ -787,7 +787,7 @@
   ],
   "media_health": [],
   "review_case_id": "review_case_66060a656e30ec2237446c751438cbe67eeb4ee377eb81a348ab398071242ae3",
-  "schema_version": "review-case-detail-v3",
+  "schema_version": "review-case-detail-v4",
   "target": {
     "authors": ["Mick Herron"],
     "connection": "primary",
@@ -796,5 +796,6 @@
     "media_kind": "epub",
     "title": "Real Tigers"
   },
-  "writes_consented": false
+  "writes_consented": false,
+  "recording_identity_basis": null
 }

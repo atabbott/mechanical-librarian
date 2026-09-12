@@ -393,3 +393,197 @@ def _audio_report(durations: tuple[str, ...]) -> MetadataReport:
         providers=(),
         audio=single_track_audio_facts(),
     )
+
+
+@pytest.mark.parametrize(
+    "delta,admitted", ((-1, False), (0, True), (6, True), (7, False))
+)
+def test_chapter_aggregate_flooring_is_bounded(delta: int, admitted: bool) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+    )
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report()
+    structure = next(
+        e.chapters for e in report.providers[0].candidates[0].evidence if e.chapters
+    )
+    assert (
+        complete_chapter_runtime_agreement(
+            report.audio,
+            report.local_claims,
+            replace(structure, runtime_seconds=1748 + delta),
+        )
+        is admitted
+    )
+
+
+@pytest.mark.parametrize(
+    "offset,admitted", ((-1001, False), (-1000, True), (1000, True), (1001, False))
+)
+def test_chapter_local_coverage_has_one_second_boundary(
+    offset: int, admitted: bool
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+    )
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report()
+    audio = report.audio
+    assert audio is not None
+    chapters = (
+        *audio.chapters[:-1],
+        replace(audio.chapters[-1], end_milliseconds=1748000 + offset),
+    )
+    structure = next(
+        e.chapters for e in report.providers[0].candidates[0].evidence if e.chapters
+    )
+    assert (
+        complete_chapter_runtime_agreement(
+            replace(audio, chapters=chapters), report.local_claims, structure
+        )
+        is admitted
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ("omitted", "truncated", "offset", "gap", "overlap", "zero", "uniform", "short"),
+)
+def test_complete_chapter_timing_refuses_incomplete_or_undiscriminated_vectors(
+    variant: str,
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audio_inspection import AudioChapter
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+    )
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report()
+    audio = report.audio
+    assert audio is not None
+    structure = next(
+        e.chapters for e in report.providers[0].candidates[0].evidence if e.chapters
+    )
+    assert complete_chapter_runtime_agreement(audio, report.local_claims, structure)
+    local_claims = report.local_claims
+    if variant == "omitted":
+        audio = replace(audio, chapter_rows_omitted=True)
+    elif variant == "truncated":
+        audio = replace(audio, chapters_truncated=True)
+    elif variant == "offset":
+        structure = replace(
+            structure,
+            chapter_count=7,
+            durations_seconds=(17, *structure.durations_seconds),
+            runtime_seconds=1765,
+        )
+    elif variant in {"gap", "overlap", "zero"}:
+        second = audio.chapters[1]
+        start = second.start_milliseconds + (1 if variant == "gap" else -1)
+        if variant == "zero":
+            start = second.end_milliseconds
+        audio = replace(
+            audio,
+            chapters=(
+                audio.chapters[0],
+                replace(second, start_milliseconds=start),
+                *audio.chapters[2:],
+            ),
+        )
+    elif variant == "uniform":
+        local_claims = chapter_runtime_report(local_duration="1800.000").local_claims
+        audio = replace(
+            audio,
+            chapters=tuple(
+                AudioChapter(i + 1, i * 300000, (i + 1) * 300000, None)
+                for i in range(6)
+            ),
+        )
+        structure = replace(
+            structure, durations_seconds=(300,) * 6, runtime_seconds=1800
+        )
+    else:
+        local_claims = chapter_runtime_report(local_duration="844.000").local_claims
+        audio = replace(audio, chapters=audio.chapters[:4])
+        structure = replace(
+            structure,
+            chapter_count=4,
+            durations_seconds=structure.durations_seconds[:4],
+            runtime_seconds=844,
+        )
+    assert not complete_chapter_runtime_agreement(audio, local_claims, structure)
+
+
+@pytest.mark.parametrize("end,admitted", ((1749001, True), (1749002, False)))
+def test_fractional_runtime_coverage_uses_canonical_milliseconds(
+    end: int, admitted: bool
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+    )
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report(local_duration="1748.001")
+    audio = report.audio
+    assert audio is not None
+    audio = replace(
+        audio,
+        chapters=(
+            *audio.chapters[:-1],
+            replace(audio.chapters[-1], end_milliseconds=end),
+        ),
+    )
+    structure = next(
+        e.chapters for e in report.providers[0].candidates[0].evidence if e.chapters
+    )
+    assert (
+        complete_chapter_runtime_agreement(audio, report.local_claims, structure)
+        is admitted
+    )
+
+
+@pytest.mark.parametrize(
+    "local,provider,admitted",
+    (
+        ((100, 101, 100, 101, 100), (100, 100, 100, 100, 100), False),
+        ((100, 100, 100, 100, 100), (99, 100, 101, 100, 100), False),
+        ((100, 110, 120, 130, 140), (102, 110, 120, 130, 138), True),
+        ((100, 110, 120, 130, 140), (103, 110, 120, 130, 137), False),
+        ((100, 110, 120, 130), (100, 110, 120, 130), False),
+    ),
+)
+def test_complete_vectors_enforce_each_side_uniformity_tolerance_and_strong_count(
+    local: tuple[int, ...], provider: tuple[int, ...], admitted: bool
+) -> None:
+    from mechanical_librarian.domain.audio_inspection import AudioChapter
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+    )
+    from mechanical_librarian.domain.metadata_report import ProviderChapterStructure
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    chapters = []
+    start = 0
+    for ordinal, duration in enumerate(local, 1):
+        chapters.append(AudioChapter(ordinal, start, start + duration * 1000, None))
+        start += duration * 1000
+    structure = ProviderChapterStructure(len(provider), sum(provider), provider)
+    report = chapter_runtime_report(
+        local_duration=f"{sum(local)}.000",
+        chapters=tuple(chapters),
+        structure=structure,
+    )
+    assert (
+        complete_chapter_runtime_agreement(report.audio, report.local_claims, structure)
+        is admitted
+    )

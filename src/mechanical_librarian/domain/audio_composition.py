@@ -92,6 +92,11 @@ class ComposedAudio:
     composition: AudioChapterComposition
     observations: tuple[AudioObservation, ...]
     tracks: tuple[AudioTrackDigest, ...]
+    chapter_rows_omitted: bool
+
+    def __post_init__(self) -> None:
+        if type(self.chapter_rows_omitted) is not bool:
+            raise ValueError("audio chapter omission is invalid")
 
 
 def compose_audio_inspections(tracks: tuple[InspectedTrack, ...]) -> ComposedAudio:
@@ -124,6 +129,8 @@ def compose_audio_inspections(tracks: tuple[InspectedTrack, ...]) -> ComposedAud
         composition,
         _observations(tracks, durations, facts, provenance, atoms_partial),
         manifest,
+        composition is not AudioChapterComposition.PER_TRACK
+        and any(track.inspection.chapter_rows_omitted for track in tracks),
     )
 
 

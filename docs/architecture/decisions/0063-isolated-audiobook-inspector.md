@@ -250,3 +250,16 @@ authority the milestone deliberately withholds.
 - Reopen triggers: an image size budget the probe closure cannot meet, or an
   audiobook capability that requires decoding rather than probing. The
   multi-file trigger fired and is answered by ADR-0066.
+
+## Retained chapter omission evidence (#1042)
+
+AudioInterpretation, audio-inspection-v4, ComposedAudio and metadata-report-v41
+carry required exact-bool `chapter_rows_omitted`. It is true when an examined row
+is discarded, including a malformed trailing row; readable partial chapters and
+zero spans remain descriptive. False records no observed parser omission, never
+complete original media. Overflow remains separate and may coexist with omission.
+Single-file and concatenated embedded composition preserve/OR contributor flags;
+generated per-track spans do not inherit discarded embedded rows and cannot admit
+the chapter fallback. Failed child outcomes carry no omission evidence. Old v3
+protocol and v40 report bytes are refused. Clean rebuild required under ADR-0013;
+no adoption or migration is introduced.

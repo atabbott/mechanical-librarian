@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Audiobooks with one local ASIN can reach owner review when a provider omits
+  book runtime but complete chapter timing and structure corroborate the recording.
+  Library and Detail explain the source; partial chapters remain readable without
+  qualifying this fallback. Automatic authority is unchanged. Existing installs
+  require a clean rebuild. (#1042)
+
 - Ebook titles supported by retained ISBN and creator evidence can be corrected
   independently of subtitle or series choices. Automatic decisions remain
   visible and reversible by the owner; Ask and Ignore remain authoritative.

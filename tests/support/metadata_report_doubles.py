@@ -103,6 +103,7 @@ def single_track_audio_facts(
     content_digest: str = "b" * 64,
     *,
     chapters: tuple[AudioChapter, ...] = (),
+    chapter_rows_omitted: bool = False,
     embedded_cover: AudioEmbeddedCover = _NO_EMBEDDED_COVER,
     file_format: str = "m4b",
     name: str = "book.m4b",
@@ -115,6 +116,7 @@ def single_track_audio_facts(
     """
     return AudioFacts(
         chapters=chapters,
+        chapter_rows_omitted=chapter_rows_omitted,
         embedded_cover=embedded_cover,
         tracks=(AudioTrackDigest(1, "a" * 64, content_digest, file_format, name),),
     )
@@ -125,6 +127,7 @@ def audio_result(
     *,
     content_digest: str = "d" * 64,
     chapters: tuple[AudioChapter, ...] = (),
+    chapter_rows_omitted: bool = False,
     chapters_truncated: bool = False,
     embedded_cover: AudioEmbeddedCover = _NO_EMBEDDED_COVER,
     sidecars: tuple[AudioSidecarDigest, ...] = (),
@@ -167,6 +170,7 @@ def audio_result(
                 else tracks
             ),
             observations,
+            chapter_rows_omitted,
         ),
     )
 

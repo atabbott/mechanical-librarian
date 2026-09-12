@@ -47,7 +47,8 @@ audiobook proposals only when ADR-0061's runtime corroboration band admits some
 candidate the report retains: `admitted_audiobook_identity` recomputes
 `runtime_corroborated_candidate` over each retained observation's candidates and
 the report's own local claims, which is deterministic and reads no candidate's
-shape. Nothing else admits. A work-shape retention does not: qualification keeps
+shape. #1042 adds the bounded retained-local-ASIN chapter fallback described
+below; no other path admits. A work-shape retention does not: qualification keeps
 a title-and-author match rather than dropping it, and naming a work is not
 naming this product. The item's own ASIN does not either: an embedded, sidecar,
 or path identifier naming a different cut of the same work is the disagreement
@@ -55,6 +56,19 @@ the band exists to settle, and the 0.20.0 measurement settled such
 disagreements through the band rather than around it. A report with no admitted
 identity has nothing to compare a proposal against, so its evidence is recorded
 and the work completes in the transaction that published the report.
+
+**Explicitly absent provider runtime (#1042).** Existing stated-runtime admission
+runs first and yields no new attribution. Otherwise one canonical non-target local
+ASIN, its retained matched-ASIN evidence, usable local runtime and complete strong
+unshifted nonuniform chapter vectors may admit owner review. Every retained matched
+candidate is checked for runtime vetoes before deterministic source selection.
+Missing duration claims are unknown; exactly one ABSENT claim is required for support.
+Malformed, multiple, nonpositive or outside-tight-band runtime statements veto it.
+The numerical boundary lives in `complete_chapter_runtime_agreement`; admission and
+required-nullable case/report-detail v4 attribution share `recording_identity_basis`.
+The source names a retained provider and candidate. Field applicability, owner
+choice and all automatic/effect authority remain unchanged. #1004 retains missing
+local runtime and remaining discovery-envelope work.
 
 **One evaluator.** An admitted recording runs through the existing election
 rules unchanged. Audio-specific behaviour is confined to four localised facts: a

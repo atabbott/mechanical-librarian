@@ -28,7 +28,7 @@ from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 # child still reads one file, still answers about that file alone, and still
 # names no ordinal: which track a fact came from is the parent's knowledge, and
 # composing it into an observation is the parent's job.
-AUDIO_INSPECTION_SCHEMA = "audio-inspection-v3"
+AUDIO_INSPECTION_SCHEMA = "audio-inspection-v4"
 AUDIO_LIMIT_PROFILE = "audio-inspection-limits-v1"
 # The retained report's own ceiling, and deliberately not a smaller one.  A
 # legal inspection of a file with 1,024 chapters titled to the full 280
@@ -809,6 +809,7 @@ class AudioInspection:
     # unexpected in it are different reports, and only the second one may
     # compose an observation.
     container_facts: AudioContainerFacts | None = None
+    chapter_rows_omitted: bool = False
 
     def __post_init__(self) -> None:
         if self.title is not None:
@@ -829,6 +830,7 @@ class AudioInspection:
             or any(type(value) is not AudioChapter for value in self.chapters)
             or type(self.embedded_cover) is not AudioEmbeddedCover
             or type(self.chapters_truncated) is not bool
+            or type(self.chapter_rows_omitted) is not bool
             or (
                 self.container_facts is not None
                 and type(self.container_facts) is not AudioContainerFacts
@@ -854,6 +856,7 @@ class AudioInspection:
             or self.chapters
             or self.embedded_cover.present
             or self.chapters_truncated
+            or self.chapter_rows_omitted
             or self.title is not None
             or self.container_facts is not None
         ):
@@ -865,6 +868,7 @@ class AudioInspection:
             {
                 "chapters": [value.to_data() for value in self.chapters],
                 "chapters_truncated": self.chapters_truncated,
+                "chapter_rows_omitted": self.chapter_rows_omitted,
                 "container_facts": None
                 if self.container_facts is None
                 else self.container_facts.to_protocol_data(),
@@ -901,6 +905,7 @@ class AudioInspection:
                 != {
                     "chapters",
                     "chapters_truncated",
+                    "chapter_rows_omitted",
                     "container_facts",
                     "embedded_cover",
                     "facts",
@@ -995,6 +1000,7 @@ class AudioInspection:
                     container_data["codec_tag"],
                     container_data["duration_stated"],
                 ),
+                value["chapter_rows_omitted"],
             )
         except (KeyError, TypeError, ValueError):
             raise ValueError("audio inspection protocol is invalid") from None

@@ -1117,148 +1117,167 @@ describe('Library route', () => {
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
   })
 
-  it('opens an audiobook row and reads the evidence its report recorded', async () => {
-    const user = userEvent.setup()
-    const firstWork = library.works[0]
-    if (!firstWork) throw new Error('library fixture requires one work')
-    const baseWork = { ...firstWork }
-    delete baseWork.reviewCaseId
-    const detailUrl = '/api/v1/library/report?connection=primary&library=audio&item=item-9'
-    const recorded = {
-      ...baseWork,
-      id: 'library_work_audio',
-      workId: 'library_work_audio',
-      title: 'Recorded work',
-      mediaKind: 'm4b',
-      attentionCount: 0,
-      attention: 'no_attention_needed',
-      detailUrl,
-      detailKind: 'report' as const,
-      summary: {
-        state: 'no_decision_recorded',
-        reason: 'No review decision is recorded.',
-        fields: [],
-      },
-      // An audiobook whose providers admitted no work identity completes on
-      // the recorded outcome, so it reports no preparation failure at all.
-      // The row must not read as a failure, and must open (#966).
-      preparation: null,
-    }
-    const getReportDetail = vi.fn(async () => ({
-      chapters: [
-        { endMilliseconds: 1_800_000, ordinal: 1, startMilliseconds: 0, title: 'Chapter One' },
-      ],
-      chaptersTruncated: false,
-      coverPresent: true,
-      coverSurface: 'container_stream',
-      evidence: [
-        {
-          basis: 'sidecar_libation',
-          excerpt: 'B0CW1KL2QD',
-          kind: 'asin',
-          role: null,
-          state: 'valid',
-          value: 'B0CW1KL2QD',
+  it.each([false, true])(
+    'opens recorded audiobook evidence with chapter attribution %s',
+    async (chapterBasis) => {
+      const user = userEvent.setup()
+      const firstWork = library.works[0]
+      if (!firstWork) throw new Error('library fixture requires one work')
+      const baseWork = { ...firstWork }
+      delete baseWork.reviewCaseId
+      const detailUrl = '/api/v1/library/report?connection=primary&library=audio&item=item-9'
+      const recorded = {
+        ...baseWork,
+        id: 'library_work_audio',
+        workId: 'library_work_audio',
+        title: 'Recorded work',
+        mediaKind: 'm4b',
+        attentionCount: 0,
+        attention: 'no_attention_needed',
+        detailUrl,
+        detailKind: 'report' as const,
+        summary: {
+          state: 'no_decision_recorded',
+          reason: 'No review decision is recorded.',
+          fields: [],
         },
-        {
-          basis: 'sidecar_libation',
-          excerpt: 'Recorded Narrator',
-          kind: 'contributor',
-          role: 'narrator',
-          state: 'valid',
-          value: 'Recorded Narrator',
-        },
-        {
-          basis: 'container_format',
-          excerpt: '43200.000',
-          kind: 'duration',
-          role: null,
-          state: 'valid',
-          value: '43200.000',
-        },
-        {
-          basis: 'path_file',
-          excerpt: 'B0XXXXXXXX',
-          kind: 'asin',
-          role: null,
-          state: 'malformed',
-          value: 'B0XXXXXXXX',
-        },
-      ],
-      evidenceTruncated: false,
-      item: 'item-9',
-      library: 'audio',
-      mediaHealth: [
-        {
-          bound:
-            'The local running time is within 90 seconds of the running time the matched edition states.',
-          cited: ['local_abc123', 'audible-product-B08G9PRS1K'],
-          expected: '72000 seconds stated by the matched edition',
-          kind: 'runtime_short_of_provider' as const,
-          observed: '43200 seconds of local audio',
-          tracks: [],
-        },
-      ],
-      mediaKind: 'm4b',
-      providerSources: [
-        {
-          providerRequests: 1,
-          laneKind: 'asin',
-          provider: 'Audnexus',
-          reason: 'The provider had nothing matching this work.',
-          status: 'no_match',
-        },
-      ],
-      providerEvidence: [],
-      providerEvidenceTruncated: false,
-      reportId: 'report_' + 'a'.repeat(64),
-      title: 'Recorded work',
-    }))
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getReportDetail,
-      getLibrary: vi.fn(async () => ({
-        lens: 'all' as const,
-        page: 1,
-        counts: { attention: 0, all: 1, clear: 1 },
-        works: [recorded],
-      })),
-    }
-    renderRoute('/library?lens=all', http)
+        // An audiobook whose providers admitted no work identity completes on
+        // the recorded outcome, so it reports no preparation failure at all.
+        // The row must not read as a failure, and must open (#966).
+        preparation: null,
+      }
+      const getReportDetail = vi.fn(async () => ({
+        chapters: [
+          { endMilliseconds: 1_800_000, ordinal: 1, startMilliseconds: 0, title: 'Chapter One' },
+        ],
+        chaptersTruncated: false,
+        coverPresent: true,
+        coverSurface: 'container_stream',
+        evidence: [
+          {
+            basis: 'sidecar_libation',
+            excerpt: 'B0CW1KL2QD',
+            kind: 'asin',
+            role: null,
+            state: 'valid',
+            value: 'B0CW1KL2QD',
+          },
+          {
+            basis: 'sidecar_libation',
+            excerpt: 'Recorded Narrator',
+            kind: 'contributor',
+            role: 'narrator',
+            state: 'valid',
+            value: 'Recorded Narrator',
+          },
+          {
+            basis: 'container_format',
+            excerpt: '43200.000',
+            kind: 'duration',
+            role: null,
+            state: 'valid',
+            value: '43200.000',
+          },
+          {
+            basis: 'path_file',
+            excerpt: 'B0XXXXXXXX',
+            kind: 'asin',
+            role: null,
+            state: 'malformed',
+            value: 'B0XXXXXXXX',
+          },
+        ],
+        evidenceTruncated: false,
+        item: 'item-9',
+        library: 'audio',
+        mediaHealth: [
+          {
+            bound:
+              'The local running time is within 90 seconds of the running time the matched edition states.',
+            cited: ['local_abc123', 'audible-product-B08G9PRS1K'],
+            expected: '72000 seconds stated by the matched edition',
+            kind: 'runtime_short_of_provider' as const,
+            observed: '43200 seconds of local audio',
+            tracks: [],
+          },
+        ],
+        mediaKind: 'm4b',
+        providerSources: [
+          {
+            providerRequests: 1,
+            laneKind: 'asin',
+            provider: 'Audnexus',
+            reason: 'The provider had nothing matching this work.',
+            status: 'no_match',
+          },
+        ],
+        providerEvidence: [],
+        providerEvidenceTruncated: false,
+        recordingIdentityBasis: chapterBasis
+          ? {
+              basis: 'chapter_runtime_and_structure' as const,
+              provider: 'Audnexus',
+              candidate: 'recording-1',
+            }
+          : null,
+        reportId: 'report_' + 'a'.repeat(64),
+        title: 'Recorded work',
+      }))
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getReportDetail,
+        getLibrary: vi.fn(async () => ({
+          lens: 'all' as const,
+          page: 1,
+          counts: { attention: 0, all: 1, clear: 1 },
+          works: [recorded],
+        })),
+      }
+      renderRoute('/library?lens=all', http)
 
-    const row = await screen.findByRole('button', { name: /^Recorded work\./u })
-    expect(row).not.toHaveClass('is-terminal')
-    expect(document.querySelector('.library-work-row.is-terminal')).toBeNull()
-    expect(row).toHaveTextContent('Recorded evidence available')
+      const row = await screen.findByRole('button', { name: /^Recorded work\./u })
+      expect(row).not.toHaveClass('is-terminal')
+      expect(document.querySelector('.library-work-row.is-terminal')).toBeNull()
+      expect(row).toHaveTextContent('Recorded evidence available')
 
-    await user.click(row)
+      await user.click(row)
 
-    const evidence = await screen.findByRole('region', { name: 'Recorded evidence' })
-    expect(getReportDetail).toHaveBeenCalledWith(detailUrl, expect.anything())
-    expect(within(evidence).getByText('B0CW1KL2QD')).toBeVisible()
-    expect(within(evidence).getByText('Recorded Narrator')).toBeVisible()
-    expect(within(evidence).getByText('43200.000')).toBeVisible()
-    // A claim the extraction could not trust must not read as sound evidence.
-    expect(within(evidence).getByText(/Malformed/u)).toBeVisible()
-    expect(within(evidence).getByText(/Embedded cover art is present/u)).toBeVisible()
-    // What is wrong with the media, stated as its own section: the observation,
-    // the rule it broke, and what it was read from -- with the opaque local
-    // reference standing for the evidence it points at rather than shown.
-    const health = within(evidence).getByRole('region', { name: 'Media health' })
-    expect(within(health).getByText('Runtime short of provider')).toBeVisible()
-    expect(
-      within(health).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
-    ).toBeVisible()
-    expect(within(health).getByText(/within 90 seconds/u)).toBeVisible()
-    expect(
-      within(health).getByText('Read from local evidence, audible-product-B08G9PRS1K'),
-    ).toBeVisible()
-    // Chapters are a bounded structured section, disclosed like the source
-    // ledger beside them rather than filling the panel.
-    await user.click(within(evidence).getByText(/Chapters \(1\)/u))
-    expect(within(evidence).getByText('Chapter One')).toBeVisible()
-    expect(within(evidence).getByText('00:00:00 – 00:30:00')).toBeVisible()
-  })
+      const evidence = await screen.findByRole('region', { name: 'Recorded evidence' })
+      if (chapterBasis) {
+        expect(
+          within(evidence).getByRole('region', { name: 'Recording identity evidence' }),
+        ).toHaveTextContent('Audnexus did not provide a separate book runtime.')
+      } else {
+        expect(
+          within(evidence).queryByRole('region', { name: 'Recording identity evidence' }),
+        ).toBeNull()
+      }
+      expect(getReportDetail).toHaveBeenCalledWith(detailUrl, expect.anything())
+      expect(within(evidence).getByText('B0CW1KL2QD')).toBeVisible()
+      expect(within(evidence).getByText('Recorded Narrator')).toBeVisible()
+      expect(within(evidence).getByText('43200.000')).toBeVisible()
+      // A claim the extraction could not trust must not read as sound evidence.
+      expect(within(evidence).getByText(/Malformed/u)).toBeVisible()
+      expect(within(evidence).getByText(/Embedded cover art is present/u)).toBeVisible()
+      // What is wrong with the media, stated as its own section: the observation,
+      // the rule it broke, and what it was read from -- with the opaque local
+      // reference standing for the evidence it points at rather than shown.
+      const health = within(evidence).getByRole('region', { name: 'Media health' })
+      expect(within(health).getByText('Runtime short of provider')).toBeVisible()
+      expect(
+        within(health).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
+      ).toBeVisible()
+      expect(within(health).getByText(/within 90 seconds/u)).toBeVisible()
+      expect(
+        within(health).getByText('Read from local evidence, audible-product-B08G9PRS1K'),
+      ).toBeVisible()
+      // Chapters are a bounded structured section, disclosed like the source
+      // ledger beside them rather than filling the panel.
+      await user.click(within(evidence).getByText(/Chapters \(1\)/u))
+      expect(within(evidence).getByText('Chapter One')).toBeVisible()
+      expect(within(evidence).getByText('00:00:00 – 00:30:00')).toBeVisible()
+    },
+  )
 
   it('does not let a retained report hide the latest real preparation failure', async () => {
     const firstWork = library.works[0]

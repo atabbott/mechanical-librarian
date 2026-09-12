@@ -427,3 +427,100 @@ def corroborated_audiobook_report(
         providers=providers,
         audio=single_track_audio_facts(content_digest),
     )
+
+
+def chapter_runtime_report(
+    *,
+    provider_duration: str | None = None,
+    duration_state: FieldState = FieldState.ABSENT,
+    local_duration: str | None = "1748.000",
+    local_asin: str | None = "B08G9PRS1K",
+    asin_basis: str = "embedded_tag",
+    provider: str = "catalogue",
+    authority: str = "audnexus",
+    chapters: tuple[AudioChapter, ...] | None = None,
+    structure: ProviderChapterStructure | None = None,
+    chapter_rows_omitted: bool = False,
+) -> MetadataReport:
+    """Synthetic retained local-ASIN lane with explicit absent-runtime evidence."""
+    from dataclasses import replace
+
+    from mechanical_librarian.application.metadata_report import (
+        ProviderLaneResult,
+        audiobook_asin_feed_plan,
+        audiobook_discovery_plan,
+        provider_observation,
+    )
+
+    claims = audio_local_claims(local_duration)
+    if local_asin is not None:
+        claims += (
+            LocalClaim.create(
+                kind=ClaimKind.ASIN,
+                observed=local_asin,
+                canonical=local_asin,
+                excerpt=local_asin,
+                applicability="not_applicable",
+                basis=asin_basis,
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+                occurrence=3,
+            ),
+        )
+    durations = (113, 171, 243, 317, 401, 503)
+    if chapters is None:
+        end = 0
+        values = []
+        for i, duration in enumerate(durations, 1):
+            values.append(AudioChapter(i, end, end + duration * 1000, None))
+            end += duration * 1000
+        chapters = tuple(values)
+    structure = structure or ProviderChapterStructure(6, 1748, durations)
+    candidate = audiobook_candidate(claims, provider=provider, chapters=structure)
+    candidate = replace(
+        candidate,
+        claims=tuple(
+            ProviderClaim.create(
+                provider=provider,
+                candidate=candidate.identity,
+                kind=c.kind,
+                value=provider_duration,
+                state=duration_state,
+                scope=c.scope,
+                applicability=c.applicability,
+                raw_order=c.raw_order,
+            )
+            if c.kind is ClaimKind.DURATION
+            else c
+            for c in candidate.claims
+        ),
+    )
+    from tests.support.audiobook_providers import asserted_target, audio_target
+
+    target = (
+        asserted_target(local_asin)
+        if asin_basis == "target_metadata" and local_asin is not None
+        else audio_target()
+    )
+    plan = audiobook_discovery_plan(target, claims)
+    if asin_basis == "target_metadata":
+        feed = audiobook_asin_feed_plan(target, plan, ())
+        assert feed is not None
+        plan = feed
+    lane = next(value for value in plan.lanes if value.kind is ProviderQueryKind.ASIN)
+    candidate = finalize_candidate_comparisons(candidate, claims, provider)
+    observation = provider_observation(
+        provider,
+        (ProviderLaneResult(lane, ProviderStatus.CANDIDATES, (candidate,)),),
+        authority=authority,
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", audio_target_fields()),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(observation,),
+        audio=single_track_audio_facts(
+            chapters=chapters, chapter_rows_omitted=chapter_rows_omitted
+        ),
+    )

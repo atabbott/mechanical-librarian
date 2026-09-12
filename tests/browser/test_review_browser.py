@@ -87,6 +87,7 @@ from mechanical_librarian.interfaces.web.setup import create_setup_app
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asin_lane_observation,
+    chapter_runtime_report,
     corroborated_audiobook_report,
 )
 from tests.support.metadata_report_doubles import audio_result
@@ -178,7 +179,7 @@ _DEFAULT_SETTINGS_DOCUMENT = OwnerSettingsDocument.model_validate(
 )
 
 
-def _publish_audiobook(repository: Any) -> None:
+def _publish_audiobook(repository: Any, chapter_runtime: bool = False) -> None:
     """Publish one audiobook exactly as preparation does, and stop there.
 
     The row this leaves behind is the whole point: a `report_only` package
@@ -222,6 +223,16 @@ def _publish_audiobook(repository: Any) -> None:
         ),
         audio=inspection.audio,
     )
+    if chapter_runtime:
+        base = chapter_runtime_report(chapter_rows_omitted=True)
+        report = MetadataReport.create(
+            target=report.target,
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            audio=base.audio,
+        )
     producer = "f" * 64
     repository.request_review_scan("primary", "ebooks", "library", producer, 10)
     discovery = repository.claim_review_pipeline_action(11)
@@ -255,7 +266,7 @@ def _publish_audiobook(repository: Any) -> None:
     )
 
 
-def _publish_audiobook_case(repository: Any) -> str:
+def _publish_audiobook_case(repository: Any, chapter_runtime: bool = False) -> str:
     """Prepare one recording whose work identity is admitted, through to a case.
 
     This is the F45 outcome the owner actually meets: the same admission the
@@ -269,6 +280,18 @@ def _publish_audiobook_case(repository: Any) -> str:
         identity="3" * 64,
         content_digest="4" * 64,
     )
+    if chapter_runtime:
+        base = chapter_runtime_report()
+        report = MetadataReport.create(
+            target=TargetFacts(
+                "primary", "ebooks", "chapter-case-item", base.target.fields
+            ),
+            file=base.file,
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            audio=base.audio,
+        )
     repository.publish(report, lambda: True)
     proposal = evaluate_report(report)
     repository.publish_proposal(proposal)
@@ -366,6 +389,7 @@ def _server(
     preparation_terminal: bool = False,
     audiobook: bool = False,
     audiobook_case: bool = False,
+    chapter_runtime: bool = False,
     audiobook_tranche: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
@@ -701,9 +725,9 @@ def _server(
         if provider_recovery:
             repository.persist_shadow_outcome(extra_case, 3)
     if audiobook:
-        _publish_audiobook(repository)
+        _publish_audiobook(repository, chapter_runtime)
     if audiobook_case:
-        _publish_audiobook_case(repository)
+        _publish_audiobook_case(repository, chapter_runtime)
     origin = (
         f"http://review-transport.test:{port.number}"
         if transport_mode == "insecure"
@@ -3342,7 +3366,9 @@ def test_an_audiobook_row_opens_the_evidence_its_report_recorded() -> None:
         assert errors == []
 
 
-def test_an_admitted_audiobook_is_decided_like_any_other_case() -> None:
+def test_an_admitted_audiobook_is_decided_like_any_other_case(
+    chapter_runtime: bool = False,
+) -> None:
     """The F47 outcome in the shipped browser, end to end.
 
     An admitted recording is a review case like any other: the owner opens it
@@ -3382,6 +3408,8 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case() -> None:
                     key=key,
                     port=reserved_port,
                     audiobook_case=True,
+                    audiobook=chapter_runtime,
+                    chapter_runtime=chapter_runtime,
                 ) as (origin, _case_id),
                 _closing_context(context),
             ):
@@ -3399,6 +3427,23 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case() -> None:
 
                 row.click()
 
+                basis = page.get_by_role("region", name="Recording identity evidence")
+                if chapter_runtime:
+                    expect(basis).to_contain_text(
+                        "Chapter timing and structure corroborate this recording."
+                    )
+                    expect(basis).to_contain_text(
+                        "catalogue did not provide a separate book runtime."
+                    )
+                    basis.get_by_text("Recording source").click()
+                    expect(basis).to_contain_text("audible-product-B08G9PRS1K")
+                    page.get_by_role("link", name="Evidence", exact=True).click()
+                    expect(
+                        page.get_by_role("region", name="Recording identity evidence")
+                    ).to_be_visible()
+                    page.get_by_role("link", name="Back to work").click()
+                else:
+                    expect(basis).to_have_count(0)
                 rail = page.locator(".field-filmstrip button")
                 expect(rail.first).to_be_visible()
                 labels = [label.splitlines()[0] for label in rail.all_inner_texts()]
@@ -3417,8 +3462,23 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case() -> None:
                     page.get_by_text("Owner selected a proposed value.").first
                 ).to_be_visible()
                 assert 0 == page.get_by_text(RECORDED_ONLY_REASON).count()
+                if chapter_runtime:
+                    page.goto(f"{origin}/library?lens=all&q=Recorded audiobook")
+                    page.get_by_role(
+                        "button", name=re.compile("^Recorded audiobook")
+                    ).click()
+                    expect(
+                        page.get_by_role("region", name="Recording identity evidence")
+                    ).to_have_count(0)
+                    page.get_by_text("Chapters (6)", exact=True).click()
+                    expect(page.get_by_text("00:00:00 – 00:01:53")).to_be_visible()
+
             browser.close()
         assert errors == []
+
+
+def test_chapter_runtime_case_explains_its_identity_basis() -> None:
+    test_an_admitted_audiobook_is_decided_like_any_other_case(chapter_runtime=True)
 
 
 def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -> None:

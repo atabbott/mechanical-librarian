@@ -1,3 +1,4 @@
+import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
@@ -642,6 +643,7 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
   return (
     <section className="library-work-evidence" aria-label="Recorded evidence">
       <h3>Recorded evidence</h3>
+      <RecordingIdentityBasis value={data.recordingIdentityBasis} />
       {data.evidence.length === 0 ? (
         <p role="status">No local evidence was recorded for this work.</p>
       ) : (
@@ -3185,6 +3187,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   </Link>
                 </nav>
               </header>
+              <RecordingIdentityBasis value={detail.data.recordingIdentityBasis} />
               {detail.data.comparisonNotices.length ? (
                 <aside className="comparison-notice" aria-label="Provider comparison condition">
                   {detail.data.comparisonNotices.map((notice) => (
