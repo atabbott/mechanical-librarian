@@ -38,12 +38,12 @@ The reference deployment may accept a measurable correction or override rate in 
 
 ## Accepted title and ISBN direction
 
-This product decision was accepted on 2026-09-11; implementation and qualification remain
-owned by #1007. It replaces this document's earlier intended requirement to
+This product decision was accepted on 2026-09-11 and is implemented and qualified
+by #1007 through the current title branch described above. It replaces this document's earlier intended requirement to
 extract or preserve subtitle and series/order components from the local title
 before accepting a provider-backed title. It does not retroactively change
-historical qualification results or grant new runtime authority. Delivery must
-reconcile the affected implementation and architectural contracts explicitly.
+historical qualification results. Current runtime authority comes from the
+explicit qualification envelope and architectural contracts delivered by #1007.
 
 - Automatically prefer a useful existing provider title when the retained
   evidence convincingly connects it to the same work and there is no material
@@ -377,8 +377,9 @@ recognizing the local title's shape is not a prerequisite for an evidence-backed
 replacement. Shorter text is not inherently better, and adding recognized noise
 is not an equivalent improvement. Materially competing bibliographic evidence
 remains an exception; merely differing local/provider title strings need not be.
-The current qualified title branches and their historical preservation rules
-remain implementation evidence until #1007 delivers the accepted direction.
+The current ISBN-linked title branch implements this accepted direction under
+its qualification envelope; earlier title branches and their historical
+preservation rules remain intact.
 
 ### Candidate aggregation
 
