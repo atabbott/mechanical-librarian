@@ -456,6 +456,7 @@ def _lane_lookup(
         audio=plan.audio,
         work_title=plan.work_title,
         work_authors=plan.work_authors,
+        requested_asin=lane.canonical_asin,
     )
 
 

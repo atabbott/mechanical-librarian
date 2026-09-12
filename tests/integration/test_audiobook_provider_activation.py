@@ -1086,3 +1086,233 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
             ).fetchone() == (0,)
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize(
+    "origin,known_runtime,collision",
+    [
+        (origin, known, collision)
+        for origin in ("target", "work")
+        for known in (False, True)
+        for collision in ("cross_asin", "runtime_band")
+    ]
+    + [("local", False, "cross_asin")],
+)
+def test_recording_collision_cannot_add_owner_choices(
+    tmp_path: Path, collision: str, known_runtime: bool, origin: str
+) -> None:
+    """A valid sibling admits review without laundering another recording."""
+    import json
+    from dataclasses import replace
+
+    import httpx
+
+    from mechanical_librarian.adapters.evidence_extractors import process
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        AudibleCatalogMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.audnexus_metadata import (
+        AudnexusMetadataProvider,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        recording_identity_basis,
+    )
+    from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support import chapter_runtime
+    from tests.support.audiobook_providers import payload
+
+    good, requested_bad, returned_bad = "B000000001", "B000000002", "B000000003"
+    vector = (137, 223, 349, 461, 587, 719)
+    spans = []
+    endpoint = 0
+    for seconds in vector:
+        spans.append((endpoint, endpoint + seconds * 1000))
+        endpoint += seconds * 1000
+    mount = tmp_path / "media"
+    mount.mkdir()
+    with (
+        patch.object(chapter_runtime, "QT_END", endpoint),
+        patch.object(chapter_runtime, "QT_SPANS", tuple(spans)),
+    ):
+        (mount / "book.m4b").write_bytes(
+            chapter_runtime.qt_media(
+                stated=known_runtime, asin=good if origin == "local" else None
+            )
+        )
+    probe = json.loads(
+        chapter_runtime.qt_recorded_probe(asin=good if origin == "local" else None)
+    )
+    if known_runtime:
+        probe["format"]["duration"] = "2476.000"
+    for chapter, (start, end) in zip(probe["chapters"], spans, strict=True):
+        chapter["start_time"] = f"{start / 1000:.3f}"
+        chapter["end_time"] = f"{end / 1000:.3f}"
+    with patch.object(
+        process,
+        "run_probe_child",
+        return_value=(json.dumps(probe).encode(), AudioInspectionOutcome.SUCCESS),
+    ):
+        inspected = composition._IsolatedAudioInspector().inspect(
+            MediaMountConfiguration("audiobooks", str(mount), "/library", True),
+            (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
+            268435456,
+        )
+    assert [
+        (c.start_milliseconds, c.end_milliseconds) for c in inspected.audio.chapters
+    ] == spans
+    assert any(c.kind is ClaimKind.DURATION for c in inspected.claims) is known_runtime
+    product = payload("audible_search")["products"][0]
+    product.pop("runtime_length_min", None)
+    products = [{**product, "asin": value} for value in (good, requested_bad)]
+    requests: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        response: dict[str, object]
+        if request.url.host == "api.audible.com":
+            response = (
+                {"products": products}
+                if request.url.path.endswith("/products")
+                else {"product": products[0]}
+            )
+        else:
+            asin = request.url.path.split("/")[2]
+            bad = asin == requested_bad or origin == "local"
+            if request.url.path.endswith("/chapters"):
+                response = {
+                    "runtimeLengthSec": 2494
+                    if bad and collision == "runtime_band"
+                    else 2476,
+                    "chapters": [
+                        {
+                            "lengthMs": v * 1000
+                            + (2900 if bad and collision == "runtime_band" else 0)
+                        }
+                        for v in vector
+                    ],
+                }
+            else:
+                response = payload("audnexus_book")
+                response["asin"] = (
+                    returned_bad if bad and collision == "cross_asin" else asin
+                )
+                response["runtimeLengthMin"] = (
+                    43 if bad and collision == "runtime_band" else 41
+                )
+                response["narrators"] = [
+                    {
+                        "name": "Different Recording Narrator"
+                        if bad
+                        else "Matching Recording Narrator"
+                    }
+                ]
+        return httpx.Response(
+            200, headers={"content-type": "application/json"}, json=response
+        )
+
+    def audible() -> MetadataProvider:
+        return AudibleCatalogMetadataProvider(
+            "audible",
+            httpx.Client(transport=httpx.MockTransport(handle)),
+            262144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1700000000.0,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+
+    def audnexus() -> MetadataProvider:
+        return AudnexusMetadataProvider(
+            "enrichment",
+            httpx.Client(transport=httpx.MockTransport(handle)),
+            262144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1700000000.0,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+
+    calls: list[tuple[str, ProviderQueryKind]] = []
+    providers: dict[str, MetadataProvider | Callable[[], MetadataProvider]] = {
+        "audible_catalog": audible,
+        "audnexus": audnexus,
+        "audiosilo": _FakeAudiobookProvider(
+            "silo", "audiosilo", calls, status=ProviderStatus.NO_MATCH
+        ),
+        "itunes_search": _FakeAudiobookProvider(
+            "store", "itunes_search", calls, status=ProviderStatus.NO_MATCH
+        ),
+    }
+    snapshot = _snapshot()
+    if origin == "target":
+        snapshot = replace(
+            snapshot,
+            fields=tuple(
+                TargetField(
+                    TargetDestination.ASIN,
+                    TargetFieldState.VALUE,
+                    good,
+                )
+                if field.destination is TargetDestination.ASIN
+                else field
+                for field in snapshot.fields
+            ),
+        )
+    with (
+        patch(__name__ + "._snapshot", return_value=snapshot),
+        patch(__name__ + "._audio_result", return_value=inspected),
+        patch(__name__ + "._CONTENT_DIGEST", inspected.content_digest),
+    ):
+        serialized, repository = _run(tmp_path, providers)
+    try:
+        report = MetadataReport.from_json(serialized)
+        expected_asins = (good,) if origin == "local" else (good, requested_bad)
+        assert {
+            path
+            for asin in expected_asins
+            for path in (f"/books/{asin}", f"/books/{asin}/chapters")
+        } <= set(requests)
+        for table in ("automatic_decisions", "field_effects", "field_effect_consents"):
+            assert repository._connection.execute(
+                f"SELECT count(*) FROM {table}"
+            ).fetchone() == (0,)
+        if origin == "local":
+            assert recording_identity_basis(report) is None
+            enrichment = next(o for o in report.providers if o.provider == "enrichment")
+            assert enrichment.status is ProviderStatus.MALFORMED
+            assert enrichment.candidates == ()
+            assert repository._connection.execute(
+                "SELECT count(*) FROM review_cases"
+            ).fetchone() == (0,)
+            return
+        assert (recording_identity_basis(report) is not None) is (not known_runtime)
+        replay = MetadataReport.from_json(
+            repository.get_proposal_input(report.report_id)
+        )
+        proposal = evaluate_report(replay)
+        repository.publish_proposal(proposal)
+        admission = json.loads(repository.admit_review_case(proposal))
+        assert admission["status"] == "admitted"
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(admission["review_case_id"]))["case"]
+        )
+        alternatives = json.dumps(
+            {p["destination"]: p["result"]["alternatives"] for p in case.proposals}
+        )
+        assert "Matching Recording Narrator" in alternatives
+        assert "Different Recording Narrator" not in alternatives
+        assert (
+            returned_bad if collision == "cross_asin" else requested_bad
+        ) not in alternatives
+        for table in ("automatic_decisions", "field_effects", "field_effect_consents"):
+            assert repository._connection.execute(
+                f"SELECT count(*) FROM {table}"
+            ).fetchone() == (0,)
+    finally:
+        repository.close()

@@ -3126,3 +3126,103 @@ def test_failed_work_set_keeps_individual_recordings_and_original_runtime_order(
         e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
         for e in one.candidates[0].evidence
     )
+
+
+@pytest.mark.parametrize(
+    "kind,requested,valid",
+    [
+        (ProviderQueryKind.ASIN, None, True),
+        (ProviderQueryKind.ASIN, "B000000001", True),
+        (ProviderQueryKind.ASIN, "b000000001", False),
+        (ProviderQueryKind.ASIN, "bad", False),
+        (ProviderQueryKind.ASIN, 1, False),
+        (ProviderQueryKind.NONE, "B000000001", False),
+        (ProviderQueryKind.ISBN, "B000000001", False),
+    ],
+)
+def test_requested_asin_is_canonical_and_asin_only(kind, requested, valid) -> None:
+    if valid:
+        assert (
+            MetadataLookup(kind, (), requested_asin=requested).requested_asin
+            == requested
+        )
+    else:
+        with pytest.raises(MetadataReportError):
+            MetadataLookup(kind, (), requested_asin=requested)
+
+
+@pytest.mark.parametrize("local", (False, True))
+@pytest.mark.parametrize("requested_asin", (None, "B08G9PRS1K", "B000000002"))
+def test_request_binding_precedes_local_shortcut_and_chapter_widening(
+    local: bool, requested_asin: str | None
+) -> None:
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report(
+        asin_basis="embedded_tag" if local else "target_metadata"
+    )
+    source = report.providers[0]
+    observation = ProviderObservation(
+        source.provider,
+        source.status,
+        source.input_references,
+        source.candidates,
+        ProviderQueryKind.ASIN,
+        source.authority,
+    )
+    result = qualify_provider_observation(
+        observation,
+        MetadataLookup(
+            ProviderQueryKind.ASIN,
+            report.local_claims,
+            audio=report.audio,
+            work_title="Project Hail Mary",
+            work_authors=("Andy Weir",),
+            requested_asin=requested_asin,
+        ),
+    )
+    if requested_asin == "B000000002":
+        assert result.status is ProviderStatus.MALFORMED
+        assert result.candidates == ()
+        return
+    assert result.status is ProviderStatus.CANDIDATES
+    admitted = any(
+        e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        for e in result.candidates[0].evidence
+    )
+    assert admitted is (local or requested_asin is not None)
+
+
+def test_bound_request_cannot_borrow_another_local_asin_shortcut() -> None:
+    from tests.support.audiobook_reports import (
+        audiobook_candidate,
+        chapter_runtime_report,
+    )
+
+    local = chapter_runtime_report()
+    source = local.providers[0]
+    observation = ProviderObservation(
+        source.provider,
+        source.status,
+        (),
+        (
+            audiobook_candidate(
+                local.local_claims, asin="B000000002", duration="72000.000"
+            ),
+        ),
+        ProviderQueryKind.ASIN,
+        source.authority,
+    )
+    result = qualify_provider_observation(
+        observation,
+        MetadataLookup(
+            ProviderQueryKind.ASIN,
+            local.local_claims,
+            requested_asin="B000000002",
+        ),
+    )
+    assert result.status is ProviderStatus.CANDIDATES
+    assert not any(
+        e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        for e in result.candidates[0].evidence
+    )

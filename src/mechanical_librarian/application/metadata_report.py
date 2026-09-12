@@ -248,6 +248,7 @@ class MetadataLookup:
     audio: AudioFacts | None = None
     work_title: str | None = None
     work_authors: tuple[str, ...] = ()
+    requested_asin: str | None = None
 
     def __post_init__(self) -> None:
         _validate_recording_context(self.audio, self.work_title, self.work_authors)
@@ -257,6 +258,12 @@ class MetadataLookup:
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.authors) is not tuple
             or any(type(value) is not str for value in self.authors)
+        ):
+            raise MetadataReportError("provider lookup is invalid")
+        if self.requested_asin is not None and (
+            self.kind is not ProviderQueryKind.ASIN
+            or type(self.requested_asin) is not str
+            or canonical_asin(self.requested_asin) != self.requested_asin
         ):
             raise MetadataReportError("provider lookup is invalid")
         if self.kind is ProviderQueryKind.ISBN:
@@ -1538,17 +1545,38 @@ def _recording_runtime_veto(candidate: ProviderCandidate, coverage: int) -> bool
     )
 
 
+def _unambiguous_candidate_asin(candidate: ProviderCandidate) -> str | None:
+    """A chapter source must identify one valid recording without alias conflict."""
+    identifiers = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.ASIN
+    )
+    asins = {claim.value for claim in identifiers}
+    if len(asins) != 1 or any(
+        claim.state is not FieldState.VALID
+        or canonical_asin(claim.value) != claim.value
+        for claim in identifiers
+    ):
+        return None
+    return next(iter(asins))
+
+
 def _chapter_candidate_support(
     candidate: ProviderCandidate,
     audio: AudioFacts | None,
     local_claims: tuple[LocalClaim, ...],
     title: str | None,
     authors: tuple[str, ...],
+    requested_asin: str | None,
 ) -> bool:
     """Qualify raw recording evidence before shaping can discard its vetoes."""
     if not provider_candidate_exact_work_identity_admission(
         candidate, title or "", authors
     ).admitted:
+        return False
+    if (
+        requested_asin is None
+        or _unambiguous_candidate_asin(candidate) != requested_asin
+    ):
         return False
     structures = tuple(
         value.chapters
@@ -1558,13 +1586,18 @@ def _chapter_candidate_support(
     durations = tuple(
         claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
     )
-    return (
-        len(structures) == 1
-        and structures[0] is not None
-        and len(durations) == 1
-        and not _recording_runtime_veto(candidate, structures[0].runtime_seconds)
-        and complete_chapter_runtime_agreement(audio, local_claims, structures[0])
-    )
+    if (
+        audio is None
+        or len(structures) != 1
+        or structures[0] is None
+        or len(durations) != 1
+        or not complete_chapter_runtime_agreement(audio, local_claims, structures[0])
+    ):
+        return False
+    coverage = local_claim_runtime_seconds(local_claims)
+    if coverage is None:
+        coverage = (audio.chapters[-1].end_milliseconds + 500) // 1000
+    return not _recording_runtime_veto(candidate, coverage)
 
 
 def _identifier_lane_candidates(
@@ -1585,7 +1618,11 @@ def _identifier_lane_candidates(
         lookup.kind is not ProviderQueryKind.ASIN
         or observation.status is not ProviderStatus.CANDIDATES
         or observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
-        or _local_identifier_asins(lookup.local_claims)
+        or (
+            lookup.requested_asin in _local_identifier_asins(lookup.local_claims)
+            if lookup.requested_asin is not None
+            else bool(_local_identifier_asins(lookup.local_claims))
+        )
     ):
         return observation.candidates
     corroborated = runtime_corroborated_candidate(
@@ -1602,6 +1639,7 @@ def _identifier_lane_candidates(
                 lookup.local_claims,
                 lookup.work_title,
                 lookup.work_authors,
+                lookup.requested_asin,
             ),
             lookup.local_claims,
             recording_hints=True,
@@ -1613,6 +1651,25 @@ def _identifier_lane_candidates(
 def qualify_provider_observation(
     observation: ProviderObservation, lookup: MetadataLookup
 ) -> ProviderObservation:
+    if (
+        lookup.requested_asin is not None
+        and observation.status is ProviderStatus.CANDIDATES
+        and any(
+            not any(
+                claim.kind is ClaimKind.ASIN
+                and claim.state is FieldState.VALID
+                and claim.value == lookup.requested_asin
+                for claim in candidate.claims
+            )
+            for candidate in observation.candidates
+        )
+    ):
+        observation = replace(
+            observation,
+            status=ProviderStatus.MALFORMED,
+            candidates=(),
+            input_references=(),
+        )
     if lookup.kind is not ProviderQueryKind.WORK:
         return ProviderObservation(
             observation.provider,
@@ -1815,7 +1872,12 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                 continue
             retained = any(
                 lane.input_references
-                and lane.kind in {ProviderQueryKind.ASIN, ProviderQueryKind.WORK}
+                and (
+                    lane.kind is ProviderQueryKind.WORK
+                    or lane.kind is ProviderQueryKind.ASIN
+                    and lane.identity
+                    == _asin_discovery_lane(asin, lane.input_references).identity
+                )
                 and any(
                     value.edition_identity == candidate.identity
                     for value in lane.candidates
@@ -1823,12 +1885,18 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                 for lane in observation.lanes
             )
             if not observation.lanes:
-                retained = bool(
-                    observation.input_references
-                ) and observation.query_kind in {
-                    ProviderQueryKind.ASIN,
-                    ProviderQueryKind.WORK,
-                }
+                retained = bool(observation.input_references) and (
+                    observation.query_kind is ProviderQueryKind.WORK
+                    or observation.query_kind is ProviderQueryKind.ASIN
+                    and _local_identifier_asins(
+                        tuple(
+                            claim
+                            for claim in report.local_claims
+                            if claim.reference in observation.input_references
+                        )
+                    )
+                    == {asin}
+                )
             if not retained:
                 continue
             # An acquisition hint alone never supplies recording support.
@@ -1844,6 +1912,7 @@ def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
                 report.local_claims,
                 report.target.current_title,
                 authors,
+                asin,
             ):
                 support.append((observation.provider, candidate.identity, asin))
     eligible = tuple(
