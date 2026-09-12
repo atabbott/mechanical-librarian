@@ -2004,8 +2004,12 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     assert title["qualified_policy_options"] == sorted(F19A_QUALIFIED_POLICY_OPTIONS)
     common = {
         "retained-report-store",
-        "retained-raw-capture", "retained-replay-configuration", "retained-local-inputs",
-        "current-report-reconstruction", "current-report-reconstruction-result", "current-report-derivatives",
+        "retained-raw-capture",
+        "retained-replay-configuration",
+        "retained-local-inputs",
+        "current-report-reconstruction",
+        "current-report-reconstruction-result",
+        "current-report-derivatives",
         "current-provider-replay",
         "retained-independent-title-labels",
         "synthetic-title-inputs",
@@ -2282,7 +2286,10 @@ def test_base_integration_retains_both_exact_historical_manifest_origins(
             "origin_commit": "dd7f7b7f911688b7df579ce288ffff5905577efe",
             "original_path": original_path,
             "sha256": intervening_digest,
-            "retained_path": original_path.removesuffix(".json") + "-" + intervening_digest + ".json",
+            "retained_path": original_path.removesuffix(".json")
+            + "-"
+            + intervening_digest
+            + ".json",
         },
         {
             "origin_commit": "2261514c458c6bc11a7805127ea330bc833260ed",
@@ -2292,7 +2299,12 @@ def test_base_integration_retains_both_exact_historical_manifest_origins(
         },
     ]
     for entry in expected:
-        assert hashlib.sha256((MANIFEST.parents[2] / entry["retained_path"]).read_bytes()).hexdigest() == entry["sha256"]
+        assert (
+            hashlib.sha256(
+                (MANIFEST.parents[2] / entry["retained_path"]).read_bytes()
+            ).hexdigest()
+            == entry["sha256"]
+        )
     for path in (LATEST_MANIFEST, LATEST_F19A_MANIFEST):
         integration = json.loads(path.read_bytes())["base_integration"]
         assert [
