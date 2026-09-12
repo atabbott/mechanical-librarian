@@ -843,17 +843,18 @@ def test_an_unqualified_audiobook_tranche_never_mints_a_decision(
             )
 
 
-def test_each_historical_manifest_digest_has_one_frozen_option_binding():
+def test_each_historical_manifest_digest_has_one_frozen_option_binding() -> None:
     for rows in (
         automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS,
         automatic_decision._PRIOR_F20_QUALIFICATION_MANIFESTS,
     ):
         assert len(rows) == len({digest for digest, _ in rows})
-    rows = dict(automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS)
+    f19a_bindings = dict(automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS)
     for digest in (
         "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523",
         "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae",
     ):
         assert (
-            rows[digest] == automatic_decision._PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS
+            f19a_bindings[digest]
+            == automatic_decision._PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS
         )
