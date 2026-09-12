@@ -282,17 +282,14 @@ def _runtime_observations(
     Two lanes reach the same statement and the precedence between them is
     settled here, in one place, so an owner is never told the same thing twice.
 
-    *Derived* is preferred. A candidate the report still holds an edition-scope
-    ``DURATION`` claim for -- the item's own ASIN lanes, and any candidate the
-    band admitted -- can be compared now, and the comparison carries both
-    running times, which is what makes the statement actionable.
+    *Derived* is preferred. A retained ``DURATION`` claim can be compared now,
+    including informational runtime alongside demoted work-level metadata. The
+    comparison carries both running times without granting recording identity
+    or metadata authority.
 
-    *Persisted* fills the rest. A search or promoted candidate the band did not
-    corroborate was demoted to work scope before publication and states no
-    running time here at all, so preparation recorded the comparison it made
-    while the claim still existed. That record names the candidate and nothing
-    else: the number belonged to a scope the candidate did not earn, and
-    keeping it would have kept the demoted claim under another name.
+    *Persisted* fills the rest. Where the report has no comparable provider
+    runtime, preparation's recorded comparison still names the candidate. It
+    states that the runtime was not retained rather than inventing a number.
 
     Retained evidence wins outright. Any comparable running time the report
     still holds for an edition decides that edition, in band or short, and the

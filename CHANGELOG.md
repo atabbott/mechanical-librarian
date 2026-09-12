@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Complete audiobook chapters can support owner review when overall runtime is
+  unavailable, including target-asserted and WORK-derived recording lookups.
+  Conflicting runtimes and different chapter cuts remain unqualified; Library
+  and Detail identify the supporting source. Automatic authority is unchanged.
+  Existing installs require a clean rebuild. (#1004)
+
 - Audiobooks with one local ASIN can reach owner review when a provider omits
   book runtime but complete chapter timing and structure corroborate the recording.
   Library and Detail explain the source; partial chapters remain readable without

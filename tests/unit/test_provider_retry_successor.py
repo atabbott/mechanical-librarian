@@ -2028,3 +2028,51 @@ def test_declared_partial_failure_publishes_no_retry_successor(retry, carrier):
     assert retry.repository.values == values
     assert retry.repository.package == package
     assert retry.repository.current_id == retry.report.report_id
+
+
+def test_lookup_hint_retry_reconstructs_identical_context_and_asin_lanes() -> None:
+    from tests.support.audiobook_providers import audio_target
+    from tests.support.audiobook_reports import recording_lookup_report
+
+    source = recording_lookup_report()
+    snapshot = replace(
+        audio_target(), files=(TargetFile(source.file.identity, "book.m4b", "m4b"),)
+    )
+    plan = audiobook_discovery_plan(snapshot, source.local_claims, audio=source.audio)
+    feed = audiobook_asin_feed_plan(snapshot, plan, source.providers)
+    assert feed is not None
+    original = provider_observation(
+        "enrichment",
+        tuple(
+            ProviderLaneResult(lane, ProviderStatus.UNAVAILABLE) for lane in feed.lanes
+        ),
+        authority="audnexus",
+    )
+    report = MetadataReport.create(
+        target=source.target,
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=(*source.providers, original),
+        audio=source.audio,
+    )
+    replacement = provider_observation(
+        "enrichment",
+        tuple(ProviderLaneResult(lane, ProviderStatus.NO_MATCH) for lane in feed.lanes),
+        authority="audnexus",
+    )
+    provider = _Provider(replacement)
+    successor = MetadataReport.from_json(
+        _fed_successor(snapshot, report, provider).run(
+            report.report_id,
+            tuple(lane.identity for lane in feed.lanes),
+            provider_name="enrichment",
+            adapter="audnexus",
+            generation=2,
+        )
+    )
+    assert provider.plans == [feed]
+    assert (
+        successor.providers[0].recording_lookup_candidates
+        == source.providers[0].recording_lookup_candidates
+    )

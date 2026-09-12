@@ -2154,7 +2154,7 @@ _NON_LIMITING_PROVIDER_STATUSES = frozenset(
 )
 _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
     "candidates": "Returned metadata candidates for comparison.",
-    "no_match": "Returned no matching metadata, so nothing was retained.",
+    "no_match": "Returned no matching metadata.",
     "disabled": "Not enabled, so this source was never asked.",
     "insufficient_input": "This work lacks the identifiers this source needs.",
     "authentication": "Refused the credentials it was given; nothing was retained.",

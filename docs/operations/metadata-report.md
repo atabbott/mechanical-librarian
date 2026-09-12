@@ -158,8 +158,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v41`. Every earlier report discriminator,
-including immediate prior `metadata-report-v40`, remains offline and requires a
+discriminator is `metadata-report-v42`. Every earlier report discriminator,
+including immediate prior `metadata-report-v41`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with 1 to 512 audio files in
@@ -208,19 +208,27 @@ admits some candidate the report retains -- one stating this recording's own
 running time -- or the narrow chapter fallback below qualifies, preparation queues the proposal stage exactly as an ebook's does, and the
 recording becomes a review case the owner decides
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
-When one non-target local ASIN names the recording, an explicitly absent provider
-book runtime can instead be corroborated by complete chapter timing and structure.
-The local single-file or concatenated embedded chapter table must be positive,
-contiguous from zero, untruncated, and have no observed discarded rows; its endpoint
-must be within one second of the usable local runtime. Provider chapters must be
-complete and positive, have bounded whole-second aggregate rounding, and agree
-within the existing tight runtime and direct full-vector chapter tolerances.
-Uniform vectors cannot qualify. Any retained matched provider's malformed,
-nonpositive, multiple, or conflicting runtime claims veto this fallback; an
-unmentioned runtime is unknown and cannot support it. Existing runtime admission
-runs first. Library and Detail name the supporting provider and associate its
-candidate under Recording source; this adds owner review, never automatic authority.
-Missing local runtime and other discovery envelopes remain open under #1004.
+Complete chapter timing and structure can corroborate recording identity when
+overall runtime is unavailable, through local, target-asserted or WORK-derived
+ASIN acquisition. Missing local runtime requires one track with an actual
+`duration_unstated` observation, no duration claim or unavailable-track evidence.
+Its complete positive chapter table begins at zero without gaps or omitted rows;
+the final endpoint supplies coverage only and never creates a duration claim.
+With known runtime the endpoint remains within one second. Both complete vectors
+contain at least five nonuniform whole-second durations, with direct per-span
+agreement within two seconds after the existing nearest-second local projection
+and aggregate agreement within 90 seconds.
+Malformed, multiple, nonpositive or conflicting matched runtime statements veto
+fallback. Supporting runtime is exactly one consistent valid value or explicit
+absence; an unmentioned value remains unknown. Existing runtime admission runs
+first. Runtime-qualified WORK results retain their existing promotion path.
+
+Failed-set audiobook WORK results retain bounded `recording_lookup_candidates`
+for one ASIN acquisition pass and runtime vetoes, separately from admitted
+candidates. These hints cannot create metadata alternatives, promotion or owner
+choices. Retry reconstructs the same context and lanes from retained evidence.
+Library and Detail identify the supporting provider and candidate under Recording
+source. This adds owner review without automatic or effect authority.
 
 Those decisions are applied through the same guarded path an ebook's take
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).

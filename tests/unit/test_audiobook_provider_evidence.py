@@ -1,4 +1,4 @@
-"""The `metadata-report-v41` audiobook provider grammar.
+"""The `metadata-report-v42` audiobook provider grammar.
 
 Marketplace provenance, the bounded chapter-structure value, the duration
 agreement band, and the lifted refusal that let an audio report carry a
@@ -303,7 +303,7 @@ def test_a_v33_audio_report_may_carry_a_provider_observation() -> None:
     dispatches none until the activation packet, which is a different fact.
     """
     report = _audio_report(())
-    assert "metadata-report-v41" == report.schema_version
+    assert "metadata-report-v42" == report.schema_version
     assert ProviderQueryKind.ASIN == report.providers[0].query_kind
     assert "audible_catalog" == report.providers[0].authority
     assert report == MetadataReport.from_json(report.to_json())
@@ -349,25 +349,20 @@ def _audio_report(evidence: tuple[ProviderEvidence, ...]) -> MetadataReport:
 
 
 def test_a_shaped_lane_records_the_truncation_publication_would_lose() -> None:
-    """The comparison outlives the claim demotion strips, and nothing else does.
-
-    A work-lane candidate outside the runtime band is demoted to work scope on
-    its way into the report, so its `DURATION` claim is gone before anything
-    downstream could compare it. Qualification therefore makes the comparison
-    while both running times exist and records the one-bit answer on the
-    candidate it shaped: the recording is short of what that edition states.
-
-    The number is deliberately not kept. It belonged to the edition scope the
-    candidate did not earn, and retaining it under another name would be the
-    demotion undone.
-    """
+    """Media-health comparison survives alongside informational runtime hints."""
     claims = audio_local_claims()
     observation = qualified_audiobook(claims, duration="72000.000")
 
     (candidate,) = observation.candidates
     assert candidate.runtime_short_of_local is True
-    assert all(claim.kind is not ClaimKind.DURATION for claim in candidate.claims)
-    assert all(claim.scope is ClaimScope.WORK for claim in candidate.claims)
+    assert [
+        claim.value for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+    ] == ["72000.000"]
+    assert all(
+        claim.scope is ClaimScope.WORK
+        or claim.kind in {ClaimKind.ASIN, ClaimKind.DURATION}
+        for claim in candidate.claims
+    )
 
     audio = single_track_audio_facts()
     composed = _audio_with_runtime_observations(audio, (observation,))
@@ -425,8 +420,7 @@ def test_a_longer_recording_than_the_edition_states_records_nothing() -> None:
 def test_two_providers_disagreeing_about_one_edition_record_nothing() -> None:
     """A disagreement between authorities is not evidence of a shortfall.
 
-    Both answers name the same edition and both were demoted, so neither
-    running time survives publication and no reader can weigh them later. One
+    Both answers name the same edition with informational runtime hints. One
     says this recording is short of that edition by hours; the other compared
     the same two numbers and says it is not. Recording the accusation because
     one provider made it would publish the more alarming half of a
@@ -445,9 +439,16 @@ def test_two_providers_disagreeing_about_one_edition_record_nothing() -> None:
     assert short_candidate.identity == long_candidate.identity
     assert short_candidate.runtime_short_of_local is True
     assert long_candidate.runtime_short_of_local is False
-    # Both demoted, so neither running time is left for a reader to compare.
-    for candidate in (short_candidate, long_candidate):
-        assert all(claim.kind is not ClaimKind.DURATION for claim in candidate.claims)
+    # Raw hints remain available to fallback vetoes without changing media health.
+    for candidate, duration in (
+        (short_candidate, "72000.000"),
+        (long_candidate, "40000.000"),
+    ):
+        assert [
+            claim.value
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.DURATION
+        ] == [duration]
 
     audio = single_track_audio_facts()
 

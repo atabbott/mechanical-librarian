@@ -8,11 +8,14 @@ provider, because the derivation does neither.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     qualify_provider_observation,
+    recording_identity_basis,
 )
 from mechanical_librarian.domain.audio_health import (
     AUDIO_HEALTH_BOUNDS,
@@ -40,6 +43,7 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderChapterStructure,
+    ProviderEvidenceKind,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -174,31 +178,38 @@ def _demoted_search_lane(
     claims: tuple[LocalClaim, ...],
     provider: str = "catalogue",
     identity: str = "audible-product-B0DEMOTED1",
+    *,
+    retain_runtime: bool = True,
 ) -> ProviderObservation:
-    """One per-ASIN answer ADR-0061 demoted, retained under its own identity.
+    """A demoted answer retains informational runtime without recording authority.
 
-    The item's own surfaces name no ASIN, so this lane was fed by an assertion
-    or a promotion and carries no warrant to settle identity. The runtime band
-    does not corroborate it either, so qualification strips its edition-scope
-    claims -- the running time among them -- and leaves the work-scope answer
-    standing. The candidate is still retained, so a record preparation wrote
-    against it still names something the report holds; what it no longer holds
-    is the number.
+    The item names no ASIN and the runtime band does not corroborate the answer.
+    Qualification keeps its duration as informational evidence. The explicit
+    absence fixture removes the source duration before qualification, preserving
+    a candidate against which a persisted observation can still be read.
     """
+    candidate = audiobook_candidate(
+        claims,
+        identity=identity,
+        asin=identity.rsplit("-", 1)[-1],
+        duration=_LONG_PROVIDER_SECONDS,
+        provider=provider,
+    )
+    if not retain_runtime:
+        candidate = replace(
+            candidate,
+            claims=tuple(
+                claim
+                for claim in candidate.claims
+                if claim.kind is not ClaimKind.DURATION
+            ),
+        )
     return qualify_provider_observation(
         ProviderObservation(
             provider,
             ProviderStatus.CANDIDATES,
             (),
-            (
-                audiobook_candidate(
-                    claims,
-                    identity=identity,
-                    asin=identity.rsplit("-", 1)[-1],
-                    duration=_LONG_PROVIDER_SECONDS,
-                    provider=provider,
-                ),
-            ),
+            (candidate,),
             ProviderQueryKind.ASIN,
             "audible_catalog",
         ),
@@ -298,11 +309,14 @@ def test_a_short_recording_reads_short_of_its_provider_runtime() -> None:
             id="within-the-tight-band",
         ),
         pytest.param(
-            # No local ASIN, so ADR-0061 demotes the asserted lane's candidate
-            # to work scope and its running time never reaches the report. The
-            # silence is the documented limit of a read-time derivation, not a
-            # statement that the recording is complete.
-            asserted_asin_report(provider_duration=_LONG_PROVIDER_SECONDS),
+            # Genuine absence is silent; demotion alone now retains runtime.
+            _report(
+                audio_local_claims(),
+                audio=_single_track(),
+                providers=(
+                    _demoted_search_lane(audio_local_claims(), retain_runtime=False),
+                ),
+            ),
             id="no-retained-provider-runtime",
         ),
     ),
@@ -559,15 +573,11 @@ def test_an_ebook_report_states_no_media_health() -> None:
         derive_audio_health("not a report")  # type: ignore[arg-type]
 
 
-def test_a_persisted_truncation_is_stated_once_without_its_lost_runtime() -> None:
-    """The shaped lane's record reaches the owner, naming what it can name.
-
-    Preparation made the comparison and publication kept the answer and not the
-    number, so the statement names the candidate and this recording's own
-    running time and says plainly that the edition's was not retained. That is
-    less than the derived lane offers and more than silence, which is the point
-    of persisting it at all.
-    """
+@pytest.mark.parametrize("retain_runtime", (False, True))
+def test_a_persisted_truncation_is_stated_once_with_runtime_precedence(
+    retain_runtime: bool,
+) -> None:
+    """Retained informational runtime wins; genuine absence uses the record."""
     claims = audio_local_claims()
     report = _report(
         claims,
@@ -580,7 +590,7 @@ def test_a_persisted_truncation_is_stated_once_without_its_lost_runtime() -> Non
                 ),
             ),
         ),
-        providers=(_demoted_search_lane(claims),),
+        providers=(_demoted_search_lane(claims, retain_runtime=retain_runtime),),
     )
 
     health = derive_audio_health(report)
@@ -592,7 +602,21 @@ def test_a_persisted_truncation_is_stated_once_without_its_lost_runtime() -> Non
     assert stated.tracks == ()
     assert stated.cited[-1] == "audible-product-B0DEMOTED1"
     assert stated.observed == f"{_LOCAL_SECONDS} seconds of local audio"
-    assert stated.expected is not None and "did not retain" in stated.expected
+    candidate = report.providers[0].candidates[0]
+    assert all(
+        evidence.kind is not ProviderEvidenceKind.ASIN_MARKETPLACE
+        for evidence in candidate.evidence
+    )
+    assert recording_identity_basis(report) is None
+    durations = tuple(
+        claim.value for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+    )
+    if retain_runtime:
+        assert durations == (_LONG_PROVIDER_SECONDS,)
+        assert stated.expected == "72000 seconds stated by the matched edition"
+    else:
+        assert durations == ()
+        assert stated.expected is not None and "did not retain" in stated.expected
     assert (
         stated.bound == AUDIO_HEALTH_BOUNDS[AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER]
     )
@@ -601,11 +625,9 @@ def test_a_persisted_truncation_is_stated_once_without_its_lost_runtime() -> Non
 def test_one_candidate_short_of_this_recording_is_stated_exactly_once() -> None:
     """The precedence rule, written down and proved rather than relied on.
 
-    A candidate whose runtime survived publication cannot also carry a
-    preparation-time record -- the band that retained the claim is the band
-    that suppresses the record -- but a report that somehow held both would
-    state the truncation twice about one edition, and twice is wrong however it
-    arose. The retained evidence wins, because it carries both running times.
+    Retained runtime and a preparation-time record may describe the same
+    candidate. The retained evidence wins because it carries both running
+    times; the persisted record must not add a duplicate statement.
     """
     report = asserted_asin_report(
         provider_duration=_LONG_PROVIDER_SECONDS, local_asin=_LOCAL_ASIN
@@ -748,7 +770,7 @@ def test_a_persisted_truncation_states_no_local_runtime_it_does_not_have() -> No
                 ),
             ),
         ),
-        providers=(_demoted_search_lane(claims),),
+        providers=(_demoted_search_lane(claims, retain_runtime=False),),
     )
 
     health = derive_audio_health(report)

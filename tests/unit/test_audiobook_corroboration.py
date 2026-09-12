@@ -587,3 +587,139 @@ def test_complete_vectors_enforce_each_side_uniformity_tolerance_and_strong_coun
         complete_chapter_runtime_agreement(report.audio, report.local_claims, structure)
         is admitted
     )
+
+
+@pytest.mark.parametrize(
+    "variant", ("complete", "unknown", "duplicate", "unavailable", "stated", "cut")
+)
+def test_missing_runtime_requires_actual_single_track_absence(variant: str) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audio_inspection import (
+        AudioObservation,
+        AudioObservationKind,
+    )
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+    )
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report(local_duration=None)
+    audio = report.audio
+    assert audio is not None
+    absence = AudioObservation(AudioObservationKind.DURATION_UNSTATED, (1,))
+    audio = replace(audio, observations=(absence,))
+    if variant == "unknown":
+        audio = replace(audio, observations=())
+    elif variant == "duplicate":
+        audio = replace(audio, observations=(absence, absence))
+    elif variant == "unavailable":
+        audio = replace(
+            audio,
+            observations=(
+                absence,
+                AudioObservation(AudioObservationKind.TRACK_DURATION_UNAVAILABLE, (1,)),
+            ),
+        )
+    elif variant == "stated":
+        audio = replace(
+            audio, tracks=(replace(audio.tracks[0], duration_milliseconds=1748000),)
+        )
+    elif variant == "cut":
+        chapters = list(audio.chapters)
+        chapters[1] = replace(
+            chapters[1], end_milliseconds=chapters[1].end_milliseconds + 3000
+        )
+        chapters[2] = replace(
+            chapters[2], start_milliseconds=chapters[2].start_milliseconds + 3000
+        )
+        audio = replace(audio, chapters=tuple(chapters))
+    structure = next(
+        e.chapters for e in report.providers[0].candidates[0].evidence if e.chapters
+    )
+    assert complete_chapter_runtime_agreement(
+        audio, report.local_claims, structure
+    ) is (variant == "complete")
+
+
+@pytest.mark.parametrize(
+    "difference, admitted",
+    (
+        (2000, True),
+        (2001, True),
+        (2404, True),
+        (2499, True),
+        (2500, False),
+        (-2500, True),
+        (-2501, False),
+    ),
+)
+@pytest.mark.parametrize("known_runtime", (True, False))
+def test_complete_chapter_tolerance_preserves_whole_second_projection(
+    difference: int, admitted: bool, known_runtime: bool
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audio_inspection import (
+        AudioObservation,
+        AudioObservationKind,
+    )
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+    )
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report(
+        local_duration=f"{(1748000 + difference) / 1000:.3f}" if known_runtime else None
+    )
+    assert report.audio is not None
+    audio = replace(
+        report.audio,
+        observations=(AudioObservation(AudioObservationKind.DURATION_UNSTATED, (1,)),),
+        chapters=(
+            *report.audio.chapters[:-1],
+            replace(report.audio.chapters[-1], end_milliseconds=1748000 + difference),
+        ),
+    )
+    structure = next(
+        e.chapters for e in report.providers[0].candidates[0].evidence if e.chapters
+    )
+    assert (
+        complete_chapter_runtime_agreement(audio, report.local_claims, structure)
+        is admitted
+    )
+
+
+def test_subsecond_variation_does_not_make_uniform_chapters_discriminating() -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+        local_chapter_durations_seconds,
+    )
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report()
+    assert report.audio is not None
+    end = 0
+    chapters = []
+    for chapter, duration in zip(
+        report.audio.chapters,
+        (291100, 291200, 291300, 291400, 291200, 291300),
+        strict=True,
+    ):
+        chapters.append(
+            replace(chapter, start_milliseconds=end, end_milliseconds=end + duration)
+        )
+        end += duration
+    audio = replace(report.audio, chapters=tuple(chapters))
+    structure = next(
+        e.chapters for e in report.providers[0].candidates[0].evidence if e.chapters
+    )
+    structure = replace(
+        structure,
+        durations_seconds=(291, 292, 291, 292, 291, 291),
+        runtime_seconds=1748,
+    )
+    assert local_chapter_durations_seconds(audio) == (291,) * 6
+    assert not complete_chapter_runtime_agreement(audio, report.local_claims, structure)

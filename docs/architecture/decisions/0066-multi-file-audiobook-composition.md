@@ -253,3 +253,7 @@ measured, and moved by a record like this one when measurement says so.
   better than a track tag, an item whose reading cannot fit the 600-second wall
   on supported hardware, or an audiobook capability that requires decoding
   rather than probing.
+
+The #1004 missing-runtime chapter fallback is restricted to a single file.
+Multi-file chapter offsets still require each track's stated duration; no
+chapter endpoint substitutes for the durations this composition requires.

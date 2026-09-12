@@ -62,7 +62,6 @@ from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
     ClaimKind,
     ClaimScope,
-    Comparison,
     DateLinkConfidence,
     EditionEnrichmentOverflow,
     FieldState,
@@ -93,6 +92,7 @@ from mechanical_librarian.domain.metadata_report import (
     derive_field_results,
     isbn_family,
     normalize_title,
+    provider_candidate_exact_work_identity_admission,
     provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
     provider_candidate_work_identity_contradiction,
@@ -213,6 +213,28 @@ class TargetSnapshot:
             raise MetadataReportError("target cover field is inconsistent")
 
 
+def _validate_recording_context(
+    audio: AudioFacts | None, title: str | None, authors: tuple[str, ...]
+) -> None:
+    """Keep discovery and physical lookup context on the same complete boundary."""
+    if (
+        (audio is not None and type(audio) is not AudioFacts)
+        or type(authors) is not tuple
+        or any(type(value) is not str for value in authors)
+        or (title is not None and type(title) is not str)
+        or (title is None) != (not authors)
+    ):
+        raise MetadataReportError("recording context is invalid")
+    if title is not None:
+        normalize_title(title)
+        for author in authors:
+            normalize_title(author)
+        if len({normalize_title(value).casefold() for value in authors}) != len(
+            authors
+        ):
+            raise MetadataReportError("recording context is invalid")
+
+
 @dataclass(frozen=True, slots=True)
 class MetadataLookup:
     """One closed provider lookup, independent of provider wire shape."""
@@ -223,13 +245,25 @@ class MetadataLookup:
     authors: tuple[str, ...] = ()
     matched_family: str | None = None
 
+    audio: AudioFacts | None = None
+    work_title: str | None = None
+    work_authors: tuple[str, ...] = ()
+    requested_asin: str | None = None
+
     def __post_init__(self) -> None:
+        _validate_recording_context(self.audio, self.work_title, self.work_authors)
         if (
             type(self.kind) is not ProviderQueryKind
             or type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
             or type(self.authors) is not tuple
             or any(type(value) is not str for value in self.authors)
+        ):
+            raise MetadataReportError("provider lookup is invalid")
+        if self.requested_asin is not None and (
+            self.kind is not ProviderQueryKind.ASIN
+            or type(self.requested_asin) is not str
+            or canonical_asin(self.requested_asin) != self.requested_asin
         ):
             raise MetadataReportError("provider lookup is invalid")
         if self.kind is ProviderQueryKind.ISBN:
@@ -333,7 +367,12 @@ class MetadataDiscoveryPlan:
     lanes: tuple[MetadataDiscoveryLane, ...]
     overflow: bool = False
 
+    audio: AudioFacts | None = None
+    work_title: str | None = None
+    work_authors: tuple[str, ...] = ()
+
     def __post_init__(self) -> None:
+        _validate_recording_context(self.audio, self.work_title, self.work_authors)
         if (
             type(self.local_claims) is not tuple
             or any(type(value) is not LocalClaim for value in self.local_claims)
@@ -382,12 +421,29 @@ class ProviderLaneResult:
     dispatch_lineage: WorkDispatchLineage | None = None
     transformation_lineage: WorkTitleTransformationLineage | None = None
 
+    recording_lookup_candidates: tuple[ProviderCandidate, ...] = ()
+
     def __post_init__(self) -> None:
         if (
             type(self.lane) is not MetadataDiscoveryLane
             or type(self.status) is not ProviderStatus
             or type(self.candidates) is not tuple
             or any(type(value) is not ProviderCandidate for value in self.candidates)
+            or type(self.recording_lookup_candidates) is not tuple
+            or len(self.recording_lookup_candidates) > MAX_CANDIDATES
+            or any(
+                type(value) is not ProviderCandidate
+                for value in self.recording_lookup_candidates
+            )
+            or (
+                self.recording_lookup_candidates
+                and (
+                    self.lane.kind is not ProviderQueryKind.WORK
+                    or self.status is not ProviderStatus.NO_MATCH
+                    or self.dispatch_lineage is not None
+                    or self.transformation_lineage is not None
+                )
+            )
             or (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates)
             or not diagnostics_are_canonical(self.diagnostics)
             or any(
@@ -629,7 +685,10 @@ PROVIDER_RECOVERY_ELIGIBLE_STATUSES = frozenset(
 
 
 def audiobook_discovery_plan(
-    target: TargetSnapshot, local_claims: tuple[LocalClaim, ...]
+    target: TargetSnapshot,
+    local_claims: tuple[LocalClaim, ...],
+    *,
+    audio: AudioFacts | None = None,
 ) -> MetadataDiscoveryPlan:
     """Plan one audiobook's discovery from its own identifier surfaces.
 
@@ -645,9 +704,12 @@ def audiobook_discovery_plan(
     by `audiobook_asin_feed_plan`, where the runtime band still judges what it
     returns. The alternatives rule above is about *local* identifiers only.
     """
+    context = metadata_lookup(target, ())
     canonical_asins = sorted(_local_identifier_asins(local_claims))
     if len(canonical_asins) > MAX_ASIN_DISCOVERY_LANES:
-        return MetadataDiscoveryPlan(local_claims, (), True)
+        return MetadataDiscoveryPlan(
+            local_claims, (), True, audio, context.title, context.authors
+        )
     lanes: list[MetadataDiscoveryLane] = []
     for asin in canonical_asins:
         references = tuple(
@@ -664,8 +726,16 @@ def audiobook_discovery_plan(
         lanes.extend(_work_discovery_lanes(target.fields, local_claims))
     ordered_lanes = tuple(sorted(lanes, key=lambda value: value.identity))
     if _metadata_discovery_query_count(ordered_lanes) > MAX_PROVIDER_DISCOVERY_QUERIES:
-        return MetadataDiscoveryPlan(local_claims, (), True)
-    return MetadataDiscoveryPlan(local_claims, ordered_lanes)
+        return MetadataDiscoveryPlan(
+            local_claims, (), True, audio, context.title, context.authors
+        )
+    return MetadataDiscoveryPlan(
+        local_claims,
+        ordered_lanes,
+        audio=audio,
+        work_title=context.title,
+        work_authors=context.authors,
+    )
 
 
 def _asin_discovery_lane(
@@ -701,9 +771,8 @@ def promoted_asins(
 
     Only a search observation promotes. An audiobook authority whose lanes are
     all work lanes reached its candidates through the title-and-author ladder,
-    and an edition-scope ASIN that survived qualification there is one the
-    runtime band already admitted -- `_admitted_candidate_shape` strips it
-    otherwise -- so this reads a decision rather than making one.
+    and edition-scope marketplace corroboration identifies the recording the
+    runtime band admitted. Informational ASIN hints alone never promote.
     """
     return tuple(
         sorted(
@@ -716,6 +785,11 @@ def promoted_asins(
                     lane.kind is ProviderQueryKind.WORK for lane in observation.lanes
                 )
                 for candidate in observation.candidates
+                if any(
+                    evidence.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                    and evidence.scope is ClaimScope.EDITION
+                    for evidence in candidate.evidence
+                )
                 for claim in candidate.claims
                 if claim.scope is ClaimScope.EDITION
                 and claim.kind is ClaimKind.ASIN
@@ -793,6 +867,37 @@ def audiobook_asin_feed_plan(
         # One ASIN promoted *and* asserted is one product, so it is one lane
         # whose references name both origins rather than two competing lanes.
         ordered[asin] = tuple(sorted(set(ordered.get(asin, ())) | set(references)))
+    for observation in observations:
+        if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
+            continue
+        for lane in observation.lanes:
+            if lane.kind is not ProviderQueryKind.WORK:
+                continue
+            candidates = (
+                observation.recording_lookup_candidates
+                if lane.status is ProviderStatus.NO_MATCH
+                else tuple(
+                    candidate
+                    for candidate in observation.candidates
+                    if any(
+                        value.edition_identity == candidate.identity
+                        for value in lane.candidates
+                    )
+                )
+            )
+            for candidate in candidates:
+                for claim in candidate.claims:
+                    if (
+                        claim.kind is ClaimKind.ASIN
+                        and claim.state is FieldState.VALID
+                        and (hint_asin := canonical_asin(claim.value)) is not None
+                    ):
+                        ordered[hint_asin] = tuple(
+                            sorted(
+                                set(ordered.get(hint_asin, ()))
+                                | set(lane.input_references)
+                            )
+                        )
     room = MAX_ASIN_DISCOVERY_LANES - sum(
         lane.kind is ProviderQueryKind.ASIN for lane in plan.lanes
     )
@@ -803,7 +908,11 @@ def audiobook_asin_feed_plan(
     if not lanes:
         return None
     return MetadataDiscoveryPlan(
-        plan.local_claims, tuple(sorted(lanes, key=lambda value: value.identity))
+        plan.local_claims,
+        tuple(sorted(lanes, key=lambda value: value.identity)),
+        audio=plan.audio,
+        work_title=plan.work_title,
+        work_authors=plan.work_authors,
     )
 
 
@@ -996,6 +1105,11 @@ def provider_observation(
         diagnostics=diagnostics,
         request_accounting=request_accounting,
         edition_enrichment_overflow=overflow,
+        recording_lookup_candidates=tuple(
+            candidate
+            for result in results
+            for candidate in result.recording_lookup_candidates
+        ),
     )
 
 
@@ -1409,6 +1523,83 @@ def _local_identifier_asins(local_claims: tuple[LocalClaim, ...]) -> frozenset[s
     )
 
 
+def _recording_runtime_veto(candidate: ProviderCandidate, coverage: int) -> bool:
+    """Reject retained malformed/conflicting statements before source selection."""
+    durations = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+    )
+    if not durations:
+        return False
+    if len(durations) != 1:
+        return True
+    duration = durations[0]
+    if duration.state is FieldState.ABSENT:
+        return False
+    seconds = candidate_runtime_seconds(candidate)
+    return (
+        duration.state is not FieldState.VALID
+        or seconds is None
+        or seconds <= 0
+        or runtime_agreement(coverage, seconds).outcome
+        is not CorroborationOutcome.CORROBORATED
+    )
+
+
+def _unambiguous_candidate_asin(candidate: ProviderCandidate) -> str | None:
+    """A chapter source must identify one valid recording without alias conflict."""
+    identifiers = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.ASIN
+    )
+    asins = {claim.value for claim in identifiers}
+    if len(asins) != 1 or any(
+        claim.state is not FieldState.VALID
+        or canonical_asin(claim.value) != claim.value
+        for claim in identifiers
+    ):
+        return None
+    return next(iter(asins))
+
+
+def _chapter_candidate_support(
+    candidate: ProviderCandidate,
+    audio: AudioFacts | None,
+    local_claims: tuple[LocalClaim, ...],
+    title: str | None,
+    authors: tuple[str, ...],
+    requested_asin: str | None,
+) -> bool:
+    """Qualify raw recording evidence before shaping can discard its vetoes."""
+    if not provider_candidate_exact_work_identity_admission(
+        candidate, title or "", authors
+    ).admitted:
+        return False
+    if (
+        requested_asin is None
+        or _unambiguous_candidate_asin(candidate) != requested_asin
+    ):
+        return False
+    structures = tuple(
+        value.chapters
+        for value in candidate.evidence
+        if value.kind is ProviderEvidenceKind.CHAPTER_STRUCTURE
+    )
+    durations = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+    )
+    if (
+        audio is None
+        or len(structures) != 1
+        or structures[0] is None
+        or len(durations) != 1
+        or not complete_chapter_runtime_agreement(audio, local_claims, structures[0])
+    ):
+        return False
+    coverage = local_claim_runtime_seconds(local_claims)
+    if coverage is None:
+        coverage = (audio.chapters[-1].end_milliseconds + 500) // 1000
+    return not _recording_runtime_veto(candidate, coverage)
+
+
 def _identifier_lane_candidates(
     observation: ProviderObservation, lookup: MetadataLookup
 ) -> tuple[ProviderCandidate, ...]:
@@ -1427,7 +1618,11 @@ def _identifier_lane_candidates(
         lookup.kind is not ProviderQueryKind.ASIN
         or observation.status is not ProviderStatus.CANDIDATES
         or observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
-        or _local_identifier_asins(lookup.local_claims)
+        or (
+            lookup.requested_asin in _local_identifier_asins(lookup.local_claims)
+            if lookup.requested_asin is not None
+            else bool(_local_identifier_asins(lookup.local_claims))
+        )
     ):
         return observation.candidates
     corroborated = runtime_corroborated_candidate(
@@ -1436,7 +1631,18 @@ def _identifier_lane_candidates(
     admitted = None if corroborated is None else corroborated[0].identity
     return tuple(
         _shaped_with_runtime_comparison(
-            candidate, candidate.identity == admitted, lookup.local_claims
+            candidate,
+            candidate.identity == admitted
+            or _chapter_candidate_support(
+                candidate,
+                lookup.audio,
+                lookup.local_claims,
+                lookup.work_title,
+                lookup.work_authors,
+                lookup.requested_asin,
+            ),
+            lookup.local_claims,
+            recording_hints=True,
         )
         for candidate in observation.candidates
     )
@@ -1445,6 +1651,25 @@ def _identifier_lane_candidates(
 def qualify_provider_observation(
     observation: ProviderObservation, lookup: MetadataLookup
 ) -> ProviderObservation:
+    if (
+        lookup.requested_asin is not None
+        and observation.status is ProviderStatus.CANDIDATES
+        and any(
+            not any(
+                claim.kind is ClaimKind.ASIN
+                and claim.state is FieldState.VALID
+                and claim.value == lookup.requested_asin
+                for claim in candidate.claims
+            )
+            for candidate in observation.candidates
+        )
+    ):
+        observation = replace(
+            observation,
+            status=ProviderStatus.MALFORMED,
+            candidates=(),
+            input_references=(),
+        )
     if lookup.kind is not ProviderQueryKind.WORK:
         return ProviderObservation(
             observation.provider,
@@ -1517,6 +1742,15 @@ def qualify_provider_observation(
             accessed_at=observation.accessed_at,
             diagnostics=observation.diagnostics,
             request_accounting=observation.request_accounting,
+            recording_lookup_candidates=tuple(
+                candidate
+                for candidate in observation.candidates
+                if provider_candidate_exact_work_identity_admission(
+                    candidate, lookup.title or "", lookup.authors
+                ).admitted
+            )
+            if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+            else (),
         )
     # Gate order: the work-identity admission above has already decided that
     # this candidate set names the item's title and author. Only then may the
@@ -1530,32 +1764,42 @@ def qualify_provider_observation(
         if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         else None
     )
-    candidate = (
+    selected = (
         min(set_admission.candidates, key=lambda value: value.identity)
         if corroborated is None
         else corroborated[0]
     )
-    transformation_lineage = set_admission.transformation
-    filtered = _shaped_with_runtime_comparison(
-        candidate, corroborated is not None, lookup.local_claims
+    is_audio = observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+    filtered = tuple(
+        _shaped_with_runtime_comparison(
+            candidate,
+            corroborated is not None and candidate.identity == corroborated[0].identity,
+            lookup.local_claims,
+            recording_hints=is_audio,
+        )
+        for candidate in (
+            set_admission.candidates
+            if is_audio and observation.authority != "itunes_search"
+            else (selected,)
+        )
     )
     return ProviderObservation(
         observation.provider,
         ProviderStatus.CANDIDATES,
         (),
-        (filtered,),
+        filtered,
         ProviderQueryKind.WORK,
         observation.authority,
         accessed_at=observation.accessed_at,
         diagnostics=observation.diagnostics,
         request_accounting=observation.request_accounting,
         dispatch_lineage=observation.dispatch_lineage,
-        transformation_lineage=transformation_lineage,
+        transformation_lineage=set_admission.transformation,
     )
 
 
 def admitted_audiobook_identity(report: MetadataReport) -> bool:
-    """Preserve stated-runtime admission, then try retained local-ASIN timing."""
+    """Preserve stated-runtime admission, then try complete retained chapter timing."""
     if type(report) is not MetadataReport:
         raise MetadataReportError("provider observation is invalid")
     return (
@@ -1574,96 +1818,111 @@ def _stated_runtime_admitted(report: MetadataReport) -> bool:
 
 
 def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
-    """Derive admission and attribution from the same retained local envelope.
-
-    Only retained local-ASIN lanes promise complete candidate observations.
-    No lookup, provider vote, or provider-native identifier adds authority.
-    """
+    """Select chapter support only after every matched same-ASIN veto is checked."""
     if type(report) is not MetadataReport:
         raise MetadataReportError("provider observation is invalid")
-    if _stated_runtime_admitted(report):
+    if _stated_runtime_admitted(report) or report.audio is None:
         return None
-    asins = _local_identifier_asins(report.local_claims)
-    local = local_claim_runtime_seconds(report.local_claims)
-    if len(asins) != 1 or local is None or local <= 0:
+    if len(_local_identifier_asins(report.local_claims)) > 1:
         return None
-    asin = next(iter(asins))
-    references = {
-        claim.reference
-        for claim in report.local_claims
-        if claim.kind is ClaimKind.ASIN
-        and claim.basis != "target_metadata"
-        and canonical_asin(claim.canonical) == asin
-    }
-    support: list[tuple[str, str]] = []
+    audio = report.audio
+    if not audio.chapters:
+        return None
+    coverage = local_claim_runtime_seconds(report.local_claims)
+    if coverage is None:
+        coverage = (audio.chapters[-1].end_milliseconds + 500) // 1000
+    fields = {field.destination: field for field in report.target.fields}
+    authors_value = fields[TargetDestination.AUTHORS].value
+    authors = (
+        cast("tuple[str, ...]", authors_value) if type(authors_value) is tuple else ()
+    )
+    support: list[tuple[str, str, str]] = []
+    vetoed: set[str] = set()
     for observation in report.providers:
         if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
             continue
-        retained = {
-            candidate.edition_identity
-            for lane in observation.lanes
-            if lane.kind is ProviderQueryKind.ASIN
-            and references.intersection(lane.input_references)
-            for candidate in lane.candidates
-        }
-        if not observation.lanes and observation.query_kind is ProviderQueryKind.ASIN:
-            if references.intersection(observation.input_references):
-                retained = {candidate.identity for candidate in observation.candidates}
-        for candidate in observation.candidates:
-            if candidate.identity not in retained:
+        for candidate in (
+            *observation.candidates,
+            *observation.recording_lookup_candidates,
+        ):
+            if not provider_candidate_exact_work_identity_admission(
+                candidate, report.target.current_title or "", authors
+            ).admitted:
                 continue
             identifiers = tuple(
                 claim for claim in candidate.claims if claim.kind is ClaimKind.ASIN
             )
-            matched = any(
-                claim.state is FieldState.VALID
-                and claim.value == asin
-                and any(
-                    link.local_reference in references
-                    and link.outcome is Comparison.AGREEMENT
-                    for link in claim.links
-                )
+            asins = {
+                value
                 for claim in identifiers
-            )
-            if not matched:
+                if claim.state is FieldState.VALID
+                and (value := canonical_asin(claim.value)) is not None
+            }
+            if len(asins) != 1:
+                vetoed.update(asins)
                 continue
+            asin = next(iter(asins))
             if any(
                 claim.state is not FieldState.VALID or claim.value != asin
                 for claim in identifiers
-            ):
-                return None
-            durations = tuple(
-                claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
-            )
-            if not durations:
+            ) or _recording_runtime_veto(candidate, coverage):
+                vetoed.add(asin)
                 continue
-            if len(durations) != 1:
-                return None
-            duration = durations[0]
-            if duration.state is FieldState.VALID:
-                seconds = candidate_runtime_seconds(candidate)
-                if (
-                    seconds is None
-                    or seconds <= 0
-                    or runtime_agreement(local, seconds).outcome
-                    is not CorroborationOutcome.CORROBORATED
-                ):
-                    return None
+            if candidate not in observation.candidates:
                 continue
-            if duration.state is not FieldState.ABSENT:
-                return None
-            structures = tuple(
-                evidence.chapters
-                for evidence in candidate.evidence
-                if evidence.kind is ProviderEvidenceKind.CHAPTER_STRUCTURE
+            retained = any(
+                lane.input_references
+                and (
+                    lane.kind is ProviderQueryKind.WORK
+                    or lane.kind is ProviderQueryKind.ASIN
+                    and lane.identity
+                    == _asin_discovery_lane(asin, lane.input_references).identity
+                )
+                and any(
+                    value.edition_identity == candidate.identity
+                    for value in lane.candidates
+                )
+                for lane in observation.lanes
             )
-            if len(structures) == 1 and complete_chapter_runtime_agreement(
-                report.audio, report.local_claims, structures[0]
+            if not observation.lanes:
+                retained = bool(observation.input_references) and (
+                    observation.query_kind is ProviderQueryKind.WORK
+                    or observation.query_kind is ProviderQueryKind.ASIN
+                    and _local_identifier_asins(
+                        tuple(
+                            claim
+                            for claim in report.local_claims
+                            if claim.reference in observation.input_references
+                        )
+                    )
+                    == {asin}
+                )
+            if not retained:
+                continue
+            # An acquisition hint alone never supplies recording support.
+            if not any(
+                value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                and value.scope is ClaimScope.EDITION
+                for value in candidate.evidence
             ):
-                support.append((observation.provider, candidate.identity))
-    if not support:
+                continue
+            if _chapter_candidate_support(
+                candidate,
+                audio,
+                report.local_claims,
+                report.target.current_title,
+                authors,
+                asin,
+            ):
+                support.append((observation.provider, candidate.identity, asin))
+    eligible = tuple(
+        (provider, identity)
+        for provider, identity, asin in support
+        if asin not in vetoed
+    )
+    if not eligible:
         return None
-    provider, candidate_identity = min(support)
+    provider, candidate_identity = min(eligible)
     return {
         "basis": "chapter_runtime_and_structure",
         "provider": provider,
@@ -1675,38 +1934,33 @@ def _shaped_with_runtime_comparison(
     candidate: ProviderCandidate,
     corroborated: bool,
     local_claims: tuple[LocalClaim, ...],
+    *,
+    recording_hints: bool = False,
 ) -> ProviderCandidate:
-    """Shape one candidate, recording the runtime comparison shaping destroys.
+    """Preserve the media-health comparison before limiting edition applicability.
 
-    Demotion is the whole point of `_admitted_candidate_shape` and is left
-    exactly as it is: an uncorroborated candidate keeps no edition-scope
-    `DURATION` claim, so after this function nothing in the published report
-    can say whether the recording on the mount was short of what that candidate
-    stated. The comparison is therefore made here, on the way past, while both
-    running times still exist, and its single-bit answer rides out on the
-    shaped candidate.
-
-    Only the uncorroborated case is recorded. A corroborated candidate agrees
-    with this recording inside the tight band by construction -- that is what
-    admitted it -- so it is never short of one, and asking would be answering a
-    question the band has already closed.
+    Audio lookup hints retain raw duration statements for later vetoes, but
+    media health still records this comparison at its original boundary.
+    Corroborated candidates cannot be short within the accepted tight band.
     """
-    shaped = _admitted_candidate_shape(candidate, corroborated)
+    shaped = _admitted_candidate_shape(
+        candidate, corroborated, recording_hints=recording_hints
+    )
     if corroborated or not runtime_short_of_stated(candidate, local_claims):
         return shaped
     return replace(shaped, runtime_short_of_local=True)
 
 
 def _admitted_candidate_shape(
-    candidate: ProviderCandidate, corroborated: bool
+    candidate: ProviderCandidate, corroborated: bool, *, recording_hints: bool = False
 ) -> ProviderCandidate:
     """Shape one admitted candidate to the scope its evidence earned.
 
     Admission decides *whether* a candidate describes this item; this
     decides *how much* of what it says the report keeps. Without
-    corroboration only work-scope statements survive, because nothing has
-    yet tied the candidate to this exact edition; with it the four
-    edition-bearing statements ADR-0061 names are kept as well.
+    corroboration work statements survive, with informational audio ASIN and
+    DURATION hints when requested. These hints grant no edition applicability.
+    Corroboration retains the edition-bearing statements ADR-0061 names.
 
     It is shared by the two lanes that can reach an uncorroborated
     candidate -- the title-and-author search, and an ASIN lane the item's
@@ -1770,6 +2024,7 @@ def _admitted_candidate_shape(
                 and claim.kind in neutral_rejection_sibling_claims
                 and claim.state is FieldState.VALID
             )
+            or (recording_hints and claim.kind in {ClaimKind.ASIN, ClaimKind.DURATION})
             or _corroborated_edition_claim(claim, corroborated)
         )
     )
@@ -2378,7 +2633,7 @@ class GenerateMetadataReport:
                 or {"no_local_audio_claims"}
             )
         )
-        plan = audiobook_discovery_plan(initial, combined_claims)
+        plan = audiobook_discovery_plan(initial, combined_claims, audio=audio.audio)
         cover_aggregate_deadline = time.monotonic() + 60.0
         observations, descriptors = self._observe_providers(
             repository, plan, cover_aggregate_deadline
@@ -2466,13 +2721,10 @@ def _audio_with_runtime_observations(
 ) -> AudioFacts | None:
     """Record, once per candidate, the truncation qualification measured.
 
-    Read at report assembly rather than derived at read time because the
-    evidence it was read from is already gone: the candidate that stated the
-    longer running time was demoted to work scope on its way into this report,
-    and a reader of the published document has nothing left to compare. What is
-    retained is the statement itself and the candidate it was made against, so
-    an owner is told which edition this recording falls short of and can go and
-    look at it.
+    Retain the qualification result at assembly so it remains available when
+    a published report has no comparable runtime. Informational duration may
+    survive demotion; read-time health prefers that retained comparison over
+    this fallback and emits only one statement per candidate.
 
     One observation per candidate identity, in identity order, so two providers
     naming the same edition state it once and a document published twice from
@@ -2485,9 +2737,9 @@ def _audio_with_runtime_observations(
     shortfall. This is decided here and not at the shaping site because
     qualification runs once per provider and never sees a second provider's
     answer, so assembly is the first place every candidate naming one edition
-    is in hand. A candidate whose running time survived shaping is marked
-    short by nobody, so a corroborated answer silences the identity here for
-    the same reason the read-time derivation does.
+    is in hand. A runtime-corroborated candidate is not marked short, so a
+    corroborated answer silences the identity here. Retained informational
+    duration alone does not change that qualification result.
     """
     if audio is None:
         return None

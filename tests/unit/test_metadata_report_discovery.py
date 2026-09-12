@@ -900,7 +900,10 @@ def test_feed_lane_identities_never_collide_across_origins() -> None:
                 ClaimKind.CONTRIBUTOR,
             },
         ),
-        ("51000.000", {ClaimKind.TITLE, ClaimKind.CREATOR}),
+        (
+            "51000.000",
+            {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.ASIN, ClaimKind.DURATION},
+        ),
     ),
     ids=("corroborated", "uncorroborated"),
 )
@@ -1096,7 +1099,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v41" == report.schema_version
+    assert "metadata-report-v42" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -2907,7 +2910,7 @@ def test_an_uncorroborated_audiobook_candidate_keeps_only_its_work_shape(
         _audio_local_claims(local_duration), duration=provider_duration
     ).candidates[0]
 
-    assert {ClaimKind.TITLE, ClaimKind.CREATOR} == {
+    assert {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.ASIN, ClaimKind.DURATION} == {
         claim.kind for claim in candidate.claims
     }
     assert () == candidate.evidence
@@ -3000,3 +3003,226 @@ def test_an_admitted_audiobook_reaches_the_same_destinations_an_ebook_does() -> 
         TargetDestination.NARRATORS
     ].reasons
     assert ("audiobook_cover_withheld",) == outcomes[TargetDestination.COVER].reasons
+
+
+@pytest.mark.parametrize(
+    "context",
+    (
+        "absent",
+        "complete",
+        "title_only",
+        "authors_only",
+        "duplicate_authors",
+        "wrong_audio",
+    ),
+)
+def test_recording_lookup_and_plan_share_complete_transient_context(
+    context: str,
+) -> None:
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    values = {
+        "audio": single_track_audio_facts(),
+        "work_title": "Example",
+        "work_authors": ("Author",),
+    }
+    if context == "absent":
+        values = {}
+    elif context == "title_only":
+        values["work_authors"] = ()
+    elif context == "authors_only":
+        values["work_title"] = None
+    elif context == "duplicate_authors":
+        values["work_authors"] = ("Author", "Author")
+    elif context == "wrong_audio":
+        values["audio"] = object()
+    for constructor in (
+        lambda: MetadataLookup(ProviderQueryKind.ASIN, (), **values),
+        lambda: MetadataDiscoveryPlan((), (), **values),
+    ):
+        if context in {"absent", "complete"}:
+            result = constructor()
+            assert result.work_title == values.get("work_title")
+        else:
+            with pytest.raises(MetadataReportError):
+                constructor()
+
+
+def test_lookup_hints_feed_all_recordings_under_existing_cap_without_promotion() -> (
+    None
+):
+    from tests.support.audiobook_providers import audio_target
+    from tests.support.audiobook_reports import recording_lookup_report
+
+    report = recording_lookup_report(asins=tuple(f"B00000000{i}" for i in range(1, 6)))
+    plan = audiobook_discovery_plan(
+        audio_target(), report.local_claims, audio=report.audio
+    )
+    observation = report.providers[0]
+    assert promoted_asins((observation,)) == ()
+    feed = audiobook_asin_feed_plan(audio_target(), plan, (observation,))
+    assert feed is not None and len(feed.lanes) == 4
+    assert {lane.canonical_asin for lane in feed.lanes} == {
+        f"B00000000{i}" for i in range(1, 5)
+    }
+    assert all(
+        lane.input_references == observation.lanes[0].input_references
+        for lane in feed.lanes
+    )
+    assert (feed.audio, feed.work_title, feed.work_authors) == (
+        report.audio,
+        plan.work_title,
+        plan.work_authors,
+    )
+    assert len(observation.recording_lookup_candidates) == 5
+    assert audiobook_asin_feed_plan(audio_target(), feed, (observation,)) is None
+
+
+def test_failed_work_set_keeps_individual_recordings_and_original_runtime_order() -> (
+    None
+):
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.work_identity import (
+        WorkDispatchLineage,
+        work_query_ladder,
+    )
+    from tests.support.audiobook_providers import work_plan
+    from tests.support.audiobook_reports import recording_lookup_report
+
+    report = recording_lookup_report()
+    hints = report.providers[0].recording_lookup_candidates
+    raw = ProviderObservation(
+        "catalogue",
+        ProviderStatus.CANDIDATES,
+        (),
+        hints,
+        ProviderQueryKind.WORK,
+        "audnexus",
+        dispatch_lineage=WorkDispatchLineage.from_query(
+            work_query_ladder("Project Hail Mary", ("Andy Weir",))[0]
+        ),
+    )
+    plan = work_plan(*(c for c in report.local_claims if c.basis != "target_metadata"))
+    lookup = MetadataLookup(
+        ProviderQueryKind.WORK, plan.local_claims, plan.work_title, plan.work_authors
+    )
+    result = qualify_provider_observation(raw, lookup)
+    assert result.status is ProviderStatus.NO_MATCH and result.candidates == ()
+    assert result.recording_lookup_candidates == hints
+    assert result.dispatch_lineage is None and result.transformation_lineage is None
+    one = qualify_provider_observation(replace(raw, candidates=(hints[0],)), lookup)
+    assert one.recording_lookup_candidates == ()
+    source_claims = tuple(
+        c for c in hints[0].claims if c.kind in {ClaimKind.ASIN, ClaimKind.DURATION}
+    )
+    retained = tuple(
+        c
+        for c in one.candidates[0].claims
+        if c.kind in {ClaimKind.ASIN, ClaimKind.DURATION}
+    )
+    assert retained == source_claims
+    assert not any(
+        e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        for e in one.candidates[0].evidence
+    )
+
+
+@pytest.mark.parametrize(
+    "kind,requested,valid",
+    [
+        (ProviderQueryKind.ASIN, None, True),
+        (ProviderQueryKind.ASIN, "B000000001", True),
+        (ProviderQueryKind.ASIN, "b000000001", False),
+        (ProviderQueryKind.ASIN, "bad", False),
+        (ProviderQueryKind.ASIN, 1, False),
+        (ProviderQueryKind.NONE, "B000000001", False),
+        (ProviderQueryKind.ISBN, "B000000001", False),
+    ],
+)
+def test_requested_asin_is_canonical_and_asin_only(kind, requested, valid) -> None:
+    if valid:
+        assert (
+            MetadataLookup(kind, (), requested_asin=requested).requested_asin
+            == requested
+        )
+    else:
+        with pytest.raises(MetadataReportError):
+            MetadataLookup(kind, (), requested_asin=requested)
+
+
+@pytest.mark.parametrize("local", (False, True))
+@pytest.mark.parametrize("requested_asin", (None, "B08G9PRS1K", "B000000002"))
+def test_request_binding_precedes_local_shortcut_and_chapter_widening(
+    local: bool, requested_asin: str | None
+) -> None:
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report(
+        asin_basis="embedded_tag" if local else "target_metadata"
+    )
+    source = report.providers[0]
+    observation = ProviderObservation(
+        source.provider,
+        source.status,
+        source.input_references,
+        source.candidates,
+        ProviderQueryKind.ASIN,
+        source.authority,
+    )
+    result = qualify_provider_observation(
+        observation,
+        MetadataLookup(
+            ProviderQueryKind.ASIN,
+            report.local_claims,
+            audio=report.audio,
+            work_title="Project Hail Mary",
+            work_authors=("Andy Weir",),
+            requested_asin=requested_asin,
+        ),
+    )
+    if requested_asin == "B000000002":
+        assert result.status is ProviderStatus.MALFORMED
+        assert result.candidates == ()
+        return
+    assert result.status is ProviderStatus.CANDIDATES
+    admitted = any(
+        e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        for e in result.candidates[0].evidence
+    )
+    assert admitted is (local or requested_asin is not None)
+
+
+def test_bound_request_cannot_borrow_another_local_asin_shortcut() -> None:
+    from tests.support.audiobook_reports import (
+        audiobook_candidate,
+        chapter_runtime_report,
+    )
+
+    local = chapter_runtime_report()
+    source = local.providers[0]
+    observation = ProviderObservation(
+        source.provider,
+        source.status,
+        (),
+        (
+            audiobook_candidate(
+                local.local_claims, asin="B000000002", duration="72000.000"
+            ),
+        ),
+        ProviderQueryKind.ASIN,
+        source.authority,
+    )
+    result = qualify_provider_observation(
+        observation,
+        MetadataLookup(
+            ProviderQueryKind.ASIN,
+            local.local_claims,
+            requested_asin="B000000002",
+        ),
+    )
+    assert result.status is ProviderStatus.CANDIDATES
+    assert not any(
+        e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        for e in result.candidates[0].evidence
+    )

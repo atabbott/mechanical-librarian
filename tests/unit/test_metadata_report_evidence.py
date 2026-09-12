@@ -106,6 +106,7 @@ from mechanical_librarian.domain.proposal_set import (
     evaluate_report,
 )
 from mechanical_librarian.domain.work_identity import work_title_has_variant_marker
+from tests.support.audiobook_reports import recording_lookup_report
 from tests.support.metadata_report_doubles import (
     FakeInspector,
     FakeReportRepository,
@@ -2120,3 +2121,239 @@ def test_a_malformed_asin_is_never_an_alternative_a_proposal_can_offer() -> None
     )
 
     assert [value.value.value for value in asin.alternatives] == ["B0CW1KL2QD"]
+
+
+def test_recording_lookup_roundtrip_grants_no_ordinary_authority() -> None:
+    from mechanical_librarian.application.metadata_report import (
+        admitted_audiobook_identity,
+    )
+
+    report = recording_lookup_report()
+    reopened = MetadataReport.from_json(report.to_json())
+    assert reopened == report
+    observation = reopened.providers[0]
+    assert len(observation.recording_lookup_candidates) == 2
+    assert observation.status is ProviderStatus.NO_MATCH
+    assert observation.candidates == ()
+    assert observation.dispatch_lineage is None
+    assert observation.transformation_lineage is None
+    assert not admitted_audiobook_identity(reopened)
+    empty = MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=(),
+        audio=report.audio,
+    )
+    assert report.identifier_evidence == empty.identifier_evidence
+    # The real evaluator has no provider-derived alternatives to elect.
+    assert evaluate_report(report).results == evaluate_report(empty).results
+    assert (
+        evaluate_report(report).bibliographic_combinations
+        == evaluate_report(empty).bibliographic_combinations
+    )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    (
+        "missing",
+        "null",
+        "reordered",
+        "duplicate",
+        "foreign",
+        "nonwork",
+        "ordinary",
+        "reference",
+        "wrong_work",
+    ),
+)
+def test_recording_lookup_strict_replay_refuses_invalid_evidence(variant: str) -> None:
+    report = recording_lookup_report()
+    data = report.to_data()
+    providers = cast(list[dict[str, object]], data["providers"])
+    observation = providers[0]
+    candidates = cast(
+        list[dict[str, object]], observation["recording_lookup_candidates"]
+    )
+    if variant == "missing":
+        del observation["recording_lookup_candidates"]
+    elif variant == "null":
+        observation["recording_lookup_candidates"] = None
+    elif variant == "reordered":
+        candidates.reverse()
+    elif variant == "duplicate":
+        candidates.append(candidates[0])
+    elif variant == "foreign":
+        observation["authority"] = "google_books"
+    elif variant == "nonwork":
+        observation["query_kind"] = "asin"
+    elif variant == "ordinary":
+        observation["candidates"] = candidates
+    elif variant == "reference":
+        cast(list[dict[str, object]], candidates[0]["claims"])[0]["reference"] = (
+            "provider_" + "0" * 24
+        )
+    else:
+        target = cast(dict[str, object], data["target"])
+        fields = cast(list[dict[str, object]], target["fields"])
+        next(field for field in fields if field["destination"] == "authors")[
+            "value"
+        ] = ["Different Author"]
+    # Recompute identity so refusal proves the nested consumer, not a stale digest.
+    import hashlib
+
+    identity = dict(data)
+    identity.pop("report_id")
+    data["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+    )
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(canonical_json(data))
+
+
+def test_lookup_work_lane_and_sqlite_proposal_roundtrip(tmp_path: Path) -> None:
+    from mechanical_librarian.application.metadata_report import (
+        ProviderLaneResult,
+        provider_observation,
+    )
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+    from tests.support.audiobook_providers import work_plan
+
+    raw = recording_lookup_report()
+    plan = work_plan(
+        *(claim for claim in raw.local_claims if claim.basis != "target_metadata")
+    )
+    lane = plan.lanes[0]
+    observation = provider_observation(
+        "catalogue",
+        (
+            ProviderLaneResult(
+                lane,
+                ProviderStatus.NO_MATCH,
+                recording_lookup_candidates=raw.providers[
+                    0
+                ].recording_lookup_candidates,
+            ),
+        ),
+        authority="audnexus",
+    )
+    assert observation.lanes[0].status is ProviderStatus.NO_MATCH
+    assert observation.lanes[0].candidates == ()
+    assert observation.lanes[0].dispatch_lineage is None
+    assert observation.input_references == lane.input_references
+    report = MetadataReport.create(
+        target=raw.target,
+        file=raw.file,
+        local_claims=plan.local_claims,
+        local_reasons=raw.local_reasons,
+        providers=(observation,),
+        audio=raw.audio,
+    )
+    database = tmp_path / "reports.sqlite"
+    repository = open_repository(database, create=True)
+    try:
+        assert repository.publish(report, lambda: True) == report.to_json()
+        proposal = evaluate_report(
+            MetadataReport.from_json(repository.get_proposal_input(report.report_id))
+        )
+        assert ProposalSet.from_json(repository.publish_proposal(proposal)) == proposal
+    finally:
+        repository.close()
+    repository = open_repository(database, create=False)
+    try:
+        assert MetadataReport.from_json(repository.get(report.report_id)) == report
+        assert (
+            ProposalSet.from_json(repository.get_proposal(proposal.proposal_set_id))
+            == proposal
+        )
+    finally:
+        repository.close()
+    with pytest.raises(ReportValueError, match="lookup provenance"):
+        replace(
+            observation,
+            lanes=(replace(observation.lanes[0], status=ProviderStatus.UNAVAILABLE),),
+        )
+
+
+@pytest.mark.parametrize(
+    "variant",
+    (
+        "wrong_author",
+        "variant_title",
+        "variant_subtitle",
+        "abridger",
+        "adapter",
+        "translator",
+        "overflow",
+    ),
+)
+def test_lookup_candidates_replay_individual_identity_and_bound_guards(
+    variant: str,
+) -> None:
+    report = recording_lookup_report()
+    observation = report.providers[0]
+    candidate = observation.recording_lookup_candidates[0]
+    if variant == "overflow":
+        with pytest.raises(ReportValueError):
+            replace(
+                observation,
+                recording_lookup_candidates=observation.recording_lookup_candidates * 3,
+            )
+        return
+    if variant in {"wrong_author", "variant_title"}:
+        kind = ClaimKind.CREATOR if variant == "wrong_author" else ClaimKind.TITLE
+        source = next(claim for claim in candidate.claims if claim.kind is kind)
+        changed = ProviderClaim.create(
+            provider=observation.provider,
+            candidate=candidate.identity,
+            kind=kind,
+            value="Different Author"
+            if variant == "wrong_author"
+            else "Project Hail Mary (Abridged)",
+            state=source.state,
+            scope=source.scope,
+            applicability=source.applicability,
+            role=source.role,
+            raw_order=source.raw_order,
+        )
+        claims = tuple(
+            changed if claim is source else claim for claim in candidate.claims
+        )
+    else:
+        claims = (
+            *candidate.claims,
+            ProviderClaim.create(
+                provider=observation.provider,
+                candidate=candidate.identity,
+                kind=ClaimKind.SUBTITLE
+                if variant == "variant_subtitle"
+                else ClaimKind.CONTRIBUTOR,
+                value="Abridged edition"
+                if variant == "variant_subtitle"
+                else "Other Person",
+                state=FieldState.VALID,
+                scope=ClaimScope.WORK,
+                applicability="not_applicable",
+                role=None if variant == "variant_subtitle" else variant,
+                raw_order=len(candidate.claims),
+            ),
+        )
+    candidate = replace(candidate, claims=claims)
+    observation = replace(
+        observation,
+        recording_lookup_candidates=(
+            candidate,
+            *observation.recording_lookup_candidates[1:],
+        ),
+    )
+    with pytest.raises(ReportValueError, match="lookup work identity"):
+        MetadataReport.create(
+            target=report.target,
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=(observation,),
+            audio=report.audio,
+        )

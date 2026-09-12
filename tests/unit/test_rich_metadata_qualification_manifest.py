@@ -57,14 +57,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v30.json"
+    "f20-rich-metadata-qualification-candidate-v31.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v16.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v17.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1980,6 +1980,9 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
         "frontend/src/routes/LibraryPage.tsx",
         "frontend/src/routes/DetailPage.tsx",
     }
+    expected.add(
+        "src/mechanical_librarian/adapters/persistence/qualification_state_bridge.py"
+    )
     assert set(rich["source_closure"]) == expected
     assert set(title["source_closure"]) == expected - {
         "src/mechanical_librarian/domain/automatic_decision.py"
@@ -1998,13 +2001,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v15.json",
-            "50eaf202ea5d57407714427863634e45abe4be6380616e7d4c0b811e5df033c6",
+            "f19a-qualification-manifest-v16.json",
+            "7b29aaac0a8b08a31930e10c1197c983d85dc1b1c6b39a4822c9bd130891f2d1",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v29.json",
-            "694b9bfffd787c097893702990b942012f61f82cd5448ea1f55e7a25c53200d2",
+            "f20-rich-metadata-qualification-candidate-v30.json",
+            "4dc19885cb3aa98cfb6b79450d42bddc6b7d6e6ac4aec12ae8e1b4bf8e00d121",
         ),
     ):
         assert (
@@ -2362,3 +2365,26 @@ def test_base_integration_retains_both_exact_historical_manifest_origins(
         ] == expected
         assert integration["f46"]["manifest_sha256"] is None
         assert integration["f46"]["passing_options"] == []
+
+
+def test_complete_chapter_successors_refresh_sources_without_measurement_or_authority():
+    for path in (LATEST_MANIFEST, LATEST_F19A_MANIFEST):
+        current = json.loads(path.read_bytes())
+        prior = json.loads(
+            (MANIFEST.parents[2] / current["prior_manifest_path"]).read_bytes()
+        )
+        increment = current["complete_chapter_increment"]
+        assert current["issue"] == 1004
+        assert increment["report_schema"] == "metadata-report-v42"
+        assert increment["clean_rebuild_required"] is True
+        assert increment["historical_measurements_reused"] is True
+        assert increment["fresh_measurement_claimed"] is False
+        for key in (
+            "measurement_artifacts",
+            "historical_measurements",
+            "chapter_runtime_increment",
+        ):
+            assert current[key] == prior[key]
+        for key in ("options", "passing_automatic_options", "qualified_policy_options"):
+            if key in prior:
+                assert current[key] == prior[key]

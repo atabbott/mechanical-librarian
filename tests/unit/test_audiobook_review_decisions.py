@@ -406,8 +406,8 @@ def test_existing_runtime_admission_keeps_null_chapter_attribution() -> None:
     assert recording_identity_basis(report) is None
 
 
-def test_target_only_asin_cannot_use_chapter_fallback() -> None:
-    assert not admitted_audiobook_identity(
+def test_target_only_asin_can_use_complete_chapter_fallback() -> None:
+    assert admitted_audiobook_identity(
         chapter_runtime_report(asin_basis="target_metadata")
     )
 
@@ -446,7 +446,13 @@ def test_cross_provider_runtime_conflict_blocks_chapter_fallback() -> None:
 
 @pytest.mark.parametrize(
     "mutation",
-    ("missing_duration", "missing_asin_link", "unbound_asin_lane", "foreign_authority"),
+    (
+        "missing_duration",
+        "missing_asin_link",
+        "unbound_asin_lane",
+        "wrong_asin_lane",
+        "foreign_authority",
+    ),
 )
 def test_chapter_fallback_needs_retained_matched_local_asin_evidence(
     mutation: str,
@@ -475,6 +481,37 @@ def test_chapter_fallback_needs_retained_matched_local_asin_evidence(
         )
     if mutation in {"missing_duration", "missing_asin_link"}:
         observation = replace(observation, candidates=(candidate,))
+    elif mutation == "wrong_asin_lane":
+        from mechanical_librarian.application.metadata_report import (
+            _asin_discovery_lane,
+        )
+        from mechanical_librarian.domain.metadata_report import (
+            provider_lane_candidate_reference,
+        )
+
+        lane = observation.lanes[0]
+        identity = _asin_discovery_lane("B000000002", lane.input_references).identity
+        observation = replace(
+            observation,
+            lanes=(
+                replace(
+                    lane,
+                    identity=identity,
+                    candidates=tuple(
+                        replace(
+                            value,
+                            reference=provider_lane_candidate_reference(
+                                observation.provider,
+                                identity,
+                                value.edition_identity,
+                                value.work_identity,
+                            ),
+                        )
+                        for value in lane.candidates
+                    ),
+                ),
+            ),
+        )
     elif mutation == "unbound_asin_lane":
         observation = replace(
             observation,
@@ -552,3 +589,70 @@ def test_multiple_local_asins_do_not_grant_chapter_admission() -> None:
     )
     assert not admitted_audiobook_identity(report)
     assert recording_identity_basis(report) is None
+
+
+@pytest.mark.parametrize("hint_provider", ("alpha", "zulu"))
+@pytest.mark.parametrize(
+    "duration, admitted", (("2000.000", False), ("1748.000", True))
+)
+def test_lookup_runtime_veto_precedes_source_selection(
+    hint_provider, duration, admitted
+):
+    from tests.support.audiobook_reports import recording_lookup_report
+
+    support = chapter_runtime_report(provider="middle")
+    hints = recording_lookup_report(
+        provider=hint_provider, asins=("B08G9PRS1K", "B000000002"), duration=duration
+    )
+    report = MetadataReport.create(
+        target=support.target,
+        file=support.file,
+        local_claims=tuple(
+            sorted(
+                {
+                    claim.reference: claim
+                    for claim in (*support.local_claims, *hints.local_claims)
+                }.values(),
+                key=lambda claim: claim.reference,
+            )
+        ),
+        local_reasons=support.local_reasons,
+        providers=tuple(
+            sorted((*support.providers, *hints.providers), key=lambda p: p.provider)
+        ),
+        audio=support.audio,
+    )
+    reopened = MetadataReport.from_json(report.to_json())
+    assert admitted_audiobook_identity(reopened) is admitted
+    assert bool(recording_identity_basis(reopened)) is admitted
+    assert reopened.providers[0 if hint_provider == "alpha" else 1].candidates == ()
+
+
+@pytest.mark.parametrize("basis", ("embedded_tag", "target_metadata"))
+def test_unlaned_chapter_support_requires_actual_local_asin_references(
+    basis: str,
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.metadata_report import ProviderQueryKind
+
+    base = chapter_runtime_report(asin_basis=basis)
+    source = base.providers[0]
+    observation = replace(
+        source,
+        lanes=(),
+        query_kind=ProviderQueryKind.ASIN,
+        input_references=source.lanes[0].input_references,
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+    assert admitted_audiobook_identity(report) is (basis == "embedded_tag")
+    assert admitted_audiobook_identity(MetadataReport.from_json(report.to_json())) is (
+        basis == "embedded_tag"
+    )

@@ -90,6 +90,8 @@ def _v26_document(
                 lane.pop("diagnostics")
                 lane.pop("dispatch_lineage")
                 lane.pop("transformation_lineage")
+    for provider in providers:
+        provider.pop("recording_lookup_candidates")
     data["providers"] = providers
     if artifact_bearing_cover:
         artifact = CoverArtifact.create(
@@ -243,7 +245,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection = sqlite3.connect(f"file:{output}?mode=ro", uri=True)
     document = connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
     report = MetadataReport.from_json(document)
-    assert report.schema_version == "metadata-report-v41"
+    assert report.schema_version == "metadata-report-v42"
     assert connection.execute("SELECT count(*) FROM proposal_sets").fetchone() == (0,)
     assert connection.execute("SELECT count(*) FROM review_cases").fetchone() == (0,)
     for table in (
@@ -1283,7 +1285,7 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
         report = MetadataReport.from_json(
             connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
         )
-    assert report.schema_version == "metadata-report-v41"
+    assert report.schema_version == "metadata-report-v42"
 
 
 def test_unpatched_bridge_refuses_before_any_filesystem_mutation(
@@ -1325,3 +1327,19 @@ def test_unpatched_bridge_refuses_before_any_filesystem_mutation(
     assert stderr.getvalue() == "Qualification-state bridge failed safely.\n"
     assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(before)
+
+
+def test_historical_provider_cannot_carry_current_lookup_field() -> None:
+    document = _v26_document()
+    source = json.loads(document)
+    source["providers"][0]["recording_lookup_candidates"] = []
+    identity = dict(source)
+    identity.pop("report_id")
+    source["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+    )
+    with pytest.raises(
+        MetadataReportError, match="qualification-state source is incompatible"
+    ):
+        bridge._reconstruct_report(canonical_json(source))
+    assert document == _v26_document()

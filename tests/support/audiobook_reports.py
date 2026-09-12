@@ -524,3 +524,50 @@ def chapter_runtime_report(
             chapters=chapters, chapter_rows_omitted=chapter_rows_omitted
         ),
     )
+
+
+def recording_lookup_report(
+    *,
+    provider: str = "catalogue",
+    asins: tuple[str, ...] = ("B000000001", "B000000002"),
+    duration: str = "58200.000",
+) -> MetadataReport:
+    from mechanical_librarian.application.metadata_report import (
+        ProviderLaneResult,
+        provider_observation,
+    )
+    from tests.support.audiobook_providers import work_plan
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    plan = work_plan(*audio_local_claims(None))
+    local = plan.local_claims
+    candidates = tuple(
+        audiobook_candidate(
+            local,
+            provider=provider,
+            identity=f"recording-{i}",
+            asin=asin,
+            duration=duration,
+        )
+        for i, asin in enumerate(asins, 1)
+    )
+    return MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", audio_target_fields()),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=local,
+        local_reasons=("embedded_tag_title",),
+        providers=(
+            provider_observation(
+                provider,
+                (
+                    ProviderLaneResult(
+                        plan.lanes[0],
+                        ProviderStatus.NO_MATCH,
+                        recording_lookup_candidates=candidates,
+                    ),
+                ),
+                authority="audnexus",
+            ),
+        ),
+        audio=single_track_audio_facts(),
+    )

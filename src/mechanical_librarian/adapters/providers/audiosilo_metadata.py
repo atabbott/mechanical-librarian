@@ -230,7 +230,7 @@ class AudioSiloMetadataProvider:
         results: list[ProviderLaneResult] = []
         with provider_client_lifetime(self._client):
             for lane in lanes:
-                lookup = _lane_lookup(lane, plan.local_claims)
+                lookup = _lane_lookup(lane, plan)
                 physical = self._resolve(ledger, lane, lookup, deadline=deadline)
                 observation = qualify_provider_observation(physical, lookup)
                 results.append(
@@ -239,6 +239,7 @@ class AudioSiloMetadataProvider:
                         observation.status,
                         observation.candidates,
                         observation.accessed_at,
+                        recording_lookup_candidates=observation.recording_lookup_candidates,
                     )
                 )
         return provider_observation(
@@ -416,11 +417,18 @@ def _lane_asin(lane: MetadataDiscoveryLane) -> str:
 
 
 def _lane_lookup(
-    lane: MetadataDiscoveryLane, local_claims: tuple[LocalClaim, ...]
+    lane: MetadataDiscoveryLane, plan: MetadataDiscoveryPlan
 ) -> MetadataLookup:
-    if lane.kind is ProviderQueryKind.WORK:
-        return MetadataLookup(lane.kind, local_claims, lane.title, lane.authors)
-    return MetadataLookup(lane.kind, local_claims)
+    return MetadataLookup(
+        lane.kind,
+        plan.local_claims,
+        lane.title if lane.kind is ProviderQueryKind.WORK else None,
+        lane.authors if lane.kind is ProviderQueryKind.WORK else (),
+        audio=plan.audio,
+        work_title=plan.work_title,
+        work_authors=plan.work_authors,
+        requested_asin=lane.canonical_asin,
+    )
 
 
 def _classify(facts: ProviderResponseFacts) -> ProviderFailure | None:

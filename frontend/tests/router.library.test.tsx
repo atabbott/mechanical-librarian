@@ -1117,9 +1117,15 @@ describe('Library route', () => {
     expect(screen.getByText('prep-0123456789abcdef')).toBeVisible()
   })
 
-  it.each([false, true])(
-    'opens recorded audiobook evidence with chapter attribution %s',
-    async (chapterBasis) => {
+  it.each([
+    { chapterBasis: false, entry: 'click' },
+    { chapterBasis: true, entry: 'click' },
+    { chapterBasis: false, entry: 'desktop' },
+    { chapterBasis: false, entry: 'resize' },
+    { chapterBasis: false, entry: 'conflicting-preview' },
+  ])(
+    'opens recorded audiobook evidence with $chapterBasis attribution via $entry',
+    async ({ chapterBasis, entry }) => {
       const user = userEvent.setup()
       const firstWork = library.works[0]
       if (!firstWork) throw new Error('library fixture requires one work')
@@ -1230,23 +1236,54 @@ describe('Library route', () => {
           lens: 'all' as const,
           page: 1,
           counts: { attention: 0, all: 1, clear: 1 },
-          works: [recorded],
+          works: [...library.works, recorded],
         })),
       }
-      renderRoute('/library?lens=all', http)
+      const previousMatchMedia = window.matchMedia
+      const changes = new Set<() => void>()
+      const media = {
+        matches: entry !== 'resize',
+        addEventListener: (_type: string, listener: () => void) => changes.add(listener),
+        removeEventListener: (_type: string, listener: () => void) => changes.delete(listener),
+      }
+      vi.stubGlobal(
+        'matchMedia',
+        vi.fn(() => media),
+      )
+      const route =
+        entry === 'click'
+          ? '/library?lens=all'
+          : `/library?lens=all&work=library_work_audio${entry === 'conflicting-preview' ? '&preview=case-1' : ''}`
+      const { router } = renderRoute(route, http)
 
       const row = await screen.findByRole('button', { name: /^Recorded work\./u })
       expect(row).not.toHaveClass('is-terminal')
       expect(document.querySelector('.library-work-row.is-terminal')).toBeNull()
       expect(row).toHaveTextContent('Recorded evidence available')
 
-      await user.click(row)
+      if (entry === 'click') {
+        await waitFor(() => expect(router.state.location.search.preview).toBe('case-1'))
+        await user.click(row)
+      }
+      if (entry === 'resize') {
+        act(() => {
+          media.matches = true
+          changes.forEach((listener) => listener())
+        })
+      }
+      await waitFor(() => expect(row).toHaveAttribute('aria-current', 'true'))
+      expect(document.querySelectorAll('.library-work-row[aria-current="true"]')).toHaveLength(1)
+      expect(router.state.location.search.work).toBe('library_work_audio')
+      if (entry !== 'conflicting-preview')
+        expect(router.state.location.search.preview).toBeUndefined()
 
       const evidence = await screen.findByRole('region', { name: 'Recorded evidence' })
       if (chapterBasis) {
         expect(
           within(evidence).getByRole('region', { name: 'Recording identity evidence' }),
-        ).toHaveTextContent('Audnexus did not provide a separate book runtime.')
+        ).toHaveTextContent(
+          'Complete chapter timing and structure corroborate this recording where overall runtime is unavailable.',
+        )
       } else {
         expect(
           within(evidence).queryByRole('region', { name: 'Recording identity evidence' }),
@@ -1276,6 +1313,7 @@ describe('Library route', () => {
       await user.click(within(evidence).getByText(/Chapters \(1\)/u))
       expect(within(evidence).getByText('Chapter One')).toBeVisible()
       expect(within(evidence).getByText('00:00:00 – 00:30:00')).toBeVisible()
+      vi.stubGlobal('matchMedia', previousMatchMedia)
     },
   )
 

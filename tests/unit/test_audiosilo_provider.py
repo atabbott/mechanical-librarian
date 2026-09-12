@@ -173,7 +173,9 @@ def test_a_recording_without_chapters_is_never_asked_about_them() -> None:
     resolved = copy.deepcopy(payload("audiosilo_lookup"))
     resolved["recording_id"] = "william-angiuli-2024"
     seen, handle = _recorder(lookup=_json(resolved))
-    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
+    candidate = (
+        _provider(handle).observe(asin_plan("B0CTZYCZW7")).observation.candidates[0]
+    )
 
     assert 2 == len(seen)
     assert () == _evidence(candidate, ProviderEvidenceKind.CHAPTER_STRUCTURE)

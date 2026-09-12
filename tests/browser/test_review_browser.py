@@ -3430,10 +3430,10 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                 basis = page.get_by_role("region", name="Recording identity evidence")
                 if chapter_runtime:
                     expect(basis).to_contain_text(
-                        "Chapter timing and structure corroborate this recording."
+                        "Complete chapter timing and structure corroborate this recording where overall runtime is unavailable."
                     )
                     expect(basis).to_contain_text(
-                        "catalogue did not provide a separate book runtime."
+                        "where overall runtime is unavailable."
                     )
                     basis.get_by_text("Recording source").click()
                     expect(basis).to_contain_text("audible-product-B08G9PRS1K")
