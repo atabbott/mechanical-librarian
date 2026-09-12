@@ -1,4 +1,4 @@
-"""The `metadata-report-v39` audiobook provider grammar.
+"""The `metadata-report-v40` audiobook provider grammar.
 
 Marketplace provenance, the bounded chapter-structure value, the duration
 agreement band, and the lifted refusal that let an audio report carry a
@@ -11,6 +11,10 @@ from dataclasses import replace
 
 import pytest
 
+from mechanical_librarian.application.metadata_report import (
+    _audio_with_runtime_observations,
+)
+from mechanical_librarian.domain.audio_inspection import AudioObservationKind
 from mechanical_librarian.domain.metadata_report import (
     AUDIOBOOK_MARKETPLACES,
     DURATION_AGREEMENT_BAND_SECONDS,
@@ -37,6 +41,7 @@ from mechanical_librarian.domain.metadata_report import (
     comparison_links,
     default_target_fields,
 )
+from tests.support.audiobook_reports import audio_local_claims, qualified_audiobook
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
 
@@ -298,7 +303,7 @@ def test_a_v33_audio_report_may_carry_a_provider_observation() -> None:
     dispatches none until the activation packet, which is a different fact.
     """
     report = _audio_report(())
-    assert "metadata-report-v39" == report.schema_version
+    assert "metadata-report-v40" == report.schema_version
     assert ProviderQueryKind.ASIN == report.providers[0].query_kind
     assert "audible_catalog" == report.providers[0].authority
     assert report == MetadataReport.from_json(report.to_json())
@@ -341,3 +346,118 @@ def _audio_report(evidence: tuple[ProviderEvidence, ...]) -> MetadataReport:
         ),
         audio=single_track_audio_facts(),
     )
+
+
+def test_a_shaped_lane_records_the_truncation_publication_would_lose() -> None:
+    """The comparison outlives the claim demotion strips, and nothing else does.
+
+    A work-lane candidate outside the runtime band is demoted to work scope on
+    its way into the report, so its `DURATION` claim is gone before anything
+    downstream could compare it. Qualification therefore makes the comparison
+    while both running times exist and records the one-bit answer on the
+    candidate it shaped: the recording is short of what that edition states.
+
+    The number is deliberately not kept. It belonged to the edition scope the
+    candidate did not earn, and retaining it under another name would be the
+    demotion undone.
+    """
+    claims = audio_local_claims()
+    observation = qualified_audiobook(claims, duration="72000.000")
+
+    (candidate,) = observation.candidates
+    assert candidate.runtime_short_of_local is True
+    assert all(claim.kind is not ClaimKind.DURATION for claim in candidate.claims)
+    assert all(claim.scope is ClaimScope.WORK for claim in candidate.claims)
+
+    audio = single_track_audio_facts()
+    composed = _audio_with_runtime_observations(audio, (observation,))
+
+    assert composed is not None
+    assert [
+        (value.kind, value.candidate, value.tracks)
+        for value in composed.observations
+        if value.kind is AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER
+    ] == [
+        (
+            AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER,
+            candidate.identity,
+            (),
+        )
+    ]
+
+
+def test_a_corroborated_lane_records_no_truncation_and_keeps_its_runtime() -> None:
+    """Inside the band there is nothing to record and nothing was lost.
+
+    A candidate the band admitted agrees with this recording by construction,
+    so asking whether the recording is short of it would answer a question
+    admission has already closed -- and its own `DURATION` claim survives
+    publication, so the read-time derivation can ask again from the document.
+    """
+    claims = audio_local_claims()
+    observation = qualified_audiobook(claims, duration="58200.000")
+
+    (candidate,) = observation.candidates
+    assert candidate.runtime_short_of_local is False
+    assert any(
+        claim.kind is ClaimKind.DURATION and claim.scope is ClaimScope.EDITION
+        for claim in candidate.claims
+    )
+
+    audio = single_track_audio_facts()
+
+    assert _audio_with_runtime_observations(audio, (observation,)) == audio
+
+
+def test_a_longer_recording_than_the_edition_states_records_nothing() -> None:
+    """A recording with more audio than the edition claims is not truncated."""
+    claims = audio_local_claims()
+    observation = qualified_audiobook(claims, duration="40000.000")
+
+    (candidate,) = observation.candidates
+    assert candidate.runtime_short_of_local is False
+    assert (
+        _audio_with_runtime_observations(single_track_audio_facts(), (observation,))
+        == single_track_audio_facts()
+    )
+
+
+def test_two_providers_disagreeing_about_one_edition_record_nothing() -> None:
+    """A disagreement between authorities is not evidence of a shortfall.
+
+    Both answers name the same edition and both were demoted, so neither
+    running time survives publication and no reader can weigh them later. One
+    says this recording is short of that edition by hours; the other compared
+    the same two numbers and says it is not. Recording the accusation because
+    one provider made it would publish the more alarming half of a
+    contradiction as though it were the finding.
+
+    Qualification cannot see this: it runs once per provider and never has the
+    second answer in hand. Assembly does, which is where the identity is
+    decided.
+    """
+    claims = audio_local_claims()
+    short = qualified_audiobook(claims, duration="72000.000", provider="audnexus")
+    long_enough = qualified_audiobook(claims, duration="40000.000")
+
+    (short_candidate,) = short.candidates
+    (long_candidate,) = long_enough.candidates
+    assert short_candidate.identity == long_candidate.identity
+    assert short_candidate.runtime_short_of_local is True
+    assert long_candidate.runtime_short_of_local is False
+    # Both demoted, so neither running time is left for a reader to compare.
+    for candidate in (short_candidate, long_candidate):
+        assert all(claim.kind is not ClaimKind.DURATION for claim in candidate.claims)
+
+    audio = single_track_audio_facts()
+
+    assert _audio_with_runtime_observations(audio, (short, long_enough)) == audio
+    assert _audio_with_runtime_observations(audio, (long_enough, short)) == audio
+
+
+def test_an_item_with_no_audio_section_records_no_truncation() -> None:
+    """An ebook report has no audio facts to append an observation to."""
+    claims = audio_local_claims()
+    observation = qualified_audiobook(claims, duration="72000.000")
+
+    assert _audio_with_runtime_observations(None, (observation,)) is None

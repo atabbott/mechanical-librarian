@@ -19,6 +19,7 @@ from mechanical_librarian.domain.audio_inspection import (
     MAX_DURATION_MILLISECONDS,
     MAX_OBSERVED_CHARACTERS,
     AudioChapter,
+    AudioContainerFacts,
     AudioEmbeddedCover,
     AudioEvidenceSurface,
     AudioInspectionFact,
@@ -202,6 +203,7 @@ class AudioInterpretation:
     chapters: tuple[AudioChapter, ...] = ()
     embedded_cover: AudioEmbeddedCover = AudioEmbeddedCover(False)
     chapters_truncated: bool = False
+    container_facts: AudioContainerFacts | None = None
     # What the container calls this recording.  Deliberately not a fact: a
     # title claim from every track of a multi-file item would flood the title
     # lane with the same value, and the report already reads its title from the
@@ -275,7 +277,13 @@ def interpret(
         else AudioInspectionOutcome.NO_APPLICABLE_EVIDENCE
     )
     return AudioInterpretation(
-        outcome, facts, chapters, cover, truncated, _container_title(container)
+        outcome,
+        facts,
+        chapters,
+        cover,
+        truncated,
+        _container_facts(container, streams),
+        _container_title(container),
     )
 
 
@@ -416,6 +424,45 @@ def _clean(value: object) -> str | None:
         return None
     text = " ".join(value.split())
     return text or None
+
+
+def _container_facts(
+    container: dict[str, object], streams: list[object]
+) -> AudioContainerFacts:
+    """State what this file's headers said about its own container and stream.
+
+    Headers only.  Every value here is one the probe read out of the container
+    without decoding a sample, and each is reported exactly as the container
+    wrote it -- an unrecognised codec name is carried through rather than
+    corrected, because the point of the fact is to let the parent say the
+    container stated something this build did not expect.  Four values and no
+    more: a fact nothing composes into an observation would be carried at every
+    layer and read by none.
+
+    ``duration_stated`` is about the *container*, not about the value: a
+    container that wrote down a running time has stated one even when the
+    number it wrote is outside what the domain will hold, and the two are
+    different things to tell an owner.
+
+    The first audio stream is the one described.  A file whose second stream is
+    an attached picture says nothing about its audio, and an item whose tracks
+    differ is already described one file at a time.
+    """
+    names = container.get("format_name")
+    stream = next(
+        (
+            value
+            for value in streams
+            if type(value) is dict and value.get("codec_type") == "audio"
+        ),
+        None,
+    )
+    return AudioContainerFacts(
+        _clean(names),
+        None if stream is None else _clean(stream.get("codec_name")),
+        None if stream is None else _clean(stream.get("codec_tag_string")),
+        "duration" in container,
+    )
 
 
 def _tag_surface_for(container: dict[str, object]) -> AudioEvidenceSurface:

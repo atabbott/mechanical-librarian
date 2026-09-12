@@ -1,4 +1,4 @@
-# ADR-0074: Independently supported ebook title corrections
+# ADR-0075: Independently supported ebook title corrections
 
 - Status: accepted
 - Date: 2026-09-11
@@ -38,7 +38,7 @@ and coupled actions retain their existing rules.
 Current title qualification admits the reason-specific
 `title:replace_target:isbn_creator_supported` option. Pre-option historical manifests do
 not acquire it. Published v11 remains readable with its original option set, but
-only the current v13 qualification grants current authority. Ask, Ignore, owner-final decisions, pause and title-layout
+only the current v14 qualification grants current authority. Ask, Ignore, owner-final decisions, pause and title-layout
 suspension remain authoritative. Consent, backup, currentness, read-back, audit
 and recovery remain prerequisites for any guarded effect. Reviewers remain
 advisory and receive no write or credential authority.
@@ -46,7 +46,7 @@ advisory and receive no write or credential authority.
 ## Consequences
 
 **Clean rebuild required** under ADR-0013. Proposal policy v24 changes the exact
-store DDL; proposal document v7, report v39 and relationship v1 remain unchanged.
+store DDL; proposal document v7, report v40 and relationship v1 remain unchanged.
 Packet-v6 and predecessor stores reject without mutation. No adoption or bridge
 refresh is supplied.
 

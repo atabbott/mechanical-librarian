@@ -27,11 +27,14 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
 from mechanical_librarian.domain.audio_inspection import (
+    AudioObservation,
+    AudioObservationKind,
     AudioSidecarDigest,
     AudioTrackDigest,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
     runtime_corroborated_candidate,
+    runtime_short_of_stated,
 )
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
@@ -1426,7 +1429,9 @@ def _identifier_lane_candidates(
     )
     admitted = None if corroborated is None else corroborated[0].identity
     return tuple(
-        _admitted_candidate_shape(candidate, candidate.identity == admitted)
+        _shaped_with_runtime_comparison(
+            candidate, candidate.identity == admitted, lookup.local_claims
+        )
         for candidate in observation.candidates
     )
 
@@ -1525,7 +1530,9 @@ def qualify_provider_observation(
         else corroborated[0]
     )
     transformation_lineage = set_admission.transformation
-    filtered = _admitted_candidate_shape(candidate, corroborated is not None)
+    filtered = _shaped_with_runtime_comparison(
+        candidate, corroborated is not None, lookup.local_claims
+    )
     return ProviderObservation(
         observation.provider,
         ProviderStatus.CANDIDATES,
@@ -1571,6 +1578,32 @@ def admitted_audiobook_identity(report: MetadataReport) -> bool:
         is not None
         for observation in report.providers
     )
+
+
+def _shaped_with_runtime_comparison(
+    candidate: ProviderCandidate,
+    corroborated: bool,
+    local_claims: tuple[LocalClaim, ...],
+) -> ProviderCandidate:
+    """Shape one candidate, recording the runtime comparison shaping destroys.
+
+    Demotion is the whole point of `_admitted_candidate_shape` and is left
+    exactly as it is: an uncorroborated candidate keeps no edition-scope
+    `DURATION` claim, so after this function nothing in the published report
+    can say whether the recording on the mount was short of what that candidate
+    stated. The comparison is therefore made here, on the way past, while both
+    running times still exist, and its single-bit answer rides out on the
+    shaped candidate.
+
+    Only the uncorroborated case is recorded. A corroborated candidate agrees
+    with this recording inside the tight band by construction -- that is what
+    admitted it -- so it is never short of one, and asking would be answering a
+    question the band has already closed.
+    """
+    shaped = _admitted_candidate_shape(candidate, corroborated)
+    if corroborated or not runtime_short_of_stated(candidate, local_claims):
+        return shaped
+    return replace(shaped, runtime_short_of_local=True)
 
 
 def _admitted_candidate_shape(
@@ -2312,7 +2345,9 @@ class GenerateMetadataReport:
                 providers=tuple(sorted(observations, key=lambda value: value.provider)),
                 field_results=derive_field_results(combined_claims),
                 cover_sources=cover_sources,
-                audio=audio.audio,
+                audio=_audio_with_runtime_observations(
+                    audio.audio, tuple(observations)
+                ),
             )
         except Exception as error:
             _release_repository(repository, error)
@@ -2333,6 +2368,60 @@ class GenerateMetadataReport:
         if type(value) is not TargetSnapshot:
             raise MetadataReportError("target response is invalid")
         return value
+
+
+def _audio_with_runtime_observations(
+    audio: AudioFacts | None, observations: tuple[ProviderObservation, ...]
+) -> AudioFacts | None:
+    """Record, once per candidate, the truncation qualification measured.
+
+    Read at report assembly rather than derived at read time because the
+    evidence it was read from is already gone: the candidate that stated the
+    longer running time was demoted to work scope on its way into this report,
+    and a reader of the published document has nothing left to compare. What is
+    retained is the statement itself and the candidate it was made against, so
+    an owner is told which edition this recording falls short of and can go and
+    look at it.
+
+    One observation per candidate identity, in identity order, so two providers
+    naming the same edition state it once and a document published twice from
+    one preparation is byte-identical.
+
+    Unanimous, or silent. An identity is stated only when every candidate
+    naming it is marked short; one authority answering that this edition is an
+    hour longer than the recording while another answers that it is not is a
+    disagreement between providers, and a disagreement is not evidence of a
+    shortfall. This is decided here and not at the shaping site because
+    qualification runs once per provider and never sees a second provider's
+    answer, so assembly is the first place every candidate naming one edition
+    is in hand. A candidate whose running time survived shaping is marked
+    short by nobody, so a corroborated answer silences the identity here for
+    the same reason the read-time derivation does.
+    """
+    if audio is None:
+        return None
+    verdicts: dict[str, bool] = {}
+    for observation in observations:
+        for candidate in observation.candidates:
+            verdicts[candidate.identity] = (
+                verdicts.get(candidate.identity, True)
+                and candidate.runtime_short_of_local
+            )
+    identities = sorted(identity for identity, short in verdicts.items() if short)
+    if not identities:
+        return audio
+    return replace(
+        audio,
+        observations=(
+            *audio.observations,
+            *(
+                AudioObservation(
+                    AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER, candidate=identity
+                )
+                for identity in identities
+            ),
+        ),
+    )
 
 
 def _audio_set_identity_or_stale(identities: tuple[str, ...]) -> str | None:

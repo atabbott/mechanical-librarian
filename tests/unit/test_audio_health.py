@@ -10,6 +10,10 @@ from __future__ import annotations
 
 import pytest
 
+from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
+    qualify_provider_observation,
+)
 from mechanical_librarian.domain.audio_health import (
     AUDIO_HEALTH_BOUNDS,
     AudioHealthError,
@@ -36,6 +40,9 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderChapterStructure,
+    ProviderObservation,
+    ProviderQueryKind,
+    ProviderStatus,
     TargetFacts,
     audio_set_content_digest,
     default_target_fields,
@@ -44,6 +51,7 @@ from tests.support.audiobook_reports import (
     asserted_asin_report,
     audio_local_claims,
     audio_target_fields,
+    audiobook_candidate,
     qualified_audiobook,
 )
 
@@ -54,6 +62,14 @@ _LOCAL_SECONDS = 58_244
 _LONG_PROVIDER_SECONDS = "72000.000"
 _CORROBORATING_PROVIDER_SECONDS = "58200.000"
 _LOCAL_ASIN = "B08G9PRS1K"
+# Every persisted observation kind that is about the files themselves. The one
+# kind left out cites a provider candidate instead, so it has no track to name
+# and is proved through the truncation cases.
+_TRACK_CITED_KINDS = tuple(
+    kind
+    for kind in AudioObservationKind
+    if kind is not AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER
+)
 
 
 def _asin_claim(value: str) -> LocalClaim:
@@ -130,6 +146,66 @@ def _running_chapters(durations_seconds: tuple[int, ...]) -> tuple[AudioChapter,
     return tuple(chapters)
 
 
+def _retained_asin_lane(
+    claims: tuple[LocalClaim, ...],
+    provider: str,
+    duration: str = _LONG_PROVIDER_SECONDS,
+) -> ProviderObservation:
+    """One per-ASIN answer from one provider, qualified as the adapter does.
+
+    The item's own surfaces name the ASIN, so ADR-0061 lets the answer through
+    unshaped and its edition-scope running time survives into the report --
+    which is what makes it a candidate the read-time derivation can compare.
+    """
+    return qualify_provider_observation(
+        ProviderObservation(
+            provider,
+            ProviderStatus.CANDIDATES,
+            (),
+            (audiobook_candidate(claims, duration=duration, provider=provider),),
+            ProviderQueryKind.ASIN,
+            "audible_catalog",
+        ),
+        MetadataLookup(ProviderQueryKind.ASIN, claims),
+    )
+
+
+def _demoted_search_lane(
+    claims: tuple[LocalClaim, ...],
+    provider: str = "catalogue",
+    identity: str = "audible-product-B0DEMOTED1",
+) -> ProviderObservation:
+    """One per-ASIN answer ADR-0061 demoted, retained under its own identity.
+
+    The item's own surfaces name no ASIN, so this lane was fed by an assertion
+    or a promotion and carries no warrant to settle identity. The runtime band
+    does not corroborate it either, so qualification strips its edition-scope
+    claims -- the running time among them -- and leaves the work-scope answer
+    standing. The candidate is still retained, so a record preparation wrote
+    against it still names something the report holds; what it no longer holds
+    is the number.
+    """
+    return qualify_provider_observation(
+        ProviderObservation(
+            provider,
+            ProviderStatus.CANDIDATES,
+            (),
+            (
+                audiobook_candidate(
+                    claims,
+                    identity=identity,
+                    asin=identity.rsplit("-", 1)[-1],
+                    duration=_LONG_PROVIDER_SECONDS,
+                    provider=provider,
+                ),
+            ),
+            ProviderQueryKind.ASIN,
+            "audible_catalog",
+        ),
+        MetadataLookup(ProviderQueryKind.ASIN, claims),
+    )
+
+
 def test_every_health_kind_projects_with_its_citation_and_bound() -> None:
     """The vocabulary is closed, and every kind in it states a rule.
 
@@ -138,7 +214,7 @@ def test_every_health_kind_projects_with_its_citation_and_bound() -> None:
     The count is asserted so widening the vocabulary is a deliberate edit here.
     """
     assert set(AUDIO_HEALTH_BOUNDS) == set(AudioHealthKind)
-    assert len(AudioHealthKind) == 9
+    assert len(AudioHealthKind) == 13
 
     projected = {
         kind: AudioHealthObservation(kind, ("cited evidence",), (1,)).to_data()
@@ -411,11 +487,16 @@ def test_an_incomplete_vector_states_nothing() -> None:
 
 
 def test_retained_set_observations_project_with_their_tracks() -> None:
-    """All six composed observations reach the owner, with declared sequences.
+    """Every track-cited observation reaches the owner with its sequences.
 
     A gap and a disorder are statements about what each file *declared*, so the
     ordinal alone is not enough: the citation binds each ordinal to the
-    sequence the manifest published for it.
+    sequence the manifest published for it.  The container and stream kinds the
+    probe states join them under the same rule.
+
+    ``runtime_short_of_provider`` is the one persisted kind that is not about
+    the track set -- it cites a provider candidate rather than a file -- so it
+    is proved separately below and excluded here.
     """
     digests = (f"{1:064x}", f"{2:064x}")
     claims = audio_local_claims()
@@ -438,7 +519,7 @@ def test_retained_set_observations_project_with_their_tracks() -> None:
                         else None
                     ),
                 )
-                for kind in AudioObservationKind
+                for kind in _TRACK_CITED_KINDS
             ),
         ),
     )
@@ -446,7 +527,7 @@ def test_retained_set_observations_project_with_their_tracks() -> None:
     health = derive_audio_health(report)
 
     assert {value.kind.value for value in health} == {
-        kind.value for kind in AudioObservationKind
+        kind.value for kind in _TRACK_CITED_KINDS
     }
     assert all(value.tracks == (1, 2) for value in health)
     gap = next(
@@ -476,3 +557,205 @@ def test_an_ebook_report_states_no_media_health() -> None:
     assert derive_audio_health(report) == ()
     with pytest.raises(AudioHealthError):
         derive_audio_health("not a report")  # type: ignore[arg-type]
+
+
+def test_a_persisted_truncation_is_stated_once_without_its_lost_runtime() -> None:
+    """The shaped lane's record reaches the owner, naming what it can name.
+
+    Preparation made the comparison and publication kept the answer and not the
+    number, so the statement names the candidate and this recording's own
+    running time and says plainly that the edition's was not retained. That is
+    less than the derived lane offers and more than silence, which is the point
+    of persisting it at all.
+    """
+    claims = audio_local_claims()
+    report = _report(
+        claims,
+        audio=AudioFacts(
+            tracks=(AudioTrackDigest(1, "a" * 64, "b" * 64, "m4b", "book.m4b"),),
+            observations=(
+                AudioObservation(
+                    AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER,
+                    candidate="audible-product-B0DEMOTED1",
+                ),
+            ),
+        ),
+        providers=(_demoted_search_lane(claims),),
+    )
+
+    health = derive_audio_health(report)
+
+    assert [value.kind for value in health] == [
+        AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER
+    ]
+    stated = health[0]
+    assert stated.tracks == ()
+    assert stated.cited[-1] == "audible-product-B0DEMOTED1"
+    assert stated.observed == f"{_LOCAL_SECONDS} seconds of local audio"
+    assert stated.expected is not None and "did not retain" in stated.expected
+    assert (
+        stated.bound == AUDIO_HEALTH_BOUNDS[AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER]
+    )
+
+
+def test_one_candidate_short_of_this_recording_is_stated_exactly_once() -> None:
+    """The precedence rule, written down and proved rather than relied on.
+
+    A candidate whose runtime survived publication cannot also carry a
+    preparation-time record -- the band that retained the claim is the band
+    that suppresses the record -- but a report that somehow held both would
+    state the truncation twice about one edition, and twice is wrong however it
+    arose. The retained evidence wins, because it carries both running times.
+    """
+    report = asserted_asin_report(
+        provider_duration=_LONG_PROVIDER_SECONDS, local_asin=_LOCAL_ASIN
+    )
+    identity = report.providers[0].candidates[0].identity
+    doubled = _report(
+        report.local_claims,
+        audio=AudioFacts(
+            tracks=(AudioTrackDigest(1, "a" * 64, "b" * 64, "m4b", "book.m4b"),),
+            observations=(
+                AudioObservation(
+                    AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER,
+                    candidate=identity,
+                ),
+            ),
+        ),
+        providers=report.providers,
+    )
+
+    health = derive_audio_health(doubled)
+
+    assert [value.kind for value in health] == [
+        AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER
+    ]
+    # The derived statement is the one kept: it carries both running times.
+    assert health[0].expected == "72000 seconds stated by the matched edition"
+
+
+def test_a_persisted_truncation_without_a_candidate_states_nothing() -> None:
+    """An observation naming no edition is a comparison against nothing."""
+    report = _report(
+        audio_local_claims(),
+        audio=AudioFacts(
+            tracks=(AudioTrackDigest(1, "a" * 64, "b" * 64, "m4b", "book.m4b"),),
+            observations=(
+                AudioObservation(AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER),
+            ),
+        ),
+    )
+
+    assert derive_audio_health(report) == ()
+
+
+def test_two_providers_answering_about_one_edition_state_it_once() -> None:
+    """One edition, one statement, however many providers named it.
+
+    Two audiobook authorities answering about the same product retain the same
+    candidate identity, and because the item carries its own ASIN both keep the
+    edition-scope running time unshaped. Reading each in turn would state the
+    same truncation twice about one edition, which an owner cannot tell apart
+    from two separate findings.
+    """
+    claims = (*audio_local_claims(), _asin_claim(_LOCAL_ASIN))
+    providers = tuple(
+        sorted(
+            (
+                _retained_asin_lane(claims, "audnexus"),
+                _retained_asin_lane(claims, "catalogue"),
+            ),
+            key=lambda value: value.provider,
+        )
+    )
+    report = _report(claims, audio=_single_track(), providers=providers)
+
+    assert {
+        candidate.identity
+        for observation in report.providers
+        for candidate in observation.candidates
+    } == {"audible-product-B08G9PRS1K"}
+
+    health = derive_audio_health(report)
+
+    assert [value.kind for value in health] == [
+        AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER
+    ]
+    assert health[0].cited[-1] == "audible-product-B08G9PRS1K"
+
+
+def test_a_retained_running_time_decides_the_edition_a_record_also_names() -> None:
+    """Evidence the report still holds outranks a record of evidence it lost.
+
+    Two authorities answered about one edition. One answer survived
+    publication with its running time and puts this recording inside the band;
+    the other was demoted before publication and left only preparation's
+    record behind. Reading the record anyway would tell the owner that the
+    edition their report can still be checked against is an hour longer than
+    this recording, on the authority of a number the report no longer has.
+    """
+    claims = (*audio_local_claims(), _asin_claim(_LOCAL_ASIN))
+    providers = tuple(
+        sorted(
+            (
+                _retained_asin_lane(claims, "audnexus", f"{_LOCAL_SECONDS}.000"),
+                _retained_asin_lane(claims, "catalogue", f"{_LOCAL_SECONDS + 30}.000"),
+            ),
+            key=lambda value: value.provider,
+        )
+    )
+    report = _report(
+        claims,
+        audio=AudioFacts(
+            tracks=(AudioTrackDigest(1, "a" * 64, "b" * 64, "m4b", "book.m4b"),),
+            observations=(
+                AudioObservation(
+                    AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER,
+                    candidate="audible-product-B08G9PRS1K",
+                ),
+            ),
+        ),
+        providers=providers,
+    )
+
+    assert {
+        candidate.identity
+        for observation in report.providers
+        for candidate in observation.candidates
+    } == {"audible-product-B08G9PRS1K"}
+
+    assert derive_audio_health(report) == ()
+
+
+def test_a_persisted_truncation_states_no_local_runtime_it_does_not_have() -> None:
+    """The record survives an item that states no single running time of its own.
+
+    Preparation made the comparison when this recording still stated one
+    running time; what the published report holds may be nothing comparable at
+    all -- two tracks disagreeing, or a total past the domain's ceiling. The
+    statement is still true and is still made, and it says nothing about a
+    local running time rather than inventing one.
+    """
+    claims = audio_local_claims(duration=None)
+    report = _report(
+        claims,
+        audio=AudioFacts(
+            tracks=(AudioTrackDigest(1, "a" * 64, "b" * 64, "m4b", "book.m4b"),),
+            observations=(
+                AudioObservation(
+                    AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER,
+                    candidate="audible-product-B0DEMOTED1",
+                ),
+            ),
+        ),
+        providers=(_demoted_search_lane(claims),),
+    )
+
+    health = derive_audio_health(report)
+
+    assert [value.kind for value in health] == [
+        AudioHealthKind.RUNTIME_SHORT_OF_PROVIDER
+    ]
+    assert health[0].cited == ("audible-product-B0DEMOTED1",)
+    assert health[0].observed is None
+    assert health[0].expected is not None and "did not retain" in health[0].expected

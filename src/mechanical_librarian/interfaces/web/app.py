@@ -76,6 +76,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     DeviceAuthFailure,
     DeviceAuthStatus,
 )
+from mechanical_librarian.domain.audio_health import MAX_HEALTH_OBSERVATIONS
 from mechanical_librarian.domain.description_advice import (
     AuthoredDescriptionDecision,
     DescriptionAdviceBinding,
@@ -552,9 +553,11 @@ class _CaseDetailResponse(_ClosedModel):
     # bound: a work with a review case is the one an owner opens first, and a
     # recording that runs short of its edition is not a field-level finding
     # any of `fields` could state.
-    media_health: list[_MediaHealthObservation] = Field(max_length=4608)
+    media_health: list[_MediaHealthObservation] = Field(
+        max_length=MAX_HEALTH_OBSERVATIONS
+    )
     review_case_id: str
-    schema_version: Literal["review-case-detail-v2"]
+    schema_version: Literal["review-case-detail-v3"]
     target: _TargetIdentity
     writes_consented: bool
 
@@ -730,7 +733,7 @@ class _MediaHealthObservation(_ClosedModel):
     expected: str | None = Field(default=None, max_length=256)
     # Closed on the wire so a client can switch on `kind` exhaustively and a
     # value outside the vocabulary fails validation here rather than reaching
-    # a reader as a statement it cannot render. The nine values are
+    # a reader as a statement it cannot render. The thirteen values are
     # transcribed rather than taken from `AudioHealthKind` because this model
     # validates strictly, which would demand enum members where the projection
     # hands it strings; `tests/unit/test_review_web_read_models.py` pins this
@@ -744,6 +747,10 @@ class _MediaHealthObservation(_ClosedModel):
         "chapter_atoms_partial",
         "tag_disagrees_across_tracks",
         "asin_disagrees_across_tracks",
+        "container_unexpected",
+        "codec_unexpected",
+        "duration_unstated",
+        "stream_encrypted",
         "media_unreadable",
     ]
     observed: str | None = Field(default=None, max_length=256)
@@ -843,7 +850,9 @@ class _ReportDetailResponse(_ClosedModel):
     # What is wrong with the media, separate from what the evidence says about
     # the work. Bounded by the domain's own ceiling of one observation per kind
     # per track.
-    media_health: list[_MediaHealthObservation] = Field(max_length=4608)
+    media_health: list[_MediaHealthObservation] = Field(
+        max_length=MAX_HEALTH_OBSERVATIONS
+    )
     # The two provider surfaces: what every configured provider was asked and
     # how it ended, and what the admitted candidates stated. Both are bounded
     # exactly as the local evidence above is.
@@ -863,7 +872,12 @@ class _LibraryResponse(_ClosedModel):
     page: int
     previous_cursor: str | None
     query: str | None
-    schema_version: str
+    # Closed, like every other read model's discriminator. A bounded string let
+    # the library token move without the wire contract moving with it, which is
+    # how `review-library-v1` gained a required `media_health` member and stayed
+    # v1; the literal makes the declared version and the served shape the same
+    # statement, and publishes it in the OpenAPI a client is built from.
+    schema_version: Literal["review-library-v2"]
 
 
 class _AttentionItem(_ClosedModel):

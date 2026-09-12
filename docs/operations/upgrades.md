@@ -3,11 +3,11 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v3`, `owner-settings-v4`,
-`cover-consideration-v4`, `metadata-report-v39`, and the added application
+`cover-consideration-v4`, `metadata-report-v40`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, #956, #965, #896, #888, #1000, #999, #957, or #892.
+#749, #956, #965, #896, #888, #1000, #999, #957, #892, or #144.
 
 The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
@@ -47,6 +47,13 @@ an absent application database; no adoption is supplied.
 field, payload shape, or vocabulary is added, but a v39 report is unreadable to
 v38 and a v38 database cannot accept one, so it is not exact-current. Rebuild an
 absent application database; no adoption is supplied.
+
+#144 advances the report discriminator from `metadata-report-v39` to
+`metadata-report-v40`: an audio observation now carries the provider candidate a
+comparison was made against, four container and stream kinds joined its closed
+vocabulary, and a provider candidate records whether qualification found this
+recording short of the running time it stated. A v39 reader rejects all three.
+Rebuild an absent application database; no adoption is supplied.
 
 #896 advances the exact proposal policy from `fixed-conservative-v18` to
 `fixed-conservative-v19` because decoration-equivalent titles collapse into one
@@ -113,7 +120,7 @@ exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its frozen target is
-`metadata-report-v39` with `fixed-conservative-v23`. That target is incompatible
+`metadata-report-v40` with `fixed-conservative-v23`. That target is incompatible
 with the current v24 title policy; this change does not refresh the bridge. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and

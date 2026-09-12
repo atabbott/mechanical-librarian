@@ -77,7 +77,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v39"
+REPORT_SCHEMA = "metadata-report-v40"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1954,10 +1954,21 @@ class ProviderCandidate:
     claims: tuple[ProviderClaim, ...]
     evidence: tuple[ProviderEvidence, ...] = ()
     identity_bindings: tuple[ProviderIdentityBinding, ...] = ()
+    # Not a claim and not evidence: the provider stated no such thing.  This
+    # records that qualification compared this candidate's stated running time
+    # to the recording on the mount and found the recording more than the
+    # tight band shorter -- a comparison it makes *before* demotion strips an
+    # uncorroborated candidate's edition-scope `DURATION` claim, which is why
+    # nothing downstream could ask the question again.  It carries no number
+    # for the same reason a demoted candidate carries no runtime: the value
+    # belonged to the edition scope that was not earned.
+    runtime_short_of_local: bool = False
 
     def __post_init__(self) -> None:
         _text(self.identity, "provider candidate identity", 128)
         _text(self.work_identity, "provider candidate work identity", 128)
+        if type(self.runtime_short_of_local) is not bool:
+            raise ReportValueError("provider candidate runtime comparison is invalid")
         if type(self.claims) is not tuple or any(
             type(value) is not ProviderClaim for value in self.claims
         ):
@@ -2141,6 +2152,7 @@ class ProviderCandidate:
             "evidence": [value.to_data() for value in self.evidence],
             "identity": self.identity,
             "identity_bindings": [value.to_data() for value in self.identity_bindings],
+            "runtime_short_of_local": self.runtime_short_of_local,
             "work_identity": self.work_identity,
         }
 
@@ -3227,6 +3239,25 @@ class MetadataReport:
                 )
                 if candidate != expected:
                     raise ReportValueError("provider comparison links are inconsistent")
+        # An observation that names a candidate is a comparison, and a
+        # comparison is only readable against the thing it was made with. A
+        # citation naming an identity this report does not retain would be
+        # presented as a matched edition an owner could go and look at, so it
+        # is refused here rather than read later. Demotion to work scope keeps
+        # the candidate, so preparation's own records still resolve; only an
+        # identity that is in no lane at all fails.
+        if self.audio is not None:
+            retained = {
+                candidate.identity
+                for provider in self.providers
+                for candidate in provider.candidates
+            }
+            if any(
+                observation.candidate is not None
+                and observation.candidate not in retained
+                for observation in self.audio.observations
+            ):
+                raise ReportValueError("audio observation cites an unknown candidate")
         expected = f"report_{hashlib.sha256(canonical_json(self._identity_data()).encode('utf-8')).hexdigest()}"
         if self.report_id != expected:
             raise ReportValueError("report identity is inconsistent")
@@ -4838,12 +4869,13 @@ def _audio_track_from_data(value: object) -> AudioTrackDigest:
 
 
 def _audio_observation_from_data(value: object) -> AudioObservation:
-    item = _object(value, {"field", "kind", "tracks"})
+    item = _object(value, {"candidate", "field", "kind", "tracks"})
     try:
         return AudioObservation(
             AudioObservationKind(item["kind"]),
             _integers(item["tracks"]),
             None if item["field"] is None else AudioInspectionField(item["field"]),
+            item["candidate"],
         )
     except ValueError as error:
         raise ReportValueError("audio observations are invalid") from error
@@ -5229,6 +5261,7 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
             "evidence",
             "identity",
             "identity_bindings",
+            "runtime_short_of_local",
             "work_identity",
         },
     )
@@ -5244,6 +5277,7 @@ def _candidate_from_data(value: object) -> ProviderCandidate:
             _provider_identity_binding_from_data(binding)
             for binding in _list(item["identity_bindings"])
         ),
+        item["runtime_short_of_local"],
     )
 
 

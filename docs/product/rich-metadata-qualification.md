@@ -7,12 +7,12 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Current title-consumer qualification (#1007)
 
-The current [v27 candidate](../reference/f20-rich-metadata-qualification-candidate-v27.json)
+The current [v28 candidate](../reference/f20-rich-metadata-qualification-candidate-v28.json)
 binds #1007's title and packet consumers, including replacement-only and
 complete ordered creator corrections. Published v25 remains immutable historical
 evidence. The current continuity proof is
-the 13-option actual persistence/effect-authority test and two retained current
-reports composed across all 13 options (26 previews). The historical 49-report
+the 13-option actual persistence/effect-authority test and two current replay derivatives from retained raw capture
+composed across all 13 options (26 previews). The historical 49-report
 v34 and 15-report v37 corpora do not parse under the current report contract;
 they were neither relabelled nor replayed for this successor. Earlier metrics
 below remain historical evidence, not a current full-corpus equivalence claim.
@@ -20,13 +20,20 @@ The option dispositions remain unchanged. Exact current source bindings are
 recorded separately from historical measurements.
 
 The base integration preserves incoming main's repinned v10/v24 at their
-canonical paths and retains the original-base bytes under digest-qualified
-historical filenames. Current v13/v27 record each origin commit, original path,
+canonical paths and retains both the original-base and intervening-main bytes under digest-qualified
+historical filenames. Current v14/v28 record each origin commit, original path,
 digest and retained path; immutable v11/v25 references resolve by that original
-digest. All v11/v12/v25/v26 bytes remain unchanged. The same 52 title cases and
+digest. All v11/v12/v13/v25/v26/v27 bytes remain unchanged. The same 52 title cases and
 current F20 consumers are remeasured through the merged code. The reached F46
 module is bound as an inert dependency: its record remains absent and its passing
 set empty, so no audiobook authority is added.
+
+The immutable v39 report objects are rejected by the current parser. The two
+v40 derivatives rebuild seeds from unchanged captured target, file and local
+facts, then run current provider adapters over the original raw HTTP exchanges.
+They are new reports, not schema relabels or unchanged historical replay. The
+manifest binds the capture, configuration, local inputs, independent truth,
+reconstruction evaluator and derivative results; no external calls are made.
 
 ## Historical cover-choice source rotation (#999)
 

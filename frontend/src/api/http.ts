@@ -204,7 +204,7 @@ export interface ProviderOutcomeView {
 // closed on the wire too, so a view switches on it exhaustively and a value
 // outside it is a server this client does not understand rather than a row it
 // renders blank; `_MediaHealthObservation` in the FastAPI adapter carries the
-// same nine values.
+// same thirteen values.
 export const MEDIA_HEALTH_KINDS = [
   'runtime_short_of_provider',
   'chapter_structure_mismatch',
@@ -214,6 +214,10 @@ export const MEDIA_HEALTH_KINDS = [
   'chapter_atoms_partial',
   'tag_disagrees_across_tracks',
   'asin_disagrees_across_tracks',
+  'container_unexpected',
+  'codec_unexpected',
+  'duration_unstated',
+  'stream_encrypted',
   'media_unreadable',
 ] as const
 export type MediaHealthKind = (typeof MEDIA_HEALTH_KINDS)[number]
@@ -2419,7 +2423,16 @@ export const mapReportDetail = (value: unknown): ReportDetailView => {
 }
 
 export const mapLibrary = (value: unknown): LibraryView => {
-  if (!record(value) || !record(value.counts) || !Array.isArray(value.items))
+  // The one token this build's library document is served under. Reading any
+  // token the server happens to send would let a version the client was never
+  // written against render as though it were understood, which is the failure
+  // the sibling mappers already refuse; the library is held to the same rule.
+  if (
+    !record(value) ||
+    value.schema_version !== 'review-library-v2' ||
+    !record(value.counts) ||
+    !Array.isArray(value.items)
+  )
     throw new ApiError(502, 'invalid_library_response')
   const lens = stringValue(value.lens, 'library_lens')
   if (!['needs_attention', 'all', 'no_attention_needed'].includes(lens))
@@ -2427,7 +2440,6 @@ export const mapLibrary = (value: unknown): LibraryView => {
   // Validated at each read: this cast names the DTO's fields, and every one the
   // view model consumes passes through the validators below before it is used.
   const dto = value as unknown as LibraryDto
-  stringValue(dto.schema_version, 'schema_version')
   const query = optionalString(dto.query, 'library_query')
   const nextCursor = optionalString(dto.next_cursor, 'library_cursor')
   const previousCursor = optionalString(dto.previous_cursor, 'library_previous_cursor')
@@ -2754,7 +2766,7 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-case-detail-v2' ||
+    value.schema_version !== 'review-case-detail-v3' ||
     !record(value.target) ||
     !Array.isArray(value.fields)
   )

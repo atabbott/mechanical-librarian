@@ -7,7 +7,7 @@ This document defines product intent. Exact thresholds remain versioned configur
 ## Operating posture
 
 The current title qualification is
-[F19a v13](../reference/f19a-qualification-manifest-v13.json) (#1007).
+[F19a v14](../reference/f19a-qualification-manifest-v14.json) (#1007).
 Its new ISBN-and-creator title option is measured separately: twenty-five synthetic
 positive opportunities and two independently labelled retained real positives
 reach correct candidates and durable Automatic decisions; twenty-five synthetic

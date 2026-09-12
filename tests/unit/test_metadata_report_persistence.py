@@ -196,7 +196,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v39",
+                "metadata-report-v40",
                 "fixed-conservative-v6",
             ),
         ),
@@ -330,7 +330,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v3",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v39",
+                "metadata-report-v40",
                 "fixed-conservative-v3",
             ),
         ),
@@ -338,7 +338,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v39",
+                "metadata-report-v40",
                 "fixed-conservative-v4",
             ),
         ),
@@ -346,7 +346,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v39",
+                "metadata-report-v40",
                 "fixed-conservative-v5",
             ),
         ),
@@ -354,7 +354,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v39",
+                "metadata-report-v40",
                 "fixed-conservative-v7",
             ),
         ),
@@ -505,7 +505,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v39",)
+        assert schema_version == ("metadata-report-v40",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -1803,6 +1803,145 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
         restored = MetadataReport.from_json(reopened.get(report.report_id))
         assert restored == report
         assert restored.cover_sources == (source,)
-        assert restored.schema_version == "metadata-report-v39"
+        assert restored.schema_version == "metadata-report-v40"
     finally:
         reopened.close()
+
+
+def _v40_audio_report(
+    cited_candidate: str = "audible-product-B08G9PRS1K",
+) -> MetadataReport:
+    """One audiobook report exercising every member v40 added.
+
+    `cited_candidate` is the identity the runtime-truncation observation names,
+    so a caller can build the same report through the same constructor while
+    citing an edition no lane retains.
+    """
+    from dataclasses import replace as _replace
+
+    from mechanical_librarian.application.metadata_report import (
+        MetadataLookup,
+        qualify_provider_observation,
+    )
+    from mechanical_librarian.domain.audio_inspection import (
+        AudioObservation,
+        AudioObservationKind,
+    )
+    from mechanical_librarian.domain.metadata_report import ProviderQueryKind
+    from tests.support.audiobook_reports import (
+        asin_lane_observation,
+        audio_local_claims,
+        audio_target_fields,
+    )
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+
+    claims = audio_local_claims()
+    return MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", audio_target_fields()),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(
+            qualify_provider_observation(
+                asin_lane_observation(claims, duration="72000.000"),
+                MetadataLookup(ProviderQueryKind.ASIN, claims),
+            ),
+        ),
+        audio=_replace(
+            single_track_audio_facts("b" * 64),
+            observations=(
+                AudioObservation(
+                    AudioObservationKind.RUNTIME_SHORT_OF_PROVIDER,
+                    candidate=cited_candidate,
+                ),
+            ),
+        ),
+    )
+
+
+def test_an_observation_may_only_cite_an_edition_the_report_retains() -> None:
+    """A citation is a comparison, and a comparison names both of its sides.
+
+    The health projection presents the cited identity as the edition this
+    recording was measured against -- something an owner can go and open. An
+    identity in none of the report's lanes is not that; it is a name with
+    nothing behind it, and a reader cannot tell the two apart. So it is refused
+    where the report is built and where it is reopened, and both refusals are
+    proved because a document can reach this build by either route.
+
+    Demotion is not deletion. The candidate a preparation-time record names was
+    demoted to work scope precisely because the band did not corroborate it,
+    and it is still retained under its own identity, so the record it left
+    behind still resolves -- which is the whole case the citation exists for.
+    """
+    from mechanical_librarian.domain.metadata_report import (
+        ClaimKind,
+        ReportValueError,
+    )
+
+    published = _v40_audio_report()
+    retained = {
+        candidate.identity
+        for observation in published.providers
+        for candidate in observation.candidates
+    }
+    assert published.audio is not None
+    assert published.audio.observations[0].candidate in retained
+    # Retained, and demoted: the edition-scope running time the record was made
+    # against is gone, and the identity the record names is not.
+    assert not any(
+        claim.kind is ClaimKind.DURATION
+        for observation in published.providers
+        for candidate in observation.candidates
+        for claim in candidate.claims
+    )
+
+    # Built through the same constructor, so its identity digest is consistent
+    # with its own contents and the citation rule is the only thing left that
+    # can refuse it. The message is matched for the same reason: a report this
+    # test mutated after construction would be refused by the identity check
+    # whether the citation rule existed or not, and would prove nothing.
+    with pytest.raises(ReportValueError, match="unknown candidate"):
+        _v40_audio_report("audible-product-B0NOSUCH99")
+
+    document = json.loads(published.to_json())
+    for observation in document["audio"]["observations"]:
+        observation["candidate"] = "audible-product-B0NOSUCH99"
+    with pytest.raises(ReportValueError, match="unknown candidate"):
+        MetadataReport.from_json(json.dumps(document))
+
+
+def test_a_v39_producer_document_is_refused_rather_than_read_as_current() -> None:
+    """The clean-rebuild rule, proved at the reader rather than at the database.
+
+    ADR-0013 supplies no migration, so the only correct answer to a document a
+    previous producer wrote is a refusal. Three separate v40 moves are proved
+    here because any one of them read leniently would admit a document this
+    build cannot interpret: the discriminator itself, the candidate citation an
+    audio observation now carries, and the runtime comparison a provider
+    candidate now records.
+    """
+    from mechanical_librarian.domain.metadata_report import ReportValueError
+
+    published = _v40_audio_report()
+    current = json.loads(published.to_json())
+    assert current["schema_version"] == "metadata-report-v40"
+    assert MetadataReport.from_json(published.to_json()) == published
+
+    previous = json.loads(json.dumps(current))
+    previous["schema_version"] = "metadata-report-v39"
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(json.dumps(previous))
+
+    narrowed = json.loads(json.dumps(current))
+    for observation in narrowed["audio"]["observations"]:
+        del observation["candidate"]
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(json.dumps(narrowed))
+
+    unmarked = json.loads(json.dumps(current))
+    for provider in unmarked["providers"]:
+        for candidate in provider["candidates"]:
+            del candidate["runtime_short_of_local"]
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(json.dumps(unmarked))

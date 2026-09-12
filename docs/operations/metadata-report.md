@@ -158,8 +158,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v39`. Every earlier report discriminator,
-including immediate prior `metadata-report-v38`, remains offline and requires a
+discriminator is `metadata-report-v40`. Every earlier report discriminator,
+including immediate prior `metadata-report-v39`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with 1 to 512 audio files in
@@ -267,11 +267,12 @@ libraries without a named read-only mount stay excluded, exactly as before. See
 
 The owner-facing evidence view also states what is wrong with the media itself,
 as a closed vocabulary of typed observations distinct from the claim set: none
-names a target field, and none can become a proposal or a decision. The section
-is derived at read time from what the report and the terminal preparation
-record already retain, so it exists for every report already published, no
-report is rebuilt to obtain it, and it moves no persisted schema — only the
-wire document `review-report-detail-v3`.
+names a target field, and none can become a proposal or a decision. Most of the
+section is derived at read time from what the report and the terminal
+preparation record already retain, so it exists for every report already
+published and no report is rebuilt to obtain it. The rest is read from
+observations the preparation recorded, because the evidence they were made from
+does not survive publication.
 
 | Observation | Cited | Bound |
 | --- | --- | --- |
@@ -283,17 +284,56 @@ wire document `review-report-detail-v3`.
 | `chapter_atoms_partial` | each track ordinal and the sequence that track declared | either every track carries embedded chapters or none does |
 | `tag_disagrees_across_tracks` | the field, then each track ordinal and its declared sequence | one item states one value per tagged field |
 | `asin_disagrees_across_tracks` | the field, then each track ordinal and its declared sequence | one item states one ASIN across its files |
+| `container_unexpected` | each track ordinal and the sequence that track declared | each file holds the container its admitted file type names |
+| `codec_unexpected` | each track ordinal and the sequence that track declared | each file's audio stream is aac or mp3 |
+| `duration_unstated` | each track ordinal and the sequence that track declared | each file's container states the running time of what it holds |
+| `stream_encrypted` | each track ordinal and the sequence that track declared | no file's samples are protected by a rights-management scheme |
 | `media_unreadable` | the refusing track, or the item where it has one file | every file of the item opens and reads within the supported bounds |
 
-Two classes are stated only where the retained evidence supports them. A
-provider's running time survives publication only on a candidate that kept an
-edition-scope `DURATION` claim — the lanes fed by an ASIN the item's own tags,
-sidecars, or path carry, and any candidate the runtime band admitted — because
-a search, promoted, or asserted candidate the band did not corroborate is
-demoted to work scope before the report is written. A provider's chapter
-structure survives only on a corroborated candidate, so a chapter mismatch is
-stated only for items whose identity was settled by structure. Where the
-evidence is absent the section is silent rather than reassuring.
+The last four are composed from four values, and only those four, that each
+file's own headers stated about itself: the demuxer family the probe named for
+the bytes, the first audio stream's codec name, that stream's sample-entry tag,
+and whether the container stated a running time at all. Each is checked against
+one thing — the family is compared to the one the file's admitted extension
+names, the codec to the two this build expects, the tag to the protected
+sample-entry codes, and the running time to its own presence. Nothing else about
+the container is read or judged. They are read from headers only: no sample is
+decoded, and the probe reads no byte it was not already reading to gate the item
+([ADR-0074](../architecture/decisions/0074-headers-only-media-health-facts.md)).
+None of them refuses an item; each is a statement an owner acts on.
+
+`stream_encrypted` is stated for the Apple protected sample entries, whose
+four-character code the probe reports verbatim as the stream's codec tag. An
+ISO common-encryption entry is rewritten to its original format before the
+probe prints anything, so this build cannot see it and says nothing about it
+rather than guessing.
+
+A file whose headers state no running time is named by `duration_unstated`
+alone. `track_duration_unavailable` is true of it as well, so the kind that
+names the cause is the one stated and the older kind is left for a track that
+stated a running time outside what the domain holds.
+
+A provider's chapter structure survives publication only on a corroborated
+candidate, so a chapter mismatch is stated only for items whose identity was
+settled by structure. Where the evidence is absent the section is silent rather
+than reassuring.
+
+Truncation is stated for every lane, through two routes that never state it
+twice about one edition. A provider's running time survives publication only on
+a candidate that kept an edition-scope `DURATION` claim — the lanes fed by an
+ASIN the item's own tags, sidecars, or path carry, and any candidate the runtime
+band admitted — and for those the comparison is made again at read time and
+carries both running times. A search, promoted, or asserted candidate the band
+did not corroborate is demoted to work scope before the report is written, so
+preparation makes the comparison while the claim still exists and records
+`runtime_short_of_provider` against that candidate. The record names the
+candidate and this recording's own running time, and says plainly that the
+edition's was not retained: the number belonged to the scope the candidate did
+not earn. A candidate named by both routes is stated once, from the retained
+evidence. The record is unanimous or it is not made: where two providers answer
+about one edition and one of them compared the same two running times and found
+no shortfall, the disagreement is published as silence, because a disagreement
+between authorities is not evidence that this recording is short.
 
 A file with no bytes is an unavailable source rather than a parser refusal: the
 length is read at the open, so the item ends `unreadable_media` under the empty

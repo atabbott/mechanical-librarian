@@ -243,6 +243,34 @@ def runtime_corroborated_candidate(
     return candidate, signal.reasons
 
 
+def runtime_short_of_stated(
+    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...]
+) -> bool:
+    """Say whether this recording runs short of what this candidate states.
+
+    The same two running times `runtime_corroborated_candidate` compares, asked
+    in one direction rather than symmetrically: corroboration wants to know
+    whether the two agree, and this wants to know whether the file on the mount
+    is missing time the edition says it has. A recording that is *longer* than
+    the edition states is not short of it and says nothing here -- a publisher's
+    branded outro is not a truncated download.
+
+    Only past the tight band, so the one number this build treats as agreement
+    is the one number it treats as silence here too.
+
+    Nothing is stated when either side states no single running time: an
+    absence is not a shortfall, and inventing one from a missing value is the
+    error this gate exists to avoid.
+    """
+    if type(candidate) is not ProviderCandidate:
+        raise CorroborationValueError("corroboration input is invalid")
+    local = local_claim_runtime_seconds(local_claims)
+    stated = candidate_runtime_seconds(candidate)
+    if local is None or stated is None:
+        return False
+    return stated - local > RUNTIME_BAND_TIGHT_SECONDS
+
+
 def local_chapter_durations_seconds(audio: AudioFacts | None) -> tuple[int, ...]:
     """Project the embedded chapter table onto whole-second durations."""
     if audio is None:
@@ -459,9 +487,17 @@ def first_divergent_chapter(
     The alignment chosen is the one that agrees for longest before it fails,
     preferring no skip where two agree equally, which is the same preference
     `chapter_vector_agreement` applies. Returns the local ordinal and its
-    seconds with the stated ordinal and its seconds, both one-based, or `None`
-    when no alignment disagrees anywhere within the cuts it compares -- a
-    recording contradicted on chapter count alone.
+    seconds with the stated ordinal and its seconds, both one-based.
+
+    `None` means *no cut could be named*, which is not the same as agreement,
+    and there are two ways to reach it. Vectors the skip grid can make equal in
+    length may agree at every cut it compares. Vectors whose lengths differ by
+    more than the grid can absorb are compared nowhere at all: every candidate
+    alignment is of unequal length and is skipped, so a recording with forty
+    chapters against an edition's twelve returns `None` here while
+    `chapter_vector_agreement` contradicts it on count. A caller must therefore
+    read `None` as "no divergent cut to cite" and keep whatever the agreement
+    gate said, never as "the cuts line up".
     """
     if (
         type(local_durations) is not tuple
@@ -538,4 +574,5 @@ __all__ = [
     "local_runtime_seconds",
     "runtime_agreement",
     "runtime_corroborated_candidate",
+    "runtime_short_of_stated",
 ]

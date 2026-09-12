@@ -314,8 +314,9 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
         "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
         "a7af724b0711177ff04ff1ae56c8a7db42c1166fe97390c29e60fed506440500",
-        "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd",
         "679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321",
+        "2e76fdb8372867c95b476208ebb0ae2bd175171439559d4f56eec8d29611c6c6",
+        "3b29fdb2e345676adb984a334aa19db8e26689e1b5927ed31bc51f1f09b1b54a",
     )
     for prior_digest in prior_digests:
         prior_core = {
@@ -389,6 +390,7 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
         "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
         "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",
         "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523",
+        "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae",
     )
     for prior_digest in prior_digests:
         prior_core = {

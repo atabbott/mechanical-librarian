@@ -35,8 +35,8 @@ context and consequences rather than reproducing code.
 | [0018](0018-closed-title-creator-comparison.md) | accepted | Close title and complete-creator comparison |
 | [0019](0019-publication-date-precision-comparison.md) | accepted | Close precision-aware publication-date comparison and manifestation binding |
 | [0020](0020-field-specific-acceptable-outcomes.md) | accepted; language grouping and regional rule superseded by 0065 | Model field-specific acceptable metadata outcomes without collapsing evidence |
-| [0021](0021-coherent-bibliographic-combinations.md) | accepted; independent title exception in 0074 | Bind dependent bibliographic advice to coherent combinations |
-| [0022](0022-decision-ready-reviewer-packets.md) | accepted; candidate summary amended by 0074 | Project source-validated decision summaries without deciding |
+| [0021](0021-coherent-bibliographic-combinations.md) | accepted; independent title exception in 0075 | Bind dependent bibliographic advice to coherent combinations |
+| [0022](0022-decision-ready-reviewer-packets.md) | accepted; candidate summary amended by 0075 | Project source-validated decision summaries without deciding |
 | [0024](0024-contain-qualification-reviewer-provider-state.md) | accepted | Separate primary reviewer credentials from disposable provider state and execution provenance |
 | [0025](0025-compile-policy-admissible-review-actions.md) | accepted; structured-output union mechanism superseded by 0027 | Compile packet-only policy-admissible reviewer actions before dispatch |
 | [0026](0026-bind-shadow-recommendation-semantics.md) | accepted; exact-current request version advanced by 0027 | Bind final candidate, keep-current, and manual reviewer semantics |
@@ -87,8 +87,9 @@ context and consequences rather than reproducing code.
 | [0071](0071-book-media-guarded-application.md) | accepted | Extend guarded application to book-media destinations including narrators |
 | [0072](0072-explicit-local-transport.md) | accepted | Admit explicit local HTTP and direct or proxied browser HTTPS |
 | [0073](0073-audiobook-decision-qualification.md) | accepted | Bind each audiobook decision tranche to its own qualification record |
+| [0074](0074-headers-only-media-health-facts.md) | accepted | State media health from header facts and a closed vocabulary |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.
 
-| [0074](0074-independent-evidence-led-titles.md) | accepted | Elect ISBN-linked ebook titles independently of companion choices |
+| [0075](0075-independent-evidence-led-titles.md) | accepted | Elect ISBN-linked ebook titles independently of companion choices |
