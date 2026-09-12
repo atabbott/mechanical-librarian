@@ -1945,6 +1945,14 @@ def test_f39_successors_preserve_history_and_exhaustive_live_source_closure() ->
 
 
 def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
+    """V24 re-pinned in place for #144 unit 2, with no option or scoring move.
+
+    Three sources moved in the frozen contract, one in each of the provider and
+    review-projection closures, and one byte binding. Every other pin is
+    asserted byte-equal to the predecessor, and every live pin is recomputed
+    from the file it names, so a source that moved without being classified
+    fails here rather than at review.
+    """
     current = json.loads(LATEST_MANIFEST.read_bytes())
     prior = json.loads(V23_MANIFEST.read_bytes())
     assert (
@@ -1971,6 +1979,7 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
         "schema",
         "authority_rotation",
         "frozen_contract",
+        "provider_contract_source_closure",
         "review_projection_source_closure",
     }:
         assert current[field] == prior[field]
@@ -1986,6 +1995,9 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
     # earlier candidate restated reads `unchanged` here because it did not
     # move again.
     expected = dict.fromkeys(sources, "unchanged")
+    expected["src/mechanical_librarian/domain/audio_inspection.py"] = (
+        "audio_probe_facts"
+    )
     expected["src/mechanical_librarian/domain/automatic_decision.py"] = (
         "historical_reader_and_audiobook_tranche_wiring"
     )
@@ -2003,8 +2015,15 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
         "domain/shadow_outcome.py",
     ):
         expected["src/mechanical_librarian/" + name] = "audiobook_tranche_wiring"
-    expected["src/mechanical_librarian/domain/metadata_report.py"] = "comment_only"
+    # One source moved in both units: F46 unit B restated a comment in it and
+    # this unit advanced the report discriminator through it, so its class
+    # names both rather than the one that would read as the whole truth.
+    expected["src/mechanical_librarian/domain/metadata_report.py"] = (
+        "report_schema_v40_and_comment"
+    )
     assert closure["bound_source_classification"] == expected
+    # A classification and a digest cannot disagree: every source the map calls
+    # unchanged reads byte-equal to v23 and every other one does not.
     for name, category in expected.items():
         assert (sources[name] == prior_sources[name]) is (category == "unchanged")
     assert closure["f20_option_outcomes_changed"] is False
@@ -2012,16 +2031,34 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
     assert (
         "states the delta against v23 alone and is not cumulative" in closure["proof"]
     )
-    assert "media_health_projection" in closure["proof"]
-    assert "no rescoring or fresh holdout is claimed" in closure["proof"]
     # The byte binding is rotated twice over: the media-health observation
     # view, and the policy state's audiobook qualification summary the owner's
     # routing surface reads (#967).
-    assert "audiobook qualification summary" in closure["proof"]
+    for reason in (
+        "media_health_projection",
+        "audio_probe_facts",
+        "report_schema_v40",
+        "metadata-report-v40",
+        "audio-inspection-v3",
+        "review-case-detail-v3",
+        "review-library-v2",
+        "audiobook qualification summary",
+        "no rescoring or fresh holdout is claimed",
+    ):
+        assert reason in closure["proof"]
     provider = current["provider_contract_source_closure"]
     projection = current["review_projection_source_closure"]
-    assert provider == prior["provider_contract_source_closure"]
+    prior_provider = prior["provider_contract_source_closure"]
+    assert set(provider) == set(prior_provider)
     assert len(provider["behavior_sources"]) == 15
+    assert set(provider["behavior_sources"]) == set(prior_provider["behavior_sources"])
+    # Qualification now records the truncation comparison on the candidate it
+    # shapes, which is the one provider-contract source this unit moves.
+    assert {
+        name
+        for name, digest in provider["behavior_sources"].items()
+        if digest != prior_provider["behavior_sources"][name]
+    } == {"src/mechanical_librarian/application/metadata_report.py"}
     assert len(projection["behavior_sources"]) == 6
     assert set(projection["behavior_sources"]) == set(
         prior["review_projection_source_closure"]["behavior_sources"]
@@ -2056,6 +2093,10 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
         provider["behavior_sources"],
         projection["behavior_sources"],
         additional,
+        # The retained-proposal evidence binding is a live pin like the rest,
+        # and was outside this loop until #144 unit 2 brought it in: a pin no
+        # test recomputes is a pin that can go stale unobserved.
+        current["evidence_method"]["retrieved_proposal"]["behavior_sources"],
     ):
         for name, digest in bindings.items():
             assert (

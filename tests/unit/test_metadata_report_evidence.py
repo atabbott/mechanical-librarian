@@ -1892,6 +1892,44 @@ def test_a_composed_audio_section_round_trips_its_manifest_and_observations() ->
     )
 
 
+def _work_scope_candidate_lane(identity: str) -> ProviderObservation:
+    """One retained candidate, work scope only, so a citation can resolve to it.
+
+    A candidate the runtime band did not corroborate keeps its identity and
+    loses its edition-scope claims, which is the exact shape preparation's own
+    truncation record is read against. This is a fixture correction and proves
+    nothing on its own: the citation rule itself is proved in
+    `tests/unit/test_metadata_report_persistence.py`. It exists here so the
+    vocabulary test below cites an edition the report actually retains, as any
+    real report does.
+    """
+    return ProviderObservation(
+        "catalogue",
+        ProviderStatus.CANDIDATES,
+        (),
+        (
+            ProviderCandidate(
+                identity,
+                "unresolved",
+                (
+                    ProviderClaim.create(
+                        provider="catalogue",
+                        candidate=identity,
+                        kind=ClaimKind.TITLE,
+                        value="Recorded title",
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                    ),
+                ),
+                (),
+            ),
+        ),
+        ProviderQueryKind.ASIN,
+        "audible_catalog",
+    )
+
+
 def test_every_observation_the_vocabulary_names_survives_the_document() -> None:
     """The vocabulary is closed, so the document has to admit all of it.
 
@@ -1900,17 +1938,23 @@ def test_every_observation_the_vocabulary_names_survives_the_document() -> None:
     """
     kinds = tuple(AudioObservationKind)
     report = _audio_report(
+        providers=(_work_scope_candidate_lane("candidate-1"),),
         audio=AudioFacts(
             tracks=(_audio_track(1, "b" * 64),),
-            observations=tuple(AudioObservation(kind, (1,), None) for kind in kinds),
-        )
+            observations=tuple(
+                AudioObservation(kind, (1,), None, "candidate-1") for kind in kinds
+            ),
+        ),
     )
 
     reopened = MetadataReport.from_json(report.to_json())
 
     assert reopened.audio is not None
     assert tuple(value.kind for value in reopened.audio.observations) == kinds
-    assert len(kinds) == 6
+    # The candidate citation is part of the closed shape, so every kind has to
+    # survive carrying one even though only the truncation kind ever sets it.
+    assert {value.candidate for value in reopened.audio.observations} == {"candidate-1"}
+    assert len(kinds) == 11
 
 
 def test_the_item_content_digest_must_compose_the_manifest_it_names() -> None:

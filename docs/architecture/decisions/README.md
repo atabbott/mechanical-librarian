@@ -87,6 +87,7 @@ context and consequences rather than reproducing code.
 | [0071](0071-book-media-guarded-application.md) | accepted | Extend guarded application to book-media destinations including narrators |
 | [0072](0072-explicit-local-transport.md) | accepted | Admit explicit local HTTP and direct or proxied browser HTTPS |
 | [0073](0073-audiobook-decision-qualification.md) | accepted | Bind each audiobook decision tranche to its own qualification record |
+| [0074](0074-headers-only-media-health-facts.md) | accepted | State media health from header facts and a closed vocabulary |
 
 Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.

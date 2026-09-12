@@ -683,7 +683,7 @@ class InspectCurrentReviewCase:
                 # were read from, never from a second source.
                 "media_health": _media_health(report),
                 "review_case_id": case.review_case_id,
-                "schema_version": "review-case-detail-v2",
+                "schema_version": "review-case-detail-v3",
                 # Read models never learn write authority. The composition root
                 # stamps the truth before the view leaves the application, and
                 # the default keeps a surface that never asks honest.
@@ -1244,7 +1244,7 @@ class BrowseReviewLibrary:
             ),
             "page": offset // bounded_limit + 1,
             "query": normalized,
-            "schema_version": "review-library-v1",
+            "schema_version": "review-library-v2",
         }
 
     def attention(
@@ -2291,7 +2291,14 @@ _TRACK_ROOT_STATUSES = frozenset(
         "multi_file_budget_exceeded",
     )
 )
-_TRACK_ROOT = re.compile(r"track_(\d+)")
+# The writer's own grammar, transcribed: `review_pipeline_stages` records
+# `track_{ordinal}` from an integer ordinal that is never zero and never
+# zero-padded. Reading a wider grammar than the writer produces would let a
+# corrupt row state an ordinal no preparation ever wrote -- `track_007` and
+# `track_0` are not files this build named -- so the reader admits exactly what
+# the writer emits and the refusing-file sentence and the media-health
+# observation agree by construction.
+_TRACK_ROOT = re.compile(r"track_([1-9]\d{0,2})")
 
 
 def _refusing_track_sentence(status: str, root: str | None) -> str:

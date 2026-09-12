@@ -13,7 +13,7 @@ import unicodedata
 from dataclasses import dataclass
 from enum import StrEnum
 from types import MappingProxyType
-from typing import ClassVar, Mapping, cast
+from typing import ClassVar, Final, Mapping, cast
 
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
@@ -23,10 +23,12 @@ from mechanical_librarian.domain.evidence_bounds import (
 )
 from mechanical_librarian.domain.identifiers import Fingerprint, SchemaVersion
 
-# `v2` adds exactly one nullable member, `title`, so a per-track chapter can be
-# named by the recording rather than by its file name.  The child still reads
-# one file and still answers about that file alone.
-AUDIO_INSPECTION_SCHEMA = "audio-inspection-v2"
+# `v3` adds exactly one nullable member, `container_facts`, so the parent can
+# say what a file's own headers stated about its container and its stream.  The
+# child still reads one file, still answers about that file alone, and still
+# names no ordinal: which track a fact came from is the parent's knowledge, and
+# composing it into an observation is the parent's job.
+AUDIO_INSPECTION_SCHEMA = "audio-inspection-v3"
 AUDIO_LIMIT_PROFILE = "audio-inspection-limits-v1"
 # The retained report's own ceiling, and deliberately not a smaller one.  A
 # legal inspection of a file with 1,024 chapters titled to the full 280
@@ -124,11 +126,20 @@ class AudioChapterComposition(StrEnum):
 
 
 class AudioObservationKind(StrEnum):
-    """Exactly what composing one item's tracks can notice, and nothing else.
+    """Exactly what preparing one item can notice about its media, and no more.
 
-    These are observations about the *set*, not evidence about the work: none
+    These are observations about the *files*, not evidence about the work: none
     of them names a target field, and none can become a proposal.  The
     vocabulary is closed so a reader can enumerate it.
+
+    Most are composed from the track set.  Four are composed from what a single
+    file's headers stated about itself -- its container, its codec, whether it
+    stated a running time at all, and whether its samples are protected -- and
+    one, ``runtime_short_of_provider``, is recorded at preparation time because
+    the comparison it names is made against a provider runtime that publication
+    then strips: a candidate the corroboration band did not admit keeps no
+    edition-scope ``DURATION`` claim, so nothing could be derived from the
+    published report afterwards.
     """
 
     TRACK_SEQUENCE_GAP = "track_sequence_gap"
@@ -137,6 +148,44 @@ class AudioObservationKind(StrEnum):
     CHAPTER_ATOMS_PARTIAL = "chapter_atoms_partial"
     TAG_DISAGREES_ACROSS_TRACKS = "tag_disagrees_across_tracks"
     ASIN_DISAGREES_ACROSS_TRACKS = "asin_disagrees_across_tracks"
+    CONTAINER_UNEXPECTED = "container_unexpected"
+    CODEC_UNEXPECTED = "codec_unexpected"
+    DURATION_UNSTATED = "duration_unstated"
+    STREAM_ENCRYPTED = "stream_encrypted"
+    RUNTIME_SHORT_OF_PROVIDER = "runtime_short_of_provider"
+
+
+# The stream codecs an admitted audiobook container is expected to carry, held
+# once because two modules read it: the composition that notices a departure
+# and the health vocabulary that states the bound it broke.  Anything else is
+# observed and never refused -- an AC-3 stream in an `.m4b` is a real recording
+# an owner may well want to keep, and this build is not the authority that
+# decides otherwise.
+ADMITTED_AUDIO_CODECS = frozenset({"aac", "mp3"})
+# The demuxer family each admitted file extension names, keyed by the
+# extension.  `format_name` is one string per demuxer -- ffprobe joins the
+# names a single demuxer answers to with commas and prints that whole string --
+# so the container fact is compared to it by equality.  The MOV demuxer answers
+# to six names at once, which is why the value looks like a list and is not one.
+MOV_CONTAINER_FAMILY = "mov,mp4,m4a,3gp,3g2,mj2"
+MP3_CONTAINER_FAMILY = "mp3"
+# Read-only at runtime, not merely un-rebindable: `Final` stops this name being
+# reassigned and stops nothing else, and a table any importer can edit in place
+# is a table that decides what `container_unexpected` means for every item the
+# process goes on to inspect.
+ADMITTED_AUDIO_CONTAINERS: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        "m4a": MOV_CONTAINER_FAMILY,
+        "m4b": MOV_CONTAINER_FAMILY,
+        "mp3": MP3_CONTAINER_FAMILY,
+    }
+)
+# The MP4 sample-entry four-character codes that name protected samples.  They
+# are the one encryption marker the stripped probe surfaces from headers alone:
+# an Apple FairPlay entry reaches `codec_tag_string` verbatim, while an ISO
+# common-encryption entry is rewritten to its `frma` original format before the
+# probe ever reports it and leaves no marker to read.
+PROTECTED_SAMPLE_ENTRY_TAGS = frozenset({"drms", "drmi", "drma"})
 
 
 class AudioEvidenceSurface(StrEnum):
@@ -440,11 +489,22 @@ class AudioEmbeddedCover:
 
 @dataclass(frozen=True, repr=False)
 class AudioObservation:
-    """One noticed property of a composed track set, never evidence about it."""
+    """One noticed property of one item's media, never evidence about it.
+
+    ``tracks`` names the files an observation is about and is empty when it is
+    about the item as a whole; ``field`` names the tagged field two files
+    disagreed on; ``candidate`` names the provider candidate a comparison was
+    made against.  Each is set by exactly the kinds that have one, and the
+    three together are the whole citation an owner is offered -- an observation
+    carries no value, no bound, and no wording of its own, because none of
+    those is a property of the media and all three would then be persisted
+    prose this build could never correct.
+    """
 
     kind: AudioObservationKind
     tracks: tuple[int, ...] = ()
     field: AudioInspectionField | None = None
+    candidate: str | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -459,9 +519,19 @@ class AudioObservation:
             or list(self.tracks) != sorted(set(self.tracks))
         ):
             raise ValueError("audio observation is malformed")
+        if self.candidate is not None:
+            try:
+                validate_projection_text(
+                    self.candidate,
+                    "audio observation candidate",
+                    MAX_OBSERVED_CHARACTERS,
+                )
+            except EvidenceValueError as error:
+                raise ValueError("audio observation is malformed") from error
 
     def to_data(self) -> dict[str, object]:
         return {
+            "candidate": self.candidate,
             "field": None if self.field is None else self.field.value,
             "kind": self.kind.value,
             "tracks": list(self.tracks),
@@ -469,6 +539,58 @@ class AudioObservation:
 
     def __repr__(self) -> str:
         return "AudioObservation(<redacted>)"
+
+
+@dataclass(frozen=True, repr=False)
+class AudioContainerFacts:
+    """What one file's own headers stated about its container and its stream.
+
+    Read from headers and nothing else: no sample is decoded, no byte past the
+    probe's own bounded read is touched, and every member is a value the
+    container wrote down about itself.  They are facts rather than claims --
+    none names a target field and none can become a proposal -- and they are
+    carried per file rather than per item because a set whose fourth track is
+    the odd one out has to be able to say so.
+
+    Exactly the four values something reads.  A fact carried on the protocol
+    that nothing composes into an observation is a value the child pays to
+    serialize, the report pays to hold, and no owner is ever told, so the MP4
+    major brand was dropped rather than kept against a future reader: the
+    demuxer family already answers the question it would have been asked.
+
+    ``None`` throughout means the probe stated nothing, which is not the same
+    as stating something unexpected: an absent container name is read as an
+    absent fact and composes no observation at all.
+    """
+
+    container: str | None = None
+    codec: str | None = None
+    codec_tag: str | None = None
+    duration_stated: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.duration_stated) is not bool:
+            raise ValueError("audio container facts are malformed")
+        for value in (self.container, self.codec, self.codec_tag):
+            if value is None:
+                continue
+            try:
+                validate_projection_text(
+                    value, "audio container fact", MAX_OBSERVED_CHARACTERS
+                )
+            except EvidenceValueError as error:
+                raise ValueError("audio container facts are malformed") from error
+
+    def to_protocol_data(self) -> dict[str, object]:
+        return {
+            "codec": self.codec,
+            "codec_tag": self.codec_tag,
+            "container": self.container,
+            "duration_stated": self.duration_stated,
+        }
+
+    def __repr__(self) -> str:
+        return "AudioContainerFacts(<redacted>)"
 
 
 @dataclass(frozen=True, repr=False)
@@ -682,6 +804,11 @@ class AudioInspection:
     embedded_cover: AudioEmbeddedCover = AudioEmbeddedCover(False)
     chapters_truncated: bool = False
     title: str | None = None
+    # ``None`` rather than an empty value object: a child that stated no
+    # container facts at all and a child that stated a container with nothing
+    # unexpected in it are different reports, and only the second one may
+    # compose an observation.
+    container_facts: AudioContainerFacts | None = None
 
     def __post_init__(self) -> None:
         if self.title is not None:
@@ -702,6 +829,10 @@ class AudioInspection:
             or any(type(value) is not AudioChapter for value in self.chapters)
             or type(self.embedded_cover) is not AudioEmbeddedCover
             or type(self.chapters_truncated) is not bool
+            or (
+                self.container_facts is not None
+                and type(self.container_facts) is not AudioContainerFacts
+            )
         ):
             raise ValueError("audio inspection is malformed")
         if self.outcome is AudioInspectionOutcome.SUCCESS and self.source is None:
@@ -724,6 +855,7 @@ class AudioInspection:
             or self.embedded_cover.present
             or self.chapters_truncated
             or self.title is not None
+            or self.container_facts is not None
         ):
             raise ValueError("failed audio inspection cannot retain evidence")
 
@@ -733,6 +865,9 @@ class AudioInspection:
             {
                 "chapters": [value.to_data() for value in self.chapters],
                 "chapters_truncated": self.chapters_truncated,
+                "container_facts": None
+                if self.container_facts is None
+                else self.container_facts.to_protocol_data(),
                 "embedded_cover": self.embedded_cover.to_protocol_data(),
                 "facts": [value.to_data() for value in self.facts],
                 "outcome": self.outcome.value,
@@ -766,6 +901,7 @@ class AudioInspection:
                 != {
                     "chapters",
                     "chapters_truncated",
+                    "container_facts",
                     "embedded_cover",
                     "facts",
                     "outcome",
@@ -791,6 +927,13 @@ class AudioInspection:
                 "present",
                 "surface",
             }:
+                raise ValueError
+            container_data = value["container_facts"]
+            if container_data is not None and (
+                type(container_data) is not dict
+                or set(container_data)
+                != {"codec", "codec_tag", "container", "duration_stated"}
+            ):
                 raise ValueError
             # A fact-bearing document always carries a source: `AudioInspectionFact`
             # rejects a `None` source, and the `ValueError` it raises is caught
@@ -844,6 +987,14 @@ class AudioInspection:
                 ),
                 value["chapters_truncated"],
                 value["title"],
+                None
+                if container_data is None
+                else AudioContainerFacts(
+                    container_data["container"],
+                    container_data["codec"],
+                    container_data["codec_tag"],
+                    container_data["duration_stated"],
+                ),
             )
         except (KeyError, TypeError, ValueError):
             raise ValueError("audio inspection protocol is invalid") from None
@@ -856,11 +1007,17 @@ class AudioInspection:
 
 
 __all__ = [
+    "ADMITTED_AUDIO_CODECS",
+    "ADMITTED_AUDIO_CONTAINERS",
     "AUDIO_CLAIM_BASES",
     "AUDIO_INSPECTION_SCHEMA",
     "AUDIO_SURFACE_BASIS",
+    "MOV_CONTAINER_FAMILY",
+    "MP3_CONTAINER_FAMILY",
+    "PROTECTED_SAMPLE_ENTRY_TAGS",
     "AudioChapter",
     "AudioChapterComposition",
+    "AudioContainerFacts",
     "AudioEmbeddedCover",
     "AudioEvidenceSurface",
     "AudioInspection",

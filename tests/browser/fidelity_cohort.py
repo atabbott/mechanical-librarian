@@ -516,7 +516,7 @@ def _field(
 def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
-            "schema_version": "review-case-detail-v2",
+            "schema_version": "review-case-detail-v3",
             "media_health": [],
             "writes_consented": False,
             "review_case_id": case_id,
@@ -930,7 +930,7 @@ def _case(case_id: str) -> dict[str, object]:
         LIBRARY_WORKS[0],
     )
     return {
-        "schema_version": "review-case-detail-v2",
+        "schema_version": "review-case-detail-v3",
         "media_health": [],
         "writes_consented": False,
         "review_case_id": case_id,
@@ -975,7 +975,7 @@ def _library(query: dict[str, list[str]]) -> dict[str, object]:
     start = (page - 1) * 6
     end = start + 6
     return {
-        "schema_version": "review.v1",
+        "schema_version": "review-library-v2",
         "lens": lens,
         "query": needle or None,
         "next_cursor": f"page-{page + 1}" if len(works) > end else None,
