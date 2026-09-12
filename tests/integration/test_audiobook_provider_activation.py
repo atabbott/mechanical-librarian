@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import tempfile
+from collections.abc import Mapping
 from pathlib import Path
 from unittest.mock import patch
 
@@ -32,6 +33,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.application.metadata_report import (
     AudioInspectionResult,
+    MetadataProvider,
     ProviderCoverDescriptor,
     ProviderLaneResult,
     ProviderResult,
@@ -368,7 +370,7 @@ def _catalogue_entry() -> CatalogueEntry:
 
 def _run(
     root: Path,
-    providers: dict[str, _FakeAudiobookProvider],
+    providers: Mapping[str, MetadataProvider],
     *,
     covers: bool = False,
 ) -> tuple[str, object]:
@@ -498,7 +500,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v40" == published.schema_version
+        assert "metadata-report-v41" == published.schema_version
         # Three authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -794,3 +796,150 @@ def test_a_refused_cover_origin_is_published_as_a_typed_outcome(
     )
     assert CoverSourceState.UNSAFE_REMOTE is store.state
     assert store.artifact is None
+
+
+@pytest.mark.parametrize("runtime", ("absent", "healthy", "malformed"))
+def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
+    tmp_path: Path, runtime: str
+) -> None:
+    import json
+
+    import httpx
+
+    from mechanical_librarian.adapters.evidence_extractors import process
+    from mechanical_librarian.adapters.providers.audnexus_metadata import (
+        AudnexusMetadataProvider,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        recording_identity_basis,
+    )
+    from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from tests.support.audiobook_providers import payload
+    from tests.support.chapter_runtime import (
+        SPANS,
+        media,
+        provider_chapters,
+        recorded_probe,
+    )
+
+    mount = tmp_path / "media"
+    mount.mkdir()
+    (mount / "book.m4b").write_bytes(media())
+    with patch.object(
+        process,
+        "run_probe_child",
+        return_value=(recorded_probe(), AudioInspectionOutcome.SUCCESS),
+    ):
+        inspected = composition._IsolatedAudioInspector().inspect(
+            MediaMountConfiguration("audiobooks", str(mount), "/library", True),
+            (TargetFile(_FILE_IDENTITY, "book.m4b", "m4b"),),
+            268435456,
+        )
+    assert [
+        (c.start_milliseconds, c.end_milliseconds) for c in inspected.audio.chapters
+    ] == list(SPANS)
+    assert inspected.audio.chapter_rows_omitted is False
+    book = payload("audnexus_book")
+    book.pop("runtimeLengthMin", None)
+    if runtime != "absent":
+        book["runtimeLengthMin"] = 29 if runtime == "healthy" else "invalid"
+    requests: list[str] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(
+            200,
+            headers={"content-type": "application/json"},
+            json=provider_chapters()
+            if request.url.path.endswith("/chapters")
+            else book,
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        provider = AudnexusMetadataProvider(
+            "enrichment",
+            client,
+            262144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1700000000.0,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+        calls: list[tuple[str, ProviderQueryKind]] = []
+        providers: dict[str, MetadataProvider] = {
+            authority: _FakeAudiobookProvider(
+                alias, authority, calls, status=ProviderStatus.NO_MATCH
+            )
+            for authority, alias in (
+                ("audible_catalog", "audible"),
+                ("audiosilo", "silo"),
+                ("itunes_search", "store"),
+            )
+        }
+        providers["audnexus"] = provider
+        with (
+            patch(__name__ + "._audio_result", return_value=inspected),
+            patch(__name__ + "._CONTENT_DIGEST", inspected.content_digest),
+        ):
+            serialized, repository = _run(tmp_path, providers)
+    try:
+        report = MetadataReport.from_json(serialized)
+        assert len(requests) == 2
+        state = repository._connection.execute(
+            "SELECT stage,state,outcome FROM review_preparation_work"
+        ).fetchone()
+        if runtime == "malformed":
+            assert state == ("complete", "complete", "evidence_only")
+            assert recording_identity_basis(report) is None
+            assert (
+                repository._connection.execute(
+                    "SELECT count(*) FROM review_cases"
+                ).fetchone()[0]
+                == 0
+            )
+            return
+        assert state[:2] == ("proposal", "queued")
+        basis = recording_identity_basis(report)
+        assert (basis is not None) is (runtime == "absent")
+        replay = MetadataReport.from_json(
+            repository.get_proposal_input(report.report_id)
+        )
+        assert recording_identity_basis(replay) == basis
+        proposal = evaluate_report(replay)
+        repository.publish_proposal(proposal)
+        admission = json.loads(repository.admit_review_case(proposal))
+        assert admission["status"] == "admitted"
+        envelope = json.loads(repository.get_review_case(admission["review_case_id"]))
+        assert envelope["current"] is True
+        case = ReviewCase.create_from_data(envelope["case"])
+        assert "narrators" in {p["destination"] for p in case.actionable}
+        narrator = next(p for p in case.proposals if p["destination"] == "narrators")
+        proposal_id = narrator["proposal_id"]
+        assert isinstance(proposal_id, str)
+        decision = HumanDecision.create(
+            case,
+            proposal_id=proposal_id,
+            target_fingerprint=case.target_fingerprint,
+            destination="narrators",
+            actor="owner",
+            outcome="accept",
+            selected_value=narrator["result"]["alternatives"][0]["value"],
+            idempotency_key="chapter-runtime-owner-0001",
+            occurred_at=1000,
+        )
+        stored = repository.record_human_decision(decision)
+        assert HumanDecision.from_json(stored) == decision
+        assert len(repository.get_review_case_decisions(case.review_case_id)) == 1
+        assert (
+            repository._connection.execute(
+                "SELECT count(*) FROM automatic_decisions"
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        repository.close()

@@ -1,3 +1,4 @@
+import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
@@ -239,6 +240,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   available. The evidence below is the retained portion only.
                 </p>
               ) : null}
+              <RecordingIdentityBasis value={data.recordingIdentityBasis} />
               {data.mediaHealth.length ? <MediaHealth observations={data.mediaHealth} /> : null}
               <div className="diagnostic-list evidence-fields">
                 {data.fields.map((field) => {

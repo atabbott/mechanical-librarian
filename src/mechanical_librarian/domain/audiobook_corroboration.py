@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
+from mechanical_librarian.domain.audio_inspection import AudioChapterComposition
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
     ClaimKind,
@@ -365,6 +366,64 @@ def chapter_vector_agreement(
     return _signal(CorroborationOutcome.CORROBORATED, aligned, compared=compared)
 
 
+def complete_chapter_runtime_agreement(
+    audio: AudioFacts | None,
+    local_claims: tuple[LocalClaim, ...],
+    provider: ProviderChapterStructure | None,
+) -> bool:
+    """Require complete timing at a directly testable domain identity boundary."""
+    local_seconds = local_claim_runtime_seconds(local_claims)
+    if (
+        audio is None
+        or local_seconds is None
+        or local_seconds <= 0
+        or audio.composition
+        not in {
+            AudioChapterComposition.SINGLE_FILE,
+            AudioChapterComposition.EMBEDDED_CONCATENATED,
+        }
+        or audio.chapter_rows_omitted
+        or audio.chapters_truncated
+        or not audio.chapters
+        or provider is None
+        or provider.durations_truncated
+    ):
+        return False
+    end = 0
+    for chapter in audio.chapters:
+        if chapter.start_milliseconds != end or chapter.end_milliseconds <= end:
+            return False
+        end = chapter.end_milliseconds
+    milliseconds = tuple(
+        value
+        for claim in local_claims
+        if _valid_duration_claim(claim)
+        and (value := duration_milliseconds(claim.canonical or "")) is not None
+    )
+    if not milliseconds or any(abs(end - value) > 1000 for value in milliseconds):
+        return False
+    local = local_chapter_durations_seconds(audio)
+    durations = provider.durations_seconds
+    if (
+        len(local) != len(durations)
+        or provider.chapter_count != len(durations)
+        or len(local) < STRONG_CHAPTER_AGREEMENT_MINIMUM
+        or any(value <= 0 for value in (*local, *durations))
+        or len(set(local)) == 1
+        or len(set(durations)) == 1
+        or not 0 <= provider.runtime_seconds - sum(durations) <= len(durations)
+        or runtime_agreement(local_seconds, provider.runtime_seconds).outcome
+        is not CorroborationOutcome.CORROBORATED
+    ):
+        return False
+    signal = chapter_vector_agreement(local, provider)
+    return (
+        signal.outcome is CorroborationOutcome.CORROBORATED
+        and signal.reasons == (CorroborationReason.CHAPTER_VECTOR_ALIGNED.value,)
+        and signal.compared == len(local)
+    )
+
+
 def cover_hash_agreement(
     local_hash: str | None,
     provider_hash: str | None,
@@ -567,6 +626,7 @@ __all__ = [
     "STRONG_CHAPTER_AGREEMENT_MINIMUM",
     "candidate_runtime_seconds",
     "chapter_vector_agreement",
+    "complete_chapter_runtime_agreement",
     "cover_hash_agreement",
     "first_divergent_chapter",
     "local_chapter_durations_seconds",

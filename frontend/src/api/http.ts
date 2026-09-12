@@ -276,7 +276,13 @@ export interface ReportProviderEvidenceView {
   state: string
   value: string | null
 }
+export interface RecordingIdentityBasisView {
+  basis: 'chapter_runtime_and_structure'
+  provider: string
+  candidate: string
+}
 export interface ReportDetailView {
+  recordingIdentityBasis: RecordingIdentityBasisView | null
   chapters: readonly ReportChapterView[]
   chaptersTruncated: boolean
   coverPresent: boolean
@@ -453,6 +459,7 @@ export interface CoverConsiderationView {
   targetFingerprint: string
 }
 export interface CaseDetailView {
+  recordingIdentityBasis: RecordingIdentityBasisView | null
   id: string
   current: boolean
   target: { connection: string; library: string; item: string; mediaKind: string; title: string }
@@ -1777,7 +1784,7 @@ const mediaHealthKind = (value: unknown, field: string): MediaHealthKind => {
     throw new ApiError(502, `invalid_${field}`)
   return value as MediaHealthKind
 }
-// `tracks` is required by review-report-detail-v3. A missing or non-array
+// `tracks` is required by review-report-detail-v4. A missing or non-array
 // member is a malformed document, not an observation about the whole item:
 // coercing it to no tracks would print "this item's audio files" where the
 // server named the files it read.
@@ -2356,10 +2363,31 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   }
 }
 
+const mapRecordingIdentityBasis = (value: unknown): RecordingIdentityBasisView | null => {
+  if (value === null) return null
+  if (
+    !record(value) ||
+    !exactKeys(value, ['basis', 'provider', 'candidate']) ||
+    value.basis !== 'chapter_runtime_and_structure'
+  )
+    throw new ApiError(502, 'invalid_recording_identity_basis')
+  const provider = boundedStringValue(value.provider, 'recording_identity_provider', 128)
+  const candidate = boundedStringValue(value.candidate, 'recording_identity_candidate', 128)
+  if (
+    !provider.trim() ||
+    !candidate.trim() ||
+    Array.from(provider + candidate).some(
+      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127,
+    )
+  )
+    throw new ApiError(502, 'invalid_recording_identity_basis')
+  return { basis: 'chapter_runtime_and_structure', provider, candidate }
+}
+
 export const mapReportDetail = (value: unknown): ReportDetailView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-report-detail-v3' ||
+    value.schema_version !== 'review-report-detail-v4' ||
     !record(value.embedded_cover) ||
     !Array.isArray(value.chapters) ||
     !Array.isArray(value.evidence) ||
@@ -2403,6 +2431,7 @@ export const mapReportDetail = (value: unknown): ReportDetailView => {
     item: stringValue(value.item, 'report_item'),
     library: stringValue(value.library, 'report_library'),
     mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
+    recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
     mediaKind: stringValue(value.media_kind, 'report_media_kind'),
     providerSources: (value.provider_sources as unknown[]).map(mapProviderOutcome),
     providerEvidence: (value.provider_evidence as unknown[]).map((claim, index) => {
@@ -2766,7 +2795,7 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-case-detail-v3' ||
+    value.schema_version !== 'review-case-detail-v4' ||
     !record(value.target) ||
     !Array.isArray(value.fields)
   )
@@ -2795,6 +2824,7 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
     subtitle: `${library} · ${mediaKind}`,
     comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
     mediaHealth: mapMediaHealth(value.media_health, 'case_media_health'),
+    recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
     writesConsented: booleanValue(dto.writes_consented, 'writes_consented'),
     fields: dto.fields.map((field) => {
       // The three fields dereferenced without a validator below: an entry that

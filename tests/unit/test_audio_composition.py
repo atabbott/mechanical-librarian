@@ -75,6 +75,7 @@ def _track(
     facts: tuple[AudioInspectionFact, ...] = (),
     *,
     chapters: tuple[AudioChapter, ...] = (),
+    chapter_rows_omitted: bool = False,
     cover: bool = False,
     title: str | None = None,
     sequence: int | None = None,
@@ -101,6 +102,7 @@ def _track(
             False,
             title,
             container_facts,
+            chapter_rows_omitted,
         ),
         sequence,
         synthesized,
@@ -749,3 +751,35 @@ def test_every_admitted_file_format_names_the_container_it_should_hold() -> None
     with pytest.raises(TypeError):
         del ADMITTED_AUDIO_CONTAINERS["m4b"]
     assert ADMITTED_AUDIO_CONTAINERS["m4b"] == MOV_CONTAINER_FAMILY
+
+
+@pytest.mark.parametrize("count", (1, 2))
+def test_embedded_composition_carries_parser_omission(count: int) -> None:
+    tracks = tuple(
+        _track(
+            i,
+            (_duration(i, 1000),),
+            chapters=(AudioChapter(1, 0, 1000, None),),
+            chapter_rows_omitted=i == 1,
+        )
+        for i in range(1, count + 1)
+    )
+    result = compose_audio_inspections(tracks)
+    assert len(result.chapters) == count
+    assert result.chapter_rows_omitted is True
+
+
+def test_generated_per_track_chapters_do_not_inherit_embedded_omission() -> None:
+    result = compose_audio_inspections(
+        (
+            _track(
+                1,
+                (_duration(1, 1000),),
+                chapters=(AudioChapter(1, 0, 1000, None),),
+                chapter_rows_omitted=True,
+            ),
+            _track(2, (_duration(2, 1000),)),
+        )
+    )
+    assert result.composition is AudioChapterComposition.PER_TRACK
+    assert result.chapter_rows_omitted is False

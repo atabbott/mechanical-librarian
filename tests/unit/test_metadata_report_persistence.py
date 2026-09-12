@@ -196,7 +196,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v40",
+                "metadata-report-v41",
                 "fixed-conservative-v6",
             ),
         ),
@@ -330,7 +330,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v3",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v40",
+                "metadata-report-v41",
                 "fixed-conservative-v3",
             ),
         ),
@@ -338,7 +338,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v40",
+                "metadata-report-v41",
                 "fixed-conservative-v4",
             ),
         ),
@@ -346,7 +346,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v40",
+                "metadata-report-v41",
                 "fixed-conservative-v5",
             ),
         ),
@@ -354,7 +354,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v40",
+                "metadata-report-v41",
                 "fixed-conservative-v7",
             ),
         ),
@@ -505,7 +505,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v40",)
+        assert schema_version == ("metadata-report-v41",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -1803,15 +1803,15 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
         restored = MetadataReport.from_json(reopened.get(report.report_id))
         assert restored == report
         assert restored.cover_sources == (source,)
-        assert restored.schema_version == "metadata-report-v40"
+        assert restored.schema_version == "metadata-report-v41"
     finally:
         reopened.close()
 
 
-def _v40_audio_report(
+def _current_audio_report(
     cited_candidate: str = "audible-product-B08G9PRS1K",
 ) -> MetadataReport:
-    """One audiobook report exercising every member v40 added.
+    """One current audiobook report exercising retained audio provenance.
 
     `cited_candidate` is the identity the runtime-truncation observation names,
     so a caller can build the same report through the same constructor while
@@ -1879,7 +1879,7 @@ def test_an_observation_may_only_cite_an_edition_the_report_retains() -> None:
         ReportValueError,
     )
 
-    published = _v40_audio_report()
+    published = _current_audio_report()
     retained = {
         candidate.identity
         for observation in published.providers
@@ -1902,7 +1902,7 @@ def test_an_observation_may_only_cite_an_edition_the_report_retains() -> None:
     # test mutated after construction would be refused by the identity check
     # whether the citation rule existed or not, and would prove nothing.
     with pytest.raises(ReportValueError, match="unknown candidate"):
-        _v40_audio_report("audible-product-B0NOSUCH99")
+        _current_audio_report("audible-product-B0NOSUCH99")
 
     document = json.loads(published.to_json())
     for observation in document["audio"]["observations"]:
@@ -1923,9 +1923,9 @@ def test_a_v39_producer_document_is_refused_rather_than_read_as_current() -> Non
     """
     from mechanical_librarian.domain.metadata_report import ReportValueError
 
-    published = _v40_audio_report()
+    published = _current_audio_report()
     current = json.loads(published.to_json())
-    assert current["schema_version"] == "metadata-report-v40"
+    assert current["schema_version"] == "metadata-report-v41"
     assert MetadataReport.from_json(published.to_json()) == published
 
     previous = json.loads(json.dumps(current))
@@ -1945,3 +1945,58 @@ def test_a_v39_producer_document_is_refused_rather_than_read_as_current() -> Non
             del candidate["runtime_short_of_local"]
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(json.dumps(unmarked))
+
+
+def test_actual_v40_producer_is_refused_without_omission_adoption() -> None:
+    from mechanical_librarian.domain.metadata_report import ReportValueError
+
+    old = (
+        Path(__file__).parents[1]
+        / "support/audio_prior_producer/metadata-report-v40.json"
+    )
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(old.read_text())
+
+
+@pytest.mark.parametrize("omitted", (False, True))
+def test_current_omission_evidence_roundtrips_sqlite(
+    tmp_path: Path, omitted: bool
+) -> None:
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report(chapter_rows_omitted=omitted)
+    repository = open_repository(tmp_path / "reports.sqlite")
+    try:
+        repository.publish(report, lambda: True)
+        restored = MetadataReport.from_json(repository.get(report.report_id))
+        assert restored.audio is not None
+        assert restored.audio.chapter_rows_omitted is omitted
+        assert restored == report
+    finally:
+        repository.close()
+    assert (
+        report.report_id
+        != chapter_runtime_report(chapter_rows_omitted=not omitted).report_id
+    )
+
+
+@pytest.mark.parametrize("value", (None, 0, 1, "false", "missing"))
+def test_current_report_omission_requires_exact_bool_with_valid_digest(value) -> None:
+    from mechanical_librarian.domain.metadata_report import (
+        ReportValueError,
+        canonical_json,
+    )
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    document = json.loads(chapter_runtime_report().to_json())
+    if value == "missing":
+        del document["audio"]["chapter_rows_omitted"]
+    else:
+        document["audio"]["chapter_rows_omitted"] = value
+    identity = dict(document)
+    del identity["report_id"]
+    document["report_id"] = (
+        "report_" + hashlib.sha256(canonical_json(identity).encode()).hexdigest()
+    )
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(canonical_json(document))

@@ -158,8 +158,8 @@ source order. Front and rear subtitle/publisher/imprint canonical values share
 NFC and whitespace normalization. Rear position does not increase authority.
 Provider comparisons link only claims with the same role; no publisher/imprint
 hierarchy is inferred. The exact-current persisted report and database
-discriminator is `metadata-report-v40`. Every earlier report discriminator,
-including immediate prior `metadata-report-v39`, remains offline and requires a
+discriminator is `metadata-report-v41`. Every earlier report discriminator,
+including immediate prior `metadata-report-v40`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with 1 to 512 audio files in
@@ -205,9 +205,23 @@ the report's own duration comparison, which decides whether a stated claim
 links to a local one at all, states the same number today but is a separate
 parameter that is retuned separately. When the runtime corroboration band
 admits some candidate the report retains -- one stating this recording's own
-running time -- preparation queues the proposal stage exactly as an ebook's does, and the
+running time -- or the narrow chapter fallback below qualifies, preparation queues the proposal stage exactly as an ebook's does, and the
 recording becomes a review case the owner decides
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md)).
+When one non-target local ASIN names the recording, an explicitly absent provider
+book runtime can instead be corroborated by complete chapter timing and structure.
+The local single-file or concatenated embedded chapter table must be positive,
+contiguous from zero, untruncated, and have no observed discarded rows; its endpoint
+must be within one second of the usable local runtime. Provider chapters must be
+complete and positive, have bounded whole-second aggregate rounding, and agree
+within the existing tight runtime and direct full-vector chapter tolerances.
+Uniform vectors cannot qualify. Any retained matched provider's malformed,
+nonpositive, multiple, or conflicting runtime claims veto this fallback; an
+unmentioned runtime is unknown and cannot support it. Existing runtime admission
+runs first. Library and Detail name the supporting provider and associate its
+candidate under Recording source; this adds owner review, never automatic authority.
+Missing local runtime and other discovery envelopes remain open under #1004.
+
 Those decisions are applied through the same guarded path an ebook's take
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
 When no candidate is admitted -- unanswered, answered about a work rather than

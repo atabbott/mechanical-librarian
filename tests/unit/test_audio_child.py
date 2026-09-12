@@ -646,3 +646,37 @@ def test_a_maximal_legal_inspection_survives_its_own_protocol() -> None:
     assert AudioInspection.from_json(serialized) == report
     # And the child may write exactly what the protocol accepts.
     assert len((serialized + "\n").encode("utf-8")) <= child._STDOUT_LIMIT
+
+
+@pytest.mark.parametrize("value", (None, 0, 1, "false"))
+def test_child_protocol_requires_exact_bool_chapter_omission(value) -> None:
+    document = json.loads(
+        AudioInspection(AudioInspectionOutcome.SUCCESS, _SOURCE).to_json()
+    )
+    document["chapter_rows_omitted"] = value
+    with pytest.raises(ValueError, match="protocol"):
+        AudioInspection.from_json(
+            json.dumps(document, sort_keys=True, separators=(",", ":"))
+        )
+
+
+def test_child_protocol_refuses_missing_omission_and_actual_v3_producer() -> None:
+    document = json.loads(
+        AudioInspection(AudioInspectionOutcome.SUCCESS, _SOURCE).to_json()
+    )
+    del document["chapter_rows_omitted"]
+    with pytest.raises(ValueError, match="protocol"):
+        AudioInspection.from_json(json.dumps(document))
+    old = (
+        Path(__file__).parents[1]
+        / "support/audio_prior_producer/audio-inspection-v3.json"
+    )
+    with pytest.raises(ValueError, match="protocol"):
+        AudioInspection.from_json(old.read_text())
+
+
+def test_failed_child_cannot_carry_omission_evidence() -> None:
+    with pytest.raises(ValueError, match="failed audio inspection"):
+        AudioInspection(
+            AudioInspectionOutcome.MALFORMED, None, chapter_rows_omitted=True
+        )

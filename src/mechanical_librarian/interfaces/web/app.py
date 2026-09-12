@@ -10,7 +10,7 @@ import stat
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Literal, TypeAlias, TypedDict, TypeVar, cast
+from typing import Annotated, Literal, Self, TypeAlias, TypedDict, TypeVar, cast
 from urllib.parse import urlsplit
 
 from argon2 import PasswordHasher
@@ -545,7 +545,23 @@ class _TargetIdentity(_ClosedModel):
     title: str = Field(max_length=512)
 
 
+class _RecordingIdentityBasis(_ClosedModel):
+    basis: Literal["chapter_runtime_and_structure"]
+    provider: StrictStr = Field(min_length=1, max_length=128)
+    candidate: StrictStr = Field(min_length=1, max_length=128)
+
+    @model_validator(mode="after")
+    def canonical_references(self) -> Self:
+        for value in (self.provider, self.candidate):
+            if not value.strip() or any(
+                ord(character) < 32 or ord(character) == 127 for character in value
+            ):
+                raise ValueError("recording identity reference is invalid")
+        return self
+
+
 class _CaseDetailResponse(_ClosedModel):
+    recording_identity_basis: _RecordingIdentityBasis | None
     comparison_notices: list[str]
     current: bool
     fields: list[_ReviewField]
@@ -557,7 +573,7 @@ class _CaseDetailResponse(_ClosedModel):
         max_length=MAX_HEALTH_OBSERVATIONS
     )
     review_case_id: str
-    schema_version: Literal["review-case-detail-v3"]
+    schema_version: Literal["review-case-detail-v4"]
     target: _TargetIdentity
     writes_consented: bool
 
@@ -835,6 +851,7 @@ class _ReportProviderEvidence(_ClosedModel):
 
 
 class _ReportDetailResponse(_ClosedModel):
+    recording_identity_basis: _RecordingIdentityBasis | None
     chapters: list[_ReportChapter] = Field(max_length=1024)
     chapters_truncated: bool
     connection: str = Field(max_length=512)
@@ -860,7 +877,7 @@ class _ReportDetailResponse(_ClosedModel):
     provider_evidence: list[_ReportProviderEvidence] = Field(max_length=1024)
     provider_evidence_truncated: bool
     report_id: str = Field(max_length=128)
-    schema_version: Literal["review-report-detail-v3"]
+    schema_version: Literal["review-report-detail-v4"]
     title: str = Field(max_length=1024)
 
 

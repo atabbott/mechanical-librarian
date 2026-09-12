@@ -2220,6 +2220,7 @@ def _recorded_audiobook() -> MetadataReport:
             interpretation.chapters,
             interpretation.chapters_truncated,
             interpretation.embedded_cover,
+            chapter_rows_omitted=interpretation.chapter_rows_omitted,
             tracks=(AudioTrackDigest(1, "c" * 64, "b" * 64, "m4b", "book.m4b"),),
         ),
     )
@@ -2248,7 +2249,7 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
 
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert body["schema_version"] == "review-report-detail-v3"
+    assert body["schema_version"] == "review-report-detail-v4"
     assert (body["connection"], body["library"], body["item"]) == (
         "primary",
         "ebooks",
@@ -2319,7 +2320,7 @@ def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["schema_version"] == "review-report-detail-v3"
+    assert body["schema_version"] == "review-report-detail-v4"
     assert len(body["media_health"]) == 1
     stated = body["media_health"][0]
     assert stated["kind"] == "runtime_short_of_provider"
@@ -2743,3 +2744,92 @@ def test_a_package_row_pointing_at_another_work_serves_no_evidence(
         503,
         "unavailable",
     )
+
+
+@pytest.mark.parametrize("omitted", (False, True))
+def test_chapter_runtime_admission_is_attributed_in_case_and_report(
+    web, omitted: bool
+) -> None:
+    from mechanical_librarian.application.review_web import _report_detail
+    from tests.support.audiobook_reports import chapter_runtime_report
+
+    report = chapter_runtime_report(chapter_rows_omitted=omitted)
+    case = ReviewCase.create(evaluate_report(report), report)
+    repository = _CloseRecordingRepository(case, report)
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: web.now,
+        ),
+        base_url="https://review.test",
+    )
+    web.login()
+    response = web.client.get(f"/api/v1/review-cases/{case.review_case_id}")
+    assert response.status_code == 200
+    basis = response.json()["recording_identity_basis"]
+    assert (basis is None) is omitted
+    assert _report_detail(report.to_data(), report)["recording_identity_basis"] == basis
+    assert response.json()["schema_version"] == "review-case-detail-v4"
+    if basis is not None:
+        assert basis == {
+            "basis": "chapter_runtime_and_structure",
+            "provider": "catalogue",
+            "candidate": "audible-product-B08G9PRS1K",
+        }
+        observation = next(
+            p for p in report.providers if p.provider == basis["provider"]
+        )
+        assert basis["candidate"] in {c.identity for c in observation.candidates}
+        assert not any(f["automatic_decision"] for f in response.json()["fields"])
+
+
+@pytest.mark.parametrize(
+    "basis",
+    (
+        {},
+        {"basis": "other", "provider": "source", "candidate": "item"},
+        {
+            "basis": "chapter_runtime_and_structure",
+            "provider": "source",
+            "candidate": "item",
+            "authority": True,
+        },
+    ),
+)
+def test_recording_identity_wire_shape_is_closed(basis) -> None:
+    from mechanical_librarian.interfaces.web.app import _RecordingIdentityBasis
+
+    with pytest.raises(ValidationError):
+        _RecordingIdentityBasis.model_validate(basis)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    (
+        ("provider", " "),
+        ("candidate", "bad\nreference"),
+        ("candidate", "x" * 129),
+        ("provider", None),
+        ("candidate", 1),
+    ),
+)
+def test_recording_identity_wire_references_are_bounded_canonical_text(
+    field: str, value: object
+) -> None:
+    from mechanical_librarian.interfaces.web.app import _RecordingIdentityBasis
+
+    data = {
+        "basis": "chapter_runtime_and_structure",
+        "provider": "source",
+        "candidate": "recording",
+    }
+    with pytest.raises(ValidationError):
+        _RecordingIdentityBasis.model_validate({**data, field: value})

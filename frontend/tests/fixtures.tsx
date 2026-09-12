@@ -47,6 +47,7 @@ export const library: LibraryView = {
 }
 
 export const detail: CaseDetailView = {
+  recordingIdentityBasis: null,
   id: 'case-1',
   current: true,
   target: {

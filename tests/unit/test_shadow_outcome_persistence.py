@@ -163,6 +163,7 @@ from mechanical_librarian.interfaces.web.app import (
 from mechanical_librarian.interfaces.web.live_stream import stream_frames
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
+    chapter_runtime_report,
     corroborated_audiobook_report,
     retained_recorded_only_decision,
 )
@@ -7861,7 +7862,10 @@ def _audiobook_preview(
     return cast(str, admitted["review_case_id"]), resolved
 
 
-def test_an_unqualified_audiobook_tranche_routed_automatic_stays_the_owners() -> None:
+@pytest.mark.parametrize("chapter_runtime", (False, True))
+def test_an_unqualified_audiobook_tranche_routed_automatic_stays_the_owners(
+    chapter_runtime: bool,
+) -> None:
     """The F46 guard: an empty passing set can never mint or fail authority.
 
     The owner may route contributor_names and series to Automatic today,
@@ -7872,7 +7876,11 @@ def test_an_unqualified_audiobook_tranche_routed_automatic_stays_the_owners() ->
     """
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
-        report = corroborated_audiobook_report()
+        report = (
+            chapter_runtime_report()
+            if chapter_runtime
+            else corroborated_audiobook_report()
+        )
         case_id, _ = _audiobook_preview(
             repository, report, ("contributor_names", "series")
         )

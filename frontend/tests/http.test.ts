@@ -654,7 +654,8 @@ describe('ReviewApiClient', () => {
       ],
     ) =>
       mapCaseDetail({
-        schema_version: 'review-case-detail-v3',
+        schema_version: 'review-case-detail-v4',
+        recording_identity_basis: null,
         review_case_id: 'case-1',
         current: true,
         comparison_notices: [],
@@ -706,7 +707,8 @@ describe('ReviewApiClient', () => {
 
   it('requires exact creator corroboration source lists in case-detail responses', () => {
     const response = (corroboration_sources: unknown) => ({
-      schema_version: 'review-case-detail-v3',
+      schema_version: 'review-case-detail-v4',
+      recording_identity_basis: null,
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
@@ -770,7 +772,8 @@ describe('ReviewApiClient', () => {
   it('uses Unicode code point bounds for readable case identity', () => {
     const astral = '📚'
     const response = (target: Record<string, unknown>) => ({
-      schema_version: 'review-case-detail-v3',
+      schema_version: 'review-case-detail-v4',
+      recording_identity_basis: null,
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
@@ -836,7 +839,8 @@ describe('ReviewApiClient', () => {
       ...overrides,
     })
     const response = (fields: readonly unknown[]) => ({
-      schema_version: 'review-case-detail-v3',
+      schema_version: 'review-case-detail-v4',
+      recording_identity_basis: null,
       review_case_id: 'case-1',
       current: true,
       comparison_notices: [],
@@ -2245,9 +2249,33 @@ describe('mapReportDetail', () => {
     provider_evidence: [],
     provider_evidence_truncated: false,
     report_id: `report_${'a'.repeat(64)}`,
-    schema_version: 'review-report-detail-v3',
+    schema_version: 'review-report-detail-v4',
+    recording_identity_basis: null,
     title: 'Recorded work',
     ...overrides,
+  })
+
+  it('requires a closed nullable recording basis and maps its attribution', () => {
+    const basis = {
+      basis: 'chapter_runtime_and_structure',
+      provider: 'Audnexus',
+      candidate: 'recording-1',
+    }
+    expect(
+      mapReportDetail(detail({ recording_identity_basis: basis })).recordingIdentityBasis,
+    ).toEqual(basis)
+    expect(mapReportDetail(detail()).recordingIdentityBasis).toBeNull()
+    for (const value of [
+      undefined,
+      {},
+      { ...basis, basis: 'runtime' },
+      { ...basis, extra: true },
+      { ...basis, provider: '' },
+      { ...basis, candidate: 'x'.repeat(129) },
+      { ...basis, provider: 'bad\nsource' },
+    ]) {
+      expect(() => mapReportDetail(detail({ recording_identity_basis: value }))).toThrow(ApiError)
+    }
   })
 
   it('maps the media-health section and refuses an older report detail', () => {

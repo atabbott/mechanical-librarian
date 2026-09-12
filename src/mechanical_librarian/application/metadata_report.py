@@ -33,6 +33,11 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioTrackDigest,
 )
 from mechanical_librarian.domain.audiobook_corroboration import (
+    CorroborationOutcome,
+    candidate_runtime_seconds,
+    complete_chapter_runtime_agreement,
+    local_claim_runtime_seconds,
+    runtime_agreement,
     runtime_corroborated_candidate,
     runtime_short_of_stated,
 )
@@ -57,6 +62,7 @@ from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
     ClaimKind,
     ClaimScope,
+    Comparison,
     DateLinkConfidence,
     EditionEnrichmentOverflow,
     FieldState,
@@ -1549,35 +1555,120 @@ def qualify_provider_observation(
 
 
 def admitted_audiobook_identity(report: MetadataReport) -> bool:
-    """Say whether the corroboration band admitted this recording's identity.
-
-    This is the gate F45 forms proposals behind, and for a recording it is
-    ADR-0061's runtime corroboration band and nothing else: some candidate the
-    report retains has to state this recording's own running time
-    (`runtime_corroborated_candidate`, `domain/audiobook_corroboration.py`).
-    Two things are deliberately not admissions. A work-shape retention is one:
-    a title-and-author match names a work, and qualification keeps such a
-    candidate rather than dropping it, so its presence says nothing about which
-    product this is. The item's own ASIN is the other: an embedded, sidecar, or
-    path identifier naming a different cut of the same work is exactly the
-    disagreement the band exists to settle, and the 0.20.0 measurement settled
-    those disagreements through the band rather than around it.
-
-    The answer is recomputed from the retained candidates and the report's own
-    local claims, so it is deterministic, it reads no candidate's shape, and it
-    is the same question the pipeline asked at runtime (#966).
-
-    A report with no admitted identity has nothing to compare a proposal
-    against, so preparation records its evidence and completes.
-    """
+    """Preserve stated-runtime admission, then try retained local-ASIN timing."""
     if type(report) is not MetadataReport:
         raise MetadataReportError("provider observation is invalid")
+    return (
+        _stated_runtime_admitted(report) or recording_identity_basis(report) is not None
+    )
+
+
+def _stated_runtime_admitted(report: MetadataReport) -> bool:
+    """Keep the existing runtime-first decision identical for both consumers."""
     return any(
         observation.status is ProviderStatus.CANDIDATES
         and runtime_corroborated_candidate(observation.candidates, report.local_claims)
         is not None
         for observation in report.providers
     )
+
+
+def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
+    """Derive admission and attribution from the same retained local envelope.
+
+    Only retained local-ASIN lanes promise complete candidate observations.
+    No lookup, provider vote, or provider-native identifier adds authority.
+    """
+    if type(report) is not MetadataReport:
+        raise MetadataReportError("provider observation is invalid")
+    if _stated_runtime_admitted(report):
+        return None
+    asins = _local_identifier_asins(report.local_claims)
+    local = local_claim_runtime_seconds(report.local_claims)
+    if len(asins) != 1 or local is None or local <= 0:
+        return None
+    asin = next(iter(asins))
+    references = {
+        claim.reference
+        for claim in report.local_claims
+        if claim.kind is ClaimKind.ASIN
+        and claim.basis != "target_metadata"
+        and canonical_asin(claim.canonical) == asin
+    }
+    support: list[tuple[str, str]] = []
+    for observation in report.providers:
+        if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
+            continue
+        retained = {
+            candidate.edition_identity
+            for lane in observation.lanes
+            if lane.kind is ProviderQueryKind.ASIN
+            and references.intersection(lane.input_references)
+            for candidate in lane.candidates
+        }
+        if not observation.lanes and observation.query_kind is ProviderQueryKind.ASIN:
+            if references.intersection(observation.input_references):
+                retained = {candidate.identity for candidate in observation.candidates}
+        for candidate in observation.candidates:
+            if candidate.identity not in retained:
+                continue
+            identifiers = tuple(
+                claim for claim in candidate.claims if claim.kind is ClaimKind.ASIN
+            )
+            matched = any(
+                claim.state is FieldState.VALID
+                and claim.value == asin
+                and any(
+                    link.local_reference in references
+                    and link.outcome is Comparison.AGREEMENT
+                    for link in claim.links
+                )
+                for claim in identifiers
+            )
+            if not matched:
+                continue
+            if any(
+                claim.state is not FieldState.VALID or claim.value != asin
+                for claim in identifiers
+            ):
+                return None
+            durations = tuple(
+                claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+            )
+            if not durations:
+                continue
+            if len(durations) != 1:
+                return None
+            duration = durations[0]
+            if duration.state is FieldState.VALID:
+                seconds = candidate_runtime_seconds(candidate)
+                if (
+                    seconds is None
+                    or seconds <= 0
+                    or runtime_agreement(local, seconds).outcome
+                    is not CorroborationOutcome.CORROBORATED
+                ):
+                    return None
+                continue
+            if duration.state is not FieldState.ABSENT:
+                return None
+            structures = tuple(
+                evidence.chapters
+                for evidence in candidate.evidence
+                if evidence.kind is ProviderEvidenceKind.CHAPTER_STRUCTURE
+            )
+            if len(structures) == 1 and complete_chapter_runtime_agreement(
+                report.audio, report.local_claims, structures[0]
+            ):
+                support.append((observation.provider, candidate.identity))
+    if not support:
+        return None
+    provider, candidate_identity = min(support)
+    return {
+        "basis": "chapter_runtime_and_structure",
+        "provider": provider,
+        "candidate": candidate_identity,
+    }
 
 
 def _shaped_with_runtime_comparison(

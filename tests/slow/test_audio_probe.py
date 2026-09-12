@@ -487,3 +487,23 @@ def test_a_container_stating_no_running_time_is_not_also_called_unavailable(
         result
     )
     assert all(value.kind is not ClaimKind.DURATION for value in result.claims)
+
+
+def test_chapter_runtime_publication_fixture_matches_actual_probe(
+    media_root: Path,
+) -> None:
+    from tests.support.chapter_runtime import ASIN, END, SPANS, media
+
+    (media_root / "book.m4b").write_bytes(media())
+    result = _inspect(media_root, "book.m4b")
+    assert [
+        (c.start_milliseconds, c.end_milliseconds) for c in result.audio.chapters
+    ] == list(SPANS)
+    assert any(c.kind is ClaimKind.ASIN and c.canonical == ASIN for c in result.claims)
+    assert any(
+        c.kind is ClaimKind.DURATION and c.canonical == f"{END / 1000:.3f}"
+        for c in result.claims
+    )
+    assert result.audio.chapter_rows_omitted is False
+    assert result.audio.chapters_truncated is False
+    assert result.audio.composition is AudioChapterComposition.SINGLE_FILE

@@ -1014,6 +1014,7 @@ class _IsolatedAudioInspector:
                     composed, tuple(claim.reference for claim in claims)
                 ),
                 composed.observations,
+                composed.chapter_rows_omitted,
             )
             if len(canonical_json(audio.to_data()).encode("utf-8")) > MAX_AUDIO_BYTES:
                 # An audio section the retained report cannot hold is evidence

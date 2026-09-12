@@ -209,6 +209,11 @@ class AudioInterpretation:
     # lane with the same value, and the report already reads its title from the
     # target.  It exists so a per-track chapter can be named by the recording.
     title: str | None = None
+    chapter_rows_omitted: bool = False
+
+    def __post_init__(self) -> None:
+        if type(self.chapter_rows_omitted) is not bool:
+            raise ValueError("audio chapter omission is invalid")
 
 
 def sidecar_surface(name: str, media_name: str) -> AudioEvidenceSurface | None:
@@ -268,7 +273,7 @@ def interpret(
     for sidecar in sidecars[: limits.sidecar_documents]:
         _sidecar_facts(builder, sidecar, limits)
     builder.bracketed(path)
-    chapters, truncated = _chapters(probe.get("chapters"), limits)
+    chapters, truncated, omitted = _chapters(probe.get("chapters"), limits)
     cover = _embedded_cover(streams)
     facts = builder.result(limits)
     outcome = (
@@ -284,6 +289,7 @@ def interpret(
         truncated,
         _container_facts(container, streams),
         _container_title(container),
+        omitted,
     )
 
 
@@ -585,25 +591,29 @@ def _performance_type(key: str, value: object) -> tuple[str, str] | None:
 
 def _chapters(
     value: object, limits: AudioInspectionLimits
-) -> tuple[tuple[AudioChapter, ...], bool]:
+) -> tuple[tuple[AudioChapter, ...], bool, bool]:
     if type(value) is not list:
-        return (), False
+        return (), False, False
     cap = min(limits.chapters, MAX_CHAPTERS)
     chapters: list[AudioChapter] = []
+    omitted = False
     for item in value[:cap]:
         if type(item) is not dict:
+            omitted = True
             continue
         start = _milliseconds(item.get("start_time"))
         end = _milliseconds(item.get("end_time"))
         if start is None or end is None or end < start:
+            omitted = True
             continue
         tags = item.get("tags")
         title = _clean(tags.get("title")) if type(tags) is dict else None
         try:
             chapters.append(AudioChapter(len(chapters) + 1, start, end, _title(title)))
         except ValueError:
+            omitted = True
             continue
-    return tuple(chapters), len(value) > cap
+    return tuple(chapters), len(value) > cap, omitted
 
 
 def _container_title(container: dict[str, object]) -> str | None:

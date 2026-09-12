@@ -127,6 +127,7 @@ class CaseDetailView:
     schema_version: str
     target: dict[str, object]
     writes_consented: bool
+    recording_identity_basis: dict[str, str] | None
 
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
@@ -146,6 +147,9 @@ class CaseDetailView:
             str(value["schema_version"]),
             dict(cast("dict[str, object]", value["target"])),
             bool(value["writes_consented"]),
+            None
+            if value["recording_identity_basis"] is None
+            else dict(cast("dict[str, str]", value["recording_identity_basis"])),
         )
 
     def to_data(self) -> dict[str, object]:
@@ -158,6 +162,7 @@ class CaseDetailView:
             "schema_version": self.schema_version,
             "target": dict(self.target),
             "writes_consented": self.writes_consented,
+            "recording_identity_basis": self.recording_identity_basis,
         }
 
 

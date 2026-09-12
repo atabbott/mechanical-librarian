@@ -172,3 +172,18 @@ recorded before it is measured is a number nobody may change without an ADR.
 - Reopen triggers: a measured tolerance that no single parameter set satisfies
   across providers, or a provider whose chapter statement is not expressible as
   a whole-second vector.
+
+## Bounded chapter-runtime admission (#1042)
+
+The descriptive matcher is unchanged. Owner-review admission may use complete
+chapter structure only after existing stated-runtime admission fails, for the sole
+retained local-ASIN envelope in ADR-0069. Local positive contiguous spans begin at
+zero and end within 1000 milliseconds of the canonical local runtime; composition
+is single-file or concatenated embedded, with neither truncation nor observed row
+omission. Provider count equals the complete positive vector length and its total
+satisfies `0 <= runtime_seconds - sum(durations_seconds) <= chapter_count`. The
+aggregate must meet the same 90-second tight band. Equal complete vectors must meet
+the existing strong minimum and per-chapter tolerance without offsets; uniform
+vectors on either side fail. This bounds rounding and does not assert independent
+recording provenance. No generic matcher, provider lookup or automatic authority
+is added. Missing-local-runtime and remaining paths remain under #1004.

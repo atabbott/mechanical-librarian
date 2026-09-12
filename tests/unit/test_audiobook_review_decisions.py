@@ -16,6 +16,7 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.application.metadata_report import (
     admitted_audiobook_identity,
+    recording_identity_basis,
 )
 from mechanical_librarian.application.review_web import (
     _attention_item,
@@ -31,6 +32,7 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
 )
 from mechanical_librarian.domain.metadata_report import (
+    FieldState,
     MetadataReport,
     TargetDestination,
 )
@@ -40,6 +42,7 @@ from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asserted_asin_report,
+    chapter_runtime_report,
     corroborated_audiobook_report,
     retained_recorded_only_decision,
 )
@@ -355,3 +358,197 @@ def test_a_shadow_disposition_never_drops_a_recording_from_the_attention_lens() 
             )
             is not None
         ), disposition
+
+
+def test_missing_provider_runtime_uses_complete_local_asin_chapters() -> None:
+    report = chapter_runtime_report()
+    assert admitted_audiobook_identity(report)
+    assert recording_identity_basis(report) == {
+        "basis": "chapter_runtime_and_structure",
+        "provider": "catalogue",
+        "candidate": "audible-product-B08G9PRS1K",
+    }
+    reopened = MetadataReport.from_json(report.to_json())
+    assert recording_identity_basis(reopened) == recording_identity_basis(report)
+    case = _case(reopened)
+    assert {p["destination"] for p in case.actionable} == {"asin", "narrators"}
+    decision = _accept(case, TargetDestination.NARRATORS)
+    assert decision.outcome == "accept"
+    assert decision.actor == "owner"
+
+
+@pytest.mark.parametrize(
+    "state,value",
+    (
+        ("malformed", None),
+        ("valid", "0.000"),
+        ("valid", "2000.000"),
+        ("valid", "4000.000"),
+    ),
+)
+def test_missing_runtime_fallback_refuses_invalid_or_conflicting_duration(
+    state, value
+) -> None:
+    assert not admitted_audiobook_identity(
+        chapter_runtime_report(
+            provider_duration=value, duration_state=FieldState(state)
+        )
+    )
+
+
+def test_existing_runtime_admission_keeps_null_chapter_attribution() -> None:
+    report = chapter_runtime_report(
+        provider_duration="1740.000",
+        duration_state=FieldState.VALID,
+        chapter_rows_omitted=True,
+    )
+    assert admitted_audiobook_identity(report)
+    assert recording_identity_basis(report) is None
+
+
+def test_target_only_asin_cannot_use_chapter_fallback() -> None:
+    assert not admitted_audiobook_identity(
+        chapter_runtime_report(asin_basis="target_metadata")
+    )
+
+
+@pytest.mark.parametrize(
+    "local_duration,omitted", ((None, False), ("0.000", False), ("1748.000", True))
+)
+def test_missing_local_runtime_and_omitted_rows_cannot_admit(
+    local_duration, omitted
+) -> None:
+    assert not admitted_audiobook_identity(
+        chapter_runtime_report(
+            local_duration=local_duration, chapter_rows_omitted=omitted
+        )
+    )
+
+
+def test_cross_provider_runtime_conflict_blocks_chapter_fallback() -> None:
+    first = chapter_runtime_report()
+    other = chapter_runtime_report(
+        provider="registry",
+        provider_duration="2000.000",
+        duration_state=FieldState.VALID,
+    )
+    report = MetadataReport.create(
+        target=first.target,
+        file=first.file,
+        local_claims=first.local_claims,
+        local_reasons=first.local_reasons,
+        providers=(*first.providers, *other.providers),
+        audio=first.audio,
+    )
+    assert not admitted_audiobook_identity(report)
+    assert not admitted_audiobook_identity(MetadataReport.from_json(report.to_json()))
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    ("missing_duration", "missing_asin_link", "unbound_asin_lane", "foreign_authority"),
+)
+def test_chapter_fallback_needs_retained_matched_local_asin_evidence(
+    mutation: str,
+) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.metadata_report import ClaimKind, ProviderQueryKind
+
+    base = chapter_runtime_report()
+    observation = base.providers[0]
+    candidate = observation.candidates[0]
+    if mutation == "missing_duration":
+        candidate = replace(
+            candidate,
+            claims=tuple(
+                c for c in candidate.claims if c.kind is not ClaimKind.DURATION
+            ),
+        )
+    elif mutation == "missing_asin_link":
+        candidate = replace(
+            candidate,
+            claims=tuple(
+                replace(c, links=()) if c.kind is ClaimKind.ASIN else c
+                for c in candidate.claims
+            ),
+        )
+    if mutation in {"missing_duration", "missing_asin_link"}:
+        observation = replace(observation, candidates=(candidate,))
+    elif mutation == "unbound_asin_lane":
+        observation = replace(
+            observation,
+            lanes=(),
+            query_kind=ProviderQueryKind.ASIN,
+            input_references=(),
+        )
+    else:
+        observation = replace(observation, authority=None)
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+    if mutation == "missing_asin_link":
+        # Canonical report construction regenerates comparison links from the
+        # retained values; it does not preserve a caller's omitted comparison.
+        asin = next(
+            c
+            for c in report.providers[0].candidates[0].claims
+            if c.kind is ClaimKind.ASIN
+        )
+        assert asin.links
+        assert admitted_audiobook_identity(report)
+    else:
+        assert not admitted_audiobook_identity(report)
+        assert (
+            recording_identity_basis(MetadataReport.from_json(report.to_json())) is None
+        )
+
+
+def test_two_supporting_providers_use_one_deterministic_recording_source() -> None:
+    first = chapter_runtime_report(provider="zulu")
+    second = chapter_runtime_report(provider="alpha")
+    for observations in (
+        (first.providers[0], second.providers[0]),
+        (second.providers[0], first.providers[0]),
+    ):
+        report = MetadataReport.create(
+            target=first.target,
+            file=first.file,
+            local_claims=first.local_claims,
+            local_reasons=first.local_reasons,
+            providers=tuple(
+                sorted(observations, key=lambda observation: observation.provider)
+            ),
+            audio=first.audio,
+        )
+        assert admitted_audiobook_identity(report)
+        assert recording_identity_basis(report) == {
+            "basis": "chapter_runtime_and_structure",
+            "provider": "alpha",
+            "candidate": "audible-product-B08G9PRS1K",
+        }
+
+
+def test_multiple_local_asins_do_not_grant_chapter_admission() -> None:
+    from mechanical_librarian.domain.metadata_report import ClaimKind
+
+    base = chapter_runtime_report()
+    other = chapter_runtime_report(local_asin="B0CW1KL2QD")
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=(
+            *base.local_claims,
+            *(c for c in other.local_claims if c.kind is ClaimKind.ASIN),
+        ),
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+    )
+    assert not admitted_audiobook_identity(report)
+    assert recording_identity_basis(report) is None

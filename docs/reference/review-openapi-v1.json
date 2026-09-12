@@ -2863,12 +2863,22 @@
             "title": "Media Health",
             "type": "array"
           },
+          "recording_identity_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_RecordingIdentityBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "review_case_id": {
             "title": "Review Case Id",
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v3",
+            "const": "review-case-detail-v4",
             "title": "Schema Version",
             "type": "string"
           },
@@ -2881,6 +2891,7 @@
           }
         },
         "required": [
+          "recording_identity_basis",
           "comparison_notices",
           "current",
           "fields",
@@ -6871,6 +6882,35 @@
         "title": "_ProviderRecoveryActivity",
         "type": "object"
       },
+      "_RecordingIdentityBasis": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "const": "chapter_runtime_and_structure",
+            "title": "Basis",
+            "type": "string"
+          },
+          "candidate": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Candidate",
+            "type": "string"
+          },
+          "provider": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "basis",
+          "provider",
+          "candidate"
+        ],
+        "title": "_RecordingIdentityBasis",
+        "type": "object"
+      },
       "_ReportChapter": {
         "additionalProperties": false,
         "properties": {
@@ -6988,13 +7028,23 @@
             "title": "Provider Sources",
             "type": "array"
           },
+          "recording_identity_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_RecordingIdentityBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "report_id": {
             "maxLength": 128,
             "title": "Report Id",
             "type": "string"
           },
           "schema_version": {
-            "const": "review-report-detail-v3",
+            "const": "review-report-detail-v4",
             "title": "Schema Version",
             "type": "string"
           },
@@ -7005,6 +7055,7 @@
           }
         },
         "required": [
+          "recording_identity_basis",
           "chapters",
           "chapters_truncated",
           "connection",
