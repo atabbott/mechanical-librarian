@@ -157,7 +157,7 @@ describe('Library review ownership', () => {
                 laneKind: 'identity',
                 provider: 'Hardcover',
                 providerRequests: 1,
-                reason: 'Returned no matching metadata, so nothing was retained.',
+                reason: 'Returned no matching metadata.',
                 status: 'no_match',
               },
               {
