@@ -23,7 +23,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "c2b2170b1e7ce6f9b199afbbdf303e72cf2fd011bcaa0b4d3e09ab1cbd577583"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "50eaf202ea5d57407714427863634e45abe4be6380616e7d4c0b811e5df033c6"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -55,6 +55,7 @@ QUALIFIED_POLICY_OPTIONS = (
     | F46_QUALIFIED_POLICY_OPTIONS
 )
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    ("c2b2170b1e7ce6f9b199afbbdf303e72cf2fd011bcaa0b4d3e09ab1cbd577583", F19A_QUALIFIED_POLICY_OPTIONS),
 
     ("15766b5b2232b2bb7e64cefa4e529c134b7c3da829f5f801a1b43afb897b4676", F19A_QUALIFIED_POLICY_OPTIONS),
     ("f30e2c102d55c532dff554f7b6ca17c3998bcd965ce55d9ca6e2df052c48b7d9", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
@@ -100,6 +101,7 @@ _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
 })
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    ("91ce3c6433fcdcebad2bdb5b6d44a6ac970ad96fe0901f5dae5fc765d54fce62", F20_PASSING_AUTOMATIC_OPTIONS),
     ('3b29fdb2e345676adb984a334aa19db8e26689e1b5927ed31bc51f1f09b1b54a', _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS),
     ("af0e2de1a9e5dfa7753fc23b873cf413fbbc29e23a44f4408c6457fa13321d04", F20_PASSING_AUTOMATIC_OPTIONS),
     ("2728215f5ade910611d6806e58de40c867a05315efe9670192de48298e54a54b", F20_PASSING_AUTOMATIC_OPTIONS),

@@ -57,14 +57,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v28.json"
+    "f20-rich-metadata-qualification-candidate-v29.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v14.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v15.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1980,13 +1980,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v13.json",
-            "15766b5b2232b2bb7e64cefa4e529c134b7c3da829f5f801a1b43afb897b4676",
+            "f19a-qualification-manifest-v14.json",
+            "c2b2170b1e7ce6f9b199afbbdf303e72cf2fd011bcaa0b4d3e09ab1cbd577583",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v27.json",
-            "af0e2de1a9e5dfa7753fc23b873cf413fbbc29e23a44f4408c6457fa13321d04",
+            "f20-rich-metadata-qualification-candidate-v28.json",
+            "91ce3c6433fcdcebad2bdb5b6d44a6ac970ad96fe0901f5dae5fc765d54fce62",
         ),
     ):
         assert (
@@ -2004,6 +2004,11 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     assert title["qualified_policy_options"] == sorted(F19A_QUALIFIED_POLICY_OPTIONS)
     common = {
         "retained-report-store",
+        "r2-title-inputs",
+        "r2-script-and-omission-truth",
+        "r2-malformed-title-truth",
+        "r2-evaluator",
+        "r2-results",
         "retained-raw-capture",
         "retained-replay-configuration",
         "retained-local-inputs",
@@ -2054,6 +2059,25 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     )
     assert title["durable_title_measurement"]["synthetic_negative"]["withheld"] == 25
     assert title["durable_title_measurement"]["retained"]["durable_predictions"] == 2
+
+    r2 = title["r2_edge_measurement"]
+    assert r2["script_controls"] == {
+        "cases": 6,
+        "positive_opportunities": 4,
+        "negative_controls": 2,
+        "candidate_predictions": 4,
+        "durable_predictions": 4,
+        "withheld": 2,
+        "incorrect": 0,
+    }
+    assert r2["neutral_preservation_controls"] == {
+        "cases": 3,
+        "automatic_opportunities": 0,
+        "candidate_predictions": 0,
+        "durable_predictions": 0,
+        "original_results_preserved": 3,
+    }
+    assert r2["owner_reachable"] == 9
 
 
 def test_v24_binds_the_media_health_projection_without_rescoring() -> None:

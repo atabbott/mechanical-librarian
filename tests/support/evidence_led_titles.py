@@ -14,9 +14,11 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
+    FieldState,
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
+    ProviderClaim,
     ProviderObservation,
     ProviderQueryKind,
     ProviderStatus,
@@ -77,7 +79,7 @@ def publish_title_case(
 def isbn_title_report(
     *,
     current: str = "Example Series 03 - Example Title",
-    titles: tuple[str, ...] = ("Example Title",),
+    titles: tuple[str | None, ...] = ("Example Title",),
     author: str = "Ada Author",
     isbns: tuple[tuple[str, str], ...] = (("9780306406157", "ebook"),),
     role: str | None = None,
@@ -95,6 +97,9 @@ def isbn_title_report(
     provider_authors: tuple[str, ...] | None = None,
     target_authors: tuple[str, ...] = ("Ada Author",),
     empty_target_title: bool = False,
+    provider_languages: tuple[str | None, ...] = (),
+    local_language: str | None = None,
+    title_state: FieldState = FieldState.VALID,
 ) -> MetadataReport:
     local = [
         consensus_local_title(current),
@@ -119,6 +124,20 @@ def isbn_title_report(
             for index, name in enumerate(names)
         ),
     ]
+    if local_language is not None:
+        local.append(
+            LocalClaim.create(
+                kind=ClaimKind.LANGUAGE,
+                observed=local_language,
+                canonical=local_language,
+                excerpt=local_language,
+                scope=ClaimScope.EDITION,
+                basis="package_metadata",
+                applicability="not_applicable",
+                checksum="not_applicable",
+                applicability_basis="not_applicable",
+            )
+        )
     if local_variant is not None:
         assert role in {"translator", "adapter", "abridger"}
         local.append(
@@ -195,32 +214,61 @@ def isbn_title_report(
             if lane.kind is not ProviderQueryKind.ISBN:
                 continue
             identity = f"{name}-edition-{n}"
-            claims = [
-                _claim(name, identity, ClaimKind.TITLE, title, scope=ClaimScope.WORK),
-                *(
+            claims = (
+                [_claim(name, identity, ClaimKind.TITLE, title, scope=ClaimScope.WORK)]
+                if title is not None
+                else []
+            )
+            if title is not None and title_state is not FieldState.VALID:
+                claims[0] = ProviderClaim.create(
+                    provider=name,
+                    candidate=identity,
+                    kind=ClaimKind.TITLE,
+                    value=None,
+                    state=title_state,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                )
+            claims.extend(
+                [
+                    *(
+                        _claim(
+                            name,
+                            identity,
+                            ClaimKind.CREATOR,
+                            author_name,
+                            scope=ClaimScope.WORK,
+                            role="author",
+                            order=1 + author_index,
+                        )
+                        for author_index, author_name in enumerate(
+                            provider_authors
+                            if provider_authors is not None
+                            else (author,)
+                        )
+                    ),
                     _claim(
                         name,
                         identity,
-                        ClaimKind.CREATOR,
-                        author_name,
-                        scope=ClaimScope.WORK,
-                        role="author",
-                        order=1 + author_index,
+                        ClaimKind.ISBN,
+                        lane.canonical_isbns[0],
+                        scope=ClaimScope.EDITION,
+                        applicability="ebook",
+                        order=2,
+                    ),
+                ]
+            )
+            if provider_languages and provider_languages[i] is not None:
+                claims.append(
+                    _claim(
+                        name,
+                        identity,
+                        ClaimKind.LANGUAGE,
+                        cast(str, provider_languages[i]),
+                        scope=ClaimScope.EDITION,
+                        order=8,
                     )
-                    for author_index, author_name in enumerate(
-                        provider_authors if provider_authors is not None else (author,)
-                    )
-                ),
-                _claim(
-                    name,
-                    identity,
-                    ClaimKind.ISBN,
-                    lane.canonical_isbns[0],
-                    scope=ClaimScope.EDITION,
-                    applicability="ebook",
-                    order=2,
-                ),
-            ]
+                )
             if role:
                 claims.append(
                     _claim(

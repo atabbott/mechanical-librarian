@@ -38,10 +38,16 @@ and coupled actions retain their existing rules.
 Current title qualification admits the reason-specific
 `title:replace_target:isbn_creator_supported` option. Pre-option historical manifests do
 not acquire it. Published v11 remains readable with its original option set, but
-only the current v14 qualification grants current authority. Ask, Ignore, owner-final decisions, pause and title-layout
+only the current v15 qualification grants current authority. Ask, Ignore, owner-final decisions, pause and title-layout
 suspension remain authoritative. Consent, backup, currentness, read-back, audit
 and recovery remain prerequisites for any guarded effect. Reviewers remain
 advisory and receive no write or credential authority.
+
+Explicit language-script disagreement remains material alongside differing
+language identities. The closed base-and-script vocabulary supplies explicit
+script identity; regional variation and an unspecified script add no dissent.
+When providers retain no valid title, this election preserves the earlier title
+result instead of comparing local content against an invented empty title.
 
 ## Consequences
 

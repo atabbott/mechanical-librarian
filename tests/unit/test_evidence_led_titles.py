@@ -20,6 +20,99 @@ from tests.support.evidence_led_titles import isbn_title_report
 
 
 @pytest.mark.parametrize(
+    "languages,local_language,eligible",
+    [
+        (("zh-Hans", "zh-Hant"), None, False),
+        (("zh-Hans-CN", "zh-Hans-SG"), None, True),
+        (("zh", "zh-Hans"), None, True),
+        (("zh-Hans",), "zh-Hant", False),
+        (("zh-Hans-CN",), "zh-Hans-SG", True),
+        (("zh-Hans",), "zh", True),
+    ],
+)
+def test_title_variant_preserves_explicit_script_but_not_missing_script_dissent(
+    tmp_path, languages, local_language, eligible
+) -> None:
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.support.evidence_led_titles import publish_title_case
+
+    report = MetadataReport.from_json(
+        isbn_title_report(
+            titles=tuple("Example Title" for _ in languages),
+            provider_languages=languages,
+            local_language=local_language,
+        ).to_json()
+    )
+    repository = open_repository(tmp_path / "state.sqlite3")
+    try:
+        _, proposal = publish_title_case(repository, report)
+        title = next(r for r in proposal.results if r.destination.value == "title")
+        assert title.reasons == (
+            EVIDENCE_LED_TITLE_REASON if eligible else "isbn_title_material_conflict",
+        )
+        packet = ShadowReviewPacket.create(
+            ReviewCase.create(proposal, report), proposal, report
+        )
+        packet = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+        decision = next(
+            d
+            for d in decide_shadow_packet(packet).decisions
+            if d.destination == "title"
+        )
+        assert decision.recommendation == (
+            "recommend_candidate" if eligible else "manual"
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE destination='title'"
+        ).fetchone()[0] == int(eligible)
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize("provider_title", ["omitted", "malformed"])
+@pytest.mark.parametrize("content_title", [None, "Example Title"])
+def test_absent_valid_provider_title_retains_existing_local_preservation(
+    tmp_path, provider_title, content_title
+) -> None:
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.metadata_report import FieldState
+    from mechanical_librarian.domain.proposal_set import ProposalOutcome
+    from tests.support.evidence_led_titles import publish_title_case
+
+    report = MetadataReport.from_json(
+        isbn_title_report(
+            current="Example Title",
+            titles=(None,) if provider_title == "omitted" else ("Example Title",),
+            title_state=FieldState.MALFORMED
+            if provider_title == "malformed"
+            else FieldState.VALID,
+            content_title=content_title,
+        ).to_json()
+    )
+    repository = open_repository(tmp_path / "state.sqlite3")
+    try:
+        case_id, proposal = publish_title_case(repository, report)
+        title = next(r for r in proposal.results if r.destination.value == "title")
+        assert title.outcome is ProposalOutcome.KEEP
+        assert title.reasons == ("positive_preservation_evidence",)
+        assert title.selected_alternative_id is None
+        assert not repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination='title'"
+        ).fetchall()
+        assert any(
+            field["destination"] == "title"
+            for field in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+        )
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
     "options,eligible",
     [
         ({"empty_target_title": True}, False),

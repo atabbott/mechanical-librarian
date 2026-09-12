@@ -1694,9 +1694,14 @@ def _title_variant_identities(
     identities: dict[str, set[str]] = {}
     for kind, role, value in claims:
         if kind is ClaimKind.LANGUAGE:
-            language = language_identity(value)
+            language = language_equivalence_class(value)
             if language is not None:
-                identities.setdefault("language", set()).add(language.base)
+                base, script = language
+                identities.setdefault("language", set()).add(base)
+                if script is not None:
+                    identities.setdefault("language_script", set()).add(
+                        f"{base}-{script}"
+                    )
         elif kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR} and role in {
             "translator",
             "adapter",
@@ -1844,7 +1849,7 @@ def _evidence_led_title_election(
                     if c.kind is ClaimKind.TITLE and c.scope is ClaimScope.WORK
                 )
         conflict = conflict or len(works) > 1
-    if not isbn_bound:
+    if not isbn_bound or not titles:
         return result
     conflict = (
         conflict

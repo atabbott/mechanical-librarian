@@ -7,7 +7,7 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Current title-consumer qualification (#1007)
 
-The current [v28 candidate](../reference/f20-rich-metadata-qualification-candidate-v28.json)
+The current [v29 candidate](../reference/f20-rich-metadata-qualification-candidate-v29.json)
 binds #1007's title and packet consumers, including replacement-only and
 complete ordered creator corrections. Published v25 remains immutable historical
 evidence. The current continuity proof is
@@ -21,9 +21,9 @@ recorded separately from historical measurements.
 
 The base integration preserves incoming main's repinned v10/v24 at their
 canonical paths and retains both the original-base and intervening-main bytes under digest-qualified
-historical filenames. Current v14/v28 record each origin commit, original path,
+historical filenames. Current v15/v29 record each origin commit, original path,
 digest and retained path; immutable v11/v25 references resolve by that original
-digest. All v11/v12/v13/v25/v26/v27 bytes remain unchanged. The same 52 title cases and
+digest. All v11/v12/v13/v14/v25/v26/v27/v28 bytes remain unchanged. The same 52 title cases and
 current F20 consumers are remeasured through the merged code. The reached F46
 module is bound as an inert dependency: its record remains absent and its passing
 set empty, so no audiobook authority is added.
@@ -34,6 +34,13 @@ facts, then run current provider adapters over the original raw HTTP exchanges.
 They are new reports, not schema relabels or unchanged historical replay. The
 manifest binds the capture, configuration, local inputs, independent truth,
 reconstruction evaluator and derivative results; no external calls are made.
+
+The current successor also measures six language-script controls separately:
+four supported title opportunities and two explicit-script conflicts. Regional
+variation and missing script evidence remain neutral. Three further controls
+retain an existing local title result when provider titles are absent or
+malformed; these are preservation checks, not automatic opportunities. The
+original 52-case matrix and published v14/v28 artifacts remain unchanged.
 
 ## Historical cover-choice source rotation (#999)
 
