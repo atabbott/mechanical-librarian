@@ -2,6 +2,9 @@
 
 from typing import Final
 
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    qualified_policy_bases,
+)
 from mechanical_librarian.domain.automatic_decision import QUALIFIED_POLICY_OPTIONS
 
 COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256: Final = (
@@ -11,3 +14,12 @@ COVER_QUALIFIED_POLICY_OPTION: Final = "cover_order:fixed_source_order"
 COVER_AWARE_QUALIFIED_POLICY_OPTIONS: Final = QUALIFIED_POLICY_OPTIONS | {
     COVER_QUALIFIED_POLICY_OPTION
 }
+
+
+def cover_aware_qualified_policy_options() -> frozenset[str]:
+    """Return every `category:option` the owner may route to Automatic now.
+
+    An audiobook record widens this set without any other edit, so the answer
+    is composed on each ask rather than frozen at import (#967).
+    """
+    return frozenset(COVER_AWARE_QUALIFIED_POLICY_OPTIONS) | qualified_policy_bases()

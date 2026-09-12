@@ -5,7 +5,13 @@ import json
 
 import pytest
 
-from mechanical_librarian.domain import automatic_decision
+from mechanical_librarian.domain import (
+    audiobook_decision_qualification,
+    automatic_decision,
+)
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    F46_SERIES_IDENTITY,
+)
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     QUALIFIED_POLICY_OPTIONS,
@@ -309,6 +315,7 @@ def test_prior_f20_decision_remains_readable_without_granting_new_authority() ->
         "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
         "a7af724b0711177ff04ff1ae56c8a7db42c1166fe97390c29e60fed506440500",
         "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd",
+        "679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321",
     )
     for prior_digest in prior_digests:
         prior_core = {
@@ -381,6 +388,7 @@ def test_prior_f19a_language_decision_remains_readable_only() -> None:
         "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
         "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
         "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",
+        "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523",
     )
     for prior_digest in prior_digests:
         prior_core = {
@@ -683,3 +691,167 @@ def test_both_v22_histories_retain_the_same_thirteen_noncurrent_options() -> Non
     assert histories[old] == histories[delivered]
     assert len(histories[old]) == 13
     assert F20_QUALIFICATION_CANDIDATE_SHA256 not in {old, delivered}
+
+
+def _f46_record(monkeypatch: pytest.MonkeyPatch, identity: str, digest: str) -> None:
+    """Publish one test-only F46 record for exactly one tranche."""
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        frozenset({identity}),
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", digest
+    )
+
+
+def test_an_audiobook_identity_binds_the_f46_manifest_and_nothing_prior(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A recording's authority comes from its own record or from nowhere.
+
+    Until an F46 record exists the identity mints nothing at all, whatever
+    digest is offered. Once one exists it binds that digest and only that one:
+    no ebook envelope, current or historical, can rehydrate a recording's
+    decision, and the record cannot speak for the ebook option it was named
+    after (#967).
+    """
+    identity = F46_SERIES_IDENTITY
+    category, option = identity.split(":", 1)
+    record = "7" * 64
+    core = {
+        "review_case_id": "review_case_" + "a" * 64,
+        "report_id": "report_" + "b" * 64,
+        "proposal_set_id": "proposal_set_" + "c" * 64,
+        "proposal_id": "review_proposal_" + "d" * 64,
+        "target_fingerprint": "e" * 64,
+        "destination": "series",
+        "outcome": "candidate",
+        "candidate_id": "alternative_" + "f" * 64,
+        "resolved_policy_id": "resolved_policy_" + "0" * 64,
+        "policy_generation": 1,
+        "rule_id": "shadow_rule_" + "1" * 64,
+        "policy_category": category,
+        "policy_option": option,
+        "source_outcome_id": "shadow_outcome_" + "3" * 64,
+        "bundle_id": None,
+    }
+
+    assert identity not in QUALIFIED_POLICY_OPTIONS
+    for offered in (
+        record,
+        F19A_QUALIFICATION_MANIFEST_SHA256,
+        F20_QUALIFICATION_CANDIDATE_SHA256,
+        F38_QUALIFICATION_MANIFEST_SHA256,
+    ):
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **core, qualification_manifest_sha256=offered, occurred_at=1
+            )
+        assert not qualification_manifest_is_current(category, option, offered)
+
+    _f46_record(monkeypatch, identity, record)
+    value = AutomaticDecision.create(
+        **core, qualification_manifest_sha256=record, occurred_at=1
+    )
+    assert record == value.qualification_manifest_sha256
+    assert qualification_manifest_is_current(category, option, record)
+    assert value == AutomaticDecision.from_json(value.to_json())
+    # The identity is its own lane, so a suspension of the base category is
+    # what withholds it.
+    assert "series" == automatic_safety_category(category, option)
+
+    for offered in (
+        F19A_QUALIFICATION_MANIFEST_SHA256,
+        F20_QUALIFICATION_CANDIDATE_SHA256,
+        F38_QUALIFICATION_MANIFEST_SHA256,
+        "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",
+    ):
+        assert not qualification_manifest_is_current(category, option, offered)
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **core, qualification_manifest_sha256=offered, occurred_at=2
+            )
+    # The record was named after an ebook option; it never speaks for one.
+    assert not qualification_manifest_is_current("series", "primary_narrative", record)
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(
+            **{**core, "policy_option": "primary_narrative"},
+            qualification_manifest_sha256=record,
+            occurred_at=3,
+        )
+    # Rotating the record leaves the persisted decision readable history and
+    # strips its effect authority, exactly as an ebook rotation does.
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_QUALIFICATION_MANIFEST_SHA256",
+        "8" * 64,
+    )
+    monkeypatch.setattr(
+        automatic_decision,
+        "_PRIOR_F46_QUALIFICATION_MANIFESTS",
+        ((record, frozenset({identity})),),
+    )
+    assert value == AutomaticDecision.from_json(value.to_json())
+    assert not qualification_manifest_is_current(category, option, record)
+    assert qualification_manifest_is_current(category, option, "8" * 64)
+    # Withdrawing it entirely refuses even the read: nothing in this envelope
+    # ever spoke for that identity.
+    monkeypatch.setattr(automatic_decision, "_PRIOR_F46_QUALIFICATION_MANIFESTS", ())
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        frozenset(),
+    )
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.from_json(value.to_json())
+
+
+def test_an_unqualified_audiobook_tranche_never_mints_a_decision(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every named tranche fails closed while its own record is absent (#967)."""
+    _f46_record(monkeypatch, F46_SERIES_IDENTITY, "7" * 64)
+    series_category, series_option = F46_SERIES_IDENTITY.split(":", 1)
+    assert qualification_manifest_is_current(series_category, series_option, "7" * 64)
+    for identity in sorted(audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES):
+        if identity == F46_SERIES_IDENTITY:
+            continue
+        category, option = identity.split(":", 1)
+        assert not qualification_manifest_is_current(category, option, "7" * 64)
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                review_case_id="review_case_" + "a" * 64,
+                report_id="report_" + "b" * 64,
+                proposal_set_id="proposal_set_" + "c" * 64,
+                proposal_id="review_proposal_" + "d" * 64,
+                target_fingerprint="e" * 64,
+                destination=identity.split(":", 1)[0],
+                outcome="candidate",
+                candidate_id="alternative_" + "f" * 64,
+                resolved_policy_id="resolved_policy_" + "0" * 64,
+                policy_generation=1,
+                rule_id="shadow_rule_" + "1" * 64,
+                policy_category=category,
+                policy_option=option,
+                qualification_manifest_sha256="7" * 64,
+                source_outcome_id="shadow_outcome_" + "3" * 64,
+                bundle_id=None,
+                occurred_at=1,
+            )
+
+
+def test_each_historical_manifest_digest_has_one_frozen_option_binding():
+    for rows in (
+        automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS,
+        automatic_decision._PRIOR_F20_QUALIFICATION_MANIFESTS,
+    ):
+        assert len(rows) == len({digest for digest, _ in rows})
+    rows = dict(automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS)
+    for digest in (
+        "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523",
+        "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae",
+    ):
+        assert (
+            rows[digest] == automatic_decision._PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS
+        )

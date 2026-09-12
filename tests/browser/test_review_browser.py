@@ -17,7 +17,7 @@ from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, cast
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
 import pytest
@@ -58,6 +58,7 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessView,
     ReviewerEngineStatus,
 )
+from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
     AudioEmbeddedCover,
@@ -86,6 +87,7 @@ from mechanical_librarian.interfaces.web.setup import create_setup_app
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asin_lane_observation,
+    corroborated_audiobook_report,
 )
 from tests.support.metadata_report_doubles import audio_result
 from tests.support.ports import ReservedPort, bind_loopback
@@ -274,6 +276,57 @@ def _publish_audiobook_case(repository: Any) -> str:
     return cast("str", admitted["review_case_id"])
 
 
+def _publish_audiobook_tranche_case(repository: Any) -> str:
+    """Decide one recording's ASIN under a test-supplied F46 record.
+
+    The caller holds the record open around this whole server, so the
+    projection, the decision and the rail all read the same qualified
+    envelope (#967).
+    """
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        OPTION_CATALOGUE,
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+
+    report = corroborated_audiobook_report(
+        connection="primary",
+        library="ebooks",
+        item="audio-tranche-item",
+        identity="5" * 64,
+        content_digest="6" * 64,
+    )
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    }
+    destinations["asin"] = "automatic"
+    profile = MetadataPolicyProfile.create(
+        "F46 ASIN tranche", dict(DEFAULT_OPTIONS), destinations
+    )
+    resolved = resolve_policy(profile, "ebooks")
+    repository.enter_shadow_preview(1)
+    repository.create_metadata_policy_draft(profile.canonical_json)
+    repository.activate_metadata_policy(
+        profile.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        (("ebooks", resolved.resolved_id, resolved.canonical_json),),
+        2,
+    )
+    repository.activate_qualified_automatic(3)
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    outcome = repository.persist_shadow_outcome(case_id, 4)
+    assert outcome not in {"inactive", "stale"}, outcome
+    return cast("str", case_id)
+
+
 @contextmanager
 def _server(
     *,
@@ -313,6 +366,7 @@ def _server(
     preparation_terminal: bool = False,
     audiobook: bool = False,
     audiobook_case: bool = False,
+    audiobook_tranche: bool = False,
     settings_document: OwnerSettingsDocument | None = _DEFAULT_SETTINGS_DOCUMENT,
     on_app: Callable[[Any], None] | None = None,
 ):
@@ -352,6 +406,11 @@ def _server(
         connection.commit()
         connection.close()
         settings = OwnerSettingsOperations(repository.owner_settings_store())
+    if audiobook_tranche:
+        # The tranche's policy has to reach the automatic posture before any
+        # other case exists, because confirmation requires a settled
+        # transition.
+        _publish_audiobook_tranche_case(repository)
     cover_considerations = None
     if cover:
         # Real pixel dimensions, because containment is a property of the
@@ -517,7 +576,25 @@ def _server(
                 report, resolved.resolved_id, human_review_destinations(resolved)
             )
         else:
-            proposal_set = evaluate_report(report)
+            from mechanical_librarian.domain.metadata_policy import (
+                human_review_destinations as _effective_destinations,
+            )
+
+            # A fixture that activated a policy of its own (the F46 tranche)
+            # leaves a current resolution this report has to be evaluated
+            # under, or admission refuses it as changed.
+            current_policy = repository.current_resolved_metadata_policy(
+                report.target.library
+            )
+            proposal_set = (
+                evaluate_report(report)
+                if current_policy is None
+                else evaluate_report(
+                    report,
+                    current_policy.resolved_id,
+                    _effective_destinations(current_policy),
+                )
+            )
         repository.publish_proposal(proposal_set)
         case_id = json.loads(repository.admit_review_case(proposal_set))[
             "review_case_id"
@@ -3340,6 +3417,96 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case() -> None:
                     page.get_by_text("Owner selected a proposed value.").first
                 ).to_be_visible()
                 assert 0 == page.get_by_text(RECORDED_ONLY_REASON).count()
+            browser.close()
+        assert errors == []
+
+
+def test_a_qualified_audiobook_tranche_states_its_candidate_backing_and_gate() -> None:
+    """A6: the field rail says what decided a recording's field and why.
+
+    Under a test-supplied F46 ASIN record the recording's ASIN is resolved
+    automatically. The rail states the candidate, the authorities behind it and
+    the gate that bound the identifier to this recording, while Narrators --
+    named by the same two authorities but without a record -- is still the
+    owner's to answer (#967).
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        os.chmod(hash_path, 0o600)
+        certificate, key = _certificate(root)
+        errors: list[str] = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": 1440, "height": 900},
+                reduced_motion="reduce",
+            )
+            page = context.new_page()
+            page.on("pageerror", lambda error: errors.append(str(error)))
+            page.on(
+                "console",
+                lambda message: (
+                    errors.append(message.text) if message.type == "error" else None
+                ),
+            )
+            with (
+                patch.object(
+                    audiobook_decision_qualification,
+                    "F46_PASSING_AUTOMATIC_OPTIONS",
+                    frozenset({audiobook_decision_qualification.F46_ASIN_IDENTITY}),
+                ),
+                patch.object(
+                    audiobook_decision_qualification,
+                    "F46_QUALIFICATION_MANIFEST_SHA256",
+                    "7" * 64,
+                ),
+                closing(ReservedPort()) as reserved_port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=reserved_port,
+                    audiobook_tranche=True,
+                ) as (origin, _case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&q=Project Hail Mary")
+                row = page.get_by_role(
+                    "button", name=re.compile("^Project Hail Mary")
+                ).first
+                expect(row).to_be_visible()
+                row.click()
+
+                page.get_by_role("button", name=re.compile("^Asin")).first.click()
+                choice = page.locator(".direct-choice").first
+                expect(choice).to_be_visible()
+                expect(choice).to_contain_text("B08G9PRS1K")
+                expect(choice).to_contain_text(
+                    "Selected from Audible and Audnexus to fill an empty ASIN field "
+                    "under a qualified automatic policy; the runtime gate "
+                    "corroborated that this recording is that product."
+                )
+
+                # Narrators is named by the same two authorities and has no
+                # record, so it is still a question the owner answers.
+                page.get_by_role("button", name=re.compile("^Narrators")).first.click()
+                narrators = page.locator(".direct-choice").first
+                expect(narrators).to_be_visible()
+                expect(narrators).to_contain_text("Ray Porter")
+                assert (
+                    0 == page.get_by_text("under a qualified automatic policy").count()
+                )
+                expect(
+                    page.get_by_role(
+                        "button", name=re.compile("^Choose proposed value: ")
+                    ).first
+                ).to_be_visible()
             browser.close()
         assert errors == []
 

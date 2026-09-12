@@ -40,6 +40,7 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    StrictBool,
     StrictInt,
     StrictStr,
     TypeAdapter,
@@ -1302,7 +1303,31 @@ _RICH_QUALIFICATION_ADAPTER: TypeAdapter[_RichQualification] = TypeAdapter(
 )
 
 
+class _AudiobookQualification(_ClosedModel):
+    """One audiobook decision tranche and whether a record qualified it.
+
+    `field` and `option` are the owner's existing policy category and option,
+    so a routing surface can read this exactly as it reads the rich records;
+    `identity` names the audiobook shape the record qualified and never
+    speaks for an ebook. Availability and the digest move together when unit
+    C publishes a record, so the shape is closed but neither is a `Literal`.
+    """
+
+    automatic_available: StrictBool
+    destination: Literal["asin", "narrators", "series"]
+    field: Literal["asin", "contributor_names", "series"]
+    identity: StrictStr = Field(max_length=128, pattern=r"^[a-z_]+:[a-z_]+:[a-z_]+$")
+    option: Literal["canonical", "preserve_exact", "primary_narrative"]
+    record_sha256: StrictStr | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+_AUDIOBOOK_QUALIFICATION_ADAPTER: TypeAdapter[_AudiobookQualification] = TypeAdapter(
+    _AudiobookQualification
+)
+
+
 class _PolicyProfileResponse(_ClosedModel):
+    audiobook_qualification: list[_AudiobookQualification]
     policy_id: str
     profile: _PolicyProfile
     rich_qualification: list[_RichQualification]
@@ -2467,6 +2492,10 @@ def _register_policy_routes(
         _require_session(sessions, ml_session)
         profile = notebook.active()
         return _PolicyProfileResponse(
+            audiobook_qualification=[
+                _AUDIOBOOK_QUALIFICATION_ADAPTER.validate_python(item)
+                for item in notebook.audiobook_qualification(profile)
+            ],
             policy_id=profile.policy_id,
             profile=_PolicyProfile.model_validate(profile.to_data()),
             rich_qualification=[
@@ -2666,6 +2695,10 @@ def _register_policy_routes(
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None
         return _PolicyProfileResponse(
+            audiobook_qualification=[
+                _AUDIOBOOK_QUALIFICATION_ADAPTER.validate_python(item)
+                for item in notebook.audiobook_qualification(profile)
+            ],
             policy_id=profile.policy_id,
             profile=_PolicyProfile.model_validate(profile.to_data()),
             rich_qualification=[
@@ -2690,6 +2723,10 @@ def _register_policy_routes(
         except MetadataPolicyApplicationError:
             raise HTTPException(404, detail={"code": "unavailable"}) from None
         return _PolicyProfileResponse(
+            audiobook_qualification=[
+                _AUDIOBOOK_QUALIFICATION_ADAPTER.validate_python(item)
+                for item in notebook.audiobook_qualification(profile)
+            ],
             policy_id=profile.policy_id,
             profile=_PolicyProfile.model_validate(profile.to_data()),
             rich_qualification=[

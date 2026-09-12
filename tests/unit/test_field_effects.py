@@ -53,6 +53,7 @@ from mechanical_librarian.application.field_effects import (
     authority_from_decision,
 )
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
+from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
@@ -2647,6 +2648,69 @@ def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
         destination="title",
         pre_value="old",
         desired_value=envelope("title", "new"),
+        target_fingerprint="e" * 64,
+        target_version="version-1",
+        dependency_digests=(DEPENDENCY,),
+        capability_digest=CAPABILITY,
+    )
+    assert result is not None
+    assert result.plan.authority.origin == "automatic_policy"
+    effects.target.seed(result.plan)
+    assert effects.service.apply(result.plan.plan_id).state == "verified"
+
+
+def test_an_activated_audiobook_tranche_plans_through_the_same_guarded_path(
+    effects: _EffectEnvironment, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An F46 decision reaches the planner exactly as an ebook's does.
+
+    ADR-0071 already extends guarded application to book-media destinations,
+    and an `AutomaticDecision` carries no `application` marker, so activating a
+    tranche is a widening of write authority under that existing envelope
+    rather than a new path. Consent, plan and effect are unchanged (#967).
+    """
+    identity = audiobook_decision_qualification.F46_ASIN_IDENTITY
+    category, option = identity.split(":", 1)
+    record = "7" * 64
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        frozenset({identity}),
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", record
+    )
+    automatic = AutomaticDecision.create(
+        review_case_id="review_case_" + "a" * 64,
+        report_id="report_" + "b" * 64,
+        proposal_set_id="proposal_set_" + "c" * 64,
+        proposal_id="review_proposal_" + "d" * 64,
+        target_fingerprint="e" * 64,
+        destination="asin",
+        outcome="candidate",
+        candidate_id="alternative_" + "f" * 64,
+        resolved_policy_id="resolved_policy_" + "0" * 64,
+        policy_generation=1,
+        rule_id="shadow_rule_" + "1" * 64,
+        policy_category=category,
+        policy_option=option,
+        qualification_manifest_sha256=record,
+        source_outcome_id="shadow_outcome_" + "3" * 64,
+        bundle_id=None,
+        occurred_at=1,
+    )
+    effects.authority.automatic_values[automatic.decision_id] = envelope(
+        "asin", "B08G9PRS1K"
+    )
+    _authorize(effects, automatic, work_id="recording-1")
+    result = effects.service.plan(
+        automatic,
+        connection="primary",
+        library="books",
+        work_id="recording-1",
+        destination="asin",
+        pre_value=None,
+        desired_value=envelope("asin", "B08G9PRS1K"),
         target_fingerprint="e" * 64,
         target_version="version-1",
         dependency_digests=(DEPENDENCY,),

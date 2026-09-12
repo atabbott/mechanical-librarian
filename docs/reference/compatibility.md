@@ -189,4 +189,4 @@ ISBN-linked title election uses `shadow-review-action-policy-v2`. The packet-v7
 candidate fact identifies only the elected title; it does not expand reviewer
 authority or require companion changes. **Clean rebuild required**: v23
 proposals, packet-v6 and their application stores are rejected before mutation.
-See [ADR-0073](../architecture/decisions/0073-independent-evidence-led-titles.md).
+See [ADR-0074](../architecture/decisions/0074-independent-evidence-led-titles.md).

@@ -9,10 +9,14 @@ from typing import TYPE_CHECKING, Protocol
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_cases import ReviewCaseError
+from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    qualified_policy_bases,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.cover_qualification_policy import (
-    COVER_AWARE_QUALIFIED_POLICY_OPTIONS,
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
+    cover_aware_qualified_policy_options,
 )
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
@@ -497,10 +501,34 @@ def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object
     )
 
 
+def audiobook_qualification(
+    profile: MetadataPolicyProfile,
+) -> tuple[dict[str, object], ...]:
+    """Expose which audiobook tranches a published F46 record qualifies.
+
+    Routing is one owner choice for the whole library, so the surface that
+    offers Automatic has to be able to see an audiobook record: while the
+    passing set is empty every tranche states itself unavailable, and
+    publishing a record makes the same summary state the option routable with
+    no further change here or above (#967).
+    """
+    if type(profile) is not MetadataPolicyProfile:
+        raise MetadataPolicyApplicationError("policy validation is invalid")
+    return audiobook_decision_qualification.public_summary()
+
+
 def require_qualified_automatic(
     profile: MetadataPolicyProfile,
 ) -> MetadataPolicyProfile:
-    """Allow Automatic intent only while it is separately qualified."""
+    """Allow Automatic intent only while it is separately qualified.
+
+    Routing is one owner choice for the whole library, so an option an
+    audiobook record qualifies becomes routable here. What that routing then
+    does to an ebook is unchanged: only a recording acts under the audiobook
+    identity, and an ebook under the same routing still needs the ebook
+    envelope, which is why `asin` is exempted from the rich check and never
+    added to it (#967).
+    """
     if type(profile) is not MetadataPolicyProfile:
         raise MetadataPolicyApplicationError("policy validation is invalid")
     requested = {
@@ -512,9 +540,9 @@ def require_qualified_automatic(
         f"{field}:{option}"
         for field, option in profile.options
         if field in F20_RICH_FIELDS and dict(profile.destinations)[field] == "automatic"
-    }
+    } - qualified_policy_bases()
     if (
-        requested and not requested.issubset(COVER_AWARE_QUALIFIED_POLICY_OPTIONS)
+        requested and not requested.issubset(cover_aware_qualified_policy_options())
     ) or not rich_requested.issubset(F20_PASSING_AUTOMATIC_OPTIONS):
         raise MetadataPolicyApplicationError("policy automatic unqualified")
     return profile
@@ -603,6 +631,7 @@ class PolicyNotebook:
             ) from error
 
     rich_qualification = staticmethod(rich_qualification)
+    audiobook_qualification = staticmethod(audiobook_qualification)
 
     def validate(self, profile: MetadataPolicyProfile) -> MetadataPolicyProfile:
         return require_qualified_automatic(profile)
@@ -822,7 +851,7 @@ class PolicyNotebook:
                 for category, destination in resolved.destinations
                 if destination == "automatic"
             }
-            if not requested.issubset(COVER_AWARE_QUALIFIED_POLICY_OPTIONS):
+            if not requested.issubset(cover_aware_qualified_policy_options()):
                 raise MetadataPolicyApplicationError("policy automatic unqualified")
             transition = self._repository.activate_metadata_policy(
                 policy_id, expected_active_policy_id, resolutions, activated_at

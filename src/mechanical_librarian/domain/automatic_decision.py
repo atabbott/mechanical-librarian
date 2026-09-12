@@ -7,6 +7,7 @@ import json
 import re
 from dataclasses import dataclass
 
+from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.contributor_display_qualification import (
     F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
     F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
@@ -22,7 +23,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "df88fef11c2d9d015c4642688cf5f5f62902f90de9474eb2828417aaeebdb420"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "15766b5b2232b2bb7e64cefa4e529c134b7c3da829f5f801a1b43afb897b4676"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -44,12 +45,18 @@ F38_QUALIFIED_POLICY_OPTIONS = frozenset({
     f"{F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY}:"
     f"{F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION}",
 })
+F46_QUALIFIED_POLICY_OPTIONS = (
+    audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+)
 QUALIFIED_POLICY_OPTIONS = (
     F19A_QUALIFIED_POLICY_OPTIONS
     | F20_PASSING_AUTOMATIC_OPTIONS
     | F38_QUALIFIED_POLICY_OPTIONS
+    | F46_QUALIFIED_POLICY_OPTIONS
 )
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    ("df88fef11c2d9d015c4642688cf5f5f62902f90de9474eb2828417aaeebdb420", F19A_QUALIFIED_POLICY_OPTIONS),
+    ("010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
     ("f9f172406ddb2a8b5ca282cad3fa25c29148ac7e04100caccc567c6648d6098b", F19A_QUALIFIED_POLICY_OPTIONS),
     ("91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
     (
@@ -79,6 +86,7 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
         "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",
         _PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS,
     ),
+
 )
 _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "subtitle:fill_empty",
@@ -89,6 +97,8 @@ _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
 })
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    ("74285ed19d72c767b0589486c6850a2808e9fc9911b7a08b08c34e6979f3a8b2", F20_PASSING_AUTOMATIC_OPTIONS),
+    ("2e76fdb8372867c95b476208ebb0ae2bd175171439559d4f56eec8d29611c6c6", F20_PASSING_AUTOMATIC_OPTIONS),
     ("cbdffb1fe38afa6eb03c2a3b9be05bd8ffe8930a884710b96cc25d0fa14f6c5c", F20_PASSING_AUTOMATIC_OPTIONS),
     ("679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321", _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS),
     (
@@ -237,7 +247,12 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         "14061bb1d1df8305d75cc2330ce37a931d01c954f1be3cd03e7587558704fbfc",
         _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
+
 )
+# No audiobook record has been published, so no audiobook digest has ever been
+# current and none can be read back. Rotations land here exactly as the ebook
+# ones above do.
+_PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = ()
 
 
 def automatic_safety_category(policy_category: str, policy_option: str) -> str:
@@ -258,6 +273,19 @@ def _current_qualification_manifest_sha256(
         return F38_QUALIFICATION_MANIFEST_SHA256
     if identity in F20_PASSING_AUTOMATIC_OPTIONS:
         return F20_QUALIFICATION_CANDIDATE_SHA256
+    # An audiobook identity carries a third segment, so it can never collide
+    # with an ebook option above and no prior envelope can speak for it. The
+    # envelope is read live, because a tranche is activated by editing that
+    # module alone.
+    if audiobook_decision_qualification.audiobook_identity(
+        policy_category, policy_option
+    ) is not None:
+        try:
+            return audiobook_decision_qualification.qualification_manifest_sha256(
+                identity
+            )
+        except audiobook_decision_qualification.AudiobookQualificationError as error:
+            raise AutomaticDecisionError("invalid") from error
     raise AutomaticDecisionError("invalid")
 
 
@@ -290,6 +318,7 @@ def _qualification_manifest_is_valid(
         manifest_sha256 == prior_digest and identity in qualified_options
         for prior_digest, qualified_options in _PRIOR_F20_QUALIFICATION_MANIFESTS
         + _PRIOR_F19A_QUALIFICATION_MANIFESTS
+        + _PRIOR_F46_QUALIFICATION_MANIFESTS
     )
 
 

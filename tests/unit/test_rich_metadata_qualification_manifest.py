@@ -57,14 +57,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v26.json"
+    "f20-rich-metadata-qualification-candidate-v27.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v12.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v13.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1958,6 +1958,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
             "src/mechanical_librarian/adapters/persistence/schema.py",
             "src/mechanical_librarian/adapters/persistence/decisions.py",
             "src/mechanical_librarian/application/decision_preview.py",
+            "src/mechanical_librarian/domain/audiobook_decision_qualification.py",
         }
     )
     assert set(rich["source_closure"]) == expected
@@ -1978,13 +1979,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v11.json",
-            "f9f172406ddb2a8b5ca282cad3fa25c29148ac7e04100caccc567c6648d6098b",
+            "f19a-qualification-manifest-v12.json",
+            "df88fef11c2d9d015c4642688cf5f5f62902f90de9474eb2828417aaeebdb420",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v25.json",
-            "cbdffb1fe38afa6eb03c2a3b9be05bd8ffe8930a884710b96cc25d0fa14f6c5c",
+            "f20-rich-metadata-qualification-candidate-v26.json",
+            "74285ed19d72c767b0589486c6850a2808e9fc9911b7a08b08c34e6979f3a8b2",
         ),
     ):
         assert (
@@ -2052,7 +2053,7 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
     prior = json.loads(V23_MANIFEST.read_bytes())
     assert (
         hashlib.sha256(V24_MANIFEST.read_bytes()).hexdigest()
-        == "679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321"
+        == "2e76fdb8372867c95b476208ebb0ae2bd175171439559d4f56eec8d29611c6c6"
     )
     assert current["schema"] == "f20-rich-metadata-qualification-candidate-v24"
     rotation = current["authority_rotation"]
@@ -2090,8 +2091,23 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
     # move again.
     expected = dict.fromkeys(sources, "unchanged")
     expected["src/mechanical_librarian/domain/automatic_decision.py"] = (
-        "historical_reader_only"
+        "historical_reader_and_audiobook_tranche_wiring"
     )
+    # V24 is re-pinned in place over the inert F46 audiobook tranche wiring, so
+    # its delta against v23 states the media-health projection and that wiring
+    # together. The wiring grants no identity while no audiobook record is
+    # published, so v24 keeps its options, scoring and every authority rule
+    # (#967).
+    for name in (
+        "adapters/persistence/field_effect_validation.py",
+        "adapters/persistence/metadata_reports.py",
+        "application/metadata_policy.py",
+        "domain/metadata_policy.py",
+        "domain/rich_metadata_preview.py",
+        "domain/shadow_outcome.py",
+    ):
+        expected["src/mechanical_librarian/" + name] = "audiobook_tranche_wiring"
+    expected["src/mechanical_librarian/domain/metadata_report.py"] = "comment_only"
     assert closure["bound_source_classification"] == expected
     for name, category in expected.items():
         assert (sources[name] == prior_sources[name]) is (category == "unchanged")
@@ -2101,6 +2117,11 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
         "states the delta against v23 alone and is not cumulative" in closure["proof"]
     )
     assert "media_health_projection" in closure["proof"]
+    assert "no rescoring or fresh holdout is claimed" in closure["proof"]
+    # The byte binding is rotated twice over: the media-health observation
+    # view, and the policy state's audiobook qualification summary the owner's
+    # routing surface reads (#967).
+    assert "audiobook qualification summary" in closure["proof"]
     provider = current["provider_contract_source_closure"]
     projection = current["review_projection_source_closure"]
     assert provider == prior["provider_contract_source_closure"]
@@ -2113,7 +2134,14 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
         name
         for name, digest in projection["behavior_sources"].items()
         if digest != prior["review_projection_source_closure"]["behavior_sources"][name]
-    } == {"src/mechanical_librarian/application/review_web.py"}
+    } == {
+        "src/mechanical_librarian/" + name
+        for name in (
+            "adapters/persistence/metadata_policy.py",
+            "adapters/persistence/metadata_reports.py",
+            "application/review_web.py",
+        )
+    }
     assert projection["issue"] == 144
     for retained in (provider, projection):
         assert retained["fresh_scoring_run"] is False
@@ -2140,14 +2168,94 @@ def test_v24_binds_the_media_health_projection_without_rescoring() -> None:
     prior_title = json.loads(V9_F19A_MANIFEST.read_bytes())
     assert (
         hashlib.sha256(V10_F19A_MANIFEST.read_bytes()).hexdigest()
-        == "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523"
+        == "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae"
     )
     assert (
         title["prior_manifest_sha256"]
         == hashlib.sha256(V9_F19A_MANIFEST.read_bytes()).hexdigest()
     )
-    rotated = {"prior_manifest_sha256", "review_projection_source_closure"}
+    rotated = {
+        "association_requalification",
+        "prior_manifest_sha256",
+        "review_projection_source_closure",
+    }
     assert {k: v for k, v in title.items() if k not in rotated} == {
         k: v for k, v in prior_title.items() if k not in rotated
     }
+    # The association evidence v9 measured is inherited exactly. Only the
+    # projection follow-up's scope is restated, because the tranche wiring
+    # reshaped those sources: the claim the retained measurements carry on is
+    # byte-identical ebook output, not an unchanged Python AST (#967).
+    association = title["association_requalification"]
+    prior_association = prior_title["association_requalification"]
+    followup = "review_projection_followup"
+    assert {k: v for k, v in association.items() if k != followup} == {
+        k: v for k, v in prior_association.items() if k != followup
+    }
+    assert {k: v for k, v in association[followup].items() if k != "scope"} == {
+        k: v for k, v in prior_association[followup].items() if k != "scope"
+    }
+    assert "the Python AST is unchanged" in prior_association[followup]["scope"]
+    assert "the Python AST is unchanged" not in association[followup]["scope"]
+    assert "ebook output is byte-identical" in association[followup]["scope"]
     assert title["review_projection_source_closure"] == projection
+
+
+@pytest.mark.parametrize(
+    "filename,original_digest,main_digest,referrer",
+    [
+        (
+            "f19a-qualification-manifest-v10.json",
+            "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523",
+            "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae",
+            "f19a-qualification-manifest-v11.json",
+        ),
+        (
+            "f20-rich-metadata-qualification-candidate-v24.json",
+            "679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321",
+            "2e76fdb8372867c95b476208ebb0ae2bd175171439559d4f56eec8d29611c6c6",
+            "f20-rich-metadata-qualification-candidate-v25.json",
+        ),
+    ],
+)
+def test_base_integration_retains_both_exact_historical_manifest_origins(
+    filename, original_digest, main_digest, referrer
+):
+    original_path = "docs/reference/" + filename
+    retained_path = (
+        original_path.removesuffix(".json") + "-" + original_digest + ".json"
+    )
+    assert (
+        hashlib.sha256((MANIFEST.parents[2] / retained_path).read_bytes()).hexdigest()
+        == original_digest
+    )
+    assert (
+        hashlib.sha256(MANIFEST.with_name(filename).read_bytes()).hexdigest()
+        == main_digest
+    )
+    historical = json.loads(MANIFEST.with_name(referrer).read_bytes())
+    assert historical["prior_manifest_path"] == original_path
+    assert historical["prior_manifest_sha256"] == original_digest
+    expected = [
+        {
+            "origin_commit": "bdf65cd39d0c03afbe30811216e8620d52baa3f4",
+            "original_path": original_path,
+            "sha256": original_digest,
+            "retained_path": retained_path,
+        },
+        {
+            "origin_commit": "dd7f7b7f911688b7df579ce288ffff5905577efe",
+            "original_path": original_path,
+            "sha256": main_digest,
+            "retained_path": original_path,
+        },
+    ]
+    for path in (LATEST_MANIFEST, LATEST_F19A_MANIFEST):
+        integration = json.loads(path.read_bytes())["base_integration"]
+        assert [
+            entry
+            for entry in integration["historical_origins"]
+            if entry["original_path"] == original_path
+        ] == expected
+        assert integration["f46"]["manifest_sha256"] is None
+        assert integration["f46"]["passing_options"] == []

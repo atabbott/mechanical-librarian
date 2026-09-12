@@ -354,4 +354,4 @@ proposal retains alternatives and meaningful source associations. One provider
 is sufficient; same-work print and ebook ISBNs may coexist. Material competing
 work, author, title or variant evidence withholds the new election. The current
 reason is `isbn_creator_supported_title`; Ask keeps the choice available and
-Ignore suppresses its action. See [ADR-0073](../architecture/decisions/0073-independent-evidence-led-titles.md).
+Ignore suppresses its action. See [ADR-0074](../architecture/decisions/0074-independent-evidence-led-titles.md).

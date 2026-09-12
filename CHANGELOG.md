@@ -14,6 +14,13 @@
   Failed workspace loads can be retried without reloading the browser page.
   Existing application state requires a clean rebuild. (#1007)
 
+- An audiobook decision class can now earn automatic authority through its own
+  qualification record, one tranche at a time, and no ebook record ever speaks
+  for a recording. No record is published yet, so every audiobook proposal is
+  still the owner's and nothing automatic acts on one. Routing `asin` to
+  Automatic becomes possible only once a record qualifies it; an ebook's `asin`
+  is unchanged. (#967)
+
 - An audiobook's evidence view, its review case and the rows a stopped
   preparation leaves behind now state a closed set of typed media-health
   observations, each naming the track or provider evidence it was read from and
@@ -39,10 +46,9 @@
 
 - Settings now carries a Cover evidence switch for Audible and iTunes, off while
   the provider is off and unchanged for every other source. Setup, Settings and
-  the review report's provider label state one canonical name per provider, with
-  the instance name shown beside it. The audiobook runtime corroboration gate
-  owns its own 90-second band instead of borrowing the report's comparison band.
-  (#967)
+  the review surfaces state one canonical name per provider, with the instance
+  name shown beside it. The audiobook runtime corroboration gate owns its own
+  90-second band instead of borrowing the report's comparison band. (#967)
 
 - Restore manual mutant generation, test-selection statistics, and audit execution
   with the pinned mutation engine (#901).

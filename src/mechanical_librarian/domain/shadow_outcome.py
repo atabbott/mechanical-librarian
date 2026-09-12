@@ -8,6 +8,7 @@ import re
 from dataclasses import dataclass
 from typing import cast
 
+from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.contributor_display_qualification import (
     F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
     F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
@@ -19,11 +20,13 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     TargetDestination,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import (
     DECORATION_TIDY_TITLE_REASONS,
     EVIDENCE_LED_TITLE_REASON,
     MAX_BIBLIOGRAPHIC_COMBINATIONS,
+    MEDIA_KINDS,
     PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,
     PROVIDER_CONSENSUS_TITLE_REASONS,
     ProposalSet,
@@ -66,8 +69,30 @@ _POLICY_CATEGORY_BY_DESTINATION = {
 _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY = "title"
 _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION = "replace_target:provider_consensus_noise"
 _DECORATION_TIDY_TITLE_POLICY_OPTION = "replace_target:decoration_tidy"
+
+
+def _audiobook_policy_options() -> dict[str, tuple[str, ...]]:
+    """Group each F46 identity's audiobook option under its owner category.
+
+    An identity is one existing category's option with an audiobook reason
+    appended, so a recording's tranche is nameable here without the shipped
+    `OPTION_CATALOGUE` -- and therefore every persisted profile -- changing at
+    all (#967).
+    """
+    options: dict[str, tuple[str, ...]] = {}
+    for identity in sorted(audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES):
+        category, option = identity.split(":", 1)
+        options[category] = (*options.get(category, ()), option)
+    return options
+
+
+_AUDIOBOOK_POLICY_OPTIONS = _audiobook_policy_options()
 _POLICY_OPTIONS_BY_CATEGORY = {
     **OPTION_CATALOGUE,
+    **{
+        category: (*OPTION_CATALOGUE[category], *options)
+        for category, options in _AUDIOBOOK_POLICY_OPTIONS.items()
+    },
     _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY: (
         _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION,
         _DECORATION_TIDY_TITLE_POLICY_OPTION,
@@ -75,6 +100,7 @@ _POLICY_OPTIONS_BY_CATEGORY = {
     ),
     F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY: (
         *OPTION_CATALOGUE[F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY],
+        *_AUDIOBOOK_POLICY_OPTIONS.get(F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY, ()),
         F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
     ),
 }
@@ -243,6 +269,49 @@ class ShadowFieldOutcome:
         return {"outcome_id": self.outcome_id, **self._identity_data()}
 
 
+def _audiobook_policy_identity(
+    destination: str, category: object, option: object
+) -> str | None:
+    """Name the F46 identity a recording's destination would act under.
+
+    A recording is not an ebook, so an ebook's qualification never speaks for
+    one. Only these three destinations have an audiobook route at all, and only
+    while the resolved option is the exact one the tranche was measured for
+    (#967).
+    """
+    identity = audiobook_decision_qualification.F46_IDENTITY_BY_DESTINATION.get(
+        destination
+    )
+    if identity is None:
+        return None
+    base_category, base_option = identity.rsplit(":", 1)[0].split(":", 1)
+    if category != base_category or option != base_option:
+        return None
+    return identity
+
+
+def _audiobook_destination(identity: str | None, policy_destination: str) -> str:
+    """Route a recording to the owner unless a record qualifies its identity.
+
+    Ignore, Ask and unsupported are the owner's own routing and stay exactly as
+    resolved; only Automatic is withdrawn, so an unqualified recording reaches
+    the owner as `ask`/`manual` and never as a minting error (#967).
+    """
+    if policy_destination != "automatic":
+        return policy_destination
+    passing = audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+    return "automatic" if identity is not None and identity in passing else "ask"
+
+
+def _narrators_target_is_empty(report: MetadataReport) -> bool:
+    """Whether this recording states no narrator at all today."""
+    return not any(
+        field.destination is TargetDestination.NARRATORS
+        and field.state is TargetFieldState.VALUE
+        for field in report.target.fields
+    )
+
+
 def _rich_field_outcome(
     preview: RichFieldPreview,
     *,
@@ -251,10 +320,14 @@ def _rich_field_outcome(
     policy_destination: str,
     proposal_id: str,
     catalogue_sha256: str,
+    policy_option: str | None = None,
 ) -> ShadowFieldOutcome:
     candidate_id = (
         preview.source_candidate_id if preview.outcome == "projected" else None
     )
+    # The acting option is the preview's own unless a recording's tranche
+    # identity is the one governing this destination.
+    option = preview.option if policy_option is None else policy_option
     disposition = (
         "ignore"
         if policy_destination == "ignore"
@@ -293,7 +366,7 @@ def _rich_field_outcome(
             "decision_policy_sha256": DECISION_POLICY_SHA256,
             "decision_policy_version": DECISION_POLICY_VERSION,
             "destination": policy_destination,
-            "option": preview.option,
+            "option": option,
         }
     )
     citation_ids = tuple(sorted(preview.source_evidence_references))
@@ -317,7 +390,7 @@ def _rich_field_outcome(
         "disposition": disposition,
         "policy_category": category,
         "policy_destination": policy_destination,
-        "policy_option": preview.option,
+        "policy_option": option,
         "proposal_id": proposal_id,
         "qualification_candidate_id": qualification_candidate_id,
         "reason_code": reason_code,
@@ -328,7 +401,7 @@ def _rich_field_outcome(
         proposal_id,
         destination,
         category,
-        preview.option,
+        option,
         policy_destination,
         disposition,
         action_id,
@@ -369,7 +442,16 @@ class ShadowOutcomeSet:
         policy_generation: int,
         report: MetadataReport,
         proposal: ProposalSet,
+        *,
+        media_kind: str,
     ) -> "ShadowOutcomeSet":
+        """Project one case's decisions under the policy that governs it.
+
+        `media_kind` is stated by the caller rather than inferred here: what a
+        projection may do to a recording is the whole subject of F46, so the
+        seam that holds the case says which kind it holds and this refuses any
+        disagreement (#967).
+        """
         if (
             type(case) is not ReviewCase
             or type(decisions) is not ShadowDecisionSet
@@ -378,6 +460,9 @@ class ShadowOutcomeSet:
             or type(proposal) is not ProposalSet
             or type(policy_generation) is not int
             or policy_generation < 1
+            or type(media_kind) is not str
+            or media_kind not in MEDIA_KINDS
+            or media_kind != case.media_kind
             or decisions.review_case_id != case.review_case_id
             or report.report_id != case.report_id
             or proposal.proposal_set_id != case.proposal_set_id
@@ -425,14 +510,16 @@ class ShadowOutcomeSet:
                 provider_consensus_contributor_display_proposals.add(
                     cast("str", value["proposal_id"])
                 )
+        # The rich projection owns these destinations end to end, so the
+        # deterministic decision policy's answer for them is not read at all.
+        # A recording's ASIN joins them: its tranche is projected from the
+        # retained gate-corroborated alternative, never from a decision policy
+        # that does not support the destination (#967).
+        rich_destinations = {"series", "genres", "tags", "description", "isbn"}
+        if media_kind == "audiobook":
+            rich_destinations = rich_destinations | {"asin"}
         for decision in decisions.decisions:
-            if decision.destination in {
-                "series",
-                "genres",
-                "tags",
-                "description",
-                "isbn",
-            }:
+            if decision.destination in rich_destinations:
                 continue
             category: str | None = _POLICY_CATEGORY_BY_DESTINATION.get(
                 decision.destination
@@ -465,6 +552,20 @@ class ShadowOutcomeSet:
                     "unsupported" if category is None else destinations[category]
                 )
                 policy_option = None if category is None else options[category]
+            if media_kind == "audiobook":
+                identity = _audiobook_policy_identity(
+                    decision.destination, category, policy_option
+                )
+                if identity is not None and (
+                    decision.destination != "narrators"
+                    or _narrators_target_is_empty(report)
+                ):
+                    category, policy_option = identity.split(":", 1)
+                else:
+                    identity = None
+                policy_destination = _audiobook_destination(
+                    identity, policy_destination
+                )
             if policy_destination == "ignore":
                 disposition = "ignore"
             elif policy_destination == "ask":
@@ -550,15 +651,25 @@ class ShadowOutcomeSet:
             ("tags", "tags"),
             ("description_fill", "description"),
             ("isbn_form", "isbn"),
+            *((("asin", "asin"),) if media_kind == "audiobook" else ()),
         ):
+            rich_destination = destinations[category]
+            rich_option: str | None = None
+            if media_kind == "audiobook":
+                identity = _audiobook_policy_identity(
+                    destination, category, options[category]
+                )
+                rich_destination = _audiobook_destination(identity, rich_destination)
+                rich_option = None if identity is None else identity.split(":", 1)[1]
             fields.append(
                 _rich_field_outcome(
                     rich[category],
                     category=category,
                     destination=destination,
-                    policy_destination=destinations[category],
+                    policy_destination=rich_destination,
                     proposal_id=proposals[destination],
                     catalogue_sha256=decisions.catalogue_sha256,
+                    policy_option=rich_option,
                 )
             )
         # The subtitle destination has two governing categories. An acting
@@ -575,7 +686,11 @@ class ShadowOutcomeSet:
                     rich["subtitle"],
                     category="subtitle",
                     destination="subtitle",
-                    policy_destination=destinations["subtitle"],
+                    policy_destination=_audiobook_destination(
+                        None, destinations["subtitle"]
+                    )
+                    if media_kind == "audiobook"
+                    else destinations["subtitle"],
                     proposal_id=proposals["subtitle"],
                     catalogue_sha256=decisions.catalogue_sha256,
                 )

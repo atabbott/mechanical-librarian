@@ -7,7 +7,7 @@ This document defines product intent. Exact thresholds remain versioned configur
 ## Operating posture
 
 The current title qualification is
-[F19a v12](../reference/f19a-qualification-manifest-v12.json) (#1007).
+[F19a v13](../reference/f19a-qualification-manifest-v13.json) (#1007).
 Its new ISBN-and-creator title option is measured separately: twenty-five synthetic
 positive opportunities and two independently labelled retained real positives
 reach correct candidates and durable Automatic decisions; twenty-five synthetic
@@ -88,14 +88,22 @@ category suspension, and explicit recovery fail closed by retaining would-be
 automatic work in human Attention. Any field, option, or policy revision outside
 that exact envelope remains human-routed until separately qualified.
 
-No automatic authority reaches an audiobook. A recording's review case is
-decided by the owner alone: the shadow projection abstains before it reads
-policy, so no outcome exists for an automatic decision to be minted from, while
-the decision the owner does record applies through the guarded path
+An audiobook decision class earns automatic authority only through its own F46
+record. An identity is `category:option:audiobook_reason`: the owner's existing
+category and option, plus the exact audiobook shape a record qualified. No
+ebook envelope admits one and an audiobook record admits no ebook option, so an
+option qualified for ebooks never becomes automatic on a recording because it
+shares a category name
+([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
+
+While no record names an identity the projection abstains for the whole
+recording, exactly as it did before F46, and the decision the owner records
+applies through the guarded path
 ([ADR-0069](../architecture/decisions/0069-audiobook-review-cases-and-terminal-outcomes.md),
 [ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
-F46 is where the dominant audiobook decision classes may earn automatic
-authority, through the same qualification route every other option uses.
+Once a record exists, Automatic is withdrawn from every destination on that
+recording the record does not name, so an unqualified identity is always the
+owner's answer to give and never an authority failure.
 
 F35 (#884) adds a closed, provider-consensus title election to the v14
 ProposalSet policy: one exact local noisy title, one exact reversible pattern,

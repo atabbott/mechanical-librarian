@@ -7,7 +7,7 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Current title-consumer qualification (#1007)
 
-The current [v26 candidate](../reference/f20-rich-metadata-qualification-candidate-v26.json)
+The current [v27 candidate](../reference/f20-rich-metadata-qualification-candidate-v27.json)
 binds #1007's title and packet consumers, including replacement-only and
 complete ordered creator corrections. Published v25 remains immutable historical
 evidence. The current continuity proof is
@@ -18,6 +18,15 @@ they were neither relabelled nor replayed for this successor. Earlier metrics
 below remain historical evidence, not a current full-corpus equivalence claim.
 The option dispositions remain unchanged. Exact current source bindings are
 recorded separately from historical measurements.
+
+The base integration preserves incoming main's repinned v10/v24 at their
+canonical paths and retains the original-base bytes under digest-qualified
+historical filenames. Current v13/v27 record each origin commit, original path,
+digest and retained path; immutable v11/v25 references resolve by that original
+digest. All v11/v12/v25/v26 bytes remain unchanged. The same 52 title cases and
+current F20 consumers are remeasured through the merged code. The reached F46
+module is bound as an inert dependency: its record remains absent and its passing
+set empty, so no audiobook authority is added.
 
 ## Historical cover-choice source rotation (#999)
 
@@ -376,6 +385,49 @@ a dedicated Activity reader and serialized live repository observations. V20 and
 all historical measurements remain byte-frozen; no rescoring or fresh holdout is
 claimed. V20 decisions remain readable history but are stale for new effects;
 only the current qualification can authorize newly prepared automatic effects.
+
+## Audiobook tranches (#967)
+
+F20 measured ebook proposals, so its record answers for an ebook and for
+nothing else. `narrators` stays in the candidate's `excluded_destinations` for
+that reason: the destination is not unqualifiable, it is qualified elsewhere.
+F46 owns it, alongside audiobook series fill and the audiobook ASIN, each under
+its own identity and its own record
+([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
+
+No F46 record is published. `F46_PASSING_AUTOMATIC_OPTIONS` is empty and
+`F46_QUALIFICATION_MANIFEST_SHA256` is `None`, so every audiobook proposal is
+the owner's exactly as it was before: the projection abstains for the whole
+recording and mints nothing. Activating one tranche is three tokens -- the
+record file in `docs/reference/`, its digest, and the identity in the passing
+set -- and changes no wiring.
+
+Changing the passing set once audiobook outcomes exist is not a free edit in
+either direction: a stored outcome is replayed against the current set, so
+adding a second identity would turn a stored `ask` into an `automatic` and
+withdrawing one would do the reverse, and the recompute refuses both rather
+than reinterpreting them. Nothing can merge into that state while no record
+exists, and unit C owes the adoption path that both directions travel before
+the first one is published.
+
+A published record widens what the owner may route to Automatic, which is how
+`asin` becomes routable at all. It does not widen what an ebook does under that
+routing: an ebook's `asin` is still decided by the F20 record, which leaves it
+at Ask.
+
+Two of the three tranches cannot yet produce a candidate even under a record,
+because their destination is not projectable: `narrators` is not a supported
+destination of the deterministic shadow decision policy, and the audiobook
+series election is refused by the work-applicability gate (#971). Both are
+projection questions F46's qualification must settle before those tranches can
+be measured; the ASIN tranche is reachable today.
+
+The marketplace an ASIN belongs to is recorded on the provider candidate's
+evidence and stays there: it is not carried onto the decision or the field
+view, because doing so needs a `review-case-view` bump this unit does not
+make. The ASIN statement names the runtime gate that corroborated the
+recording instead.
+
 ## Provider recovery explanations source closure (#891)
 
 The [v21 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v21.json)
@@ -432,3 +484,10 @@ the 15 provider bindings, scoring, measurements, policy v23 and both closure fla
 are unchanged; no rescoring or fresh holdout is claimed. Each candidate's source
 classification states the delta against its immediate predecessor alone, so a
 source restated by an earlier candidate reads `unchanged` in the successor.
+
+The pair is then re-pinned in place for the inert F46 audiobook tranche wiring
+(#967), which restates seven frozen-contract bindings and all three bindings of
+the shared projection closure: its two persistence adapters and the review web
+application. The digests both manifests published before that restatement
+remain readable history only, and no option, score, measurement or authority
+rule moves.
