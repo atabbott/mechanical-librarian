@@ -403,7 +403,7 @@
     "src/mechanical_librarian/application/failure_diagnostics.py": "2aa922f5b5bfbd414d65092e20ac1fb0ace1cccb51ed1ea2850608e00661ae71",
     "src/mechanical_librarian/application/field_effects.py": "d9f85df089e54b583d2f97487be54525b1325f5ff41a0d9805c3cdbf7db7164f",
     "src/mechanical_librarian/application/metadata_policy.py": "868e975df4f8824f22e183383f28ee5c8fbf255dd854feb05143d70a7d91d2db",
-    "src/mechanical_librarian/application/metadata_report.py": "5175d9870f87028775d874ab975bd6a036f5295872cf8e602ff6d632e856a4e7",
+    "src/mechanical_librarian/application/metadata_report.py": "efc1cfd06306507c94bf99b19561f5f9c1ef79baf6841e17e6f4f283b8005265",
     "src/mechanical_librarian/application/provider_evidence.py": "9f6b41fd1ae40d3d70d05ec65705248e890eb374b5c5bde505997018689987b2",
     "src/mechanical_librarian/application/provider_recovery_evidence.py": "5a6b904a288f67a4f8fa68e3dde6c6245215bcdea4fafe8e880d41157063b28a",
     "src/mechanical_librarian/application/provider_retry_successor.py": "67c327c8b4baf159a4c621687ea40773901e61fe39f46c28abba52465f658be4",

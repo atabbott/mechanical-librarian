@@ -2652,13 +2652,10 @@ def _audio_with_runtime_observations(
 ) -> AudioFacts | None:
     """Record, once per candidate, the truncation qualification measured.
 
-    Read at report assembly rather than derived at read time because the
-    evidence it was read from is already gone: the candidate that stated the
-    longer running time was demoted to work scope on its way into this report,
-    and a reader of the published document has nothing left to compare. What is
-    retained is the statement itself and the candidate it was made against, so
-    an owner is told which edition this recording falls short of and can go and
-    look at it.
+    Retain the qualification result at assembly so it remains available when
+    a published report has no comparable runtime. Informational duration may
+    survive demotion; read-time health prefers that retained comparison over
+    this fallback and emits only one statement per candidate.
 
     One observation per candidate identity, in identity order, so two providers
     naming the same edition state it once and a document published twice from
@@ -2671,9 +2668,9 @@ def _audio_with_runtime_observations(
     shortfall. This is decided here and not at the shaping site because
     qualification runs once per provider and never sees a second provider's
     answer, so assembly is the first place every candidate naming one edition
-    is in hand. A candidate whose running time survived shaping is marked
-    short by nobody, so a corroborated answer silences the identity here for
-    the same reason the read-time derivation does.
+    is in hand. A runtime-corroborated candidate is not marked short, so a
+    corroborated answer silences the identity here. Retained informational
+    duration alone does not change that qualification result.
     """
     if audio is None:
         return None
