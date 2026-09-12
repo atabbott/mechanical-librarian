@@ -5,7 +5,44 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Cover-choice source rotation (#999)
+## Current title-consumer qualification (#1007)
+
+The current [v29 candidate](../reference/f20-rich-metadata-qualification-candidate-v29.json)
+binds #1007's title and packet consumers, including replacement-only and
+complete ordered creator corrections. Published v25 remains immutable historical
+evidence. The current continuity proof is
+the 13-option actual persistence/effect-authority test and two current replay derivatives from retained raw capture
+composed across all 13 options (26 previews). The historical 49-report
+v34 and 15-report v37 corpora do not parse under the current report contract;
+they were neither relabelled nor replayed for this successor. Earlier metrics
+below remain historical evidence, not a current full-corpus equivalence claim.
+The option dispositions remain unchanged. Exact current source bindings are
+recorded separately from historical measurements.
+
+The base integration preserves incoming main's repinned v10/v24 at their
+canonical paths and retains both the original-base and intervening-main bytes under digest-qualified
+historical filenames. Current v15/v29 record each origin commit, original path,
+digest and retained path; immutable v11/v25 references resolve by that original
+digest. All v11/v12/v13/v14/v25/v26/v27/v28 bytes remain unchanged. The same 52 title cases and
+current F20 consumers are remeasured through the merged code. The reached F46
+module is bound as an inert dependency: its record remains absent and its passing
+set empty, so no audiobook authority is added.
+
+The immutable v39 report objects are rejected by the current parser. The two
+v40 derivatives rebuild seeds from unchanged captured target, file and local
+facts, then run current provider adapters over the original raw HTTP exchanges.
+They are new reports, not schema relabels or unchanged historical replay. The
+manifest binds the capture, configuration, local inputs, independent truth,
+reconstruction evaluator and derivative results; no external calls are made.
+
+The current successor also measures six language-script controls separately:
+four supported title opportunities and two explicit-script conflicts. Regional
+variation and missing script evidence remain neutral. Three further controls
+retain an existing local title result when provider titles are absent or
+malformed; these are preservation checks, not automatic opportunities. The
+original 52-case matrix and published v14/v28 artifacts remain unchanged.
+
+## Historical cover-choice source rotation (#999)
 
 The [v17 candidate](../reference/f20-rich-metadata-qualification-candidate-v17.json)
 binds the incumbent-artifact and live cover-currentness follow-up. All 35 F20

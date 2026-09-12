@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v23` policy. It does not construct or contact a metadata or
+`fixed-conservative-v24` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -44,7 +44,7 @@ older same-schema result is historical and receives one current successor.
 Success is exactly one canonical `proposal-set-v7` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v7` documents under `fixed-conservative-v23` and the exact current
+Only `proposal-set-v7` documents under `fixed-conservative-v24` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
@@ -53,7 +53,7 @@ Only `proposal-set-v7` documents under `fixed-conservative-v23` and the exact cu
 `fixed-conservative-v13`, `fixed-conservative-v14`, `fixed-conservative-v15`,
 `fixed-conservative-v16`, `fixed-conservative-v17`, `fixed-conservative-v18`, or
 `fixed-conservative-v19`, `fixed-conservative-v20`, or
-`fixed-conservative-v21`, or `fixed-conservative-v22` table shape is
+`fixed-conservative-v21`, `fixed-conservative-v22`, or `fixed-conservative-v23` table shape is
 incompatible and is rejected before mutation. A clean rebuild is required; there is no
 proposal migration, import, conversion, or compatibility parser.
 
@@ -345,3 +345,13 @@ job, or normalized evidence tables. Identical exact inputs converge on the
 same ID and bytes. The report database accepts only an absent database or its
 exact current report-plus-ProposalSet schema; earlier development schemas are
 rejected without migration, import, or conversion.
+
+## ISBN-linked titles
+
+An existing provider title can be selected from a successful retained ISBN lane
+and positive creator identity without first deciding subtitle or series. The
+proposal retains alternatives and meaningful source associations. One provider
+is sufficient; same-work print and ebook ISBNs may coexist. Material competing
+work, author, title or variant evidence withholds the new election. The current
+reason is `isbn_creator_supported_title`; Ask keeps the choice available and
+Ignore suppresses its action. See [ADR-0075](../architecture/decisions/0075-independent-evidence-led-titles.md).

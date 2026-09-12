@@ -1,4 +1,7 @@
 const ownerFieldLabels: Record<string, string> = {
+  isbn_creator_supported_title: 'ISBN and author evidence support this title',
+  isbn_title_material_conflict:
+    'The sources disagree about the work or title; choose the title yourself',
   publishedDate: 'Publication date',
   provider_consensus_title_bracket_source_tag:
     'Independent providers agree after removing the bracketed source tag',

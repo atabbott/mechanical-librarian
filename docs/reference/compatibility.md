@@ -12,10 +12,10 @@ The current installed contract is intentionally narrow:
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v40` plus `proposal-set-v7` under
-  `fixed-conservative-v23`, or the separate `catalogue-v2` schema;
-- `review-case-v2`, `shadow-review-packet-v6`,
+  `fixed-conservative-v24`, or the separate `catalogue-v2` schema;
+- `review-case-v2`, `shadow-review-packet-v7`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v11`,
+  `deterministic-shadow-decision-policy-v12`,
   and the exact-current deterministic shadow decision/outcome schema;
 - `review-session-v1`, `review-library-v2`, `review-case-detail-v3`,
   `review-case-evidence-v4`,
@@ -181,7 +181,13 @@ This is a pre-release reset and not a deprecation cycle. Compatibility requires
 a named present user need. A future public release must document its own
 compatibility, migration, and restore promises before users depend on them.
 
-The #1002 title-component association increment declares **clean rebuild required**
-for `fixed-conservative-v22` proposal state. Only exact v23 policy state is
-accepted; report v38, proposal document v7 and relationship v1 remain unchanged.
-No alias is persisted and no adoption or migration is provided.
+The historical #1002 title-component association increment required a clean
+rebuild from `fixed-conservative-v22` to v23. The current #1007 increment
+requires v24; report v40, proposal document v7 and relationship v1 remain
+unchanged. No alias is persisted and no adoption or migration is provided.
+
+ISBN-linked title election uses `shadow-review-action-policy-v2`. The packet-v7
+candidate fact identifies only the elected title; it does not expand reviewer
+authority or require companion changes. **Clean rebuild required**: v23
+proposals, packet-v6 and their application stores are rejected before mutation.
+See [ADR-0075](../architecture/decisions/0075-independent-evidence-led-titles.md).

@@ -1,10 +1,28 @@
 # Automation Policy
 
-Mechanical Librarian is designed to make useful, non-destructive decisions without routine human approval. The goal is a small unresolved queue and an accurate audit trail, not perfect certainty before every improvement.
+Mechanical Librarian is designed to make useful, non-destructive decisions without routine human approval. [Decision quality and human attention](../../PRODUCT.md#decision-quality-and-human-attention) defines the product's balance between useful metadata, residual uncertainty, and owner effort.
 
 This document defines product intent. Exact thresholds remain versioned configuration and must be qualified through shadow runs before they authorize production writes.
 
 ## Operating posture
+
+The current title qualification is
+[F19a v15](../reference/f19a-qualification-manifest-v15.json) (#1007).
+Its new ISBN-and-creator title option is measured separately: twenty-five synthetic
+positive opportunities and two independently labelled retained real positives
+reach correct candidates and durable Automatic decisions; twenty-five synthetic
+negative controls are withheld. All fifty-two cases remain owner-reachable.
+The original nineteen synthetic positives, fifteen negatives and two real
+positives remain covered; six positive and ten negative controls cover populated
+targets, complete ordered creators and repeated opening observations.
+One retained truth comparison treats straight and curly apostrophes as
+equivalent without changing the provider title. F35's 50 and F41's 75 historical
+constructor controls retain their expected decisions through current consumers.
+These finite checks make no population accuracy or full-library savings claim.
+Historical qualification manifests retain their original option sets. Published
+v11 remains readable but cannot grant current authority; pre-option manifests
+still reject the new option. The current companion F20 continuity boundary is
+documented in [rich-metadata qualification](rich-metadata-qualification.md).
 
 The initial production profile is **decisive non-destructive**:
 
@@ -17,6 +35,48 @@ The initial production profile is **decisive non-destructive**:
 - never automate deletion or another destructive operation.
 
 The reference deployment may accept a measurable correction or override rate in exchange for a much smaller queue. Public defaults must expose this tradeoff plainly and allow a user to begin in shadow mode.
+
+## Accepted title and ISBN direction
+
+This product decision was accepted on 2026-09-11 and is implemented and qualified
+by #1007 through the current title branch described above. It replaces this document's earlier intended requirement to
+extract or preserve subtitle and series/order components from the local title
+before accepting a provider-backed title. It does not retroactively change
+historical qualification results. Current runtime authority comes from the
+explicit qualification envelope and architectural contracts delivered by #1007.
+
+- Automatically prefer a useful existing provider title when the retained
+  evidence convincingly connects it to the same work and there is no material
+  competing evidence. One reliable provider can suffice; a provider-count
+  majority or mandatory second provider is not the definition of sufficiency.
+- A valid extracted ISBN linked to the work is strong title evidence. Multiple
+  print/ebook ISBNs that converge on the same work and title need not block a
+  work-level decision because their editions differ. A single ISBN family is
+  not a universal requirement. Preserve source provenance and distinguish an
+  ISBN belonging to this work from an unrelated occurrence or contradictory
+  provider association; checksum validity alone does not establish that link.
+- File, package, and target-service metadata are observations that may need
+  correction. Their title disagreement alone must not permanently veto
+  stronger applicable evidence. Independent local content agreement adds
+  support, but extracting a matching local title is not mandatory when the
+  provider/ISBN evidence is sufficient.
+- Providers may supply subtitle and series metadata through their own field
+  decisions. Do not require parsing those components out of the old local
+  title, reconstructing them as sibling proposals, or settling uncertain
+  series positions before making an independently supported title decision.
+  Retain original observations in provenance. Apply edition-specific evidence
+  requirements only to fields or changes for which the edition matters.
+- Escalate material competing works, authors, titles, or other consequential
+  ambiguity. Several returned records sharing a title do not by themselves
+  prove work identity. Failed, unavailable, or missing sources supply neither
+  corroboration nor dissent. Preserve owner-final decisions and Ask me/Ignore;
+  the goal is to reduce unnecessary choices under Automatic.
+
+Qualification should target realistic positives and material counterexamples,
+including the effect on owner attention. It must not turn an aspiration toward
+high accuracy into a requirement for zero bibliographic error or exhaustive
+proof before a bounded useful improvement. Exact software contracts and write
+safety still require their applicable checks.
 
 ## Current decision-only qualification boundary
 
@@ -208,7 +268,7 @@ provider evidence.
 
 | Field or action | Intended automatic behavior | Escalate when |
 | --- | --- | --- |
-| Title | Fill or correct when target and work identity are supported. Recognized format, identifier, and filename noise may be removed when the meaningful title and subtitle are preserved. Meaningful series/order text may be removed only when independently supported separate structured facts are already persisted or emitted as preserved sibling proposals. | Plausible candidates identify different works, an edition-sensitive change lacks applicable edition evidence, or meaningful subtitle or series/order information lacks preserved structured capture. |
+| Title | Fill or correct from convincing same-work evidence under the [accepted title and ISBN direction](#accepted-title-and-isbn-direction). Provider subtitle/series decisions do not require extraction from the old title. | Material competing work, author, or title evidence, or consequential edition-sensitive ambiguity. |
 | Author or authors | Fill, normalize, reorder, or correct when identity evidence supports the people and roles. A controlled package creator placeholder remains visible evidence but cannot qualify an authors proposal by itself. | Authorship conflicts, contributor roles cannot be mapped safely, or a collective/pseudonym choice is materially ambiguous. |
 | Series name | Fill or correct when the work-to-series relationship is supported. | Sources disagree about whether the work belongs to the series or represent different series. |
 | Series index | Fill or correct when numeric, decimal, or labelled order is supported. | Reading order and publication order conflict without a selected policy, or the evidence is internally inconsistent. |
@@ -311,21 +371,15 @@ external ID or path, media handle, database repository, or mutation port.
 
 ### Directional title arbitration
 
-Title normalization is directional. With supported target and work identity,
-policy may remove recognized format, identifier, and filename noise when the
-removal preserves the meaningful title and subtitle. Before removing meaningful
-series/order text, independently supported separate structured series and order
-facts must already be persisted or emitted as preserved sibling proposals.
-Merely leaving existing structured fields unchanged is insufficient. Edition
-identity or applicability is additionally required when the field policy or
-proposed change is edition-sensitive.
-
-The inverse is not equivalent evidence: a candidate that adds a token classified
-as recognized noise is rejected. Supported meaningful subtitle or structured
-series/order information is not noise. A cleanup that deterministically
-preserves meaning, or a candidate that deterministically degrades the title,
-resolves through policy rather than becoming AI `manual`. Genuine supported
-alternatives remain eligible for review.
+The [accepted title and ISBN direction](#accepted-title-and-isbn-direction)
+governs intended title replacement. Recognized cleanup may remain useful, but
+recognizing the local title's shape is not a prerequisite for an evidence-backed
+replacement. Shorter text is not inherently better, and adding recognized noise
+is not an equivalent improvement. Materially competing bibliographic evidence
+remains an exception; merely differing local/provider title strings need not be.
+The current ISBN-linked title branch implements this accepted direction under
+its qualification envelope; earlier title branches and their historical
+preservation rules remain intact.
 
 ### Candidate aggregation
 

@@ -88,3 +88,9 @@ activation remain out of scope.
   decomposition, translation preference, provider ranking, human decision,
   apply, or write authority.
 - Prompt and private qualification changes remain separate milestone work.
+
+## Independent title amendment
+
+[ADR-0075](0075-independent-evidence-led-titles.md) adds a candidate-specific
+ISBN-linked title exception in packet-v7 and action policy v2. Its elected title
+requires no companion action; all other combination rules remain in force.

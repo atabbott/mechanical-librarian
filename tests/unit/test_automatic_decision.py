@@ -453,6 +453,42 @@ def _f19a_title_decision_document(prior_digest: str, policy_option: str) -> str:
     return json.dumps(document, separators=(",", ":"), sort_keys=True)
 
 
+def test_only_current_manifest_can_admit_isbn_title_option() -> None:
+    option = "replace_target:isbn_creator_supported"
+    current = AutomaticDecision.from_json(
+        _f19a_title_decision_document(F19A_QUALIFICATION_MANIFEST_SHA256, option)
+    )
+    assert qualification_manifest_is_current(
+        "title", option, current.qualification_manifest_sha256
+    )
+    for (
+        prior_digest,
+        options,
+    ) in automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS:
+        if "title:" + option in options:
+            historical = AutomaticDecision.from_json(
+                _f19a_title_decision_document(prior_digest, option)
+            )
+            assert not qualification_manifest_is_current(
+                "title", option, historical.qualification_manifest_sha256
+            )
+        else:
+            with pytest.raises(AutomaticDecisionError):
+                AutomaticDecision.from_json(
+                    _f19a_title_decision_document(prior_digest, option)
+                )
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **{
+                    key: value
+                    for key, value in current._core().items()
+                    if key != "qualification_manifest_sha256"
+                },
+                qualification_manifest_sha256=prior_digest,
+                occurred_at=2,
+            )
+
+
 def test_prior_f19a_manifests_cannot_rehydrate_an_f41_decision() -> None:
     for prior_digest in (
         "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
@@ -805,3 +841,20 @@ def test_an_unqualified_audiobook_tranche_never_mints_a_decision(
                 bundle_id=None,
                 occurred_at=1,
             )
+
+
+def test_each_historical_manifest_digest_has_one_frozen_option_binding() -> None:
+    for rows in (
+        automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS,
+        automatic_decision._PRIOR_F20_QUALIFICATION_MANIFESTS,
+    ):
+        assert len(rows) == len({digest for digest, _ in rows})
+    f19a_bindings = dict(automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS)
+    for digest in (
+        "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523",
+        "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae",
+    ):
+        assert (
+            f19a_bindings[digest]
+            == automatic_decision._PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS
+        )

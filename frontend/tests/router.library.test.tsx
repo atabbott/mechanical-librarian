@@ -23,6 +23,23 @@ import type {
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 
+it('retries a failed Library route loader through a new request', async () => {
+  const user = userEvent.setup()
+  const getLibrary = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('temporary Library failure'))
+    .mockResolvedValue(library)
+  renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+  expect(
+    await screen.findByRole('heading', { name: 'This workspace could not be loaded.' }),
+  ).toBeVisible()
+  const failedReads = getLibrary.mock.calls.length
+  await user.click(screen.getByRole('button', { name: 'Try again' }))
+  expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
+  expect(getLibrary.mock.calls.length).toBeGreaterThan(failedReads)
+  expect(screen.queryByRole('heading', { name: 'This workspace could not be loaded.' })).toBeNull()
+})
+
 const terminalPreparation = (
   runId: string,
   updatedAt = 101,

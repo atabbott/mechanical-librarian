@@ -23,7 +23,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "f30e2c102d55c532dff554f7b6ca17c3998bcd965ce55d9ca6e2df052c48b7d9"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "50eaf202ea5d57407714427863634e45abe4be6380616e7d4c0b811e5df033c6"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -35,8 +35,11 @@ _PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS = (
     _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS
     | frozenset({"title:replace_target:provider_consensus_noise"})
 )
-F19A_QUALIFIED_POLICY_OPTIONS = _PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS | frozenset({
+_PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS = _PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS | frozenset({
     "title:replace_target:decoration_tidy",
+})
+F19A_QUALIFIED_POLICY_OPTIONS = _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS | frozenset({
+    "title:replace_target:isbn_creator_supported",
 })
 F38_QUALIFIED_POLICY_OPTIONS = frozenset({
     f"{F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY}:"
@@ -52,20 +55,28 @@ QUALIFIED_POLICY_OPTIONS = (
     | F46_QUALIFIED_POLICY_OPTIONS
 )
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    ("c2b2170b1e7ce6f9b199afbbdf303e72cf2fd011bcaa0b4d3e09ab1cbd577583", F19A_QUALIFIED_POLICY_OPTIONS),
+
+    ("15766b5b2232b2bb7e64cefa4e529c134b7c3da829f5f801a1b43afb897b4676", F19A_QUALIFIED_POLICY_OPTIONS),
+    ("f30e2c102d55c532dff554f7b6ca17c3998bcd965ce55d9ca6e2df052c48b7d9", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
+    ("df88fef11c2d9d015c4642688cf5f5f62902f90de9474eb2828417aaeebdb420", F19A_QUALIFIED_POLICY_OPTIONS),
+    ("010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
+    ("f9f172406ddb2a8b5ca282cad3fa25c29148ac7e04100caccc567c6648d6098b", F19A_QUALIFIED_POLICY_OPTIONS),
+    ("91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
     (
         "01c876cd73706231bf6ab3de9371e0c60b755124d19427a807fc9472b65bbdd0",
-        F19A_QUALIFIED_POLICY_OPTIONS,
+        _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "15298611ad0b50dc9a8adb924e6e3551a4da0dd641d2600843f3dac260a71dfb",
-        F19A_QUALIFIED_POLICY_OPTIONS,
+        _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS,
     ),
-    ("77fd7323b01446306577865ebdb4b47f4fb34748021a89ffdca3fa4d51017335", F19A_QUALIFIED_POLICY_OPTIONS),
-    ("62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014", F19A_QUALIFIED_POLICY_OPTIONS),
-    ("7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6", F19A_QUALIFIED_POLICY_OPTIONS),
+    ("77fd7323b01446306577865ebdb4b47f4fb34748021a89ffdca3fa4d51017335", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
+    ("62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
+    ("7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6", _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS),
     (
         "f7a4493d94f0188e6974aad1b68f9238d9e7733aa1a2e064e5663e385af0fe6e",
-        F19A_QUALIFIED_POLICY_OPTIONS,
+        _PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "6708826d4891a228d9d2f664ea134ffad693974144c462370db851e50b330b56",
@@ -79,14 +90,7 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
         "e4dc35aa64e3e052f3866225a492fab9572e5727194691782b881b60a46144ec",
         _PRE_F41_F19A_QUALIFIED_POLICY_OPTIONS,
     ),
-    (
-        "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523",
-        F19A_QUALIFIED_POLICY_OPTIONS,
-    ),
-    (
-        "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae",
-        F19A_QUALIFIED_POLICY_OPTIONS,
-    ),
+
 )
 _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "subtitle:fill_empty",
@@ -97,6 +101,14 @@ _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
 })
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    ("91ce3c6433fcdcebad2bdb5b6d44a6ac970ad96fe0901f5dae5fc765d54fce62", F20_PASSING_AUTOMATIC_OPTIONS),
+    ('3b29fdb2e345676adb984a334aa19db8e26689e1b5927ed31bc51f1f09b1b54a', _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS),
+    ("af0e2de1a9e5dfa7753fc23b873cf413fbbc29e23a44f4408c6457fa13321d04", F20_PASSING_AUTOMATIC_OPTIONS),
+    ("2728215f5ade910611d6806e58de40c867a05315efe9670192de48298e54a54b", F20_PASSING_AUTOMATIC_OPTIONS),
+    ("74285ed19d72c767b0589486c6850a2808e9fc9911b7a08b08c34e6979f3a8b2", F20_PASSING_AUTOMATIC_OPTIONS),
+    ("2e76fdb8372867c95b476208ebb0ae2bd175171439559d4f56eec8d29611c6c6", _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS),
+    ("cbdffb1fe38afa6eb03c2a3b9be05bd8ffe8930a884710b96cc25d0fa14f6c5c", F20_PASSING_AUTOMATIC_OPTIONS),
+    ("679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321", _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS),
     (
         "f69a500950778b6298c2b149326ddd496bdaa501b5e50a593cd61f47558e32bc",
         _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
@@ -243,18 +255,7 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         "14061bb1d1df8305d75cc2330ce37a931d01c954f1be3cd03e7587558704fbfc",
         _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
     ),
-    (
-        "679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321",
-        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
-    ),
-    (
-        "2e76fdb8372867c95b476208ebb0ae2bd175171439559d4f56eec8d29611c6c6",
-        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
-    ),
-    (
-        "3b29fdb2e345676adb984a334aa19db8e26689e1b5927ed31bc51f1f09b1b54a",
-        _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS,
-    ),
+
 )
 # No audiobook record has been published, so no audiobook digest has ever been
 # current and none can be read back. Rotations land here exactly as the ebook
@@ -265,7 +266,7 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = ()
 def automatic_safety_category(policy_category: str, policy_option: str) -> str:
     """Return the suspension lane for one immutable policy identity."""
     if policy_category == "title":
-        # Both title elections write the same target through the same lane.
+        # All title elections write the same target through the same lane.
         return "title_layout"
     return policy_category
 

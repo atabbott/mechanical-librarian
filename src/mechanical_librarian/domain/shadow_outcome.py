@@ -24,6 +24,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import (
     DECORATION_TIDY_TITLE_REASONS,
+    EVIDENCE_LED_TITLE_REASON,
     MAX_BIBLIOGRAPHIC_COMBINATIONS,
     MEDIA_KINDS,
     PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,
@@ -95,6 +96,7 @@ _POLICY_OPTIONS_BY_CATEGORY = {
     _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY: (
         _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION,
         _DECORATION_TIDY_TITLE_POLICY_OPTION,
+        "replace_target:isbn_creator_supported",
     ),
     F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY: (
         *OPTION_CATALOGUE[F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY],
@@ -476,9 +478,14 @@ class ShadowOutcomeSet:
         provider_consensus_contributor_display_proposals: set[str] = set()
         provider_consensus_title_proposals: set[str] = set()
         decoration_tidy_title_proposals: set[str] = set()
+        independent_title_proposals: set[str] = set()
         for value in case.proposals:
             result = cast("dict[str, object]", value["result"])
             reasons = result["reasons"]
+            if value["destination"] == "title" and reasons == [
+                EVIDENCE_LED_TITLE_REASON
+            ]:
+                independent_title_proposals.add(cast("str", value["proposal_id"]))
             if (
                 value["destination"] == "title"
                 and type(reasons) is list
@@ -518,7 +525,11 @@ class ShadowOutcomeSet:
                 decision.destination
             )
             policy_option: str | None
-            if decision.proposal_id in provider_consensus_title_proposals:
+            if decision.proposal_id in independent_title_proposals:
+                category = "title"
+                policy_destination = destinations["title_layout"]
+                policy_option = "replace_target:isbn_creator_supported"
+            elif decision.proposal_id in provider_consensus_title_proposals:
                 category = _PROVIDER_CONSENSUS_TITLE_POLICY_CATEGORY
                 policy_destination = destinations["title_layout"]
                 policy_option = _PROVIDER_CONSENSUS_TITLE_POLICY_OPTION

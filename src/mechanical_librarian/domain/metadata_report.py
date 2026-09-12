@@ -2746,7 +2746,7 @@ def provider_candidate_series_identity_matches(
             for claim in candidate.claims
             if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.TITLE
         )
-        or not _creator_sequence_methods(authors, local_authors)
+        or not creator_sequence_methods(authors, local_authors)
     ):
         return False
     if (
@@ -4339,7 +4339,7 @@ def _creator_comparison_links(
                     local_index, method = bound_match
                     agreements[group[local_index].reference] = method
             else:
-                methods = _creator_sequence_methods(provider_values, local_values)
+                methods = creator_sequence_methods(provider_values, local_values)
                 if methods:
                     provider_index = compatible_provider.index(provider)
                     agreements[group[provider_index].reference] = methods[
@@ -4479,10 +4479,11 @@ def complete_creator_identity_bindings(
     return bindings
 
 
-def _creator_sequence_methods(
+def creator_sequence_methods(
     provider_values: tuple[str, ...],
     local_values: tuple[str, ...],
 ) -> tuple[ComparisonMethod, ...]:
+    """Compare complete ordered creators through the closed lexical vocabulary."""
     if (
         len(provider_values) != len(local_values)
         or not provider_values

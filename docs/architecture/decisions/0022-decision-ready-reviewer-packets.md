@@ -118,3 +118,9 @@ and has no current runtime compatibility surface.
   provider queries, prompt behavior, reviewer result shape, or any write gate.
 - Future write support must replace the static unsupported state only through a
   separately qualified adapter/read-back contract.
+
+## Independent title amendment
+
+[ADR-0075](0075-independent-evidence-led-titles.md) adds a candidate-specific
+ISBN-linked title exception in packet-v7 and action policy v2. Its elected title
+requires no companion action; all other combination rules remain in force.

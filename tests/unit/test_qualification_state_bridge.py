@@ -191,7 +191,15 @@ def _create_source(
     return data["report_id"]
 
 
-def _accept_synthetic_source(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+def _accept_synthetic_source_and_target(
+    monkeypatch: pytest.MonkeyPatch, path: Path
+) -> None:
+    # Algorithm safety only: the production bridge remains bound to v23.
+    monkeypatch.setattr(
+        bridge,
+        "_TARGET_SCHEMA_OBJECTS_SHA256",
+        bridge._expected_schema_objects_digest(),
+    )
     connection = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
     try:
         digest = bridge._schema_objects_digest(connection)
@@ -213,7 +221,7 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     source_before = _digest(source)
 
     result = bridge.bridge_qualification_state(
@@ -253,12 +261,12 @@ def test_exact_predecessor_builds_fresh_current_state_without_mutating_source(
     connection.close()
 
 
-def test_target_schema_binding_is_the_exact_installed_contract() -> None:
+def test_target_schema_binding_remains_historical() -> None:
     assert bridge._TARGET_SCHEMA_OBJECTS_SHA256 == (
         "5dc77f44c3450e9251af772207c06b4845ee2cca9566ec9341367bd26f4292c8"
     )
     assert (
-        bridge._expected_schema_objects_digest() == bridge._TARGET_SCHEMA_OBJECTS_SHA256
+        bridge._expected_schema_objects_digest() != bridge._TARGET_SCHEMA_OBJECTS_SHA256
     )
 
 
@@ -271,7 +279,7 @@ def test_missing_work_dispatch_lineage_is_selectively_invalidated(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source, missing_work_lineage=True)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
 
     result = bridge.bridge_qualification_state(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
@@ -312,7 +320,7 @@ def test_malformed_cover_dependent_on_invalidated_provider_is_rejected(
     )
     source, backup, output = _paths(tmp_path)
     _create_source(source, document=canonical_json(data))
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
 
     with pytest.raises(
         MetadataReportError, match="qualification-state source is incompatible"
@@ -330,7 +338,7 @@ def test_artifact_bearing_cover_is_invalidated_without_mutating_source(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source, document=_v26_document(artifact_bearing_cover=True))
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     source_before = _digest(source)
 
     result = bridge.bridge_qualification_state(
@@ -356,7 +364,7 @@ def test_exact_output_and_backup_make_rerun_idempotent(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     bridge.bridge_qualification_state(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
@@ -375,7 +383,7 @@ def test_prior_v22_output_is_rejected_without_mutating_any_file(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     bridge.bridge_qualification_state(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
@@ -438,7 +446,7 @@ def test_durable_temp_is_reconciled_after_ambiguous_publication(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     bridge.bridge_qualification_state(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
@@ -460,7 +468,7 @@ def test_existing_output_temp_cleanup_failure_requires_recovery(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     bridge.bridge_qualification_state(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
@@ -489,7 +497,14 @@ def test_existing_output_temp_cleanup_failure_requires_recovery(
 
 def test_unknown_source_contract_fails_before_backup_or_output(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Reach the unknown-source algorithm guard without refreshing production authority.
+    monkeypatch.setattr(
+        bridge,
+        "_TARGET_SCHEMA_OBJECTS_SHA256",
+        bridge._expected_schema_objects_digest(),
+    )
     source, backup, output = _paths(tmp_path)
     _create_source(source)
     before = _digest(source)
@@ -512,7 +527,7 @@ def test_source_sidecars_are_rejected_before_backup(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     source.with_name(source.name + suffix).write_bytes(b"sidecar")
 
     with pytest.raises(MetadataReportError):
@@ -529,7 +544,7 @@ def test_closed_wal_source_is_rejected_before_backup_or_output(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     connection = sqlite3.connect(source)
     assert connection.execute("PRAGMA journal_mode=WAL").fetchone() == ("wal",)
     connection.close()
@@ -560,7 +575,7 @@ def test_semantically_changed_source_document_fails_before_backup(
     document = canonical_json(data)
     source, backup, output = _paths(tmp_path)
     _create_source(source, document=document)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
 
     with pytest.raises(
         MetadataReportError, match="qualification-state source is incompatible"
@@ -587,7 +602,7 @@ def test_inconsistent_retained_local_status_fails_before_backup(
     )
     source, backup, output = _paths(tmp_path)
     _create_source(source, document=canonical_json(data))
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
 
     with pytest.raises(
         MetadataReportError, match="qualification-state source is incompatible"
@@ -628,7 +643,7 @@ def test_forged_current_pointer_is_rejected_before_backup(
         values[2] = "forged-item"
         assignments = ",".join(f"{column}=?" for column in identity_columns.split(","))
         connection.execute(f"UPDATE {table} SET {assignments}", values)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
 
     with pytest.raises(
         MetadataReportError, match="qualification-state source is incompatible"
@@ -646,7 +661,7 @@ def test_unknown_existing_output_is_never_overwritten(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     backup.write_bytes(source.read_bytes())
     backup.chmod(0o600)
     output.write_bytes(b"not a database")
@@ -669,7 +684,7 @@ def test_changed_exact_schema_output_is_not_accepted_as_current(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source, document=_v26_document(nonartifact_cover=True))
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     bridge.bridge_qualification_state(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
@@ -741,7 +756,7 @@ def test_symlink_and_non_owner_only_sources_are_rejected(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     symlink = tmp_path / "linked.sqlite3"
     symlink.symlink_to(source)
 
@@ -766,7 +781,7 @@ def test_mismatched_backup_collision_fails_without_output(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     backup.write_bytes(b"collision")
     backup.chmod(0o600)
     before = _digest(source)
@@ -787,7 +802,7 @@ def test_byte_identical_backup_inode_replacement_is_rejected_before_publication(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     real_validate = bridge._validate_output
     replaced = False
 
@@ -824,7 +839,7 @@ def test_backup_write_failure_removes_partial_backup_and_preserves_source(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     before = _digest(source)
 
     def fail_write(descriptor: int, value: object) -> int:
@@ -848,7 +863,7 @@ def test_backup_close_failure_still_unlinks_partial_and_requires_recovery(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     real_close = bridge.os.close
     backup_descriptor = -1
 
@@ -882,7 +897,7 @@ def test_interrupted_reconstruction_removes_partial_output(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     before = _digest(source)
 
     def interrupt(
@@ -908,7 +923,7 @@ def test_postpublication_failure_requires_recovery(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     validations = 0
     real_validate = bridge._validate_output
 
@@ -939,7 +954,7 @@ def test_postpublication_cleanup_failure_requires_recovery(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     real_close = _LinuxDatabaseBinding.close
 
     def fail_after_close(binding: _LinuxDatabaseBinding) -> None:
@@ -961,7 +976,7 @@ def test_postlink_identity_failure_requires_recovery(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     real_require = bridge._require_named_identity
 
     def fail_output_identity(
@@ -986,7 +1001,7 @@ def test_interruption_immediately_after_publication_requires_recovery(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     real_publish = bridge._publish_temp
 
     def interrupt_after_publication(
@@ -1013,7 +1028,7 @@ def test_postpublication_byte_identical_output_replacement_requires_recovery(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     real_validate = bridge._validate_output
     replaced = False
 
@@ -1045,7 +1060,7 @@ def test_path_recheck_failure_never_reports_success(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     checks = 0
     real_require = bridge._require_source_current
 
@@ -1078,7 +1093,7 @@ def test_existing_output_path_replacement_never_reports_success(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     bridge.bridge_qualification_state(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
     )
@@ -1113,7 +1128,7 @@ def test_backup_directory_entry_is_durable_before_output_creation(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     real_fsync = bridge.os.fsync
     directory_synced_before_output = False
 
@@ -1140,7 +1155,7 @@ def test_live_source_parent_authority_is_rejected_without_waiting(
 
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     parent = os.open(tmp_path, os.O_RDONLY | os.O_DIRECTORY)
     try:
         fcntl.flock(parent, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1164,7 +1179,7 @@ def test_stale_private_binding_is_rejected_before_backup(
 ) -> None:
     source, backup, output = _paths(tmp_path)
     _create_source(source)
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     alias = (
         tmp_path / ".metadata-report-binding-00000000000000000000000000000000.sqlite"
     )
@@ -1258,7 +1273,7 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
     )
     source, backup, output = _paths(tmp_path)
     _create_source(source, document=canonical_json(data))
-    _accept_synthetic_source(monkeypatch, source)
+    _accept_synthetic_source_and_target(monkeypatch, source)
     before = source.read_bytes()
     bridge.bridge_qualification_state(
         source, backup, output, RETAINED_LIBRARY_V26_TO_V32
@@ -1269,3 +1284,44 @@ def test_inventaire_nonartifact_cover_is_validated_by_historical_bridge(
             connection.execute("SELECT document FROM metadata_reports").fetchone()[0]
         )
     assert report.schema_version == "metadata-report-v40"
+
+
+def test_unpatched_bridge_refuses_before_any_filesystem_mutation(
+    tmp_path: Path,
+) -> None:
+    source, backup, output = _paths(tmp_path)
+    _create_source(source)
+    before = {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()}
+    with pytest.raises(
+        MetadataReportError,
+        match="qualification-state bridge is unavailable for this build",
+    ):
+        bridge.bridge_qualification_state(
+            source, backup, output, RETAINED_LIBRARY_V26_TO_V32
+        )
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
+    assert not backup.exists() and not output.exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(before)
+    stdout, stderr = io.StringIO(), io.StringIO()
+    assert (
+        main(
+            [
+                "qualification-state-bridge",
+                RETAINED_LIBRARY_V26_TO_V32,
+                "--database",
+                str(source),
+                "--backup",
+                str(backup),
+                "--output",
+                str(output),
+            ],
+            qualification_state_bridge_runner=bridge.bridge_qualification_state,
+            stdout=stdout,
+            stderr=stderr,
+        )
+        == 1
+    )
+    assert stdout.getvalue() == ""
+    assert stderr.getvalue() == "Qualification-state bridge failed safely.\n"
+    assert {p.name: p.read_bytes() for p in tmp_path.iterdir() if p.is_file()} == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(before)

@@ -10,6 +10,7 @@ from typing import TypedDict, cast
 
 from mechanical_librarian.domain.proposal_set import (
     DECORATION_TIDY_TITLE_REASONS,
+    EVIDENCE_LED_TITLE_REASON,
     PROVIDER_CONSENSUS_TITLE_REASONS,
 )
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
@@ -22,7 +23,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v11"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v12"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -92,6 +93,12 @@ _RULE_TABLE = {
         "proposal_target_only_preservation": 1,
         "reasons": sorted(DECORATION_TIDY_TITLE_REASONS),
     },
+    "independent_title": {
+        "reason": EVIDENCE_LED_TITLE_REASON,
+        "elected_candidate_only": True,
+        "minimum_independent_provider_correlations": 1,
+        "companion_witness_required": False,
+    },
     "provider_consensus_title": {
         "candidate_local_evidence": 0,
         "minimum_independent_provider_correlations": 2,
@@ -118,6 +125,7 @@ class _CandidateSummary(TypedDict):
     bibliographic_compatibility_ids: list[str]
     creator_roles: dict[str, object]
     evidence_scope: str
+    independent_title: bool
     publication: dict[str, object] | None
     selected_manifestation_binding: str
     support: dict[str, int]
@@ -491,6 +499,9 @@ def _candidate_is_eligible(
         and len(reasons) == 1
         and reasons[0] in DECORATION_TIDY_TITLE_REASONS
     )
+    independent_title = summary["independent_title"]
+    if reasons == [EVIDENCE_LED_TITLE_REASON] and not independent_title:
+        return False
     title_election = provider_consensus_title or decoration_tidy_title
     proposal_target_only_preservation = cast(
         "_ProposalSummary", proposal["decision_summary"]
@@ -499,12 +510,14 @@ def _candidate_is_eligible(
     if (
         (
             not source_evidence_report_only
+            and not independent_title
             and proposal_target_only_preservation != (1 if title_election else 0)
         )
         or support["target_only_preservation"] != 0
         or (
             destination != "publishedDate"
             and not decoration_tidy_title
+            and not independent_title
             and support["local_evidence"] != (0 if provider_consensus_title else 1)
         )
         or (
@@ -765,6 +778,13 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
         if destination not in _SUPPORTED_DESTINATIONS:
             action = _manual_action(catalogue, proposal_id)
             reason = "unsupported_destination"
+        elif (
+            destination == "title"
+            and proposal["reasons"] == [EVIDENCE_LED_TITLE_REASON]
+            and len(eligible) == 1
+        ):
+            action = eligible[0]
+            reason = "unique_supported_candidate"
         elif destination in constrained_destinations:
             action = combination_actions.get(proposal_id) or _manual_action(
                 catalogue, proposal_id

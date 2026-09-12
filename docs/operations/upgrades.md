@@ -119,8 +119,9 @@ Maintainers have one separate qualification-only command:
 exact retained #744 test schema, an existing complete owner-only clone, an
 independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
-original plan; its fresh output is always the exact current schema,
-`metadata-report-v40` with `fixed-conservative-v23`. It leaves the source
+original plan; its frozen target is
+`metadata-report-v40` with `fixed-conservative-v23`. That target is incompatible
+with the current v24 title policy; this change does not refresh the bridge. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all
@@ -145,3 +146,8 @@ with `config-v9` and `review-bootstrap-v2`: clean rebuild required for these
 configuration documents only. No conversion or adoption is supplied. This
 transport change does not advance database, owner-settings, setup, session,
 report, or API schemas; earlier independent rebuild requirements still apply.
+
+The ISBN-linked title policy requires a clean rebuild under ADR-0013. Retain
+old evidence offline; v23 proposals and packet-v6 cannot be adopted into this
+build. No migration, automatic repair or qualification-bridge refresh is supplied
+(#1007).

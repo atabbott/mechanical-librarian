@@ -495,6 +495,8 @@ const choiceSelected = (
 const choiceContext = (field: ReviewField, alternativeId: string | null) =>
   field.choiceContexts.find((context) => context.alternativeId === alternativeId)
 const materialComparisonReasons = new Set([
+  'isbn_creator_supported_title',
+  'isbn_title_material_conflict',
   'bibliographic_combination_unresolved',
   'competing_evidence',
   'date_refinement_requires_corroboration',
