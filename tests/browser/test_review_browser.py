@@ -3437,10 +3437,30 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     )
                     basis.get_by_text("Recording source").click()
                     expect(basis).to_contain_text("audible-product-B08G9PRS1K")
+                    source = basis.locator("summary")
+                    desktop_bounds = source.bounding_box()
+                    assert desktop_bounds is not None and desktop_bounds["height"] < 44
+                    page.set_viewport_size({"width": 390, "height": 844})
+                    bounds = source.bounding_box()
+                    assert bounds is not None and bounds["height"] >= 44
+                    source.focus()
+                    source.press("Space")
+                    expect(basis.locator("details")).not_to_have_attribute("open", "")
+                    source.press("Space")
+                    expect(basis.locator("details")).to_have_attribute("open", "")
                     page.get_by_role("link", name="Evidence", exact=True).click()
                     expect(
                         page.get_by_role("region", name="Recording identity evidence")
                     ).to_be_visible()
+                    source = page.get_by_role(
+                        "region", name="Recording identity evidence"
+                    ).locator("summary")
+                    bounds = source.bounding_box()
+                    assert bounds is not None and bounds["height"] >= 44
+                    source.focus()
+                    source.press("Space")
+                    expect(source.locator("..")).to_have_attribute("open", "")
+                    page.set_viewport_size({"width": 1440, "height": 900})
                     page.get_by_role("link", name="Back to work").click()
                 else:
                     expect(basis).to_have_count(0)

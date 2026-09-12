@@ -358,9 +358,10 @@
   "scope": "Finite synthetic controls and two independently labelled retained real positives; candidate predictions measured separately from durable decisions. No population accuracy, new holdout or full-library queue-saving claim. One real title differs from its label only by straight versus typographic apostrophe; original provider text is retained.",
   "source_closure": {
     "frontend/src/api/http.ts": "7d225d70cf691dc7a160c1307c0fa78a2a7f54d2d33986672084deb66a24ceeb",
-    "frontend/src/components/RecordingIdentityBasis.tsx": "ac880d388f4099e1943b3d61f4d2fa1a93b6f0a99218a328e0b17bf83ca1b614",
+    "frontend/src/components/RecordingIdentityBasis.tsx": "4df7a8f42cd9ff8ad12e98094dfcb0b62c340b008869deda4d3c80784e0de92e",
     "frontend/src/routes/DetailPage.tsx": "c0fbbac4714a187ebf6a5df5d7e07b7a9d79152b498d25b67ea07b1fe02f9eb4",
     "frontend/src/routes/LibraryPage.tsx": "0a636b39dd3579a10dcae23f7866e629e52613e489ed47da1ac6167a7b66f6fd",
+    "frontend/src/styles.css": "1743440a0a2360200c628fc60d7d77adb29301fae9218e851d3053a3dbeda973",
     "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
     "scripts/qualify_provider_evidence_replay.py": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129",
     "src/mechanical_librarian/adapters/evidence_extractors/audio_local.py": "daebcaadf6b1f51e99a2330dddd5fd2a4d071168439cd2bbf6d0ff71877c60b9",

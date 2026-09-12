@@ -917,6 +917,7 @@ html[data-reduced-motion='always-reduced'] * { scroll-behavior:auto!important; a
 .diagnostic-entry h3 { font-size:.82rem; line-height:1.4; }
 .diagnostic-entry p { font-size:.86rem; line-height:1.58; }
 .diagnostic-entry small { display:block; margin-top:.45rem; color:var(--soft); font-size:.7rem; }
+@media (max-width:760px) { .recording-identity-source { min-height:44px; padding-block:.75rem; } }
 .diagnostic-value { display:grid; grid-template-columns:minmax(5rem,auto) minmax(0,1fr); gap:.75rem; }
 .diagnostic-value span { color:var(--soft); font-size:.7rem; font-weight:700; }
 .diagnostic-facts,.diagnostic-limitations { margin:.75rem 0 0; padding:0; list-style:none; }

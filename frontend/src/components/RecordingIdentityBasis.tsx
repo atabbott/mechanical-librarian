@@ -9,7 +9,7 @@ export function RecordingIdentityBasis({ value }: { value: RecordingIdentityBasi
         separate book runtime.
       </p>
       <details>
-        <summary>Recording source</summary>
+        <summary className="recording-identity-source">Recording source</summary>
         <p>
           {value.provider} · Candidate reference: {value.candidate}
         </p>

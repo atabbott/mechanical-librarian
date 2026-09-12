@@ -1976,6 +1976,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     } | {
         "tests/unit/test_shadow_outcome_persistence.py",
         "frontend/src/components/RecordingIdentityBasis.tsx",
+        "frontend/src/styles.css",
         "frontend/src/routes/LibraryPage.tsx",
         "frontend/src/routes/DetailPage.tsx",
     }
