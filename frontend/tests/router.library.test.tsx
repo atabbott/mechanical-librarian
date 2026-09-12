@@ -1246,7 +1246,9 @@ describe('Library route', () => {
       if (chapterBasis) {
         expect(
           within(evidence).getByRole('region', { name: 'Recording identity evidence' }),
-        ).toHaveTextContent('Audnexus did not provide a separate book runtime.')
+        ).toHaveTextContent(
+          'Complete chapter timing and structure corroborate this recording where overall runtime is unavailable.',
+        )
       } else {
         expect(
           within(evidence).queryByRole('region', { name: 'Recording identity evidence' }),

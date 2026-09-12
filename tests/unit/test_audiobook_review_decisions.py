@@ -406,8 +406,8 @@ def test_existing_runtime_admission_keeps_null_chapter_attribution() -> None:
     assert recording_identity_basis(report) is None
 
 
-def test_target_only_asin_cannot_use_chapter_fallback() -> None:
-    assert not admitted_audiobook_identity(
+def test_target_only_asin_can_use_complete_chapter_fallback() -> None:
+    assert admitted_audiobook_identity(
         chapter_runtime_report(asin_basis="target_metadata")
     )
 
@@ -552,3 +552,40 @@ def test_multiple_local_asins_do_not_grant_chapter_admission() -> None:
     )
     assert not admitted_audiobook_identity(report)
     assert recording_identity_basis(report) is None
+
+
+@pytest.mark.parametrize("hint_provider", ("alpha", "zulu"))
+@pytest.mark.parametrize(
+    "duration, admitted", (("2000.000", False), ("1748.000", True))
+)
+def test_lookup_runtime_veto_precedes_source_selection(
+    hint_provider, duration, admitted
+):
+    from tests.support.audiobook_reports import recording_lookup_report
+
+    support = chapter_runtime_report(provider="middle")
+    hints = recording_lookup_report(
+        provider=hint_provider, asins=("B08G9PRS1K", "B000000002"), duration=duration
+    )
+    report = MetadataReport.create(
+        target=support.target,
+        file=support.file,
+        local_claims=tuple(
+            sorted(
+                {
+                    claim.reference: claim
+                    for claim in (*support.local_claims, *hints.local_claims)
+                }.values(),
+                key=lambda claim: claim.reference,
+            )
+        ),
+        local_reasons=support.local_reasons,
+        providers=tuple(
+            sorted((*support.providers, *hints.providers), key=lambda p: p.provider)
+        ),
+        audio=support.audio,
+    )
+    reopened = MetadataReport.from_json(report.to_json())
+    assert admitted_audiobook_identity(reopened) is admitted
+    assert bool(recording_identity_basis(reopened)) is admitted
+    assert reopened.providers[0 if hint_provider == "alpha" else 1].candidates == ()

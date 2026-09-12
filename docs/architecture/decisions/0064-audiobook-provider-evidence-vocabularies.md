@@ -173,7 +173,7 @@ recorded before it is measured is a number nobody may change without an ADR.
   across providers, or a provider whose chapter statement is not expressible as
   a whole-second vector.
 
-## Bounded chapter-runtime admission (#1042)
+## First-increment chapter-runtime admission (#1042)
 
 The descriptive matcher is unchanged. Owner-review admission may use complete
 chapter structure only after existing stated-runtime admission fails, for the sole
@@ -187,3 +187,57 @@ the existing strong minimum and per-chapter tolerance without offsets; uniform
 vectors on either side fail. This bounds rounding and does not assert independent
 recording provenance. No generic matcher, provider lookup or automatic authority
 is added. Missing-local-runtime and remaining paths remain under #1004.
+
+## Complete chapter recording corroboration (#1004)
+
+This amendment defines F51's activation increment; it does not claim that the
+increment is implemented or qualified. The #1042 decision above records the
+delivered first increment. The descriptive chapter matcher and its offset
+rules remain unchanged.
+
+The admission predicate also accepts missing local runtime only for a
+`SINGLE_FILE` composition with exactly one track whose duration is `None`, no
+local `DURATION` claim, exactly one actual `DURATION_UNSTATED` observation
+naming track 1, and no `TRACK_DURATION_UNAVAILABLE` observation. Complete
+positive contiguous chapters must begin at zero, with no truncation or observed
+omission. Missing-runtime multi-file composition remains unsupported.
+
+The final chapter endpoint supplies coverage for comparison only; it never
+creates a duration claim. With known local runtime, that endpoint must remain
+within 1000 milliseconds of it. Both complete vectors have equal counts of at
+least five chapters, positive nonuniform durations, and direct alignment within
+the existing two-second per-chapter tolerance on the existing rounded local
+whole-second projection, with no offsets or skipped rows. Millisecond
+differences are not compared against a newly tightened threshold.
+Provider aggregate flooring remains bounded by
+`0 <= runtime_seconds - sum(durations_seconds) <= chapter_count`, and its
+aggregate must meet the existing 90-second tight band against local coverage.
+Equal totals do not excuse a different interior cut.
+
+Failed-set audiobook `WORK` observations gain a separate bounded
+`recording_lookup_candidates` collection. It retains every individually exact
+title/full-author matched candidate, including original references, source
+order, claim states, subtitle and contributor veto inputs. The ordinary result
+remains `NO_MATCH` with empty candidates and no dispatch or transformation
+lineage. Report validation binds the lookup collection separately to exactly
+one actual WORK lane and its local input references, and replays individual
+work guards. No common work identity or set verdict is fabricated.
+
+Only explicit ASIN acquisition and matched-runtime veto consumers read this
+collection. Generic proposals, identifier election, covers, promotion and
+owner provider-claim projection continue to read ordinary candidates only.
+Successful WORK-set candidates are not duplicated into the collection: they
+retain source-ordered informational ASIN and DURATION claims alongside earned
+work claims, while unearned marketplace, chapter, narrator and edition
+applicability is stripped. Promotion requires corroborated `ASIN_MARKETPLACE`
+evidence; an informational ASIN alone grants no promotion or identity.
+This supersedes the earlier claim that every retained ASIN names a resolving
+marketplace: only corroborated recording identity requires that marketplace;
+lookup hints may retain an ASIN without it.
+
+The new collection advances the report to `metadata-report-v42` and participates
+in its canonical digest. **Clean rebuild required**, with no adoption or
+migration; prior reports and report databases refuse unchanged under ADR-0013.
+The audio child and owner detail API remain v4. Historical qualification
+sources and measurements remain immutable; current source bindings advance
+separately and do not upgrade historical completeness provenance.

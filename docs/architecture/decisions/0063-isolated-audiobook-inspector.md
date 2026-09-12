@@ -263,3 +263,8 @@ generated per-track spans do not inherit discarded embedded rows and cannot admi
 the chapter fallback. Failed child outcomes carry no omission evidence. Old v3
 protocol and v40 report bytes are refused. Clean rebuild required under ADR-0013;
 no adoption or migration is introduced.
+
+The #1004 report-v42 extension consumes the existing v4 duration-absence and
+chapter-omission facts without changing this protocol or parser authority. A
+complete referenced chapter track may survive an unstated audio runtime; the
+chapter endpoint remains coverage evidence, never a synthesized duration claim.

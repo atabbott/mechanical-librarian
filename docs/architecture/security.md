@@ -709,7 +709,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v41`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v42`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -1399,3 +1399,10 @@ The reason-specific current F19a option is decision-only, and old manifests
 cannot authorize it. The existing title-layout pause/suspension, owner-final,
 consent, backup, currentness, read-back and audit boundaries remain unchanged.
 No new external call, parser, provider or write capability is introduced.
+
+The #1004 chapter fallback grants owner review only. Failed-set audiobook WORK
+lookup candidates retain original bounded evidence separately from admitted
+metadata, with exact work and local-reference validation. Only bounded ASIN
+acquisition and matched-runtime vetoes consume them; they grant no proposal,
+identifier, cover, promotion, automatic or effect authority. Existing provider
+limits, isolated probe limits, read-only media and explicit retry stay unchanged.

@@ -21,7 +21,11 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Final
 
-from mechanical_librarian.domain.audio_inspection import AudioChapterComposition
+from mechanical_librarian.domain.audio_inspection import (
+    AudioChapterComposition,
+    AudioObservation,
+    AudioObservationKind,
+)
 from mechanical_librarian.domain.metadata_report import (
     AudioFacts,
     ClaimKind,
@@ -375,8 +379,6 @@ def complete_chapter_runtime_agreement(
     local_seconds = local_claim_runtime_seconds(local_claims)
     if (
         audio is None
-        or local_seconds is None
-        or local_seconds <= 0
         or audio.composition
         not in {
             AudioChapterComposition.SINGLE_FILE,
@@ -400,7 +402,30 @@ def complete_chapter_runtime_agreement(
         if _valid_duration_claim(claim)
         and (value := duration_milliseconds(claim.canonical or "")) is not None
     )
-    if not milliseconds or any(abs(end - value) > 1000 for value in milliseconds):
+    if local_seconds is None:
+        if (
+            audio.composition is not AudioChapterComposition.SINGLE_FILE
+            or len(audio.tracks) != 1
+            or audio.tracks[0].duration_milliseconds is not None
+            or any(claim.kind is ClaimKind.DURATION for claim in local_claims)
+            or tuple(
+                observation
+                for observation in audio.observations
+                if observation.kind is AudioObservationKind.DURATION_UNSTATED
+            )
+            != (AudioObservation(AudioObservationKind.DURATION_UNSTATED, (1,)),)
+            or any(
+                observation.kind is AudioObservationKind.TRACK_DURATION_UNAVAILABLE
+                for observation in audio.observations
+            )
+        ):
+            return False
+        local_seconds = (end + 500) // 1000
+    elif (
+        local_seconds <= 0
+        or not milliseconds
+        or any(abs(end - value) > 1000 for value in milliseconds)
+    ):
         return False
     local = local_chapter_durations_seconds(audio)
     durations = provider.durations_seconds
@@ -416,11 +441,9 @@ def complete_chapter_runtime_agreement(
         is not CorroborationOutcome.CORROBORATED
     ):
         return False
-    signal = chapter_vector_agreement(local, provider)
-    return (
-        signal.outcome is CorroborationOutcome.CORROBORATED
-        and signal.reasons == (CorroborationReason.CHAPTER_VECTOR_ALIGNED.value,)
-        and signal.compared == len(local)
+    return all(
+        abs(one - other) <= CHAPTER_DURATION_TOLERANCE_SECONDS
+        for one, other in zip(local, durations, strict=True)
     )
 
 

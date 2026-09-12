@@ -48,7 +48,8 @@ candidate the report retains: `admitted_audiobook_identity` recomputes
 `runtime_corroborated_candidate` over each retained observation's candidates and
 the report's own local claims, which is deterministic and reads no candidate's
 shape. #1042 adds the bounded retained-local-ASIN chapter fallback described
-below; no other path admits. A work-shape retention does not: qualification keeps
+below; the #1004 amendment later in this record defines its extension. A
+work-shape retention does not: qualification keeps
 a title-and-author match rather than dropping it, and naming a work is not
 naming this product. The item's own ASIN does not either: an embedded, sidecar,
 or path identifier naming a different cut of the same work is the disagreement
@@ -69,6 +70,48 @@ required-nullable case/report-detail v4 attribution share `recording_identity_ba
 The source names a retained provider and candidate. Field applicability, owner
 choice and all automatic/effect authority remain unchanged. #1004 retains missing
 local runtime and remaining discovery-envelope work.
+
+**Complete chapter fallback across discovery origins (#1004).** This amendment
+defines F51 activation. Existing
+stated-runtime admission runs first unchanged, including its historical local
+ASIN behavior. The chapter fallback then covers local-ASIN, target-asserted,
+promoted-ASIN and WORK-derived acquisition using ADR-0064's complete numerical
+predicate, including its narrowly witnessed missing-local-runtime branch.
+Current WORK adapters require stated local runtime to earn promotion; their
+missing-runtime results remain lookup hints. The promoted-ASIN path preserves
+that existing runtime-qualified flow and cannot promote from chapter or ASIN
+presence alone.
+
+Before deterministic support selection, inspect every retained matched
+same-ASIN runtime statement, including lookup-only evidence. A supporting book
+runtime is exactly one VALID positive value consistent with chapter coverage,
+or exactly one explicit ABSENT claim. Missing claims remain unknown. Malformed,
+multiple, nonpositive or conflicting statements veto fallback rather than
+becoming absence when a candidate is shaped. Exact title and complete author
+context, including variant and contributor vetoes, qualify raw candidates on
+the new paths before edition evidence is stripped.
+
+Discovery and retry carry transient audio, work title and full work authors;
+work context is complete or absent, with absent defaults for unchanged callers.
+This context changes neither ASIN HTTP title/author semantics nor lane identity.
+WORK lookup hints follow existing local, promoted and asserted ASIN priorities,
+using the originating WORK lane's local input references. Deduplication and
+reference union preserve the four-ASIN cap, canonical lane order and existing
+query, byte and deadline limits. All matched veto evidence survives the request
+cap. There is one bounded second pass, no recursion, and no new retry policy.
+Retry rebuilds the same context and feed from verified source evidence and
+preserves them when filtering lanes; stale or unrebuildable sources still stop
+before dispatch.
+
+The shared `recording_identity_basis` retains the existing provider/candidate
+attribution shape and states: “Complete chapter timing and structure corroborate
+this recording where overall runtime is unavailable.” Lookup-only candidates
+remain outside admitted provider-claim projection and cannot themselves create
+work or edition alternatives, an identity, or an owner choice. Admitted evidence
+passes through the existing report, proposal, case, owner decision and reopen
+path. This fallback grants owner review only: field applicability, independent
+authority, competing evidence, owner-final/Ask me/Ignore policy and guarded
+writes remain unchanged, and no automatic or effect authority is activated.
 
 **One evaluator.** An admitted recording runs through the existing election
 rules unchanged. Audio-specific behaviour is confined to four localised facts: a

@@ -77,7 +77,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v41"
+REPORT_SCHEMA = "metadata-report-v42"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -2351,6 +2351,8 @@ class ProviderObservation:
     dispatch_lineage: WorkDispatchLineage | None = None
     transformation_lineage: WorkTitleTransformationLineage | None = None
 
+    recording_lookup_candidates: tuple[ProviderCandidate, ...] = ()
+
     def __post_init__(self) -> None:
         _name(self.provider, "provider")
         if (
@@ -2424,6 +2426,49 @@ class ProviderObservation:
             raise ReportValueError(
                 "provider candidates are not in canonical identity order"
             )
+        if (
+            type(self.recording_lookup_candidates) is not tuple
+            or len(self.recording_lookup_candidates) > MAX_CANDIDATES
+            or any(
+                type(value) is not ProviderCandidate
+                for value in self.recording_lookup_candidates
+            )
+        ):
+            raise ReportValueError("recording lookup candidates are invalid")
+        lookup_identities = tuple(
+            value.identity for value in self.recording_lookup_candidates
+        )
+        if lookup_identities != tuple(sorted(set(lookup_identities))):
+            raise ReportValueError("recording lookup candidates are not canonical")
+        if self.recording_lookup_candidates:
+            work_lanes = tuple(
+                lane for lane in self.lanes if lane.kind is ProviderQueryKind.WORK
+            )
+            if (
+                self.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+                or self.edition_enrichment_overflow is not None
+                or self.dispatch_lineage is not None
+                or self.transformation_lineage is not None
+                or (
+                    not self.lanes
+                    and (
+                        self.query_kind is not ProviderQueryKind.WORK
+                        or self.status is not ProviderStatus.NO_MATCH
+                        or self.candidates
+                    )
+                )
+                or (
+                    self.lanes
+                    and (
+                        len(work_lanes) != 1
+                        or work_lanes[0].status is not ProviderStatus.NO_MATCH
+                        or work_lanes[0].candidates
+                        or work_lanes[0].dispatch_lineage is not None
+                        or work_lanes[0].transformation_lineage is not None
+                    )
+                )
+            ):
+                raise ReportValueError("recording lookup provenance is invalid")
         if (self.status is ProviderStatus.CANDIDATES) != bool(self.candidates):
             raise ReportValueError("provider status and candidates disagree")
         if self.edition_enrichment_overflow is not None and (
@@ -2491,7 +2536,7 @@ class ProviderObservation:
                     claim.date_confidence,
                 ),
             )
-            for candidate in self.candidates
+            for candidate in (*self.candidates, *self.recording_lookup_candidates)
             for claim in candidate.claims
         ):
             raise ReportValueError("provider candidate claim reference is inconsistent")
@@ -2574,6 +2619,9 @@ class ProviderObservation:
     def to_data(self) -> dict[str, object]:
         return {
             "candidates": [value.to_data() for value in self.candidates],
+            "recording_lookup_candidates": [
+                value.to_data() for value in self.recording_lookup_candidates
+            ],
             "input_references": list(self.input_references),
             "provider": self.provider,
             "query_kind": self.query_kind.value,
@@ -3090,6 +3138,52 @@ class MetadataReport:
             else ()
         )
         for provider in self.providers:
+            if provider.recording_lookup_candidates:
+                lookup_lanes = tuple(
+                    lane
+                    for lane in provider.lanes
+                    if lane.kind is ProviderQueryKind.WORK
+                )
+                if len(lookup_lanes) != 1 or not lookup_lanes[0].input_references:
+                    raise ReportValueError("recording lookup lane is missing")
+                lane = lookup_lanes[0]
+                work_inputs = {
+                    claim.reference
+                    for claim in self.local_claims
+                    if claim.kind is ClaimKind.TITLE
+                    and claim.basis == "target_metadata"
+                    and claim.canonical == target_title
+                }
+                expected_lane = (
+                    "lane_"
+                    + hashlib.sha256(
+                        canonical_json(
+                            {
+                                "authors": [
+                                    normalize_title(author) for author in target_authors
+                                ],
+                                "input_references": list(lane.input_references),
+                                "kind": ProviderQueryKind.WORK.value,
+                                "title": normalize_title(target_title or ""),
+                            }
+                        ).encode()
+                    ).hexdigest()
+                )
+                if (
+                    not set(lane.input_references).issubset(work_inputs)
+                    or lane.identity != expected_lane
+                ):
+                    raise ReportValueError("recording lookup lane is inconsistent")
+            if provider.recording_lookup_candidates and (
+                not is_audio
+                or any(
+                    not provider_candidate_exact_work_identity_admission(
+                        candidate, target_title or "", target_authors
+                    ).admitted
+                    for candidate in provider.recording_lookup_candidates
+                )
+            ):
+                raise ReportValueError("recording lookup work identity is inconsistent")
             witness = provider.edition_enrichment_overflow
             if witness is not None:
                 work_lanes = tuple(
@@ -3222,16 +3316,29 @@ class MetadataReport:
                 link,
             )
             for provider in self.providers
-            for candidate in provider.candidates
+            for candidate in (
+                *provider.candidates,
+                *provider.recording_lookup_candidates,
+            )
             for evidence in candidate.evidence
             for link in evidence.links
         ):
             raise ReportValueError(
                 "provider evidence comparison references are invalid"
             )
+        if any(
+            not {link.local_reference for link in claim.links}.issubset(known)
+            for provider in self.providers
+            for candidate in provider.recording_lookup_candidates
+            for claim in candidate.claims
+        ):
+            raise ReportValueError("recording lookup claim references are invalid")
         expected: ProviderCandidate | str
         for provider in self.providers:
-            for candidate in provider.candidates:
+            for candidate in (
+                *provider.candidates,
+                *provider.recording_lookup_candidates,
+            ):
                 expected = finalize_candidate_comparisons(
                     candidate,
                     self.local_claims,
@@ -3289,6 +3396,17 @@ class MetadataReport:
         providers = tuple(
             replace(
                 provider,
+                recording_lookup_candidates=tuple(
+                    finalize_candidate_comparisons(
+                        candidate,
+                        local_claims,
+                        provider.provider,
+                        allow_unbound_manifestation_link=(
+                            _target_backed_work_lookup(target, provider)
+                        ),
+                    )
+                    for candidate in provider.recording_lookup_candidates
+                ),
                 candidates=tuple(
                     finalize_candidate_comparisons(
                         candidate,
@@ -5114,6 +5232,7 @@ def _provider_from_data(value: object) -> ProviderObservation:
             "accessed_at",
             "authority",
             "candidates",
+            "recording_lookup_candidates",
             "convergence",
             "diagnostics",
             "dispatch_lineage",
@@ -5166,6 +5285,10 @@ def _provider_from_data(value: object) -> ProviderObservation:
             else work_title_transformation_lineage_from_data(
                 item["transformation_lineage"]
             )
+        ),
+        recording_lookup_candidates=tuple(
+            _candidate_from_data(candidate)
+            for candidate in _list(item["recording_lookup_candidates"])
         ),
     )
 

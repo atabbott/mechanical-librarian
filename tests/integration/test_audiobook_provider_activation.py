@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import io
 import tempfile
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from unittest.mock import patch
 
@@ -370,7 +370,7 @@ def _catalogue_entry() -> CatalogueEntry:
 
 def _run(
     root: Path,
-    providers: Mapping[str, MetadataProvider],
+    providers: Mapping[str, MetadataProvider | Callable[[], MetadataProvider]],
     *,
     covers: bool = False,
 ) -> tuple[str, object]:
@@ -389,7 +389,8 @@ def _run(
     assert extraction is not None
 
     def adapter(authority: str):
-        return lambda name, *_args, **_kwargs: providers[authority]
+        value = providers[authority]
+        return lambda name, *_args, **_kwargs: value() if callable(value) else value
 
     with (
         patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
@@ -500,7 +501,7 @@ def test_an_audiobook_publishes_provider_evidence_and_ends_terminally(
             == enrichment.lanes[0].candidates[0].edition_identity
         )
         assert published.audio is not None
-        assert "metadata-report-v41" == published.schema_version
+        assert "metadata-report-v42" == published.schema_version
         # Three authorities answered the ASIN lane with candidates, so the
         # recording's work identity is admitted and preparation queued the
         # proposal stage exactly as an ebook's does (#966).
@@ -798,9 +799,24 @@ def test_a_refused_cover_origin_is_published_as_a_typed_outcome(
     assert store.artifact is None
 
 
-@pytest.mark.parametrize("runtime", ("absent", "healthy", "malformed"))
+@pytest.mark.parametrize(
+    "origin,runtime",
+    [
+        (origin, runtime)
+        for origin in ("legacy", "local", "target", "work")
+        for runtime in (
+            "absent",
+            "healthy",
+            "malformed",
+            "cut",
+            "wrong_work",
+            "wrong_author",
+        )
+    ]
+    + [("promoted", "healthy")],
+)
 def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
-    tmp_path: Path, runtime: str
+    tmp_path: Path, runtime: str, origin: str
 ) -> None:
     import json
 
@@ -819,19 +835,36 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
     from mechanical_librarian.domain.review_case import ReviewCase
     from tests.support.audiobook_providers import payload
     from tests.support.chapter_runtime import (
+        QT_SPANS,
         SPANS,
         media,
         provider_chapters,
+        qt_media,
+        qt_provider_chapters,
+        qt_recorded_probe,
         recorded_probe,
     )
 
     mount = tmp_path / "media"
     mount.mkdir()
-    (mount / "book.m4b").write_bytes(media())
+    tagged = _ASIN if origin in {"legacy", "local"} else None
+    (mount / "book.m4b").write_bytes(
+        media()
+        if origin == "legacy"
+        else qt_media(asin=tagged, stated=origin == "promoted")
+    )
+    probe = recorded_probe() if origin == "legacy" else qt_recorded_probe(asin=tagged)
+    if origin == "promoted":
+        projection = json.loads(probe)
+        projection["format"]["duration"] = "1748.000"
+        probe = json.dumps(projection).encode()
     with patch.object(
         process,
         "run_probe_child",
-        return_value=(recorded_probe(), AudioInspectionOutcome.SUCCESS),
+        return_value=(
+            probe,
+            AudioInspectionOutcome.SUCCESS,
+        ),
     ):
         inspected = composition._IsolatedAudioInspector().inspect(
             MediaMountConfiguration("audiobooks", str(mount), "/library", True),
@@ -840,28 +873,57 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
         )
     assert [
         (c.start_milliseconds, c.end_milliseconds) for c in inspected.audio.chapters
-    ] == list(SPANS)
+    ] == list(SPANS if origin == "legacy" else QT_SPANS)
     assert inspected.audio.chapter_rows_omitted is False
     book = payload("audnexus_book")
     book.pop("runtimeLengthMin", None)
-    if runtime != "absent":
+    if runtime in {"healthy", "malformed"}:
         book["runtimeLengthMin"] = 29 if runtime == "healthy" else "invalid"
+    if runtime == "wrong_work":
+        book["title"] = "Different Work"
+    if runtime == "wrong_author":
+        book["authors"] = [{"name": "Different Author"}]
+    chapters = provider_chapters() if origin == "legacy" else qt_provider_chapters()
+    if runtime == "cut":
+        chapters["chapters"][1]["lengthMs"] += 3000
+        chapters["chapters"][2]["lengthMs"] -= 3000
+    snapshot = _snapshot()
+    if origin == "target":
+        from dataclasses import replace
+
+        snapshot = replace(
+            snapshot,
+            fields=tuple(
+                TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, _ASIN)
+                if field.destination is TargetDestination.ASIN
+                else field
+                for field in snapshot.fields
+            ),
+        )
     requests: list[str] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
         requests.append(request.url.path)
+        import copy
+
+        response = copy.deepcopy(
+            chapters if request.url.path.endswith("/chapters") else book
+        )
+        requested_asin = request.url.path.split("/")[2]
+        if request.url.path.endswith("/chapters"):
+            if requested_asin != _ASIN:
+                response["chapters"][1]["lengthMs"] += 6000
+                response["chapters"][2]["lengthMs"] -= 6000
+        else:
+            response["asin"] = requested_asin
         return httpx.Response(
-            200,
-            headers={"content-type": "application/json"},
-            json=provider_chapters()
-            if request.url.path.endswith("/chapters")
-            else book,
+            200, headers={"content-type": "application/json"}, json=response
         )
 
-    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
-        provider = AudnexusMetadataProvider(
+    def provider() -> MetadataProvider:
+        return AudnexusMetadataProvider(
             "enrichment",
-            client,
+            httpx.Client(transport=httpx.MockTransport(handle)),
             262144,
             5.0,
             marketplaces=("us",),
@@ -870,30 +932,98 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
             sleep=lambda _: None,
             jitter=lambda: 0.0,
         )
-        calls: list[tuple[str, ProviderQueryKind]] = []
-        providers: dict[str, MetadataProvider] = {
-            authority: _FakeAudiobookProvider(
-                alias, authority, calls, status=ProviderStatus.NO_MATCH
+
+    calls: list[tuple[str, ProviderQueryKind]] = []
+    providers: dict[str, MetadataProvider | Callable[[], MetadataProvider]] = {
+        authority: _FakeAudiobookProvider(
+            alias, authority, calls, status=ProviderStatus.NO_MATCH
+        )
+        for authority, alias in (
+            ("audible_catalog", "audible"),
+            ("audiosilo", "silo"),
+            ("itunes_search", "store"),
+        )
+    }
+    providers["audnexus"] = provider
+    if origin in {"work", "promoted"}:
+        import copy
+
+        from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+            AudibleCatalogMetadataProvider,
+        )
+
+        product = copy.deepcopy(payload("audible_search")["products"][0])
+        product.pop("runtime_length_min", None)
+        if origin == "promoted":
+            product["runtime_length_min"] = 29
+        product["asin"] = _ASIN
+        other = {**product, "asin": "B000000002"}
+        search_client = httpx.Client(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"content-type": "application/json"},
+                    json={
+                        "products": [product, other] if origin == "work" else [product]
+                    },
+                )
             )
-            for authority, alias in (
-                ("audible_catalog", "audible"),
-                ("audiosilo", "silo"),
-                ("itunes_search", "store"),
-            )
-        }
-        providers["audnexus"] = provider
-        with (
-            patch(__name__ + "._audio_result", return_value=inspected),
-            patch(__name__ + "._CONTENT_DIGEST", inspected.content_digest),
-        ):
-            serialized, repository = _run(tmp_path, providers)
+        )
+        providers["audible_catalog"] = AudibleCatalogMetadataProvider(
+            "audible",
+            search_client,
+            262144,
+            5.0,
+            marketplaces=("uk",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1700000000.0,
+            sleep=lambda _: None,
+            jitter=lambda: 0.0,
+        )
+    with (
+        patch(__name__ + "._audio_result", return_value=inspected),
+        patch(__name__ + "._CONTENT_DIGEST", inspected.content_digest),
+        patch(__name__ + "._snapshot", return_value=snapshot),
+    ):
+        serialized, repository = _run(tmp_path, providers)
     try:
         report = MetadataReport.from_json(serialized)
-        assert len(requests) == 2
+        expected_asins = (_ASIN, "B000000002") if origin == "work" else (_ASIN,)
+        assert set(requests) == {
+            path
+            for asin in expected_asins
+            for path in (f"/books/{asin}", f"/books/{asin}/chapters")
+        }
+        assert len(requests) == 2 * len(expected_asins)
+        if origin not in {"legacy", "promoted"}:
+            assert not any(
+                claim.kind is ClaimKind.DURATION for claim in report.local_claims
+            )
+        if origin == "work":
+            search = next(
+                value for value in report.providers if value.provider == "audible"
+            )
+            assert search.status is ProviderStatus.NO_MATCH and search.candidates == ()
+            assert len(search.recording_lookup_candidates) == 2
+            from mechanical_librarian.application.metadata_report import promoted_asins
+
+            assert promoted_asins((search,)) == ()
+        if origin == "promoted":
+            from mechanical_librarian.application.metadata_report import promoted_asins
+
+            search = next(
+                value for value in report.providers if value.provider == "audible"
+            )
+            assert promoted_asins((search,)) == (_ASIN,)
+            assert search.recording_lookup_candidates == ()
         state = repository._connection.execute(
             "SELECT stage,state,outcome FROM review_preparation_work"
         ).fetchone()
-        if runtime == "malformed":
+        for table in ("automatic_decisions", "field_effects", "field_effect_consents"):
+            assert repository._connection.execute(
+                f"SELECT count(*) FROM {table}"
+            ).fetchone() == (0,)
+        if runtime in {"malformed", "cut", "wrong_work", "wrong_author"}:
             assert state == ("complete", "complete", "evidence_only")
             assert recording_identity_basis(report) is None
             assert (
@@ -905,7 +1035,9 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
             return
         assert state[:2] == ("proposal", "queued")
         basis = recording_identity_basis(report)
-        assert (basis is not None) is (runtime == "absent")
+        assert (basis is not None) is (
+            runtime == "absent" or origin not in {"legacy", "promoted"}
+        )
         replay = MetadataReport.from_json(
             repository.get_proposal_input(report.report_id)
         )
@@ -941,5 +1073,16 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
             ).fetchone()[0]
             == 0
         )
+        repository.close()
+        repository = open_repository(tmp_path / "reports.sqlite", create=False)
+        assert MetadataReport.from_json(repository.get(report.report_id)) == report
+        reopened = json.loads(repository.get_review_case(case.review_case_id))
+        assert reopened["current"] is True
+        assert ReviewCase.create_from_data(reopened["case"]) == case
+        assert len(repository.get_review_case_decisions(case.review_case_id)) == 1
+        for table in ("automatic_decisions", "field_effects", "field_effect_consents"):
+            assert repository._connection.execute(
+                f"SELECT count(*) FROM {table}"
+            ).fetchone() == (0,)
     finally:
         repository.close()

@@ -252,16 +252,15 @@ def test_a_search_lane_contacts_only_the_first_configured_marketplace() -> None:
     assert {AUDIBLE_MARKETPLACE_HOSTS["uk"]} == {url.host for url in seen}
     assert {"6"} == {url.params["num_results"] for url in seen}
     assert {"Project Hail Mary"} == {url.params["title"] for url in seen}
-    # Three products come back and work-identity qualification keeps one, at
-    # work scope only: a title-and-author search establishes no edition, so the
-    # ASIN, runtime and narrator this adapter parsed are all withheld from it.
+    # The admitted work retains informational ASIN/runtime hints without
+    # marketplace authority or narrator applicability.
     candidate = observation.candidates[0]
     assert 1 == len(observation.candidates)
     assert ("Project Hail Mary",) == tuple(
         claim.value for claim in _claims(candidate, ClaimKind.TITLE)
     )
-    assert () == _claims(candidate, ClaimKind.ASIN)
-    assert () == _claims(candidate, ClaimKind.DURATION)
+    assert _claims(candidate, ClaimKind.ASIN)
+    assert _claims(candidate, ClaimKind.DURATION)
     assert () == _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
 
 
@@ -537,8 +536,8 @@ def test_a_search_lane_outside_the_band_keeps_only_its_work_shape() -> None:
     candidate = observation.candidates[0]
 
     assert 1 == len(seen)
-    assert () == _claims(candidate, ClaimKind.ASIN)
-    assert () == _claims(candidate, ClaimKind.DURATION)
+    assert _claims(candidate, ClaimKind.ASIN)
+    assert _claims(candidate, ClaimKind.DURATION)
     assert () == _claims(candidate, ClaimKind.CONTRIBUTOR)
     assert () == _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
 

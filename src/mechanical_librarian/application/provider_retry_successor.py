@@ -403,7 +403,7 @@ class GenerateProviderRetrySuccessor:
         ):
             raise CurrentnessError("target or media changed")
         plan = (
-            audiobook_discovery_plan(snapshot, source.local_claims)
+            audiobook_discovery_plan(snapshot, source.local_claims, audio=source.audio)
             if audio
             else metadata_discovery_plan(snapshot, source.local_claims)
         )
@@ -499,9 +499,7 @@ class GenerateProviderRetrySuccessor:
     ) -> tuple[ProviderObservation, int | None]:
         try:
             client: MetadataProvider = provider.binding.factory()
-            result = client.observe(
-                MetadataDiscoveryPlan(plan.local_claims, selected), deadline=deadline
-            )
+            result = client.observe(replace(plan, lanes=selected), deadline=deadline)
         except Exception as error:
             # Provider construction and the remote observation are one dispatch
             # across the complete result/failure contract. Either failing

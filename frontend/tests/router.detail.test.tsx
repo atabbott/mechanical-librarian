@@ -49,11 +49,11 @@ describe('Library review ownership', () => {
       renderRoute(route, http)
       const section = await screen.findByRole('region', { name: 'Recording identity evidence' })
       expect(
-        within(section).getByText(/Chapter timing and structure corroborate this recording/u),
+        within(section).getByText(
+          /Complete chapter timing and structure corroborate this recording/u,
+        ),
       ).toBeVisible()
-      expect(
-        within(section).getByText(/Audnexus did not provide a separate book runtime/u),
-      ).toBeVisible()
+      expect(within(section).getByText(/where overall runtime is unavailable/u)).toBeVisible()
       const source = within(section).getByText('Recording source')
       expect(within(section).getByText(/Candidate reference: recording-1/u)).not.toBeVisible()
       await userEvent.setup().click(source)

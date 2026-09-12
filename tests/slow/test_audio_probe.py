@@ -507,3 +507,56 @@ def test_chapter_runtime_publication_fixture_matches_actual_probe(
     assert result.audio.chapter_rows_omitted is False
     assert result.audio.chapters_truncated is False
     assert result.audio.composition is AudioChapterComposition.SINGLE_FILE
+
+
+@pytest.mark.parametrize(
+    "stated,chapter_stated", ((True, True), (False, True), (False, False))
+)
+def test_quicktime_chapters_keep_complete_missing_runtime_provenance(
+    media_root: Path, stated: bool, chapter_stated: bool
+) -> None:
+    from mechanical_librarian.domain.audio_inspection import AudioObservationKind
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        complete_chapter_runtime_agreement,
+    )
+    from mechanical_librarian.domain.metadata_report import ProviderChapterStructure
+    from tests.support.chapter_runtime import ASIN, QT_SPANS, qt_media
+
+    (media_root / "book.m4b").write_bytes(
+        qt_media(stated=stated, chapter_stated=chapter_stated, asin=ASIN)
+    )
+    result = _inspect(media_root, "book.m4b")
+    assert any(c.kind is ClaimKind.ASIN and c.canonical == ASIN for c in result.claims)
+    assert result.audio.composition is AudioChapterComposition.SINGLE_FILE
+    assert not result.audio.chapter_rows_omitted
+    assert not result.audio.chapters_truncated
+    if chapter_stated:
+        assert [
+            (c.start_milliseconds, c.end_milliseconds) for c in result.audio.chapters
+        ] == list(QT_SPANS)
+    else:
+        assert (
+            result.audio.chapters[-1].end_milliseconds
+            == result.audio.chapters[-1].start_milliseconds
+        )
+    durations = tuple(c for c in result.claims if c.kind is ClaimKind.DURATION)
+    assert bool(durations) is stated
+    if not stated:
+        assert result.audio.tracks[0].duration_milliseconds is None
+        absence = tuple(
+            o
+            for o in result.audio.observations
+            if o.kind is AudioObservationKind.DURATION_UNSTATED
+        )
+        assert len(absence) == 1 and absence[0].tracks == (1,)
+        assert not any(
+            o.kind is AudioObservationKind.TRACK_DURATION_UNAVAILABLE
+            for o in result.audio.observations
+        )
+    structure = ProviderChapterStructure(
+        6, 1748, tuple((end - start) // 1000 for start, end in QT_SPANS)
+    )
+    assert (
+        complete_chapter_runtime_agreement(result.audio, result.claims, structure)
+        is chapter_stated
+    )

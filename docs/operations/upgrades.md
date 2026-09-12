@@ -3,7 +3,7 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v3`, `owner-settings-v4`,
-`cover-consideration-v4`, `metadata-report-v41`, and the added application
+`cover-consideration-v4`, `metadata-report-v42`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
@@ -47,6 +47,11 @@ an absent application database; no adoption is supplied.
 field, payload shape, or vocabulary is added, but a v39 report is unreadable to
 v38 and a v38 database cannot accept one, so it is not exact-current. Rebuild an
 absent application database; no adoption is supplied.
+
+#1004 advances `metadata-report-v41` to `metadata-report-v42` with the required
+`recording_lookup_candidates` collection. Clean rebuild required: prior JSON
+and application databases refuse unchanged; no adoption or migration is supplied.
+The isolated audio protocol and owner detail API remain v4.
 
 #1042 advances `metadata-report-v40` to `metadata-report-v41` and the isolated
 audio protocol from v3 to v4. The required exact boolean `chapter_rows_omitted`

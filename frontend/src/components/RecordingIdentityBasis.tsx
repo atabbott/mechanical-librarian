@@ -5,8 +5,8 @@ export function RecordingIdentityBasis({ value }: { value: RecordingIdentityBasi
   return (
     <section className="diagnostic-entry" aria-label="Recording identity evidence">
       <p>
-        Chapter timing and structure corroborate this recording. {value.provider} did not provide a
-        separate book runtime.
+        Complete chapter timing and structure corroborate this recording where overall runtime is
+        unavailable.
       </p>
       <details>
         <summary className="recording-identity-source">Recording source</summary>
