@@ -2497,7 +2497,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     if (typeof window.matchMedia !== 'function') return
     const media = window.matchMedia('(min-width: 761px)')
     const selectWideDefault = () => {
-      if (!media.matches || currentSearch.current.preview) return
+      if (
+        !media.matches ||
+        currentSearch.current.preview ||
+        currentSearch.current.work ||
+        currentSearch.current.preparation
+      )
+        return
       const first =
         data.works.find((work) => work.reviewCaseId && work.attentionCount > 0) ??
         data.works.find((work) => work.reviewCaseId)
@@ -2505,7 +2511,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       if (reviewCaseId)
         void navigate({
           replace: true,
-          search: (current) => (current.preview ? current : { ...current, preview: reviewCaseId }),
+          search: (current) =>
+            current.preview || current.work || current.preparation
+              ? current
+              : { ...current, preview: reviewCaseId },
         })
     }
     selectWideDefault()
@@ -2888,9 +2897,9 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               data.works.map((work, index) => {
                 const selectedWorkRow =
                   !preparationSelected &&
-                  (work.reviewCaseId
-                    ? search.preview === work.reviewCaseId
-                    : search.work === work.workId)
+                  (selectedWork
+                    ? selectedWork.workId === work.workId
+                    : work.reviewCaseId !== undefined && search.preview === work.reviewCaseId)
                 const needsAttention = work.attentionCount > 0
                 // A published report is not a failure. The row for a work
                 // that stopped before producing one has nothing to open and

@@ -368,7 +368,7 @@
     "frontend/src/api/http.ts": "7d225d70cf691dc7a160c1307c0fa78a2a7f54d2d33986672084deb66a24ceeb",
     "frontend/src/components/RecordingIdentityBasis.tsx": "a719096272238aa4abccd3a5b0339ed17efdd26be60dd9ab3f2f8a17c732b0d9",
     "frontend/src/routes/DetailPage.tsx": "c0fbbac4714a187ebf6a5df5d7e07b7a9d79152b498d25b67ea07b1fe02f9eb4",
-    "frontend/src/routes/LibraryPage.tsx": "0a636b39dd3579a10dcae23f7866e629e52613e489ed47da1ac6167a7b66f6fd",
+    "frontend/src/routes/LibraryPage.tsx": "8131f03ee35a88e7ea6720d6075e35522db6e9041419e09e8af74d766eea9f72",
     "frontend/src/styles.css": "edf8bc2609a535d98486dbacee0da4ba08c9dfc3c4da86edce1de52cc546ce80",
     "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
     "scripts/qualify_provider_evidence_replay.py": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129",
