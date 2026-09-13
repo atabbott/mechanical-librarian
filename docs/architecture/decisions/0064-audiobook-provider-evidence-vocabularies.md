@@ -118,10 +118,12 @@ qualification.
 - Report-layer ASIN claims accept ISBN-10-shaped ASINs. `ProviderClaim`
   validates against the same `canonical_asin` grammar the ASIN lane is built
   from, per clause 1 and ADR-0061 clause 4, so one identifier family has one
-  grammar rather than two that disagree. The proposal path's write-destination
-  eligibility and the shadow-review linkage guard remain `B0`-shaped: relaxing
-  those grants an ASIN write destination this record does not, and that part
-  stays deferred.
+  grammar rather than two that disagree. The originally deferred narrower
+  proposal and packet checks were subsequently superseded: #957 aligned proposal
+  eligibility, and [ADR-0073](0073-audiobook-decision-qualification.md) aligned
+  shadow-review linkage with the existing canonical grammar. This accepts
+  ISBN-10-shaped identifiers without granting recording applicability or
+  Automatic ASIN qualification; provenance and field-specific guards remain.
 - Audiobook cover acquisition is granted on two of the four adapters. The
   Audible catalog and iTunes Search each state a cover asset of their own, so
   `config-v7` carries a real `cover_enabled` bool on their enabled forms,

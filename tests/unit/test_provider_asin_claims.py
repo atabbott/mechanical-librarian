@@ -1,27 +1,45 @@
-"""One ASIN grammar on the report path, and the strict write-path guards.
+"""Canonical ASIN grammar across report, proposal and packet linkage.
 
-ADR-0061 clause 4 admits ISBN-10-shaped ASINs without a prefix filter, so the
-retained report validates a provider ASIN claim against the same canonical form
-the ASIN discovery lane is built from, and the proposal path now asks that same
-question (#957). The shadow-review linkage guard stays strict, which ADR-0064
-records as deferred rather than decided.
+Canonical linkage does not establish recording applicability or grant Automatic
+ASIN authority; the report, provenance and qualification guards remain separate.
 """
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+
 import pytest
 
+from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
+    qualify_provider_observation,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
     FieldState,
+    MetadataReport,
     ProviderClaim,
+    ProviderQueryKind,
     ReportValueError,
     TargetDestination,
     canonical_asin,
 )
-from mechanical_librarian.domain.proposal_set import _eligible_identifier
-from mechanical_librarian.domain.shadow_review import _ASIN as _SHADOW_ASIN
+from mechanical_librarian.domain.proposal_set import (
+    _eligible_identifier,
+    evaluate_report,
+)
+from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.shadow_review import (
+    ShadowReviewPacket,
+    ShadowReviewValueError,
+)
+from tests.support.audiobook_reports import (
+    asin_lane_observation,
+    asserted_asin_report,
+    audiobook_candidate,
+)
 
 _CANONICAL = ("B08G9PRS1K", "0743563123", "9780306406", "0000000000", "ZZZZZZZZZZ")
 _REFUSED = (
@@ -102,7 +120,80 @@ def test_the_proposal_path_asks_the_one_canonical_asin_question() -> None:
         ) == (canonical_asin(value) is not None)
 
 
-def test_the_shadow_review_linkage_guard_stays_strict() -> None:
-    assert _SHADOW_ASIN.fullmatch("B08G9PRS1K") is not None
-    assert _SHADOW_ASIN.fullmatch("0743563123") is None
-    assert canonical_asin("0743563123") == "0743563123"
+@pytest.mark.parametrize("value", ("0743563123", "B08G9PRS1K"))
+def test_packet_linkage_accepts_canonical_asin_and_rejects_changed_facts(
+    value: str,
+) -> None:
+    base = asserted_asin_report(provider_duration="58200.000")
+    observation = asin_lane_observation(base.local_claims)
+    candidate = audiobook_candidate(
+        base.local_claims, identity="synthetic-product", asin=value
+    )
+    date = ProviderClaim.create(
+        provider=observation.provider,
+        candidate=candidate.identity,
+        kind=ClaimKind.PUBLICATION_DATE,
+        value="2025-02-03",
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+        raw_order=5,
+    )
+    observation = replace(
+        observation, candidates=(replace(candidate, claims=(*candidate.claims, date)),)
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        audio=base.audio,
+        providers=(
+            qualify_provider_observation(
+                observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+            ),
+        ),
+    )
+    report = MetadataReport.from_json(report.to_json())
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    assert ShadowReviewPacket.from_json(packet.to_json(), report, proposal) == packet
+    citation = next(
+        item for item in packet.citations if item["citation_id"] == date.reference
+    )
+    assert citation["fact"]["linkage"]["identifier_facts"][0]["value"] == value
+    for invalid in (
+        "b08g9prs1k",
+        "074356312",
+        "07435631233",
+        "074356312!",
+        "B000000001",
+    ):
+        document = json.loads(packet.to_json())
+        changed = next(
+            item
+            for item in document["citations"]
+            if item["citation_id"] == date.reference
+        )
+        changed["fact"]["linkage"]["identifier_facts"][0]["value"] = invalid
+        with pytest.raises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(
+                json.dumps(document, sort_keys=True, separators=(",", ":")),
+                report,
+                proposal,
+            )
+    document = json.loads(packet.to_json())
+    changed = next(
+        item for item in document["citations"] if item["citation_id"] == date.reference
+    )
+    changed["fact"]["linkage"]["identifier_facts"][0]["reference"] = (
+        "provider_" + "0" * 64
+    )
+    with pytest.raises(ShadowReviewValueError):
+        ShadowReviewPacket.from_json(
+            json.dumps(document, sort_keys=True, separators=(",", ":")),
+            report,
+            proposal,
+        )

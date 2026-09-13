@@ -64,6 +64,11 @@ does under that routing is still decided by the ebook envelope, which leaves
   the same candidate's complete structured association and author identity.
   Packet v8 carries recomputable recording support; it is never an independent
   source of authority.
+- Packet provider linkage uses the report/proposal `canonical_asin` grammar,
+  including ISBN-10-shaped identifiers. This supersedes ADR-0064's deferred
+  `B0`-only linkage restriction; it does not establish recording applicability
+  or grant Automatic ASIN authority, which remains withheld. Provider identity,
+  claim-reference provenance and field-specific guards are still validated.
 - Audio cover fill reuses the existing deterministic classifier and election,
   binds its own F46 identity, and never dispatches an image observer. A populated
   cover cannot borrow empty-fill authority.
