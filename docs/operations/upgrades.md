@@ -3,13 +3,20 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The reviewer-access authority, `setup-state-v3`, `owner-settings-v4`,
-`cover-consideration-v4`, `metadata-report-v42`, and the added application
+`cover-consideration-v4`, `metadata-report-v43`, and the added application
 tables change the current SQLite objects in this build. Every earlier
 application database therefore requires a clean rebuild; no adoption,
 migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, #956, #965, #896, #888, #1000, #999, #957, #892, or #144.
+#749, #956, #965, #896, #888, #1000, #999, #957, #967, #892, or #144.
 
-The exact predecessors for this change are `config-v7`, `metadata-report-v32`,
+#967 requires current `metadata-report-v43`, `shadow-outcome-set-v5`,
+`metadata-policy-profile-v3`, `shadow-review-packet-v8`, and
+`cover-automatic-decision-v2`, with `fixed-conservative-v25` under the unchanged
+`proposal-set-v7` document shape. These recording-support and qualification
+contracts require a clean application rebuild. Historical records and their
+measurements remain unchanged; no adoption or rescoring is supplied.
+
+The Inventaire increment's exact predecessors were `config-v7`, `metadata-report-v32`,
 `owner-settings-v2`, and `setup-state-v2`. Inventaire changes all four closed
 vocabularies, so no predecessor is parsed or adopted: supply a `config-v9`
 document and rebuild an absent application database through first-run setup.
@@ -133,7 +140,7 @@ independent backup path, and an absent output path under the same private
 directory. The command name remains the frozen authority identifier from its
 original plan; its frozen target is
 `metadata-report-v40` with `fixed-conservative-v23`. That target is incompatible
-with the current v24 title policy; this change does not refresh the bridge. It leaves the source
+with the current v25 title policy; this change does not refresh the bridge. It leaves the source
 untouched, verifies the backup, rebuilds a fresh exact-current report database
 through current derivation, and
 invalidates observations that lack current work-dispatch provenance plus all

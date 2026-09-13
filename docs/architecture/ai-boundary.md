@@ -9,7 +9,7 @@ closed observation as advisory evidence only after local admission.
 
 The deterministic decision-preview and qualified automatic-decision
 paths are outside the AI boundary. They consume the retained exact,
-source-validated `shadow-review-packet-v7` and trusted compiled action
+source-validated `shadow-review-packet-v8` and trusted compiled action
 catalogue without model/provider dispatch. Their packet, rule identity,
 `source_outcome_id`, `shadow_decision`, and `shadow_outcome` contracts
 remain deterministic and authoritative.
