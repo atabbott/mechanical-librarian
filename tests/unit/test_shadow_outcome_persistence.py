@@ -7822,10 +7822,15 @@ def test_an_audiobook_series_identity_cannot_authorize_an_ebook_effect(
 
 
 def _audiobook_preview(
-    repository: Any, report: MetadataReport, automatic: tuple[str, ...]
+    repository: Any,
+    report: MetadataReport,
+    automatic: tuple[str, ...],
+    *,
+    selected_options: dict[str, str] | None = None,
 ) -> tuple[str, ResolvedMetadataPolicy]:
     """Publish one recording under a policy routing `automatic` to Automatic."""
     options = dict(DEFAULT_OPTIONS)
+    options.update(selected_options or {})
     destinations = {
         name: "unsupported" if name == "explicit" else "ask"
         for name in OPTION_CATALOGUE
@@ -8209,3 +8214,139 @@ def test_audio_cover_fill_is_persisted_reopened_and_never_lends_replacement_auth
             decision, case, report, proposal_set, consideration
         ) == {"kind": "cover", "value": source.artifact.artifact_id}
     repository.close()
+
+
+@pytest.mark.parametrize(
+    "current,option,operation,expected",
+    (
+        ("2024-01-01", "full_date", "replace", "2025-02-03"),
+        (None, "full_date", "fill", "2025-02-03"),
+        ("2025-02-03", "full_date", "preserve", None),
+    ),
+)
+def test_audio_date_selected_projection_survives_reopen_and_effect(
+    monkeypatch, tmp_path, current, option, operation, expected
+):
+    from tests.unit.test_audiobook_review_decisions import _recording_date_report
+
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        frozenset(audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES),
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", "7" * 64
+    )
+    report = _recording_date_report(current)
+    path = tmp_path / "date.sqlite"
+    repository = open_repository(path)
+    case_id, resolved = _audiobook_preview(
+        repository,
+        report,
+        ("date_precision",),
+        selected_options={"date_precision": option},
+    )
+    outcome = ShadowOutcomeSet.from_json(repository.persist_shadow_outcome(case_id, 4))
+    field = next(
+        item for item in outcome.outcomes if item.destination == "publishedDate"
+    )
+    assert field.policy_option == option + ":audiobook_publisheddate_" + operation
+    repository.close()
+    repository = open_repository(path)
+    try:
+        decision = next(
+            AutomaticDecision.from_json(value)
+            for value in repository.get_review_case_decisions(case_id)
+            if json.loads(value)["destination"] == "publishedDate"
+        )
+        assert decision.policy_option == field.policy_option
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        value = _automatic_decision_value(decision, case, report, proposal, outcome)
+        assert value == (
+            None if expected is None else {"kind": "text", "value": expected}
+        )
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        displayed = next(
+            item for item in detail["fields"] if item["destination"] == "publishedDate"
+        )
+        assert displayed["automatic_decision"]["selected_value"] == value
+        event = next(
+            item
+            for item in InspectCurrentReviewCase(repository).history(case_id)["items"]
+            if item.get("decision_id") == decision.decision_id
+        )
+        assert event["selected_value"] == (
+            value if expected is not None else {"kind": "text", "value": current}
+        )
+        source_result = next(
+            item
+            for item in proposal.results
+            if item.destination is TargetDestination.PUBLISHED_DATE
+        )
+        assert any(
+            item.value.value == "2025-02-03" for item in source_result.alternatives
+        )
+
+        assert repository.automatic_safety_state() == AutomaticSafetyState(
+            False, None, ()
+        )
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "source,option",
+    (("2025", "full_date"), ("2025-02", "full_date"), ("2025-02-03", "year")),
+)
+def test_audio_unsupported_date_shape_cannot_mint_automatic_authority(
+    monkeypatch, tmp_path, source, option
+):
+    from tests.unit.test_audiobook_review_decisions import _recording_date_report
+
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        frozenset(audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES),
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", "7" * 64
+    )
+    report = _recording_date_report(None, source)
+    repository = open_repository(tmp_path / "partial.sqlite")
+    try:
+        case_id, resolved = _audiobook_preview(
+            repository,
+            report,
+            ("date_precision",),
+            selected_options={"date_precision": option},
+        )
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        assert any(
+            item.value.value == source
+            for result in proposal.results
+            if result.destination is TargetDestination.PUBLISHED_DATE
+            for item in result.alternatives
+        )
+        outcome = ShadowOutcomeSet.from_json(
+            repository.persist_shadow_outcome(case_id, 4)
+        )
+        field = next(
+            item for item in outcome.outcomes if item.destination == "publishedDate"
+        )
+        assert field.policy_destination != "automatic"
+        assert all(
+            json.loads(value)["destination"] != "publishedDate"
+            for value in repository.get_review_case_decisions(case_id)
+        )
+        assert repository.automatic_safety_state() == AutomaticSafetyState(
+            False, None, ()
+        )
+    finally:
+        repository.close()

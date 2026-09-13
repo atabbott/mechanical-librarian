@@ -109,11 +109,19 @@ F46 qualifies each actual field operation separately. One applicable independent
 source can suffice for a supported work or recording field; material conflicts,
 incomplete credits and unexplained title suffixes still require review. Existing
 fill-only choices preserve populated values. Explicit series addition retains
-current associations, while replacement requires the separately chosen and
-qualified replacement operation. Unknown audio ISBNs, explicit-content semantics,
+current associations, including equivalent existing spelling, while replacement
+requires the separately chosen and qualified replacement operation. Unknown audio ISBNs, explicit-content semantics,
 subtitle and typed-tag operations without scorable evidence, and cover replacement
 remain withheld. Cover fill uses the existing deterministic image path without
 model calls. Candidate availability does not itself grant Automatic authority.
+
+Audiobook Automatic dates require the Full date option and a valid full calendar
+day accepted by the existing target reader. Year options and year/month-only
+source dates remain manual; no date precision is invented or reduced.
+Audiobook language comparison recognizes equivalent ISO codes and the observed
+English display name without discarding region or script. Both language options
+retain the admitted source string; neither renders a new display name. Genre and
+opt-in tag addition retain equivalent incumbent spelling and add only new members.
 
 F35 (#884) adds a closed, provider-consensus title election to the v14
 ProposalSet policy: one exact local noisy title, one exact reversible pattern,

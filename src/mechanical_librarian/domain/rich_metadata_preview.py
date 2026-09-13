@@ -15,6 +15,7 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
     qualified_policy_bases,
 )
+from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
@@ -349,7 +350,11 @@ def _project(
         if candidate.value.kind is not ProposalValueKind.LIST:
             return _abstain(field, option, target, current, "no_candidate")
         if option == "add" and target.state is TargetFieldState.VALUE:
-            desired = tuple((*target.value, *(item for item in candidate.value.value if item not in target.value)))
+            desired = (
+                tuple(_add_audiobook_taxonomy_members(current, desired))
+                if proposal.media_kind == "audiobook"
+                else tuple((*target.value, *(item for item in candidate.value.value if item not in target.value)))
+            )
         elif option == "fill_empty" and target.state not in _EMPTY:
             return _preserved(field, option, target, current)
         elif option not in {"fill_empty", "add", "replace"}:
@@ -360,7 +365,11 @@ def _project(
         if candidate.value.kind is not ProposalValueKind.SERIES:
             return _abstain(field, option, target, current, "no_candidate")
         if option == "add_qualified" and target.state is TargetFieldState.VALUE:
-            desired = [*current, *(item for item in desired if item not in current)]
+            desired = (
+                tuple(_add_series_associations(current, desired))
+                if proposal.media_kind == "audiobook"
+                else [*current, *(item for item in desired if item not in current)]
+            )
         if option == "all_qualified":
             desired = (candidate.value.value[0],)
             if _data_value(desired) == current:
@@ -1154,8 +1163,15 @@ def project_audiobook_automatic_decision_value(
             current = _data_value(current_value)
             if type(current) not in {list, tuple}:
                 raise RichMetadataPreviewError("rich automatic projection is invalid")
-            values = [*current, *(item for item in values if item not in current)]
+            values = _add_series_associations(current, values)
         projected: dict[str, object] = {"kind": "series", "value": values}
+    elif field in {"genres", "tags"} and option == "add" and current_value is not None:
+        projected = project_f20_automatic_decision_value(
+            field, "replace", {
+                "kind": candidate_value["kind"],
+                "value": _add_audiobook_taxonomy_members(current_value, candidate_value["value"]),
+            }, None,
+        )
     else:
         projected = project_f20_automatic_decision_value(
             field,
@@ -1169,6 +1185,34 @@ def project_audiobook_automatic_decision_value(
     if identity != f"{field}:{qualified_option}":
         raise RichMetadataPreviewError("rich automatic operation is unqualified")
     return projected
+
+
+def _add_audiobook_taxonomy_members(current: object, desired: object) -> list[str]:
+    """Keep incumbent taxonomy spelling when an admitted member is equivalent."""
+    if (
+        type(current) not in {list, tuple} or type(desired) not in {list, tuple}
+        or any(type(item) is not str for item in (*current, *desired))
+    ):
+        raise RichMetadataPreviewError("rich automatic projection is invalid")
+    return [*current, *(item for item in desired if not any(
+        values_match(TargetDestination.GENRES, existing, item) for existing in current
+    ))]
+
+
+def _add_series_associations(current: object, desired: object) -> list[object]:
+    """Retain existing displays while adding only distinct bound series pairs."""
+    if type(current) not in {list, tuple} or type(desired) not in {list, tuple}:
+        raise RichMetadataPreviewError("rich automatic projection is invalid")
+    def identity(item: object) -> tuple[str, str | None]:
+        if (
+            type(item) is not dict or set(item) != {"name", "sequence"}
+            or type(item["name"]) is not str
+            or (item["sequence"] is not None and type(item["sequence"]) is not str)
+        ):
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        return series_name_equivalence_key(item["name"]), item["sequence"]
+    existing = {identity(item) for item in current}
+    return [*current, *(item for item in desired if identity(item) not in existing)]
 
 
 def _data_value(value: object) -> object:

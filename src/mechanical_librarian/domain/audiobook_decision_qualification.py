@@ -11,10 +11,12 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Final, Mapping, Sequence, cast
 
+from mechanical_librarian.domain.field_outcomes import language_identity
 from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     canonical_asin,
+    normalize_date_value,
 )
 
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = None
@@ -104,6 +106,15 @@ def identity_for_effect(
     destination: str, category: str, option: str, current: object, desired: object
 ) -> str | None:
     """Bind qualification to the actual effect on the retained pre-value."""
+    if destination == "publishedDate":
+        if option != "full_date" or type(desired) is not str:
+            return None
+        try:
+            normalized, precision = normalize_date_value(desired)
+        except ValueError:
+            return None
+        if precision.value != "day" or normalized != desired:
+            return None
     if current == desired or (
         type(current) in {list, tuple}
         and type(desired) in {list, tuple}
@@ -113,7 +124,11 @@ def identity_for_effect(
         operation = "preserve"
     elif current in (None, "", [], ()):
         operation = "fill"
-    elif values_match(TargetDestination(destination), current, desired):
+    elif (
+        _language_effect_equivalent(current, desired)
+        if destination == "language"
+        else values_match(TargetDestination(destination), current, desired)
+    ):
         operation = "normalize"
     elif (
         destination in {"authors", "narrators", "series", "genres", "tags"}
@@ -135,6 +150,17 @@ def identity_for_effect(
         operation = "replace"
     identity = _identity(destination, category, option, operation)
     return identity if identity in F46_AUDIOBOOK_IDENTITIES else None
+
+
+def _language_effect_equivalent(current: object, desired: object) -> bool:
+    """Compare admitted forms without losing a language region or script."""
+    if type(current) is not str or type(desired) is not str:
+        return False
+    if current.casefold() == desired.casefold():
+        return True
+    left = language_identity("en" if current.casefold() == "english" else current)
+    right = language_identity("en" if desired.casefold() == "english" else desired)
+    return left is not None and left == right
 
 
 F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset()

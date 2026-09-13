@@ -825,3 +825,32 @@ def test_post_dispatch_status_and_transport_loss_reconcile_through_application(
         else "unexpected_effect_behavior"
     )
     repository.close()
+
+
+@pytest.mark.parametrize(
+    "value,readable", (("2025-02-03", True), ("2025", False), ("2025-02", False))
+)
+def test_publication_date_transport_and_report_reader_define_the_supported_shape(
+    case, value, readable
+):
+    from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+        _target_field,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetFieldState,
+    )
+
+    plan = _plan("publishedDate", None, value)
+    assert case.target.read(plan).value is None
+    assert case.target.apply(plan).outcome == "accepted"
+    assert case.target.read(plan).value == value
+    request = next(item for item in case.requests if item.method == "PATCH")
+    assert json.loads(request.content) == {"metadata": {"publishedDate": value}}
+    observed = _target_field(
+        case.detail["media"]["metadata"], TargetDestination.PUBLISHED_DATE
+    )
+    assert observed.state is (
+        TargetFieldState.VALUE if readable else TargetFieldState.MALFORMED
+    )
+    assert observed.value == (value if readable else None)

@@ -812,32 +812,34 @@ def test_the_policy_state_names_every_audiobook_tranche_and_a_record_opens_one(
     """
     web.login()
     inert = web.client.get("/api/v1/metadata-policy/state").json()
-    assert [
-        {
-            "automatic_available": False,
-            "destination": "asin",
-            "field": "asin",
-            "identity": F46_ASIN_IDENTITY,
-            "option": "preserve_exact",
-            "record_sha256": None,
-        },
-        {
-            "automatic_available": False,
-            "destination": "narrators",
-            "field": "contributor_names",
-            "identity": "contributor_names:canonical:audiobook_narrators_fill_empty",
-            "option": "canonical",
-            "record_sha256": None,
-        },
-        {
-            "automatic_available": False,
-            "destination": "series",
-            "field": "series",
-            "identity": "series:primary_narrative:audiobook_fill_empty",
-            "option": "primary_narrative",
-            "record_sha256": None,
-        },
-    ] == inert["audiobook_qualification"]
+    entries = inert["audiobook_qualification"]
+    assert {entry["identity"] for entry in entries} == set(
+        audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES
+    )
+    assert len(entries) == len(
+        audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES
+    )
+    for entry in entries:
+        assert set(entry) == {
+            "automatic_available",
+            "destination",
+            "field",
+            "identity",
+            "option",
+            "operation",
+            "record_sha256",
+        }
+        assert entry["automatic_available"] is False
+        assert entry["record_sha256"] is None
+    assert {entry["operation"] for entry in entries} == {
+        "preserve",
+        "fill",
+        "normalize",
+        "add",
+        "replace",
+        "replace_invalid",
+        "replace_recording",
+    }
 
     record = "7" * 64
     monkeypatch.setattr(
@@ -850,10 +852,10 @@ def test_the_policy_state_names_every_audiobook_tranche_and_a_record_opens_one(
     )
     qualified = web.client.get("/api/v1/metadata-policy/state").json()
     assert {
-        (entry["field"], entry["option"], entry["record_sha256"])
+        (entry["identity"], entry["operation"], entry["record_sha256"])
         for entry in qualified["audiobook_qualification"]
         if entry["automatic_available"]
-    } == {("asin", "preserve_exact", record)}
+    } == {(F46_ASIN_IDENTITY, "fill", record)}
     # The ebook records are the same bytes either way: an audiobook record
     # never speaks for one, and the ASIN it names is exactly the option the
     # ebook envelope still leaves unqualified.

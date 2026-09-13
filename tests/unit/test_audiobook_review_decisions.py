@@ -1087,3 +1087,261 @@ def test_asserted_asin_work_fields_do_not_require_matching_current_title_or_auth
     }
     assert decisions["title"].recommendation == "recommend_candidate"
     assert decisions["authors"].recommendation == "recommend_candidate"
+
+
+@pytest.mark.parametrize(
+    "source,option,eligible",
+    (
+        ("2025-02-03", "full_date", True),
+        ("2025-02-03", "year", False),
+        ("2025", "full_date", False),
+        ("2025-02", "full_date", False),
+        ("2025-02-30", "full_date", False),
+        (None, "full_date", False),
+    ),
+)
+def test_audio_date_qualification_requires_supported_full_day(source, option, eligible):
+    identity = identity_for_effect(
+        "publishedDate", "date_precision", option, None, source
+    )
+    assert identity == (
+        "date_precision:full_date:audiobook_publisheddate_fill" if eligible else None
+    )
+
+
+@pytest.mark.parametrize(
+    "current,desired,operation",
+    (
+        ("en", "eng", "normalize"),
+        ("en", "English", "normalize"),
+        ("eng", "english", "normalize"),
+        ("English", "ENGLISH", "normalize"),
+        ("en-US", "english", "replace"),
+        ("en-GB", "en", "replace"),
+        ("en-Latn", "eng", "replace"),
+        ("en-US", "en-GB", "replace"),
+        ("fr", "english", "replace"),
+        ("French", "fr", "replace"),
+    ),
+)
+def test_audio_language_operation_preserves_script_and_region(
+    current, desired, operation
+):
+    assert (
+        identity_for_effect(
+            "language", "language_rendering", "preserve", current, desired
+        )
+        == "language_rendering:preserve:audiobook_language_" + operation
+    )
+
+
+@pytest.mark.parametrize(
+    "name,sequence,operation",
+    (
+        ("EXAMPLE CYCLE", "2", "preserve"),
+        ("Another Cycle", "2", "add"),
+        ("Example Cycle", "3", "add"),
+    ),
+)
+def test_audio_series_add_preserves_equivalent_existing_pair(name, sequence, operation):
+    current = [{"name": "EXAMPLE CYCLE", "sequence": "2"}]
+    candidate = {"kind": "series", "value": [{"name": name, "sequence": sequence}]}
+    result = project_audiobook_automatic_decision_value(
+        "series",
+        "series",
+        "add_qualified:audiobook_series_" + operation,
+        candidate,
+        current,
+    )
+    assert result["value"] == (
+        current if operation == "preserve" else [*current, *candidate["value"]]
+    )
+    if sequence != "2":
+        with pytest.raises(RichMetadataPreviewError, match="operation is unqualified"):
+            project_audiobook_automatic_decision_value(
+                "series",
+                "series",
+                "add_qualified:audiobook_series_preserve",
+                candidate,
+                current,
+            )
+
+
+def _recording_date_report(
+    current: str | None, source: str = "2025-02-03"
+) -> MetadataReport:
+    base = asserted_asin_report(provider_duration="58200.000")
+    observation = asin_lane_observation(base.local_claims)
+    candidate = observation.candidates[0]
+    date = ProviderClaim.create(
+        provider=observation.provider,
+        candidate=candidate.identity,
+        kind=ClaimKind.PUBLICATION_DATE,
+        value=source,
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+        date_event=DateEvent.MANIFESTATION_PUBLICATION,
+        raw_order=9,
+    )
+    observation = replace(
+        observation, candidates=(replace(candidate, claims=(*candidate.claims, date)),)
+    )
+    observation = qualify_provider_observation(
+        observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+    )
+    date_target = (
+        TargetField(TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING)
+        if current is None
+        else TargetField(
+            TargetDestination.PUBLISHED_DATE, TargetFieldState.VALUE, current
+        )
+    )
+    fields = tuple(
+        date_target if field.destination is TargetDestination.PUBLISHED_DATE else field
+        for field in base.target.fields
+    )
+    return MetadataReport.create(
+        target=replace(base.target, fields=fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+
+
+@pytest.mark.parametrize("destination", ("genres", "tags"))
+@pytest.mark.parametrize("new_member", (False, True))
+def test_audio_taxonomy_add_retains_equivalent_incumbent(destination, new_member):
+    current = ["SCIENCE FICTION & FANTASY"]
+    desired = ["Science Fiction & Fantasy", *(["Mystery"] if new_member else [])]
+    operation = "add" if new_member else "preserve"
+    result = project_audiobook_automatic_decision_value(
+        destination,
+        destination,
+        "add:audiobook_" + destination + "_" + operation,
+        {"kind": "list", "value": desired},
+        current,
+    )
+    assert result == {
+        "kind": "list",
+        "value": [*current, *(["Mystery"] if new_member else [])],
+    }
+
+
+@pytest.mark.parametrize("field", ("series", "genres", "tags"))
+@pytest.mark.parametrize("new_member", (False, True))
+def test_audio_add_actual_preview_matches_effect_reconstruction(field, new_member):
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        OPTION_CATALOGUE,
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from mechanical_librarian.domain.metadata_report import TargetSeries
+    from mechanical_librarian.domain.rich_metadata_preview import (
+        compile_rich_metadata_preview,
+    )
+
+    report = corroborated_audiobook_report()
+    destination = TargetDestination(field)
+    current: tuple[TargetSeries, ...] | tuple[str, ...]
+    if field == "series":
+        current = (TargetSeries("READING ORDER", "2"),)
+        if new_member:
+            current = (TargetSeries("Another Cycle", "3"),)
+    else:
+        current = ("SCIENCE FICTION & FANTASY",)
+        providers = []
+        for provider in report.providers:
+            candidates = []
+            for candidate in provider.candidates:
+                extra = tuple(
+                    ProviderClaim.create(
+                        provider=provider.provider,
+                        candidate=candidate.identity,
+                        kind=ClaimKind.GENRE if field == "genres" else ClaimKind.TAG,
+                        value=value,
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        raw_order=20 + ordinal,
+                    )
+                    for ordinal, value in enumerate(
+                        (
+                            "Science Fiction & Fantasy",
+                            *(["Mystery"] if new_member else []),
+                        )
+                    )
+                )
+                candidates.append(
+                    replace(candidate, claims=(*candidate.claims, *extra))
+                )
+            providers.append(replace(provider, candidates=tuple(candidates)))
+        report = MetadataReport.create(
+            target=report.target,
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=tuple(providers),
+            audio=report.audio,
+        )
+    target = replace(
+        report.target,
+        fields=tuple(
+            TargetField(destination, TargetFieldState.VALUE, current)
+            if item.destination is destination
+            else item
+            for item in report.target.fields
+        ),
+    )
+    report = MetadataReport.create(
+        target=target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        audio=report.audio,
+    )
+    options = dict(DEFAULT_OPTIONS)
+    option = "add_qualified" if field == "series" else "add"
+    options[field] = option
+    policy = resolve_policy(
+        MetadataPolicyProfile.create(
+            "Example policy",
+            options,
+            {
+                name: "unsupported" if name == "explicit" else "ask"
+                for name in OPTION_CATALOGUE
+            },
+        ),
+        report.target.library,
+    )
+    proposal = evaluate_report(
+        report, policy.resolved_id, human_review_destinations(policy)
+    )
+    preview = next(
+        item
+        for item in compile_rich_metadata_preview(policy, report, proposal).fields
+        if item.field == field
+    )
+    assert preview.outcome == ("projected" if new_member else "no_op")
+    selected_candidate = next(
+        item
+        for result in proposal.results
+        if result.destination is destination
+        for item in result.alternatives
+    )
+    operation = "add" if new_member else "preserve"
+    effect = project_audiobook_automatic_decision_value(
+        field,
+        field,
+        option + ":audiobook_" + field + "_" + operation,
+        selected_candidate.value.to_data(),
+        current,
+    )
+    preview_value = preview.desired_value
+    assert type(preview_value) is list or type(preview_value) is tuple
+    assert effect["value"] == list(preview_value)

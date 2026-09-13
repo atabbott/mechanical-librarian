@@ -282,14 +282,14 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     transformation: 'records the option without reducing the candidate',
     effect:
       'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision',
-    fallback: 'abstains when no decision is qualified',
+    fallback: 'unavailable for audiobook Automatic; requires a qualified decision for ebooks',
   },
   'date_precision:full_date': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without changing candidate precision',
     effect:
       'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision',
-    fallback: 'abstains when no decision is qualified',
+    fallback: 'audiobook Automatic requires a full calendar day and a qualified operation',
   },
   'publisher_preference:publisher': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
