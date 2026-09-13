@@ -105,7 +105,7 @@ Once a record exists, Automatic is withdrawn from every destination on that
 recording the record does not name, so an unqualified identity is always the
 owner's answer to give and never an authority failure.
 
-The [F46 qualification record](../reference/f46-audiobook-qualification-candidate-v3.json)
+The [F46 qualification record](../reference/f46-audiobook-qualification-candidate-v4.json)
 names 44 accepted operations across title, authors, narrators, language, series
 and genres. Other operation identities remain manual. Date, publisher,
 description, ASIN and cover did not meet the selected-positive confirmation
