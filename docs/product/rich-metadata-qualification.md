@@ -12,11 +12,14 @@ including explicit series add/replace and description replace choices. Each
 operation binds its current target value before an effect is reconstructed.
 Existing F20 options and historical v31 bytes retain their ebook meaning.
 The presentation successor reserves space for Evidence below expanded descriptions;
-metadata rules and the completed correspondence remain unchanged.
-The [F46 v4 record](../reference/f46-audiobook-qualification-candidate-v4.json)
+The review successor also retains valid book fields beside malformed taxonomy
+members and makes all returned sampled Policy outcomes expandable before activation.
+All twelve retained parser responses are unchanged; frozen quality and completed
+correspondence remain bound to their original sources.
+The [F46 v5 record](../reference/f46-audiobook-qualification-candidate-v5.json)
 registers 44 accepted operations in six fields, bound by
-[F19a v21](../reference/f19a-qualification-manifest-v21.json) and
-[F20 v35](../reference/f20-rich-metadata-qualification-candidate-v35.json).
+[F19a v22](../reference/f19a-qualification-manifest-v22.json) and
+[F20 v36](../reference/f20-rich-metadata-qualification-candidate-v36.json).
 Retained Automatic/effect correspondence passed at the recorded source; Ask previews
 expose candidate evidence without granting effect authority.
 
@@ -513,15 +516,15 @@ rule moves.
 
 ## Current expanded audiobook source bindings (#967)
 
-The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v4.json)
+The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v5.json)
 names 44 accepted field/operation identities across title, authors, narrators,
 language, series and genres. Its source-quality corpus and candidate operations
 are frozen separately from subsequent Automatic/effect correspondence. Dates,
 publisher, description, ASIN and cover lack the required selected-positive
 confirmation floor; subtitle/tags lack the source floor, and ISBN/explicit
 semantics remain unresolved. No new authority is inferred from those candidates.
-The [F19a v21](../reference/f19a-qualification-manifest-v21.json) and
-[F20 v35](../reference/f20-rich-metadata-qualification-candidate-v35.json)
+The [F19a v22](../reference/f19a-qualification-manifest-v22.json) and
+[F20 v36](../reference/f20-rich-metadata-qualification-candidate-v36.json)
 successors bind the current consumers without rewriting historical records or
 claiming fresh ebook scoring. Report v43, shadow outcome v5 and policy profile
 v3 require a clean rebuild; prior state is never relabelled as current.

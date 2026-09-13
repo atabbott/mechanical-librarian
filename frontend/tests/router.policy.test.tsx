@@ -543,6 +543,102 @@ describe('Policy route', () => {
     ])
   })
 
+  it('reveals material outcomes beyond six rows without changing preview authority', async () => {
+    const user = userEvent.setup()
+    const unchanged = Array.from({ length: 6 }, (_, index) => ({
+      current_value: `Retained ${String(index)}`,
+      desired_value: `Retained ${String(index)}`,
+      field: `unchanged_${String(index)}`,
+      narrowed_for_target: false,
+      option: 'preserve',
+      outcome: 'projected',
+      qualified_value: `Retained ${String(index)}`,
+      reason: null,
+      target_state: 'available',
+    }))
+    const policyCommand = vi.fn<(path: string, body: unknown) => Promise<unknown>>(async (path) => {
+      if (path === 'drafts')
+        return { policy_id: 'policy-reviewed', schema_version: 'metadata-policy-profile-v3' }
+      if (path === 'preview')
+        return {
+          active_policy_id: 'policy-preview-authority',
+          policy_id: 'policy-reviewed',
+          schema_version: 'metadata-policy-preview-v1',
+          libraries: [
+            {
+              library: 'Fiction',
+              affected_categories: ['contributor_names'],
+              cases_total: 1,
+              cases_truncated: false,
+              current_unapplied_count: 1,
+              resolved_policy_id: 'resolved-policy',
+              cases: [
+                {
+                  fields: [
+                    ...unchanged,
+                    {
+                      ...unchanged[0],
+                      field: 'contributor_names',
+                      option: 'canonical',
+                      current_value: 'Previous narrator',
+                      desired_value: 'Complete recording cast',
+                      qualified_value: 'Complete recording cast',
+                    },
+                  ],
+                  proposal_set_id: 'proposal-1',
+                  report_id: 'report-1',
+                  resolved_policy_id: 'resolved-policy',
+                  work_label: 'Recording book',
+                },
+              ],
+            },
+          ],
+        }
+      if (path === 'activate') throw new ApiError(409, 'policy_transition_is_processing')
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      policyCommand: <T,>(path: string, body: unknown) => policyCommand(path, body) as Promise<T>,
+    }
+    renderRoute('/policy?section=identity', http)
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    const showMore = await screen.findByRole('button', { name: 'Show 1 more outcome' })
+    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
+    expect(showMore).toHaveAttribute('aria-expanded', 'false')
+    showMore.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByText('· Previous narrator → Complete recording cast')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Show fewer outcomes' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    await user.click(screen.getByRole('button', { name: 'Show fewer outcomes' }))
+    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Show 1 more outcome' }))
+    await user.click(screen.getByRole('button', { name: 'Back to editing' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    expect(await screen.findByRole('button', { name: 'Show 1 more outcome' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Show 1 more outcome' }))
+    await user.click(screen.getByRole('button', { name: 'Review activation' }))
+    expect(screen.getByText('· Previous narrator → Complete recording cast')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Activate policy' }))
+    await waitFor(() =>
+      expect(policyCommand).toHaveBeenCalledWith('activate', {
+        policy_id: 'policy-reviewed',
+        expected_active_policy_id: 'policy-preview-authority',
+      }),
+    )
+    expect(policyCommand.mock.calls.filter(([path]) => path === 'activate')).toHaveLength(1)
+    expect(policyCommand.mock.calls.filter(([path]) => path === 'preview')).toHaveLength(2)
+  })
+
   it('identifies each affected work beside its exact policy outcome', async () => {
     const user = userEvent.setup()
     const field = (current_value: string, desired_value: string, name = 'title_layout') => ({

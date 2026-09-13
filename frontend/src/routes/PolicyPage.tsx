@@ -692,6 +692,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const [snapshotId, setSnapshotId] = useState<string>()
   const [previewActivePolicyId, setPreviewActivePolicyId] = useState<string>()
   const [preview, setPreview] = useState<PolicyPreviewView>()
+  const [expandedPreview, setExpandedPreview] = useState<PolicyPreviewView>()
   const [stage, setStage] = useState<PolicyStage>('editing')
   const [status, setStatus] = useState<{
     tone: 'neutral' | 'success' | 'error' | 'warning'
@@ -1508,29 +1509,31 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     {String(impactTotals?.changedWorks ?? 0)}
                   </b>
                 </header>
-                <div className="cm-policy-preview-list">
+                <div id="policy-preview-outcomes" className="cm-policy-preview-list">
                   {previewRows.length
-                    ? previewRows.slice(0, 6).map((row) => (
-                        <div key={row.id} className={row.impact.changed ? 'is-change' : ''}>
-                          <span className="cm-policy-work-mark" aria-hidden="true">
-                            {row.work.slice(0, 2).toUpperCase()}
-                          </span>
-                          <span>
-                            <strong>{row.work}</strong>
-                            <small>
-                              {row.library} · {row.field}
-                            </small>
-                          </span>
-                          <span className="cm-policy-impact">
-                            <b>{row.impact.title}</b>
-                            <small>· {row.impact.detail}</small>
-                            <details>
-                              <summary>Technical detail</summary>
-                              <code>{row.impact.technicalDetail}</code>
-                            </details>
-                          </span>
-                        </div>
-                      ))
+                    ? previewRows
+                        .slice(0, expandedPreview === preview ? undefined : 6)
+                        .map((row) => (
+                          <div key={row.id} className={row.impact.changed ? 'is-change' : ''}>
+                            <span className="cm-policy-work-mark" aria-hidden="true">
+                              {row.work.slice(0, 2).toUpperCase()}
+                            </span>
+                            <span>
+                              <strong>{row.work}</strong>
+                              <small>
+                                {row.library} · {row.field}
+                              </small>
+                            </span>
+                            <span className="cm-policy-impact">
+                              <b>{row.impact.title}</b>
+                              <small>· {row.impact.detail}</small>
+                              <details>
+                                <summary>Technical detail</summary>
+                                <code>{row.impact.technicalDetail}</code>
+                              </details>
+                            </span>
+                          </div>
+                        ))
                     : preview.libraries.map((library) => (
                         <div key={library.library}>
                           <span className="cm-policy-work-mark" aria-hidden="true">
@@ -1559,7 +1562,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 </div>
                 {previewRows.length > 6 ? (
                   <footer>
-                    Plus {String(previewRows.length - 6)} more exact field outcomes in this preview
+                    <button
+                      type="button"
+                      aria-expanded={expandedPreview === preview}
+                      aria-controls="policy-preview-outcomes"
+                      onClick={() =>
+                        setExpandedPreview(expandedPreview === preview ? undefined : preview)
+                      }
+                    >
+                      {expandedPreview === preview
+                        ? 'Show fewer outcomes'
+                        : `Show ${String(previewRows.length - 6)} more ${previewRows.length === 7 ? 'outcome' : 'outcomes'}`}
+                    </button>
                   </footer>
                 ) : preview.libraries.some((library) => library.cases_truncated) ? (
                   <footer>

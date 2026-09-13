@@ -614,7 +614,11 @@ def _candidate(
             add(ClaimKind.TAG, _UNPROJECTABLE)
         else:
             for item in taxonomy:
-                if type(item) is not dict or item.get("type") not in {"genre", "tag"}:
+                if (
+                    type(item) is not dict
+                    or type(item.get("type")) is not str
+                    or item["type"] not in {"genre", "tag"}
+                ):
                     schema_rejections(1)
                     continue
                 kind = ClaimKind.GENRE if item["type"] == "genre" else ClaimKind.TAG

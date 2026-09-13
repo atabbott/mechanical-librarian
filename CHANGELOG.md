@@ -12,8 +12,8 @@
   language, series and genres, with complete credits and explicit list operations.
   Other fields remain available for review within their evidence limits;
   unknown identifiers, subtitle/tags and cover authority stay withheld.
-  Expanded descriptions keep Evidence clear of the text.
-  Existing application state requires a clean rebuild. (#967)
+  Policy previews reveal all sampled outcomes; malformed taxonomy retains valid fields.
+  Expanded descriptions keep Evidence clear; state requires a clean rebuild. (#967)
 
 - Complete audiobook chapters can support owner review when overall runtime is
   unavailable, including target-asserted and WORK-derived recording lookups.

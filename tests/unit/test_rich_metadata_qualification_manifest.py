@@ -62,14 +62,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v35.json"
+    "f20-rich-metadata-qualification-candidate-v36.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v21.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v22.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -2019,13 +2019,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v20.json",
-            "685a88818f97eeda1c302fad6a695ffffab634428248a8c9a3274980491d3a90",
+            "f19a-qualification-manifest-v21.json",
+            "df7d676444bbc74e168c30f1e7991184d61a32a2d235609554674b093bd6fd43",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v34.json",
-            "b978bf5caf2c726c4d25999ef6ca313242fc55e1884b45380e9758c4db6bda88",
+            "f20-rich-metadata-qualification-candidate-v35.json",
+            "bf8c9f29704e71ff96e820e7b973bca2a7ec13d5a5304e3474bfcf5e777ad676",
         ),
     ):
         assert (
@@ -2412,7 +2412,7 @@ def test_complete_chapter_successors_refresh_sources_without_measurement_or_auth
 
 
 def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
-    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v4.json")
+    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v5.json")
     document = json.loads(path.read_bytes())
     assert (
         hashlib.sha256(path.read_bytes()).hexdigest()
@@ -2479,6 +2479,8 @@ def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
         "src/mechanical_librarian/domain/automatic_decision.py",
         "tests/unit/test_shadow_outcome_persistence.py",
         "frontend/src/styles.css",
+        "frontend/src/routes/PolicyPage.tsx",
+        "src/mechanical_librarian/adapters/providers/audnexus_metadata.py",
     }
     for name, digest in document["source_closure"].items():
         if name not in exceptions:
@@ -2530,9 +2532,9 @@ def test_withdrawn_preservation_authority_retains_adverse_receipts():
 
 def test_final_record_preserves_verified_rules_and_exact_passing_set():
     document = json.loads(
-        MANIFEST.with_name("f46-audiobook-qualification-candidate-v4.json").read_bytes()
+        MANIFEST.with_name("f46-audiobook-qualification-candidate-v5.json").read_bytes()
     )
-    prior = MANIFEST.with_name("f46-audiobook-qualification-candidate-v3.json")
+    prior = MANIFEST.with_name("f46-audiobook-qualification-candidate-v4.json")
     assert (
         hashlib.sha256(prior.read_bytes()).hexdigest()
         == document["prior_manifest_sha256"]
@@ -2621,4 +2623,51 @@ def test_presentation_successor_is_only_the_approved_description_clearance():
     assert (
         delta["current_rule"]
         == ".metadata-choice.is-evidence-open, .metadata-choice:has(.choice-description[open]) { padding-bottom:68px; }"
+    )
+
+
+def test_review_successor_binds_only_approved_parser_and_preview_corrections():
+    document = json.loads(
+        MANIFEST.with_name("f46-audiobook-qualification-candidate-v5.json").read_bytes()
+    )
+    prior_path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v4.json")
+    prior = json.loads(prior_path.read_bytes())
+    assert hashlib.sha256(prior_path.read_bytes()).hexdigest() == (
+        "1fe94f60c1e5ffd0f61b0b7612e46eb3952fdbf5717d74f1f476d1e72b718174"
+    )
+    for key in (
+        "source_closure",
+        "completed_correspondence",
+        "passing_automatic_options",
+        "binding_only_source_equivalence",
+        "software_correspondence_attempt",
+        "presentation_source_delta",
+    ):
+        assert document[key] == prior[key]
+    delta = document["review_correction_delta"]
+    assert delta["base_sha"] == "5b996410855ca9f133fc1e46383f9019c730ae1f"
+    expected = {
+        "src/mechanical_librarian/adapters/providers/audnexus_metadata.py": "2d58d6e8d91a202bb699496a4e45b1690b425d47180c3fcc0aa46a6e47ceddf9",
+        "frontend/src/routes/PolicyPage.tsx": "8d642e86be5bc26e071111f11795acb3ddccdd4949bb279a3894fda1a099a5f8",
+    }
+    assert set(delta["source_files"]) == set(expected)
+    for name, change in delta["source_files"].items():
+        current = (MANIFEST.parents[2] / name).read_text()
+        assert hashlib.sha256(current.encode()).hexdigest() == expected[name]
+        assert change["current_sha256"] == expected[name]
+        restored = current
+        for replacement in reversed(change["replacements"]):
+            assert restored.count(replacement["current_text"]) == 1
+            restored = restored.replace(
+                replacement["current_text"], replacement["prior_text"], 1
+            )
+        assert hashlib.sha256(restored.encode()).hexdigest() == (change["prior_sha256"])
+        assert change["prior_sha256"] == prior["source_closure"][name]
+    comparison = delta["retained_parser_comparison"]
+    assert comparison["responses"] == 12
+    assert comparison["candidates"] == 10
+    assert comparison["noncandidates"] == 2
+    assert comparison["candidate_full_json_and_diagnostics_equal"] is True
+    assert comparison["receipt_sha256"] == (
+        "40842a4c75f4408554eaf71a6ee9068b4ba04748e1054d9d2ddf9e267bfa5bd5"
     )

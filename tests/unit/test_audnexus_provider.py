@@ -176,6 +176,42 @@ def test_typed_audio_fields_and_source_associations_survive_the_adapter() -> Non
     assert [claim.value for claim in _claims(candidate, ClaimKind.TAG)] == ["Adventure"]
 
 
+@pytest.mark.parametrize("taxonomy_type", [[], {}, "unknown"])
+def test_invalid_taxonomy_type_keeps_the_book_and_valid_siblings(
+    taxonomy_type: object,
+) -> None:
+    book = {
+        "asin": _ASIN,
+        "title": "Synthetic Journey",
+        "authors": [{"name": "Example Author"}],
+        "genres": [
+            {"type": "genre", "name": "Fantasy"},
+            {"type": taxonomy_type, "name": "Rejected member"},
+            {"type": "tag", "name": "Adventure"},
+        ],
+    }
+    seen, handle = _recorder(book=_json(book))
+    observation = _provider(handle).observe(asin_plan()).observation
+    assert observation.status is ProviderStatus.CANDIDATES
+    assert len(observation.candidates) == 1
+    assert [str(url) for url in seen] == [_BOOK, _CHAPTERS]
+    candidate = observation.candidates[0]
+    assert [claim.value for claim in _claims(candidate, ClaimKind.TITLE)] == [
+        "Synthetic Journey"
+    ]
+    assert [claim.value for claim in _claims(candidate, ClaimKind.CREATOR)] == [
+        "Example Author"
+    ]
+    assert [claim.value for claim in _claims(candidate, ClaimKind.GENRE)] == ["Fantasy"]
+    assert [claim.value for claim in _claims(candidate, ClaimKind.TAG)] == ["Adventure"]
+    assert [
+        (item.value, item.taxonomy_type)
+        for item in _evidence(candidate, ProviderEvidenceKind.TAXONOMY)
+    ] == [("Adventure", "tag"), ("Fantasy", "genre")]
+    assert len(observation.diagnostics) == 1
+    assert observation.diagnostics[0].count == 1
+
+
 def test_partial_cast_and_malformed_release_remain_explicit_invalid_claims() -> None:
     book = {
         "asin": _ASIN,
