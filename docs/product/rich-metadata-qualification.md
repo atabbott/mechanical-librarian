@@ -11,11 +11,11 @@ The F46 registry names actual preserve/fill/normalize/add/replace operations,
 including explicit series add/replace and description replace choices. Each
 operation binds its current target value before an effect is reconstructed.
 Existing F20 options and historical v31 bytes retain their ebook meaning.
-The [F46 v2 record](../reference/f46-audiobook-qualification-candidate-v2.json)
+The [F46 v3 record](../reference/f46-audiobook-qualification-candidate-v3.json)
 registers 44 accepted operations in six fields, bound by
-[F19a v19](../reference/f19a-qualification-manifest-v19.json) and
-[F20 v33](../reference/f20-rich-metadata-qualification-candidate-v33.json).
-Final retained Automatic/effect correspondence remains pending; Ask previews
+[F19a v20](../reference/f19a-qualification-manifest-v20.json) and
+[F20 v34](../reference/f20-rich-metadata-qualification-candidate-v34.json).
+Retained Automatic/effect correspondence passed at the recorded source; Ask previews
 expose candidate evidence without granting effect authority.
 
 Report v43 preserves candidate-associated series-title decoration honestly;
@@ -432,7 +432,12 @@ ASIN and other unqualified operations remain manual.
 Title and author preserve operations are withheld because retained software
 correspondence rejected author no-change authority and suspended title
 preservation admission. Their independently accepted source quality is unchanged.
-The remaining registration awaits final retained Automatic/effect correspondence.
+The remaining registration passed all 530 retained software scenarios, with
+1,165 verified synthetic-service effects, 162 no-change facts and no errors,
+value/operation mismatches or unintended suspension. These repeated scenarios
+are not independent books. The default policy produced 25 actual changes across
+six of the twelve source-quality books; eleven source-correct title/author
+preservations remain manual after the operation withdrawal.
 
 Adding or withdrawing qualification changes persisted interpretation. The exact
 shadow-outcome successor and clean rebuild prevent old stored decisions from
@@ -506,15 +511,15 @@ rule moves.
 
 ## Current expanded audiobook source bindings (#967)
 
-The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v2.json)
+The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v3.json)
 names 44 accepted field/operation identities across title, authors, narrators,
 language, series and genres. Its source-quality corpus and candidate operations
 are frozen separately from subsequent Automatic/effect correspondence. Dates,
 publisher, description, ASIN and cover lack the required selected-positive
 confirmation floor; subtitle/tags lack the source floor, and ISBN/explicit
 semantics remain unresolved. No new authority is inferred from those candidates.
-The [F19a v19](../reference/f19a-qualification-manifest-v19.json) and
-[F20 v33](../reference/f20-rich-metadata-qualification-candidate-v33.json)
+The [F19a v20](../reference/f19a-qualification-manifest-v20.json) and
+[F20 v34](../reference/f20-rich-metadata-qualification-candidate-v34.json)
 successors bind the current consumers without rewriting historical records or
 claiming fresh ebook scoring. Report v43, shadow outcome v5 and policy profile
 v3 require a clean rebuild; prior state is never relabelled as current.

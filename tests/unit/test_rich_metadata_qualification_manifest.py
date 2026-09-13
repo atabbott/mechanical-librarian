@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import re
@@ -61,14 +62,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v33.json"
+    "f20-rich-metadata-qualification-candidate-v34.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v19.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v20.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -2018,13 +2019,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v18.json",
-            "09d99f036e562e8134b948694d3bd6651ffefcf5b1948532adeba1b49c3dc6f6",
+            "f19a-qualification-manifest-v19.json",
+            "b07048c857e5946634f6eaa0ec57cd609e5288899eb020ef20d26df8ed37e426",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v32.json",
-            "f91bf7c73869d8b3aca8b189c614eb808442b4dbeec13ac106705ecd754e82de",
+            "f20-rich-metadata-qualification-candidate-v33.json",
+            "3b62f0fdbad07a0d893f1e18f9d20d23e0c4101db14a001f2df550a383a51927",
         ),
     ):
         assert (
@@ -2411,7 +2412,7 @@ def test_complete_chapter_successors_refresh_sources_without_measurement_or_auth
 
 
 def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
-    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v2.json")
+    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v3.json")
     document = json.loads(path.read_bytes())
     assert (
         hashlib.sha256(path.read_bytes()).hexdigest()
@@ -2420,10 +2421,7 @@ def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
     assert (
         document["frozen_candidate_sha"] == "be6cb086d14aff4c61e6e9ae983f23ed3a996b94"
     )
-    assert (
-        document["status"]
-        == "accepted_candidate_quality_pending_automatic_correspondence"
-    )
+    assert document["status"] == "qualified_automatic_correspondence_complete"
     assert set(document["passing_automatic_options"]) == F46_PASSING_AUTOMATIC_OPTIONS
     assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 44
     assert document["passing_fields"] == [
@@ -2527,3 +2525,59 @@ def test_withdrawn_preservation_authority_retains_adverse_receipts():
         re.fullmatch("[0-9a-f]{64}", value)
         for value in document["software_receipts"].values()
     )
+
+
+def test_final_record_preserves_verified_rules_and_exact_passing_set():
+    document = json.loads(
+        MANIFEST.with_name("f46-audiobook-qualification-candidate-v3.json").read_bytes()
+    )
+    prior = MANIFEST.with_name("f46-audiobook-qualification-candidate-v2.json")
+    assert (
+        hashlib.sha256(prior.read_bytes()).hexdigest()
+        == document["prior_manifest_sha256"]
+    )
+    assert (
+        document["passing_automatic_options"]
+        == json.loads(prior.read_bytes())["passing_automatic_options"]
+    )
+    completed = document["completed_correspondence"]
+    assert completed["source_sha"] == "c7c0c65da90444a0f8bc36fe96ee92032ea8a946"
+    assert completed["scenarios_completed"] == 530
+    assert completed["counts"] == {
+        "scenario_complete": 530,
+        "verified_fake_service": 1165,
+        "no_change": 162,
+    }
+    assert (
+        completed["errors"]
+        == completed["unintended_suspension"]
+        == completed["value_or_operation_mismatches"]
+        == 0
+    )
+    assert set(completed["identity_counts"]) == F46_PASSING_AUTOMATIC_OPTIONS
+    assert all(
+        sum(counts.values()) > 0 for counts in completed["identity_counts"].values()
+    )
+    equivalence = document["binding_only_source_equivalence"]
+    for name, expected in equivalence["ast_sha256"].items():
+        tree = ast.parse((MANIFEST.parents[2] / name).read_bytes())
+        tree.body = [
+            node
+            for node in tree.body
+            if not (
+                isinstance(node, (ast.Assign, ast.AnnAssign))
+                and any(
+                    isinstance(target, ast.Name)
+                    and target.id in equivalence["excluded_binding_assignments"]
+                    for target in (
+                        node.targets if isinstance(node, ast.Assign) else [node.target]
+                    )
+                )
+            )
+        ]
+        assert (
+            hashlib.sha256(
+                ast.dump(tree, include_attributes=False).encode()
+            ).hexdigest()
+            == expected
+        )
