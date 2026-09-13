@@ -280,6 +280,8 @@ describe('policy impact projections', () => {
       'series:primary_narrative',
       'series:source_order',
       'series:all_qualified',
+      'series:add_qualified',
+      'series:replace_qualified',
       'genres:fill_empty',
       'genres:add',
       'genres:replace',
@@ -288,6 +290,7 @@ describe('policy impact projections', () => {
       'tags:add',
       'tags:replace',
       'description_fill:safe_plain_text',
+      'description_fill:replace_safe_plain_text',
       'description_fill:google_visible_text',
       'cover_order:fixed_source_order',
       'asin:preserve_exact',
@@ -314,7 +317,17 @@ describe('policy impact projections', () => {
       expect(guidance.admitted).toContain('already-produced exact candidate')
       expect(guidance.transformation).toContain('without')
       expect(guidance.effect).toContain('only that exact selected')
-      expect(guidance.fallback).toContain('no decision is qualified')
+      if (key === 'date_precision:year') {
+        expect(guidance.fallback).toBe(
+          'unavailable for audiobook Automatic; requires a qualified decision for ebooks',
+        )
+      } else if (key === 'date_precision:full_date') {
+        expect(guidance.fallback).toBe(
+          'audiobook Automatic requires a full calendar day and a qualified operation',
+        )
+      } else {
+        expect(guidance.fallback).toContain('no decision is qualified')
+      }
     }
     expect(policyRepresentationGuidance['date_precision:year']?.effect).toContain(
       'Publication date or Publication year destination value',
