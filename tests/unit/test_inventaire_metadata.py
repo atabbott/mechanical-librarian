@@ -184,7 +184,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v42"
+    assert report.schema_version == "metadata-report-v43"
     assert report == MetadataReport.from_json(report.to_json())
 
 

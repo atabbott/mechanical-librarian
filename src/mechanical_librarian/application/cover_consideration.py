@@ -77,6 +77,9 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
+from mechanical_librarian.domain.proposal_set import (
+    provider_candidate_represents_target_recording,
+)
 
 SCHEMA_VERSION = "cover-consideration-v4"
 _IDENTITY_ELIGIBLE = frozenset({"verified_manifestation_match", "verified_work_match"})
@@ -726,17 +729,12 @@ class CoverConsiderationService:
     def _packet(
         self, report_document: str, report: MetadataReport
     ) -> PreparedCoverPacket | None:
-        """Build one considerable cover packet, or state that there is none.
-
-        An audiobook's provider covers are acquired as evidence and nothing
-        elects them, so an audio report is never packeted and never reaches the
-        observer however many covers it retained: a consideration it cannot act
-        on is reviewer spend and a review row for a decision nobody may make.
-        The acquired covers, their artifacts, their perceptual hashes and the
-        corroboration recorded over them are unaffected -- they live in the
-        report, not in a consideration.
-        """
-        if report.file.format in AUDIO_FILE_FORMATS:
+        """Build a bounded packet; audiobook evaluation stays deterministic."""
+        if report.file.format in AUDIO_FILE_FORMATS and not any(
+            provider_candidate_represents_target_recording(report, provider, candidate)
+            for provider in report.providers
+            for candidate in provider.candidates
+        ):
             return None
         try:
             return prepare_cover_packet(report_document, self._read_preview)
@@ -751,7 +749,7 @@ class CoverConsiderationService:
         """Capture bounded observer inputs while mutable product state is serialized."""
         report = MetadataReport.from_json(report_document)
         packet = self._packet(report_document, report)
-        if packet is None:
+        if packet is None or report.file.format in AUDIO_FILE_FORMATS:
             replay_digest = self._replay_digest(
                 review_case_id,
                 report.report_id,
@@ -1090,7 +1088,9 @@ class CoverConsiderationService:
                 image_payloads,
                 read_preview=self._read_preview,
             ).document
-            if evidence is None:
+            if report.file.format in AUDIO_FILE_FORMATS:
+                evidence = _ReviewerEvidence(replay_digest, None, "unavailable", None)
+            elif evidence is None:
                 evidence = self._observe_packet(replay_digest, packet)
             observation_document = evidence.observation_document
             reviewer_status = evidence.reviewer_status

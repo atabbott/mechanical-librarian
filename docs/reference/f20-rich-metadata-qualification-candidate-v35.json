@@ -1,0 +1,512 @@
+{
+  "audiobook_activation": {
+    "automatic_correspondence": "complete at c7c0c65da90444a0f8bc36fe96ee92032ea8a946; later CSS-only presentation and binding equivalence verified separately",
+    "clean_rebuild_required": true,
+    "frozen_candidate_sha": "be6cb086d14aff4c61e6e9ae983f23ed3a996b94",
+    "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v4.json",
+    "manifest_sha256": "1fe94f60c1e5ffd0f61b0b7612e46eb3952fdbf5717d74f1f476d1e72b718174",
+    "passing_options": [
+      "contributor_names:canonical:audiobook_authors_fill",
+      "contributor_names:canonical:audiobook_authors_replace",
+      "contributor_names:canonical:audiobook_narrators_add",
+      "contributor_names:canonical:audiobook_narrators_fill",
+      "contributor_names:canonical:audiobook_narrators_normalize",
+      "contributor_names:canonical:audiobook_narrators_preserve",
+      "contributor_names:canonical:audiobook_narrators_replace",
+      "contributor_names:preserve:audiobook_authors_fill",
+      "contributor_names:preserve:audiobook_authors_replace",
+      "genres:add:audiobook_genres_add",
+      "genres:add:audiobook_genres_fill",
+      "genres:add:audiobook_genres_preserve",
+      "genres:fill_empty:audiobook_genres_fill",
+      "genres:fill_empty:audiobook_genres_preserve",
+      "genres:replace:audiobook_genres_add",
+      "genres:replace:audiobook_genres_fill",
+      "genres:replace:audiobook_genres_normalize",
+      "genres:replace:audiobook_genres_preserve",
+      "genres:replace:audiobook_genres_replace",
+      "language_rendering:display_name:audiobook_language_fill",
+      "language_rendering:display_name:audiobook_language_normalize",
+      "language_rendering:display_name:audiobook_language_preserve",
+      "language_rendering:display_name:audiobook_language_replace",
+      "language_rendering:preserve:audiobook_language_fill",
+      "language_rendering:preserve:audiobook_language_normalize",
+      "language_rendering:preserve:audiobook_language_preserve",
+      "language_rendering:preserve:audiobook_language_replace",
+      "series:add_qualified:audiobook_series_add",
+      "series:add_qualified:audiobook_series_fill",
+      "series:add_qualified:audiobook_series_preserve",
+      "series:all_qualified:audiobook_series_fill",
+      "series:all_qualified:audiobook_series_preserve",
+      "series:primary_narrative:audiobook_series_fill",
+      "series:primary_narrative:audiobook_series_preserve",
+      "series:replace_qualified:audiobook_series_fill",
+      "series:replace_qualified:audiobook_series_normalize",
+      "series:replace_qualified:audiobook_series_preserve",
+      "series:replace_qualified:audiobook_series_replace",
+      "series:source_order:audiobook_series_fill",
+      "series:source_order:audiobook_series_preserve",
+      "title_layout:preserve:audiobook_title_fill",
+      "title_layout:preserve:audiobook_title_replace",
+      "title_layout:title_and_subtitle:audiobook_title_fill",
+      "title_layout:title_and_subtitle:audiobook_title_replace"
+    ]
+  },
+  "base_integration": {
+    "base_commit": "2261514c458c6bc11a7805127ea330bc833260ed",
+    "f46": {
+      "manifest_sha256": null,
+      "passing_options": [],
+      "scope": "Bound inert consumer dependency, no audiobook authority granted."
+    },
+    "historical_origins": [
+      {
+        "origin_commit": "bdf65cd39d0c03afbe30811216e8620d52baa3f4",
+        "original_path": "docs/reference/f19a-qualification-manifest-v10.json",
+        "retained_path": "docs/reference/f19a-qualification-manifest-v10-91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523.json",
+        "sha256": "91292dd98bef221efc6d75ed336bc1031e3917fa75c05dcd38474eef5b29e523"
+      },
+      {
+        "origin_commit": "dd7f7b7f911688b7df579ce288ffff5905577efe",
+        "original_path": "docs/reference/f19a-qualification-manifest-v10.json",
+        "retained_path": "docs/reference/f19a-qualification-manifest-v10-010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae.json",
+        "sha256": "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae"
+      },
+      {
+        "origin_commit": "2261514c458c6bc11a7805127ea330bc833260ed",
+        "original_path": "docs/reference/f19a-qualification-manifest-v10.json",
+        "retained_path": "docs/reference/f19a-qualification-manifest-v10.json",
+        "sha256": "f30e2c102d55c532dff554f7b6ca17c3998bcd965ce55d9ca6e2df052c48b7d9"
+      },
+      {
+        "origin_commit": "bdf65cd39d0c03afbe30811216e8620d52baa3f4",
+        "original_path": "docs/reference/f20-rich-metadata-qualification-candidate-v24.json",
+        "retained_path": "docs/reference/f20-rich-metadata-qualification-candidate-v24-679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321.json",
+        "sha256": "679b4edfa4f3d79919dfed756140d852acc215e79e08d5bee9b77e3a41977321"
+      },
+      {
+        "origin_commit": "dd7f7b7f911688b7df579ce288ffff5905577efe",
+        "original_path": "docs/reference/f20-rich-metadata-qualification-candidate-v24.json",
+        "retained_path": "docs/reference/f20-rich-metadata-qualification-candidate-v24-2e76fdb8372867c95b476208ebb0ae2bd175171439559d4f56eec8d29611c6c6.json",
+        "sha256": "2e76fdb8372867c95b476208ebb0ae2bd175171439559d4f56eec8d29611c6c6"
+      },
+      {
+        "origin_commit": "2261514c458c6bc11a7805127ea330bc833260ed",
+        "original_path": "docs/reference/f20-rich-metadata-qualification-candidate-v24.json",
+        "retained_path": "docs/reference/f20-rich-metadata-qualification-candidate-v24.json",
+        "sha256": "2728215f5ade910611d6806e58de40c867a05315efe9670192de48298e54a54b"
+      }
+    ],
+    "historical_reference_resolution": "Resolve an immutable predecessor path together with its recorded digest and origin commit. Original v11/v25 predecessor references resolve to the retained original-base byte copies; canonical v10/v24 paths retain the separately repinned incoming main bytes. No historical manifest is rewritten."
+  },
+  "chapter_runtime_increment": {
+    "base_commit": "c1963d9714cc04d9e22db0c137e4685d2e55ecf6",
+    "clean_rebuild_required": true,
+    "historical_measurements_reused_without_rescoring": true,
+    "proof": "Synthetic parser/protocol/composition and actual provider publication controls qualify the bounded chapter rule. Prior measurements below remain historical continuity, not a fresh measurement or recording-accuracy claim.",
+    "scope": "Retained sole local-ASIN explicit-absent provider-runtime fallback to owner review. Existing runtime admission, all ebook options and inert F46 remain unchanged. No automatic or effect authority is added."
+  },
+  "complete_chapter_increment": {
+    "base_source_sha": "449a1e913c22bc956d5e157d2cd42c3ee720267a",
+    "clean_rebuild_required": true,
+    "fresh_measurement_claimed": false,
+    "historical_measurements_reused": true,
+    "report_schema": "metadata-report-v42",
+    "scope": "Complete missing-runtime chapter support and bounded lookup-only WORK acquisition; current source refresh, no automatic authority activation."
+  },
+  "current_continuity": {
+    "assertion": "test_every_f20_automatic_option_reaches_persisted_effect_authority",
+    "composition_outcomes": [
+      {
+        "option": "description_fill:safe_plain_text",
+        "outcome": "abstain"
+      },
+      {
+        "option": "genres:add",
+        "outcome": "abstain"
+      },
+      {
+        "option": "genres:fill_empty",
+        "outcome": "abstain"
+      },
+      {
+        "option": "genres:replace",
+        "outcome": "abstain"
+      },
+      {
+        "option": "isbn_form:prefer_isbn13",
+        "outcome": "abstain"
+      },
+      {
+        "option": "isbn_form:preserve_exact",
+        "outcome": "abstain"
+      },
+      {
+        "option": "series:all_qualified",
+        "outcome": "abstain"
+      },
+      {
+        "option": "series:primary_narrative",
+        "outcome": "abstain"
+      },
+      {
+        "option": "series:source_order",
+        "outcome": "abstain"
+      },
+      {
+        "option": "subtitle:fill_empty",
+        "outcome": "abstain"
+      },
+      {
+        "option": "tags:add",
+        "outcome": "abstain"
+      },
+      {
+        "option": "tags:fill_empty",
+        "outcome": "abstain"
+      },
+      {
+        "option": "tags:replace",
+        "outcome": "abstain"
+      },
+      {
+        "option": "description_fill:safe_plain_text",
+        "outcome": "abstain"
+      },
+      {
+        "option": "genres:add",
+        "outcome": "abstain"
+      },
+      {
+        "option": "genres:fill_empty",
+        "outcome": "abstain"
+      },
+      {
+        "option": "genres:replace",
+        "outcome": "abstain"
+      },
+      {
+        "option": "isbn_form:prefer_isbn13",
+        "outcome": "abstain"
+      },
+      {
+        "option": "isbn_form:preserve_exact",
+        "outcome": "abstain"
+      },
+      {
+        "option": "series:all_qualified",
+        "outcome": "abstain"
+      },
+      {
+        "option": "series:primary_narrative",
+        "outcome": "abstain"
+      },
+      {
+        "option": "series:source_order",
+        "outcome": "abstain"
+      },
+      {
+        "option": "subtitle:fill_empty",
+        "outcome": "abstain"
+      },
+      {
+        "option": "tags:add",
+        "outcome": "abstain"
+      },
+      {
+        "option": "tags:fill_empty",
+        "outcome": "abstain"
+      },
+      {
+        "option": "tags:replace",
+        "outcome": "abstain"
+      }
+    ],
+    "retained_current_reports": 2,
+    "retained_option_compositions": 26,
+    "synthetic_persisted_effect_options": 13
+  },
+  "current_source_refresh": {
+    "frozen_candidate_sha": "be6cb086d14aff4c61e6e9ae983f23ed3a996b94",
+    "historical_ebook_measurements_reused_without_rescoring": true,
+    "scope": "Exact-current source/interpretation closure; ebook option authority and historical measurement bytes unchanged."
+  },
+  "historical_measurements": "Earlier per-option metrics remain in the immutable predecessor and are inherited history, not current replay. The old 49-report v34 and 15-report v37 corpora reject current parsing. Current continuity is limited to thirteen synthetic persisted-effect options and two current reports across thirteen options; no schema relabelling or provider grafting was used.",
+  "issue": 967,
+  "measurement_artifacts": {
+    "candidate-evaluator": {
+      "evidence_mode": "current_candidate_and_continuity_consumer",
+      "sha256": "6b9028b9ee1a083bbf8db2610fb0fb7cc172f5dc20f7cbffa8f5140af3151d95"
+    },
+    "candidate-results": {
+      "evidence_mode": "new_candidate_and_current_continuity_measurement",
+      "sha256": "d28cda75fb33dde2f12452935a77075c6f22dbb7a72c53b8798c461b862871b3"
+    },
+    "current-provider-replay": {
+      "evidence_mode": "actual_current_provider_adapter_replay_consumer",
+      "sha256": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129"
+    },
+    "current-report-derivatives": {
+      "evidence_mode": "new_current_v40_reports_not_unchanged_v39_replay",
+      "sha256": "c19e27603a91dc91cd9527a7b2e9f6dcbfada2d11715561b8be462811a757613"
+    },
+    "current-report-reconstruction": {
+      "evidence_mode": "current_constructors_and_raw_exchange_adapter_replay",
+      "sha256": "d3bbece2256aa7dc70897f7cfc945dc17b47d23ff3f5c7da5a50671d5d3d0bdf"
+    },
+    "current-report-reconstruction-result": {
+      "evidence_mode": "current_v40_derivative_parse_and_no_external_io_receipt",
+      "sha256": "c5f62d17b42e434bc36dfa775bb090798ed3a83a441aeaa4097012b1edb5987e"
+    },
+    "durable-evaluator": {
+      "evidence_mode": "actual_repository_admission_and_owner_projection",
+      "sha256": "2614d5141d135f599ff74eed67ba27f41679f2277cc762f58a8b7dcb623c1b1c"
+    },
+    "durable-results": {
+      "evidence_mode": "new_actual_durable_decision_measurement",
+      "sha256": "167b912031b12266ef66a1e91bd7773ad67906d46406b7e2b05aaca41d992769"
+    },
+    "f20-persistence-effect-result": {
+      "evidence_mode": "executed_current_thirteen_option_assertions",
+      "sha256": "261e0cc667ccb4a186594fae47208424262c49dbe966f15f9627419134973a2c"
+    },
+    "f20-persistence-effect-test": {
+      "evidence_mode": "thirteen_option_persisted_effect_authority_assertions",
+      "sha256": "6b159791d31216467d22c7221fc16c116b71bd13a919bf33cac705cea1ff90ba"
+    },
+    "r2-evaluator": {
+      "evidence_mode": "current_candidate_packet_durable_and_neutral_preservation_consumers",
+      "sha256": "a89447391d2b1da84be65722cd60b054ed2352400a7bd7f6a619fedd77369043"
+    },
+    "r2-malformed-title-truth": {
+      "evidence_mode": "declared_before_product_correction",
+      "sha256": "5ceb60551b8003307a22e360f22dea14da2508b49142210fb2478e0fd0edb66d"
+    },
+    "r2-results": {
+      "evidence_mode": "six_script_controls_and_three_neutral_preservation_controls",
+      "sha256": "e0a5668fd35d95bb97b53a663ddbc0a0fe3a01a0cb5abe463d1160a70899d5f8"
+    },
+    "r2-script-and-omission-truth": {
+      "evidence_mode": "declared_before_product_correction",
+      "sha256": "9fb53f5ed907fce93ff5fcef5b730b37d9545a6b77acc52a516cb332beed4975"
+    },
+    "r2-title-inputs": {
+      "evidence_mode": "pre_correction_reports_and_declared_outcomes",
+      "sha256": "56aa21489cdbe290eabcdaea6e4440d54672f3386fb78a8b473e015e84881671"
+    },
+    "retained-independent-title-labels": {
+      "evidence_mode": "independently_labelled_real_truth",
+      "sha256": "eb470e551dde49b712549a79f03276c47bb954c7151bcbd9aca87f65e5e3469d"
+    },
+    "retained-local-inputs": {
+      "evidence_mode": "exact_captured_target_file_local_fact_subtrees",
+      "sha256": "a4e423a6727c4a67fbb5a4b60a3fd3b0551905e66b7c94096c8d6bfdf380aeb1"
+    },
+    "retained-raw-capture": {
+      "evidence_mode": "immutable_raw_http_capture_and_local_seed_facts",
+      "sha256": "5d90aca47e9019090260cae6b0aaa89fa0ca25607de83d9a9befac53228937f9"
+    },
+    "retained-replay-configuration": {
+      "evidence_mode": "immutable_capture_configuration",
+      "sha256": "2d1f7aef0cd765af6e38750f2791236faeb1ee23ee84eed97965ff907be6f9a9"
+    },
+    "retained-report-store": {
+      "evidence_mode": "immutable_historical_v39_report_store_not_current_parseable",
+      "sha256": "2ea7ee568151450e625955584c08e77db147a8352628be74e6a642ae08c84765"
+    },
+    "synthetic-report-builder": {
+      "evidence_mode": "current_retained_lane_constructor",
+      "sha256": "0cff2ce4ecf8075d9c3815a7f6774e9ec30a9c2cb693eed332471fb881f7c18e"
+    },
+    "synthetic-title-inputs": {
+      "evidence_mode": "finite_synthetic_reports_and_declared_truth",
+      "sha256": "ec75d47b5a63f5600cf02e58e11e0ee19ee708fa1922bb0e18f95721e15ff924"
+    }
+  },
+  "network_requests": 0,
+  "options": [
+    {
+      "disposition": "passing_automatic",
+      "identity": "subtitle:fill_empty"
+    },
+    {
+      "disposition": "not_qualified",
+      "identity": "subtitle:corroborated_split"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "series:primary_narrative"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "series:source_order"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "series:all_qualified"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "genres:fill_empty"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "genres:add"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "genres:replace"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "tags:fill_empty"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "tags:add"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "tags:replace"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "description_fill:safe_plain_text"
+    },
+    {
+      "disposition": "not_qualified",
+      "identity": "description_fill:google_visible_text"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "isbn_form:preserve_exact"
+    },
+    {
+      "disposition": "passing_automatic",
+      "identity": "isbn_form:prefer_isbn13"
+    },
+    {
+      "disposition": "insufficient_coverage",
+      "identity": "asin:preserve_exact"
+    },
+    {
+      "disposition": "insufficient_coverage",
+      "identity": "asin:ebook_manifestation"
+    },
+    {
+      "disposition": "passing_human_only",
+      "identity": "explicit:unsupported"
+    }
+  ],
+  "passing_automatic_options": [
+    "description_fill:safe_plain_text",
+    "genres:add",
+    "genres:fill_empty",
+    "genres:replace",
+    "isbn_form:prefer_isbn13",
+    "isbn_form:preserve_exact",
+    "series:all_qualified",
+    "series:primary_narrative",
+    "series:source_order",
+    "subtitle:fill_empty",
+    "tags:add",
+    "tags:fill_empty",
+    "tags:replace"
+  ],
+  "presentation_source_delta": {
+    "current_rule": ".metadata-choice.is-evidence-open, .metadata-choice:has(.choice-description[open]) { padding-bottom:68px; }",
+    "current_sha256": "be4cf730007f5b283711c3e1373b880753006975a372ddb0a2c76d42089a406d",
+    "path": "frontend/src/styles.css",
+    "prior_rule": ".metadata-choice.is-evidence-open { padding-bottom:68px; }",
+    "prior_sha256": "edf8bc2609a535d98486dbacee0da4ba08c9dfc3c4da86edce1de52cc546ce80",
+    "scope": "Reserve existing evidence-button clearance when the full description is expanded. No metadata selection, operation, effect, or passing-set change.",
+    "source_sha": "152e7fe3b88baaef18be8b927f7387223160e239"
+  },
+  "prior_manifest_path": "docs/reference/f20-rich-metadata-qualification-candidate-v34.json",
+  "prior_manifest_sha256": "b978bf5caf2c726c4d25999ef6ca313242fc55e1884b45380e9758c4db6bda88",
+  "proposal_policy_version": "fixed-conservative-v25",
+  "schema": "f20-rich-metadata-qualification-candidate-v35",
+  "source_closure": {
+    "frontend/src/api/http.ts": "f1b5dffd956e76571c557cfbee966e3eb61fbcba93ae25e39196e8e8e53b7d6f",
+    "frontend/src/components/RecordingIdentityBasis.tsx": "a719096272238aa4abccd3a5b0339ed17efdd26be60dd9ab3f2f8a17c732b0d9",
+    "frontend/src/routes/DetailPage.tsx": "c0fbbac4714a187ebf6a5df5d7e07b7a9d79152b498d25b67ea07b1fe02f9eb4",
+    "frontend/src/routes/LibraryPage.tsx": "8131f03ee35a88e7ea6720d6075e35522db6e9041419e09e8af74d766eea9f72",
+    "frontend/src/routes/PolicyPage.tsx": "2da43c8c0883815e824ae590813b61163fc14a3d75c28bfc7e7b015e2fd49537",
+    "frontend/src/styles.css": "be4cf730007f5b283711c3e1373b880753006975a372ddb0a2c76d42089a406d",
+    "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
+    "scripts/qualify_provider_evidence_replay.py": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129",
+    "src/mechanical_librarian/adapters/evidence_extractors/audio_local.py": "daebcaadf6b1f51e99a2330dddd5fd2a4d071168439cd2bbf6d0ff71877c60b9",
+    "src/mechanical_librarian/adapters/field_effect_authority.py": "4fc99a4100839a4b367152265d70496ac7b1bf8c3354d4effe9d046f71043cc3",
+    "src/mechanical_librarian/adapters/field_effect_runtime.py": "cfcc6edea33937d3e8c9ed85371c5f15dca434b85642bde37184d12cf5797c19",
+    "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py": "f44672c9e8242e9b663452948ad5c57b21c0f26eb8176a13e20186a8fe166544",
+    "src/mechanical_librarian/adapters/persistence/cover_considerations.py": "e620ec3707527ce7e4e1e78f0b7a4db5755715e8d0352069ccf2a872ab65d3be",
+    "src/mechanical_librarian/adapters/persistence/decisions.py": "3991161707a683b5303c7515b4ebcd355270516df4aac309dd7359e0abf55e5a",
+    "src/mechanical_librarian/adapters/persistence/documents.py": "eeb855cafe56a39b6adc318eff41c42225553bf5d544d91b8ab9405486410baa",
+    "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "0f06c6941c60291e0d2e7bee0c370126a59b0ba85160099b32bf79bcb369a1b2",
+    "src/mechanical_librarian/adapters/persistence/field_effect_validation.py": "b6edbb89bd2c8cbc0f8da8ffeae687ca7870a933c4f31f4058e5218b41112484",
+    "src/mechanical_librarian/adapters/persistence/metadata_policy.py": "83dca6d483294a11102ea61830cf0f1ae11e809b1037353d1095655c3cbf800e",
+    "src/mechanical_librarian/adapters/persistence/metadata_reports.py": "72f2167a00ba71616e599baa8d8e56d3e639408481ce2f40dd525617b63bd6ca",
+    "src/mechanical_librarian/adapters/persistence/qualification_state_bridge.py": "d5e7b637a342bb1c189dcaebc953409b25f85f45df89bfbc939b1c905e460ba7",
+    "src/mechanical_librarian/adapters/persistence/review_cases.py": "7b4a1a19dfd3e7cfc861351d3143d2de5fc631d3dc17ac88b336b59520bdbb79",
+    "src/mechanical_librarian/adapters/persistence/review_projections.py": "2ef1a06397309216f3e5ebb8899116f495f86735cc2b36508d7b16074482bda4",
+    "src/mechanical_librarian/adapters/persistence/review_sql.py": "239a1a71befe44e9eb5a71b5514ec1ef27cee5b938b5a89705803320c015f937",
+    "src/mechanical_librarian/adapters/persistence/schema.py": "a12d059996392bb5d7934108af89c343f4aec9bfc000b98230b8a8824eec2e89",
+    "src/mechanical_librarian/adapters/persistence/transactions.py": "d925b8d8829c4b06d9b8ebd22eb85bdf4dfefd2de918997253312554c09f2ab9",
+    "src/mechanical_librarian/adapters/providers/audible_catalog_metadata.py": "8f6df4ea171924916046e68e93d5a83f7d1514579f393cf610a10f16b4b93fbf",
+    "src/mechanical_librarian/adapters/providers/audiosilo_metadata.py": "f3745442f6b0600ab975610f041f7eda40add2335735d9f3f59194d826670f7e",
+    "src/mechanical_librarian/adapters/providers/audnexus_metadata.py": "3cb42151c733d76f99ae9e52ae6d30a4d90ab7536249b0eddd3618998736dde5",
+    "src/mechanical_librarian/adapters/providers/google_books_metadata.py": "1757e811025b73682b031833ed63c8c2221e7b1f536ee7d3873ab279dc6b7d25",
+    "src/mechanical_librarian/adapters/providers/hardcover_metadata.py": "80d6969d8f25a416c95d2c6ddc8bb4c508c51c93883eaa511b6b79086bcade6e",
+    "src/mechanical_librarian/adapters/providers/inventaire_metadata.py": "6bee019f2bff6a2c2c7298e99ce0e6d0d51fd332e90426d90187e736731d091f",
+    "src/mechanical_librarian/adapters/providers/itunes_search_metadata.py": "b8b654c380b480591af5c26be5da79b2889bc17f35ea51518c97cec341b5a524",
+    "src/mechanical_librarian/adapters/providers/open_library_metadata.py": "d2c88d28a956494475f4865edf926f917c64056c9dcbb54189a786d13686a4a0",
+    "src/mechanical_librarian/adapters/providers/retry_safety.py": "8343b35ac098647b405cdfc3ee3ab0ae7c29601763f21ded1ca33a7508ed6ecc",
+    "src/mechanical_librarian/adapters/providers/sdk.py": "7bfc661148624447934bb3f81a9e00b210473d563126a5e9d7f2d3b7b69a309c",
+    "src/mechanical_librarian/application/continuous_field_effects.py": "de18c7aa265fb6562c459411c2725610d4bed623fed262d63750b0aa49cde99b",
+    "src/mechanical_librarian/application/cover_consideration.py": "676dfe0ce495de5b707b6eb65cbe90efb0f72de825bbe180fea6f36c2fc14369",
+    "src/mechanical_librarian/application/cover_identity.py": "5e9fe1a56682aa8e4240a3af3a4f73fead390a95f046492016876a283fbc8dcb",
+    "src/mechanical_librarian/application/decision_preview.py": "71c8d67707e61cbd2026d2ca3b828e320204df80d812b77f12b47a66eab2a3ef",
+    "src/mechanical_librarian/application/failure_diagnostics.py": "2aa922f5b5bfbd414d65092e20ac1fb0ace1cccb51ed1ea2850608e00661ae71",
+    "src/mechanical_librarian/application/field_effects.py": "d9f85df089e54b583d2f97487be54525b1325f5ff41a0d9805c3cdbf7db7164f",
+    "src/mechanical_librarian/application/metadata_policy.py": "868e975df4f8824f22e183383f28ee5c8fbf255dd854feb05143d70a7d91d2db",
+    "src/mechanical_librarian/application/metadata_report.py": "0592f1087d1811cc516caf19a80f6c91d04a8c10b5e29d8f089fd03b971e73df",
+    "src/mechanical_librarian/application/provider_evidence.py": "9f6b41fd1ae40d3d70d05ec65705248e890eb374b5c5bde505997018689987b2",
+    "src/mechanical_librarian/application/provider_recovery_evidence.py": "5a6b904a288f67a4f8fa68e3dde6c6245215bcdea4fafe8e880d41157063b28a",
+    "src/mechanical_librarian/application/provider_retry_successor.py": "67c327c8b4baf159a4c621687ea40773901e61fe39f46c28abba52465f658be4",
+    "src/mechanical_librarian/application/review_application.py": "0adde578e9ea3119d0ef0161670be79bd14890467fba70ade60b1a5ee0f0c5fa",
+    "src/mechanical_librarian/application/review_web.py": "4c00f46a6e38275b0cf1a69883cd2491159b293cfd51b92150420374ef0d16fa",
+    "src/mechanical_librarian/bootstrap/audio_child.py": "b2e2269066f12c7b8ef6e1a708d11b54c6a63edccf4e6ab8c57eee7c2e6ac8ed",
+    "src/mechanical_librarian/bootstrap/composition.py": "b57c4648171d7fd6f6a2931877a130835a654cb7c3fac3cc6c1628b43ee6d3c9",
+    "src/mechanical_librarian/domain/audio_composition.py": "fdbe9612c1057d51c9ff3c8576837d753550d4faa88deb405048dedbf91078dd",
+    "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
+    "src/mechanical_librarian/domain/audiobook_corroboration.py": "4f26b262a5e76f43222f5afa9e3a175b926f599ccb111c3ba8a9d5ad960159ee",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "23ffd53776243c542b43ca6a7e2fcabfd01595cffef7725a085dafca072565bf",
+    "src/mechanical_librarian/domain/automatic_decision.py": "12b5c39ebada2c6c15d2696924f8f645fcd6c3f0709470f44ae818d918d8829f",
+    "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
+    "src/mechanical_librarian/domain/cover_automatic_decision.py": "66fcb3b7c6b996379e347a2f2628ecf425fd25fde543b28f242f70ed89af969b",
+    "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
+    "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
+    "src/mechanical_librarian/domain/epub_opening.py": "1d6714c2d668f0ef82c4e12e0ee3075f8b2164aade9bb5c2ecf2d7506f99bf12",
+    "src/mechanical_librarian/domain/evidence_bounds.py": "dd21b6b9fe02af6b666f51077e31c39d5249d0888e3ffa37119fa50e5bc05957",
+    "src/mechanical_librarian/domain/failure_diagnostics.py": "90adc37a72a0dcad63ab8833da1c9a071bedacd0c4d84911a5c5d79c069b06b7",
+    "src/mechanical_librarian/domain/field_effect.py": "380a7fc3915b951bae2514d12468aba092aa7452fcfd3567cd2421416693635d",
+    "src/mechanical_librarian/domain/field_outcomes.py": "e8f989da95c8a6527cb49c55e4c0cc25f0e6d148a9a47edb678cd24c78818772",
+    "src/mechanical_librarian/domain/field_value_comparison.py": "9e16b0e1c2b473f4a40983aa5905ad265367003fa832dbd290d19d3b7d2d62c7",
+    "src/mechanical_librarian/domain/human_decision.py": "949761de7fc75c5635da9c75c3c4e435564a5a9ca26479583a731da5c432353a",
+    "src/mechanical_librarian/domain/identifiers.py": "ab8862f3259921b9cd5e00bf2bf636c846b810db79c58c293c8cf12bd1c54f6a",
+    "src/mechanical_librarian/domain/metadata_policy.py": "1a5ae1a97bc7c24eff0ce5f15eb16da2b66f1e26158938cdcd3ca88726dff2ed",
+    "src/mechanical_librarian/domain/metadata_report.py": "b34320925af585d4b919af7a751bd0a382321e8306d7a7134c8d540c9f337f0b",
+    "src/mechanical_librarian/domain/proposal_set.py": "b2d3f0fd6ed8b6a5201c9aaeb38d68141e2258dde7e70f8f93a5ff6561dfabfd",
+    "src/mechanical_librarian/domain/review_case.py": "f2dc706bada3fa10f20018a050c99a3f9266c5224c6f556602ba0c43595f627a",
+    "src/mechanical_librarian/domain/reviewer_decision_summary.py": "daf26560cf61873905a2513153998608822430d5997b61e031fbce9b0d64fd23",
+    "src/mechanical_librarian/domain/rich_metadata_preview.py": "7afb1e4aeb26ea403a498ca5e9b75aee0f59d4744859a11bcaaa3a6349235fc4",
+    "src/mechanical_librarian/domain/shadow_decision.py": "f3dbe01adddf6f95011aaf34dc4430f10cbfe663f71ab110d5b06313b15aad05",
+    "src/mechanical_librarian/domain/shadow_outcome.py": "39ea51a61afb0eb72563e22bc4476dfb52887e3d743d95e20300a51c6f5bdeec",
+    "src/mechanical_librarian/domain/shadow_review.py": "2b8a68d59f45e00263d7581d7e9eb37cb946735cd854adac45d7061335f081db",
+    "src/mechanical_librarian/domain/shadow_review_actions.py": "6e936a0435809f67c1d02a99a1703ee43bf56a2618ffad77864b0716041a9bbc",
+    "src/mechanical_librarian/domain/validation.py": "da5b1952989cd2dff31aa375d4874e0177d1d5ccb786d844919b50ba0024ca94",
+    "src/mechanical_librarian/domain/work_identity.py": "f1815641adc477d55477ef69524538fa5dcd623062cb8e9ee9f9133f9406860c",
+    "src/mechanical_librarian/interfaces/web/app.py": "780ded8b0d88a99d425a62176535a6060cbe2174ff48e3a2bcd47db0162f8278",
+    "tests/unit/test_shadow_outcome_persistence.py": "a509fa5269c3c025a46949e66f48e6680b2f4185968efb23999b647653f2b41e"
+  }
+}

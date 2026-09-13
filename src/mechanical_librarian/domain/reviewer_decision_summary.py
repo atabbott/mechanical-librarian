@@ -20,6 +20,8 @@ from mechanical_librarian.domain.proposal_set import (
     EVIDENCE_LED_TITLE_REASON,
     ProposalOutcome,
     ProposalSet,
+    provider_candidate_represents_target_recording,
+    provider_candidate_supports_complete_narrators,
 )
 
 MAX_DECISION_SUPPORT = 256
@@ -110,6 +112,7 @@ def validate_candidate_decision_summary(
             "bibliographic_compatibility_ids",
             "creator_roles",
             "independent_title",
+            "recording_support",
             "evidence_scope",
             "publication",
             "selected_manifestation_binding",
@@ -132,6 +135,8 @@ def validate_candidate_decision_summary(
             for value in summary["bibliographic_compatibility_ids"]
         )
     ):
+        raise DecisionSummaryValueError("candidate decision summary is invalid")
+    if type(summary["recording_support"]) is not bool:
         raise DecisionSummaryValueError("candidate decision summary is invalid")
     if type(summary["independent_title"]) is not bool or (
         summary["independent_title"]
@@ -292,12 +297,11 @@ def _manifestation_binding(
         if provider_correlation not in correlations:
             continue
         for candidate in provider.candidates:
-            if references.intersection(
-                _provider_candidate_references(candidate)
-            ) and _has_manifestation_anchor(
-                report,
-                provider.provider,
-                candidate,
+            if references.intersection(_provider_candidate_references(candidate)) and (
+                _has_manifestation_anchor(report, provider.provider, candidate)
+                or provider_candidate_represents_target_recording(
+                    report, provider, candidate
+                )
             ):
                 return "established"
     return "unresolved"
@@ -503,6 +507,23 @@ def candidate_decision_summary(
             "write_eligibility": "unsupported",
         }
     return {
+        "recording_support": any(
+            provider_candidate_represents_target_recording(report, provider, candidate)
+            and (
+                destination != "narrators"
+                or provider_candidate_supports_complete_narrators(
+                    candidate,
+                    tuple(cast("list[str]", alternative["evidence_references"])),
+                )
+            )
+            and bool(
+                set(cast("list[str]", alternative["evidence_references"])).intersection(
+                    claim.reference for claim in candidate.claims
+                )
+            )
+            for provider in report.providers
+            for candidate in provider.candidates
+        ),
         "bibliographic_compatibility_ids": compatibility_ids.get(
             # ProposalAlternative.to_data always projects a str identity.
             cast("str", alternative["alternative_id"]),

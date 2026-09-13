@@ -90,7 +90,7 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
         proposal_set.proposal_set_id
         == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
     )
-    assert "fixed-conservative-v24" == POLICY_VERSION
+    assert "fixed-conservative-v26" == POLICY_VERSION
     assert POLICY_VERSION == proposal_set.policy_version
     assert (
         re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id)
@@ -732,3 +732,17 @@ def test_non_review_result_cannot_carry_any_selection() -> None:
 def test_invalid_unicode_is_a_closed_value_error() -> None:
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json("\ud800")
+
+
+def test_actual_v25_work_subtitle_producer_is_rejected() -> None:
+    from pathlib import Path
+
+    predecessor = (
+        Path(__file__).parents[1]
+        / "support/proposal_predecessors/work-subtitle-v25.json"
+    ).read_text()
+    assert json.loads(predecessor)["policy_version"] == "fixed-conservative-v25"
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json(predecessor)
+    current = evaluate_report(_report())
+    assert ProposalSet.from_json(current.to_json()) == current

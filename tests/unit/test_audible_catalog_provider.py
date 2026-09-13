@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import copy
+import json
+from dataclasses import replace
 from typing import Any, Callable
 
 import httpx
@@ -26,9 +28,11 @@ from mechanical_librarian.domain.metadata_report import (
     Comparison,
     ComparisonMethod,
     FieldState,
+    MetadataReport,
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    ReportValueError,
     TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
@@ -49,6 +53,123 @@ from tests.support.audiobook_reports import (
 )
 
 _ASIN = "B08G9PRS1K"
+
+
+@pytest.mark.parametrize(
+    "failure", (None, "series", "sequence", "author", "subtitle", "residual")
+)
+@pytest.mark.parametrize("side", ("provider", "local"))
+def test_provider_series_suffix_admission_replays_the_actual_association(
+    failure,
+    side,
+    tmp_path,
+) -> None:
+    title = "Synthetic Journey"
+    decorated = (
+        title + ": Example Cycle, Book 2" + (" extra" if failure == "residual" else "")
+    )
+    lookup_title = decorated if side == "local" else title
+    product = {
+        "asin": _ASIN,
+        "title": decorated if side == "provider" else title,
+        "authors": [
+            {"name": "Other Author" if failure == "author" else "Example Author"}
+        ],
+        "series": [
+            {
+                "title": "Other Cycle" if failure == "series" else "Example Cycle",
+                "sequence": "3" if failure == "sequence" else "2",
+            }
+        ],
+        "runtime_length_min": 970,
+        "publisher_name": "Example Audio",
+        "release_date": "2025-02-03",
+    }
+    if failure == "subtitle":
+        product["subtitle"] = "A genuine subtitle"
+    plan = work_plan(
+        local_runtime_claim(), title=lookup_title, authors=("Example Author",)
+    )
+    observation = (
+        _provider(lambda request: _json({"products": [product]}))
+        .observe(plan)
+        .observation
+    )
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.support.audiobook_providers import audio_target
+
+    base = admitted_audiobook_report()
+    report = MetadataReport.create(
+        target=replace(
+            base.target, fields=audio_target(lookup_title, ("Example Author",)).fields
+        ),
+        file=base.file,
+        local_claims=plan.local_claims,
+        local_reasons=("embedded_tag_duration",),
+        providers=(observation,),
+        audio=base.audio,
+    )
+    path = tmp_path / "application.sqlite3"
+    repository = open_repository(path)
+    try:
+        repository.publish(report, lambda: True)
+    finally:
+        repository.close()
+    repository = open_repository(path)
+    try:
+        stored = repository.current(
+            report.target.connection,
+            report.target.library,
+            report.target.item,
+            report.file.identity,
+        )
+        assert stored == report.to_json()
+        assert stored is not None
+        reopened = MetadataReport.from_json(stored)
+        assert reopened == report
+    finally:
+        repository.close()
+    if failure is not None:
+        assert observation.status is ProviderStatus.NO_MATCH
+        assert not observation.candidates
+        return
+    assert observation.status is ProviderStatus.CANDIDATES
+    candidate = observation.candidates[0]
+    assert (
+        next(
+            claim.value
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.PUBLISHER
+        )
+        == "Example Audio"
+    )
+    assert (
+        next(
+            claim.value
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.PUBLICATION_DATE
+        )
+        == "2025-02-03"
+    )
+    assert reopened.providers[0].lanes[0].transformation_lineage is not None
+    assert (
+        reopened.providers[0].lanes[0].transformation_lineage.production
+        == "provider_associated_series_suffix"
+    )
+    assert (
+        reopened.providers[0].lanes[0].transformation_lineage.applications[0].side.value
+        == side
+    )
+    changed = json.loads(report.to_json())
+    changed["providers"][0]["lanes"][0]["transformation_lineage"]["applications"][0][
+        "side"
+    ] = "local" if side == "provider" else "provider"
+    with pytest.raises(
+        ReportValueError, match="provider work identity lineage is inconsistent"
+    ):
+        MetadataReport.from_json(json.dumps(changed))
 
 
 def _json(value: object, status_code: int = 200, **headers: str) -> httpx.Response:
@@ -703,3 +824,32 @@ def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
         assert expected and expected != seen[0]
     assert caught.value.__cause__ is cause
     assert caught.value.snapshot.evidence.accessed_at == "2023-11-14T22:13:20.000000Z"
+
+
+def test_all_series_pairs_survive_with_explicit_partial_member_failure() -> None:
+    document = {
+        "product": {
+            "asin": _ASIN,
+            "title": "Synthetic Journey",
+            "authors": [{"name": "Example Author"}],
+            "series": [
+                {"title": "Example Cycle", "sequence": "2"},
+                {"title": "Example Collection", "sequence": 5},
+                {"title": 42, "sequence": "9"},
+            ],
+        }
+    }
+    _seen, handle = _recorder(default=_json(document))
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
+    assert [
+        (claim.value, claim.state) for claim in _claims(candidate, ClaimKind.SERIES)
+    ] == [
+        ("Example Cycle", FieldState.VALID),
+        ("Example Collection", FieldState.VALID),
+        (None, FieldState.MALFORMED),
+    ]
+    assert [claim.value for claim in _claims(candidate, ClaimKind.SERIES_SEQUENCE)] == [
+        "2",
+        "5",
+        "9",
+    ]

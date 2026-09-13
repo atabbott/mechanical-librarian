@@ -11,12 +11,14 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v42` plus `proposal-set-v7` under
-  `fixed-conservative-v24`, or the separate `catalogue-v2` schema;
-- `review-case-v2`, `shadow-review-packet-v7`,
+  `metadata-report-v43` plus `proposal-set-v7` under
+  `fixed-conservative-v26`, or the separate `catalogue-v2` schema;
+- `review-case-v2`, `shadow-review-packet-v8`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v12`,
-  and the exact-current deterministic shadow decision/outcome schema;
+  `deterministic-shadow-decision-policy-v13`,
+  `shadow-review-action-policy-v3`, `shadow-outcome-set-v5`,
+  `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
+  these successors require a clean rebuild and do not adopt prior state;
 - `review-session-v1`, `review-library-v2`, `review-case-detail-v4`,
   `review-case-evidence-v4`,
   `review-report-detail-v4`, `review-case-history-v2`, `human-decision-v2`,
@@ -182,11 +184,12 @@ a named present user need. A future public release must document its own
 compatibility, migration, and restore promises before users depend on them.
 
 The historical #1002 title-component association increment required a clean
-rebuild from `fixed-conservative-v22` to v23. The current #1007 increment
-requires v24; report v40, proposal document v7 and relationship v1 remain
-unchanged. No alias is persisted and no adoption or migration is provided.
+rebuild from `fixed-conservative-v22` to v23. The historical #1007 increment
+required v24, report v40, proposal document v7 and relationship v1.
+The current versions are listed above. No alias is persisted and no adoption
+or migration is provided.
 
-ISBN-linked title election uses `shadow-review-action-policy-v2`. The packet-v7
+The #1007 ISBN-linked title election used `shadow-review-action-policy-v2`. Its packet-v7
 candidate fact identifies only the elected title; it does not expand reviewer
 authority or require companion changes. **Clean rebuild required**: v23
 proposals, packet-v6 and their application stores are rejected before mutation.

@@ -8,6 +8,9 @@ stays readable history the planner refuses by name (ADR-0071, #968).
 
 from __future__ import annotations
 
+import json
+from dataclasses import replace
+
 import pytest
 
 from mechanical_librarian.application.field_effects import (
@@ -15,13 +18,19 @@ from mechanical_librarian.application.field_effects import (
     authority_from_decision,
 )
 from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
     admitted_audiobook_identity,
+    qualify_provider_observation,
     recording_identity_basis,
 )
 from mechanical_librarian.application.review_web import (
     _attention_item,
     _decision_projection,
 )
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    identity_for_effect,
+)
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     project_decision_value,
@@ -32,16 +41,34 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
     FieldState,
     MetadataReport,
+    ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
+    ProviderQueryKind,
     TargetDestination,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+from mechanical_librarian.domain.rich_metadata_preview import (
+    RichMetadataPreviewError,
+    project_audiobook_automatic_decision_value,
+)
+from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
+from mechanical_librarian.domain.shadow_review import (
+    ShadowReviewPacket,
+    ShadowReviewValueError,
+)
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
+    asin_lane_observation,
     asserted_asin_report,
+    audiobook_candidate,
     chapter_runtime_report,
     corroborated_audiobook_report,
     retained_recorded_only_decision,
@@ -55,6 +82,299 @@ from tests.unit.test_proposal_authors import _narrator as _epub_narrator
 
 def _case(report: MetadataReport) -> ReviewCase:
     return ReviewCase.create(evaluate_report(report), report)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ("single", "aliases", "date_conflict", "recording_mismatch", "wrong_event"),
+)
+def test_recording_publication_uses_one_earned_authority_and_preserves_conflicts(
+    variant,
+):
+    base = asserted_asin_report(provider_duration="58200.000")
+    providers = []
+    for ordinal in range(
+        2 if variant in {"aliases", "date_conflict", "wrong_event"} else 1
+    ):
+        name = "catalogue" if ordinal == 0 else "mirror"
+        candidate = audiobook_candidate(
+            base.local_claims,
+            provider=name,
+            duration="12000.000" if variant == "recording_mismatch" else "58200.000",
+        )
+        publication = ProviderClaim.create(
+            provider=name,
+            candidate=candidate.identity,
+            kind=ClaimKind.PUBLICATION_DATE,
+            value="2024-01-02"
+            if ordinal and variant in {"date_conflict", "wrong_event"}
+            else "2025-02-03",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            raw_order=5,
+        )
+        publisher_claim = ProviderClaim.create(
+            provider=name,
+            candidate=candidate.identity,
+            kind=ClaimKind.PUBLISHER,
+            value="Example Audio",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+            raw_order=6,
+        )
+        observation = replace(
+            asin_lane_observation(base.local_claims),
+            provider=name,
+            candidates=(
+                replace(
+                    candidate,
+                    claims=(
+                        *candidate.claims,
+                        *(
+                            (publication,)
+                            if not (ordinal and variant == "wrong_event")
+                            else ()
+                        ),
+                        publisher_claim,
+                    ),
+                    evidence=(
+                        *candidate.evidence,
+                        *(
+                            (
+                                ProviderEvidence(
+                                    ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                                    "2024-01-02",
+                                    ClaimScope.WORK,
+                                ),
+                            )
+                            if ordinal and variant == "wrong_event"
+                            else ()
+                        ),
+                    ),
+                ),
+            ),
+        )
+        providers.append(
+            qualify_provider_observation(
+                observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+            )
+        )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=tuple(providers),
+        audio=base.audio,
+    )
+    report = MetadataReport.from_json(report.to_json())
+    proposal = evaluate_report(report)
+    results = {value.destination: value for value in proposal.results}
+    date = results[TargetDestination.PUBLISHED_DATE]
+    publisher = results[TargetDestination.PUBLISHER]
+    if variant == "recording_mismatch":
+        assert not date.alternatives and not publisher.alternatives
+        return
+    assert len(publisher.alternatives) == 1
+    assert publisher.alternatives[0].value.value == "Example Audio"
+    assert len(publisher.alternatives[0].correlations) == 1
+    assert len(date.alternatives) == (2 if variant == "date_conflict" else 1)
+    assert all(
+        value.date_event is DateEvent.MANIFESTATION_PUBLICATION
+        and value.date_precision is DatePrecision.DAY
+        for value in date.alternatives
+    )
+    if variant != "date_conflict":
+        assert date.alternatives[0].value.value == "2025-02-03"
+        assert len(date.alternatives[0].correlations) == 1
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    reopened = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    decisions = decide_shadow_packet(reopened)
+    if variant == "date_conflict":
+        assert date.selected_alternative_id is None
+        assert not any(
+            value.destination == "publishedDate"
+            and value.recommendation == "recommend_candidate"
+            for value in decisions.decisions
+        )
+
+
+def test_numeric_recording_asin_survives_actual_packet_linkage_and_reopen():
+    base = asserted_asin_report(provider_duration="58200.000")
+    observation = asin_lane_observation(base.local_claims)
+    candidate = audiobook_candidate(
+        base.local_claims, identity="audio-product-1234567890", asin="1234567890"
+    )
+    date = ProviderClaim.create(
+        provider=observation.provider,
+        candidate=candidate.identity,
+        kind=ClaimKind.PUBLICATION_DATE,
+        value="2025-02-03",
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+        raw_order=5,
+    )
+    observation = replace(
+        observation, candidates=(replace(candidate, claims=(*candidate.claims, date)),)
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        audio=base.audio,
+        providers=(
+            qualify_provider_observation(
+                observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+            ),
+        ),
+    )
+    report = MetadataReport.from_json(report.to_json())
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    assert ShadowReviewPacket.from_json(packet.to_json(), report, proposal) == packet
+    citation = next(
+        value for value in packet.citations if value["citation_id"] == date.reference
+    )
+    assert citation["fact"]["linkage"]["identifier_facts"][0]["value"] == "1234567890"
+    for invalid in (
+        "123456789",
+        "12345678901",
+        "123456789!",
+        "１２３４５６７８９０",
+        "B000000001",
+    ):
+        document = json.loads(packet.to_json())
+        changed = next(
+            value
+            for value in document["citations"]
+            if value["citation_id"] == date.reference
+        )
+        changed["fact"]["linkage"]["identifier_facts"][0]["value"] = invalid
+        with pytest.raises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(
+                json.dumps(
+                    document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ),
+                report,
+                proposal,
+            )
+
+
+@pytest.mark.parametrize(
+    "duration, supported", (("58200.000", True), ("12000.000", False))
+)
+def test_recording_support_is_recomputed_through_packet_reopen(duration, supported):
+    report = asserted_asin_report(provider_duration=duration)
+    proposal = evaluate_report(report)
+    case = ReviewCase.create(proposal, report)
+    packet = ShadowReviewPacket.create(case, proposal, report)
+    reopened = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    summaries = [
+        candidate["decision_summary"]
+        for result in reopened.proposals
+        for candidate in result["candidates"]
+    ]
+    assert any(summary["recording_support"] for summary in summaries) is supported
+    decisions = decide_shadow_packet(reopened)
+    if supported:
+        narrator = next(
+            value for value in decisions.decisions if value.destination == "narrators"
+        )
+        assert narrator.recommendation == "recommend_candidate"
+        assert narrator.reason_code == "unique_supported_candidate"
+    else:
+        assert not any(
+            value.destination == "narrators"
+            and value.recommendation == "recommend_candidate"
+            for value in decisions.decisions
+        )
+
+
+@pytest.mark.parametrize(
+    "state, role, supported",
+    (
+        (FieldState.MALFORMED, "narrator", False),
+        (FieldState.VALID, "translator", False),
+        (FieldState.VALID, "narrator", True),
+    ),
+)
+def test_incomplete_or_mixed_narrator_credits_cannot_gain_packet_authority(
+    state, role, supported
+):
+    base = asserted_asin_report(provider_duration="58200.000")
+    observation = asin_lane_observation(base.local_claims)
+    candidate = observation.candidates[0]
+    extra = ProviderClaim.create(
+        provider=observation.provider,
+        candidate=candidate.identity,
+        kind=ClaimKind.CONTRIBUTOR,
+        value=None if state is FieldState.MALFORMED else "Other Contributor",
+        state=state,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        role=role,
+        raw_order=5,
+    )
+    observation = replace(
+        observation, candidates=(replace(candidate, claims=(*candidate.claims, extra)),)
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        audio=base.audio,
+        providers=(
+            qualify_provider_observation(
+                observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+            ),
+        ),
+    )
+    proposal = evaluate_report(report)
+    case = ReviewCase.create(proposal, report)
+    packet = ShadowReviewPacket.create(case, proposal, report)
+    reopened = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    if state is FieldState.MALFORMED:
+        result = next(
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.NARRATORS
+        )
+        assert result.reasons == ("no_supported_evidence",)
+        assert not any(
+            value["destination"] == "narrators" for value in reopened.proposals
+        )
+        assert not any(
+            value.destination == "narrators"
+            for value in decide_shadow_packet(reopened).decisions
+        )
+        return
+    narrator = next(
+        value for value in reopened.proposals if value["destination"] == "narrators"
+    )
+    assert narrator["candidates"]
+    assert (
+        any(
+            value["decision_summary"]["recording_support"]
+            for value in narrator["candidates"]
+        )
+        is supported
+    )
+    decision = next(
+        value
+        for value in decide_shadow_packet(reopened).decisions
+        if value.destination == "narrators"
+    )
+    assert (decision.recommendation == "recommend_candidate") is supported
 
 
 def _accept(case: ReviewCase, destination: TargetDestination) -> HumanDecision:
@@ -656,3 +976,697 @@ def test_unlaned_chapter_support_requires_actual_local_asin_references(
     assert admitted_audiobook_identity(MetadataReport.from_json(report.to_json())) is (
         basis == "embedded_tag"
     )
+
+
+@pytest.mark.parametrize(
+    "current,desired,operation",
+    [
+        (None, ["Example Narrator"], "fill"),
+        (["Example Narrator"], ["Example Narrator"], "preserve"),
+        (["Example Narrator"], ["EXAMPLE NARRATOR"], "normalize"),
+        (["Example Narrator"], ["Example Narrator", "Another Narrator"], "add"),
+        (["Different Narrator"], ["Example Narrator"], "replace"),
+    ],
+)
+def test_narrator_qualification_names_actual_effect(current, desired, operation):
+    assert identity_for_effect(
+        "narrators", "contributor_names", "canonical", current, desired
+    ) == ("contributor_names:canonical:audiobook_narrators_" + operation)
+
+
+def test_rich_effect_reconstruction_rejects_fill_identity_for_replacement():
+    candidate = {"kind": "text", "value": "A supported source description."}
+    with pytest.raises(RichMetadataPreviewError, match="operation is unqualified"):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_fill",
+            candidate,
+            "An existing description.",
+        )
+    assert (
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_replace",
+            candidate,
+            "An existing description.",
+        )
+        == candidate
+    )
+
+
+def test_series_add_effect_retains_bound_members_and_rejects_forged_fill():
+    current = [{"name": "Existing Cycle", "sequence": "3"}]
+    candidate = {
+        "kind": "series",
+        "value": [{"name": "Example Cycle", "sequence": "2"}],
+    }
+    expected = {"kind": "series", "value": [*current, *candidate["value"]]}
+    assert (
+        project_audiobook_automatic_decision_value(
+            "series",
+            "series",
+            "add_qualified:audiobook_series_add",
+            candidate,
+            current,
+        )
+        == expected
+    )
+    with pytest.raises(RichMetadataPreviewError, match="operation is unqualified"):
+        project_audiobook_automatic_decision_value(
+            "series",
+            "series",
+            "add_qualified:audiobook_series_fill",
+            candidate,
+            current,
+        )
+    assert (
+        identity_for_effect(
+            "series", "series", "source_order", current, candidate["value"]
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("empty", (False, True))
+def test_asserted_asin_work_fields_do_not_require_matching_current_title_or_authors(
+    empty,
+):
+    base = asserted_asin_report(provider_duration="58200.000")
+    fields = tuple(
+        TargetField(field.destination, TargetFieldState.MISSING)
+        if empty
+        and field.destination in {TargetDestination.TITLE, TargetDestination.AUTHORS}
+        else TargetField(
+            TargetDestination.TITLE, TargetFieldState.VALUE, "Wrong synthetic title"
+        )
+        if field.destination is TargetDestination.TITLE
+        else TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Different Author",)
+        )
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in base.target.fields
+    )
+    report = MetadataReport.create(
+        target=replace(base.target, fields=fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+    )
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    restored = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    decisions = {
+        value.destination: value for value in decide_shadow_packet(restored).decisions
+    }
+    assert decisions["title"].recommendation == "recommend_candidate"
+    assert decisions["authors"].recommendation == "recommend_candidate"
+
+
+@pytest.mark.parametrize(
+    "source,option,eligible",
+    (
+        ("2025-02-03", "full_date", True),
+        ("2025-02-03", "year", False),
+        ("2025", "full_date", False),
+        ("2025-02", "full_date", False),
+        ("2025-02-30", "full_date", False),
+        (None, "full_date", False),
+    ),
+)
+def test_audio_date_qualification_requires_supported_full_day(source, option, eligible):
+    identity = identity_for_effect(
+        "publishedDate", "date_precision", option, None, source
+    )
+    assert identity == (
+        "date_precision:full_date:audiobook_publisheddate_fill" if eligible else None
+    )
+
+
+@pytest.mark.parametrize(
+    "current,desired,operation",
+    (
+        ("en", "eng", "normalize"),
+        ("en", "English", "normalize"),
+        ("eng", "english", "normalize"),
+        ("English", "ENGLISH", "normalize"),
+        ("en-US", "english", "replace"),
+        ("en-GB", "en", "replace"),
+        ("en-Latn", "eng", "replace"),
+        ("en-US", "en-GB", "replace"),
+        ("fr", "english", "replace"),
+        ("French", "fr", "replace"),
+    ),
+)
+def test_audio_language_operation_preserves_script_and_region(
+    current, desired, operation
+):
+    assert (
+        identity_for_effect(
+            "language", "language_rendering", "preserve", current, desired
+        )
+        == "language_rendering:preserve:audiobook_language_" + operation
+    )
+
+
+@pytest.mark.parametrize(
+    "name,sequence,operation",
+    (
+        ("EXAMPLE CYCLE", "2", "preserve"),
+        ("Another Cycle", "2", "add"),
+        ("Example Cycle", "3", "add"),
+    ),
+)
+def test_audio_series_add_preserves_equivalent_existing_pair(name, sequence, operation):
+    current = [{"name": "EXAMPLE CYCLE", "sequence": "2"}]
+    candidate = {"kind": "series", "value": [{"name": name, "sequence": sequence}]}
+    result = project_audiobook_automatic_decision_value(
+        "series",
+        "series",
+        "add_qualified:audiobook_series_" + operation,
+        candidate,
+        current,
+    )
+    assert result["value"] == (
+        current if operation == "preserve" else [*current, *candidate["value"]]
+    )
+    if sequence != "2":
+        with pytest.raises(RichMetadataPreviewError, match="operation is unqualified"):
+            project_audiobook_automatic_decision_value(
+                "series",
+                "series",
+                "add_qualified:audiobook_series_preserve",
+                candidate,
+                current,
+            )
+
+
+def _recording_date_report(
+    current: str | None, source: str = "2025-02-03"
+) -> MetadataReport:
+    base = asserted_asin_report(provider_duration="58200.000")
+    observation = asin_lane_observation(base.local_claims)
+    candidate = observation.candidates[0]
+    date = ProviderClaim.create(
+        provider=observation.provider,
+        candidate=candidate.identity,
+        kind=ClaimKind.PUBLICATION_DATE,
+        value=source,
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+        date_event=DateEvent.MANIFESTATION_PUBLICATION,
+        raw_order=9,
+    )
+    observation = replace(
+        observation, candidates=(replace(candidate, claims=(*candidate.claims, date)),)
+    )
+    observation = qualify_provider_observation(
+        observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+    )
+    date_target = (
+        TargetField(TargetDestination.PUBLISHED_DATE, TargetFieldState.MISSING)
+        if current is None
+        else TargetField(
+            TargetDestination.PUBLISHED_DATE, TargetFieldState.VALUE, current
+        )
+    )
+    fields = tuple(
+        date_target if field.destination is TargetDestination.PUBLISHED_DATE else field
+        for field in base.target.fields
+    )
+    return MetadataReport.create(
+        target=replace(base.target, fields=fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+
+
+@pytest.mark.parametrize("destination", ("genres", "tags"))
+@pytest.mark.parametrize("new_member", (False, True))
+def test_audio_taxonomy_add_retains_equivalent_incumbent(destination, new_member):
+    current = ["SCIENCE FICTION & FANTASY"]
+    desired = ["Science Fiction & Fantasy", *(["Mystery"] if new_member else [])]
+    operation = "add" if new_member else "preserve"
+    result = project_audiobook_automatic_decision_value(
+        destination,
+        destination,
+        "add:audiobook_" + destination + "_" + operation,
+        {"kind": "list", "value": desired},
+        current,
+    )
+    assert result == {
+        "kind": "list",
+        "value": [*current, *(["Mystery"] if new_member else [])],
+    }
+
+
+@pytest.mark.parametrize("field", ("series", "genres", "tags"))
+@pytest.mark.parametrize("new_member", (False, True))
+def test_audio_add_actual_preview_matches_effect_reconstruction(field, new_member):
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        OPTION_CATALOGUE,
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from mechanical_librarian.domain.metadata_report import TargetSeries
+    from mechanical_librarian.domain.rich_metadata_preview import (
+        compile_rich_metadata_preview,
+    )
+
+    report = corroborated_audiobook_report()
+    destination = TargetDestination(field)
+    current: tuple[TargetSeries, ...] | tuple[str, ...]
+    if field == "series":
+        current = (TargetSeries("READING ORDER", "2"),)
+        if new_member:
+            current = (TargetSeries("Another Cycle", "3"),)
+    else:
+        current = ("SCIENCE FICTION & FANTASY",)
+        providers = []
+        for provider in report.providers:
+            candidates = []
+            for candidate in provider.candidates:
+                extra = tuple(
+                    ProviderClaim.create(
+                        provider=provider.provider,
+                        candidate=candidate.identity,
+                        kind=ClaimKind.GENRE if field == "genres" else ClaimKind.TAG,
+                        value=value,
+                        state=FieldState.VALID,
+                        scope=ClaimScope.WORK,
+                        applicability="not_applicable",
+                        raw_order=20 + ordinal,
+                    )
+                    for ordinal, value in enumerate(
+                        (
+                            "Science Fiction & Fantasy",
+                            *(["Mystery"] if new_member else []),
+                        )
+                    )
+                )
+                candidates.append(
+                    replace(candidate, claims=(*candidate.claims, *extra))
+                )
+            providers.append(replace(provider, candidates=tuple(candidates)))
+        report = MetadataReport.create(
+            target=report.target,
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=tuple(providers),
+            audio=report.audio,
+        )
+    target = replace(
+        report.target,
+        fields=tuple(
+            TargetField(destination, TargetFieldState.VALUE, current)
+            if item.destination is destination
+            else item
+            for item in report.target.fields
+        ),
+    )
+    report = MetadataReport.create(
+        target=target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        audio=report.audio,
+    )
+    options = dict(DEFAULT_OPTIONS)
+    option = "add_qualified" if field == "series" else "add"
+    options[field] = option
+    policy = resolve_policy(
+        MetadataPolicyProfile.create(
+            "Example policy",
+            options,
+            {
+                name: "unsupported" if name == "explicit" else "ask"
+                for name in OPTION_CATALOGUE
+            },
+        ),
+        report.target.library,
+    )
+    proposal = evaluate_report(
+        report, policy.resolved_id, human_review_destinations(policy)
+    )
+    preview = next(
+        item
+        for item in compile_rich_metadata_preview(policy, report, proposal).fields
+        if item.field == field
+    )
+    assert preview.outcome == ("projected" if new_member else "no_op")
+    selected_candidate = next(
+        item
+        for result in proposal.results
+        if result.destination is destination
+        for item in result.alternatives
+    )
+    operation = "add" if new_member else "preserve"
+    effect = project_audiobook_automatic_decision_value(
+        field,
+        field,
+        option + ":audiobook_" + field + "_" + operation,
+        selected_candidate.value.to_data(),
+        current,
+    )
+    preview_value = preview.desired_value
+    assert type(preview_value) is list or type(preview_value) is tuple
+    assert effect["value"] == list(preview_value)
+
+
+def _audiosilo_consumer_report(
+    *, malformed=None, runtime=970, populated=True, multiple_series=True
+):
+    """A synthetic target-ASIN response traverses runtime-gated admission."""
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_asin_feed_plan,
+        audiobook_discovery_plan,
+    )
+    from mechanical_librarian.domain.metadata_report import TargetFacts, TargetSeries
+    from tests.support.audiobook_providers import (
+        audio_claim,
+        audio_target,
+        target_asin_claim,
+    )
+    from tests.unit.test_audiosilo_provider import _json, _provider
+
+    base = asserted_asin_report(provider_duration="58200.000")
+    target = audio_target("Synthetic Expedition", ("Synthetic Author",))
+    target = replace(
+        target,
+        fields=tuple(
+            TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, "B000000001")
+            if field.destination is TargetDestination.ASIN
+            else field
+            for field in target.fields
+        ),
+    )
+    local = (
+        audio_claim(ClaimKind.TITLE, "Synthetic Expedition"),
+        audio_claim(ClaimKind.CREATOR, "Synthetic Author", 2, role="author"),
+        target_asin_claim("B000000001"),
+        audio_claim(ClaimKind.DURATION, "58200.000", 4),
+    )
+    plan = audiobook_asin_feed_plan(target, audiobook_discovery_plan(target, local), ())
+    assert plan is not None
+    work = {
+        "id": "synthetic-work",
+        "title": "Synthetic Expedition",
+        "authors": [{"name": "Synthetic Author"}, {"name": "Second Author"}],
+        "language": "en",
+        "series": [
+            {"name": "First Cycle", "sequence": 2},
+            {"name": "Shared Universe", "sequence": 7},
+        ],
+        "recordings": [
+            {
+                "id": "synthetic-recording",
+                "narrators": [{"name": "First Narrator"}, {"name": "Second Narrator"}],
+                "runtime_min": runtime,
+                "asin": [{"region": "us", "asin": "B000000001"}],
+                "chapter_count": 0,
+            }
+        ],
+    }
+    if not multiple_series:
+        work["series"] = work["series"][:1]
+    if malformed == "authors":
+        work["authors"][1] = {}
+    elif malformed == "narrators":
+        work["recordings"][0]["narrators"][1] = {}
+    elif malformed == "series":
+        work["series"][1] = {"name": "Shared Universe", "sequence": []}
+    observation = (
+        _provider(
+            lambda request: _json(
+                {
+                    "work": {"id": "synthetic-work"},
+                    "recording_id": "synthetic-recording",
+                }
+                if request.url.path.endswith("/lookup")
+                else work
+            )
+        )
+        .observe(plan)
+        .observation
+    )
+    fields = tuple(
+        TargetField(
+            field.destination,
+            TargetFieldState.VALUE,
+            (TargetSeries("Old Cycle", "1"),)
+            if field.destination is TargetDestination.SERIES
+            else ("Old Narrator",)
+            if field.destination is TargetDestination.NARRATORS
+            else ("Old Author",),
+        )
+        if populated
+        and field.destination
+        in {
+            TargetDestination.AUTHORS,
+            TargetDestination.NARRATORS,
+            TargetDestination.SERIES,
+        }
+        else TargetField(field.destination, TargetFieldState.MISSING)
+        if field.destination
+        in {
+            TargetDestination.AUTHORS,
+            TargetDestination.NARRATORS,
+            TargetDestination.SERIES,
+        }
+        else field
+        for field in target.fields
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "synthetic-work", fields),
+        file=base.file,
+        local_claims=local,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+    return MetadataReport.from_json(report.to_json())
+
+
+@pytest.mark.parametrize("malformed", (None, "authors", "narrators", "series"))
+@pytest.mark.parametrize("populated", (False, True))
+def test_audiosilo_complete_sets_survive_or_refuse_at_reopened_effect_boundary(
+    tmp_path, malformed, populated
+):
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _automatic_decision_value,
+    )
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.domain.automatic_decision import (
+        AutomaticDecision,
+        AutomaticSafetyState,
+    )
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+    from tests.unit.test_shadow_outcome_persistence import _audiobook_preview
+
+    report = _audiosilo_consumer_report(malformed=malformed, populated=populated)
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    case_id, resolved = _audiobook_preview(
+        repository,
+        report,
+        ("contributor_names", "series"),
+        selected_options={
+            "contributor_names": "canonical",
+            "series": "replace_qualified",
+        },
+    )
+    stored = repository.persist_shadow_outcome(case_id, 4)
+    repository.close()
+    repository = open_repository(path)
+    outcome = ShadowOutcomeSet.from_json(stored)
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    case = ReviewCase.create(proposal, report)
+    decisions = [
+        AutomaticDecision.from_json(value)
+        for value in repository.get_review_case_decisions(case_id)
+    ]
+    for field in ("authors", "narrators", "series"):
+        matching = [decision for decision in decisions if decision.destination == field]
+        if (
+            field == malformed
+            or malformed == "authors"
+            or (field == "series" and populated)
+        ):
+            assert not matching
+            continue
+        assert len(matching) == 1, field
+        value = _automatic_decision_value(matching[0], case, report, proposal, outcome)[
+            "value"
+        ]
+        assert (
+            value
+            == {
+                "authors": ["Synthetic Author", "Second Author"],
+                "narrators": ["First Narrator", "Second Narrator"],
+                "series": [
+                    {"name": "First Cycle", "sequence": "2"},
+                    {"name": "Shared Universe", "sequence": "7"},
+                ],
+            }[field]
+        )
+    assert repository.automatic_safety_state() == AutomaticSafetyState(False, None, ())
+    assert repository.persist_shadow_outcome(case_id, 5) == stored
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "variant", ("supported", "wrong_recording", "series_display", "malformed")
+)
+def test_recording_work_subtitle_reaches_manual_sql_case_only(tmp_path, variant):
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        TargetSnapshot,
+        audiobook_asin_feed_plan,
+        audiobook_discovery_plan,
+    )
+    from mechanical_librarian.domain.automatic_decision import (
+        AutomaticDecision,
+        AutomaticSafetyState,
+    )
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
+    from tests.unit.test_audnexus_provider import _json, _provider
+    from tests.unit.test_shadow_outcome_persistence import _audiobook_preview
+
+    base = _audiosilo_consumer_report(populated=False)
+    target = TargetSnapshot(
+        "audiobook", base.target.current_title, (), fields=base.target.fields
+    )
+    plan = audiobook_asin_feed_plan(
+        target, audiobook_discovery_plan(target, base.local_claims), ()
+    )
+    assert plan is not None
+    subtitle = {
+        "supported": "A Synthetic Expedition",
+        "wrong_recording": "A Synthetic Expedition",
+        "series_display": "First Cycle, Book 2",
+        "malformed": [],
+    }[variant]
+    raw = {
+        "asin": "B000000001",
+        "title": "Synthetic Expedition",
+        "subtitle": subtitle,
+        "authors": [{"name": "Synthetic Author"}],
+        "narrators": [{"name": "First Narrator"}],
+        "runtimeLengthMin": 100 if variant == "wrong_recording" else 970,
+        "seriesPrimary": {"name": "First Cycle", "position": "2"},
+    }
+    observation = (
+        _provider(
+            lambda request: (
+                _json({}, 404) if request.url.path.endswith("/chapters") else _json(raw)
+            )
+        )
+        .observe(plan)
+        .observation
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+    report = MetadataReport.from_json(report.to_json())
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    case_id, resolved = _audiobook_preview(
+        repository,
+        report,
+        ("contributor_names",),
+        selected_options={"title_layout": "preserve"},
+    )
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    result = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.SUBTITLE
+    )
+    assert bool(result.alternatives) is (variant == "supported")
+    if variant == "supported":
+        assert result.alternatives[0].value.value == "A Synthetic Expedition"
+        assert result.alternatives[0].scope.value == "work"
+    stored = repository.persist_shadow_outcome(case_id, 4)
+    repository.close()
+    repository = open_repository(path)
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    subtitle_result = next(
+        value["result"]
+        for value in case.proposals
+        if value["destination"] == "subtitle"
+    )
+    assert bool(subtitle_result["alternatives"]) is (variant == "supported")
+    assert not any(
+        AutomaticDecision.from_json(value).destination == "subtitle"
+        for value in repository.get_review_case_decisions(case_id)
+    )
+    assert repository.automatic_safety_state() == AutomaticSafetyState(False, None, ())
+    assert repository.persist_shadow_outcome(case_id, 5) == stored
+    repository.close()
+
+
+@pytest.mark.parametrize("runtime", (970, 100))
+def test_audiosilo_single_series_fill_requires_actual_recording_admission(
+    tmp_path, runtime
+):
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.domain.automatic_decision import (
+        AutomaticDecision,
+        AutomaticSafetyState,
+    )
+    from tests.unit.test_shadow_outcome_persistence import _audiobook_preview
+
+    report = _audiosilo_consumer_report(
+        runtime=runtime, populated=False, multiple_series=False
+    )
+    repository = open_repository(tmp_path / "reports.sqlite")
+    case_id, _ = _audiobook_preview(
+        repository,
+        report,
+        ("contributor_names", "series"),
+        selected_options={"contributor_names": "canonical", "series": "add_qualified"},
+    )
+    repository.persist_shadow_outcome(case_id, 4)
+    decisions = [
+        AutomaticDecision.from_json(value)
+        for value in repository.get_review_case_decisions(case_id)
+    ]
+    for field in ("narrators", "series"):
+        matching = [value for value in decisions if value.destination == field]
+        assert bool(matching) is (runtime == 970)
+        if matching:
+            assert matching[0].policy_option.endswith("_fill")
+    assert repository.automatic_safety_state() == AutomaticSafetyState(False, None, ())
+    repository.close()

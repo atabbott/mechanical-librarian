@@ -17,6 +17,7 @@ class WorkDispatchRung(StrEnum):
 
 
 class WorkTitleTransformationFamily(StrEnum):
+    PROVIDER_ASSOCIATED_SERIES_SUFFIX = "provider_associated_series_suffix"
     FILENAME_UNDERSCORES = "filename_underscores"
     FILENAME_AUTHOR_TITLE_PREFIX = "filename_author_title_prefix"
     BRACKET_SOURCE_TAG = "bracket_source_tag"
@@ -138,6 +139,12 @@ class WorkTitleCompoundProduction:
 
 
 WORK_TITLE_TRANSFORMATION_RULES = (
+    WorkTitleTransformationRule(
+        WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,
+        False,
+        False,
+        WorkDispatchRung.NORMALIZED,
+    ),
     WorkTitleTransformationRule(
         WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
         True,
@@ -345,6 +352,11 @@ _RULE_ORDINAL = {
 
 WORK_TITLE_COMPOUND_PRODUCTIONS = (
     WorkTitleCompoundProduction(
+        "provider_associated_series_suffix",
+        (WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,),
+        True,
+    ),
+    WorkTitleCompoundProduction(
         "author_prefix_then_underscores",
         (
             WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
@@ -382,6 +394,14 @@ def _application_ordinal(
 def _lineage_production(
     applications: tuple[WorkTitleTransformationApplication, ...],
 ) -> str | None:
+    if (
+        len(applications) == 1
+        and applications[0].family
+        is WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX
+        and applications[0].field is WorkTitleTransformationField.TITLE
+        and applications[0].ordinal is None
+    ):
+        return "provider_associated_series_suffix"
     compound = (
         WorkTitleTransformationApplication(
             WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
@@ -708,6 +728,7 @@ def replay_provider_work_identity_admission(
     provider_work_identity: str,
     dispatch_lineage: WorkDispatchLineage | None,
     variant_excluded: bool = False,
+    provider_series: tuple[tuple[str, str], ...] = (),
 ) -> WorkIdentityAdmission:
     """Recompute admission only for a dispatch the exact local ladder can emit."""
     admission = admit_provider_work_identity(
@@ -719,6 +740,44 @@ def replay_provider_work_identity_admission(
         variant_excluded=variant_excluded,
         allow_reordered_authors=True,
     )
+    if not admission.admitted and len(provider_series) == 1:
+        series, sequence = provider_series[0]
+        suffix = f": {series}, Book {sequence}"
+        for decorated, side in (
+            (provider_title, WorkTitleTransformationSide.PROVIDER),
+            (local_title, WorkTitleTransformationSide.LOCAL),
+        ):
+            if not decorated.endswith(suffix):
+                continue
+            clean = decorated[: -len(suffix)]
+            exact = admit_provider_work_identity(
+                local_title=clean
+                if side is WorkTitleTransformationSide.LOCAL
+                else local_title,
+                local_authors=local_authors,
+                provider_title=clean
+                if side is WorkTitleTransformationSide.PROVIDER
+                else provider_title,
+                provider_authors=provider_authors,
+                provider_work_identity=provider_work_identity,
+                variant_excluded=variant_excluded,
+                allow_reordered_authors=True,
+            )
+            if exact.admitted and exact.transformation is None:
+                admission = WorkIdentityAdmission(
+                    True,
+                    WorkTitleTransformationLineage(
+                        (
+                            WorkTitleTransformationApplication(
+                                WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,
+                                side,
+                                WorkTitleTransformationField.TITLE,
+                                None,
+                            ),
+                        )
+                    ),
+                )
+                break
     if not admission.admitted or dispatch_lineage is None:
         return WorkIdentityAdmission(False)
     queries = work_query_ladder(local_title, local_authors)

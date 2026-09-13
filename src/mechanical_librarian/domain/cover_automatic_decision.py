@@ -7,6 +7,10 @@ import json
 import re
 from dataclasses import dataclass
 
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    F46_COVER_FILL_IDENTITY,
+    qualification_manifest_sha256,
+)
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
@@ -46,12 +50,28 @@ class CoverAutomaticDecision:
     supersedes_decision_id: str | None
     idempotency_digest: str
     occurred_at: int
+    qualification_identity: str | None = None
 
     destination = "cover"
     outcome = "candidate"
     policy_category = "cover_order"
-    policy_option = "fixed_source_order"
-    qualification_manifest_sha256 = COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
+
+    @property
+    def policy_option(self) -> str:
+        return (
+            "fixed_source_order"
+            if self.qualification_identity is None
+            else self.qualification_identity.split(":", 1)[1]
+        )
+
+    @property
+    def qualification_manifest_sha256(self) -> str:
+        return (
+            COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
+            if self.qualification_identity is None
+            else qualification_manifest_sha256(self.qualification_identity)
+        )
+
     bundle_id = None
 
     @property
@@ -89,8 +109,10 @@ class CoverAutomaticDecision:
         citation_ids: tuple[str, ...],
         supersedes_decision_id: str | None,
         occurred_at: int,
+        qualification_identity: str | None = None,
     ) -> "CoverAutomaticDecision":
         core: dict[str, object] = {
+            "qualification_identity": qualification_identity,
             "artifact_id": artifact_id,
             "candidate_id": candidate_id,
             "candidate_reference": candidate_reference,
@@ -131,6 +153,7 @@ class CoverAutomaticDecision:
             supersedes_decision_id=supersedes_decision_id,
             idempotency_digest=_digest(core),
             occurred_at=occurred_at,
+            qualification_identity=qualification_identity,
         )
 
     def __post_init__(self) -> None:
@@ -175,6 +198,10 @@ class CoverAutomaticDecision:
             or self.citation_ids != tuple(sorted(set(self.citation_ids)))
         ):
             raise AutomaticDecisionError("invalid")
+        if self.qualification_identity is not None:
+            if self.qualification_identity != F46_COVER_FILL_IDENTITY:
+                raise AutomaticDecisionError("invalid")
+            qualification_manifest_sha256(self.qualification_identity)
         core = self._core()
         if self.idempotency_digest != _digest(core) or self.decision_id != (
             "automatic_decision_" + _digest({**core, "occurred_at": self.occurred_at})
@@ -183,6 +210,7 @@ class CoverAutomaticDecision:
 
     def _core(self) -> dict[str, object]:
         return {
+            "qualification_identity": self.qualification_identity,
             "artifact_id": self.artifact_id,
             "candidate_id": self.candidate_id,
             "candidate_reference": self.candidate_reference,
@@ -215,7 +243,7 @@ class CoverAutomaticDecision:
                 "policy_category": self.policy_category,
                 "policy_option": self.policy_option,
                 "qualification_manifest_sha256": self.qualification_manifest_sha256,
-                "schema_version": "cover-automatic-decision-v1",
+                "schema_version": "cover-automatic-decision-v2",
             }
         )
 
@@ -223,7 +251,7 @@ class CoverAutomaticDecision:
     def from_json(cls, document: str) -> "CoverAutomaticDecision":
         try:
             raw = json.loads(document)
-            if raw.get("schema_version") != "cover-automatic-decision-v1":
+            if raw.get("schema_version") != "cover-automatic-decision-v2":
                 raise AutomaticDecisionError("invalid")
             values = {
                 key: raw[key]
@@ -248,6 +276,6 @@ def parse_automatic_authority(document: str) -> AutomaticAuthority:
         raw = json.loads(document)
     except (TypeError, json.JSONDecodeError) as error:
         raise AutomaticDecisionError("invalid") from error
-    if type(raw) is dict and raw.get("schema_version") == "cover-automatic-decision-v1":
+    if type(raw) is dict and raw.get("schema_version") == "cover-automatic-decision-v2":
         return CoverAutomaticDecision.from_json(document)
     return AutomaticDecision.from_json(document)

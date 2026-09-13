@@ -12,8 +12,10 @@ import re
 from typing import Final
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
+    identity_for_effect,
     qualified_policy_bases,
 )
+from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
@@ -254,9 +256,11 @@ def _project(
     if field == "tags" and option == "off":
         return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_off")
     if target.state is TargetFieldState.VALUE and (
-        field in {"subtitle", "description_fill", "isbn_form", "asin"}
+        field in {"subtitle", "isbn_form"}
+        or (field == "description_fill" and option != "replace_safe_plain_text")
+        or (field == "asin" and proposal.media_kind != "audiobook")
         or (field in {"genres", "tags"} and option == "fill_empty")
-        or (field == "series" and destination == "automatic")
+        or (field == "series" and destination == "automatic" and option not in {"add_qualified", "replace_qualified"})
     ):
         return _preserved(field, option, target, current)
     automatic_work = None
@@ -346,7 +350,11 @@ def _project(
         if candidate.value.kind is not ProposalValueKind.LIST:
             return _abstain(field, option, target, current, "no_candidate")
         if option == "add" and target.state is TargetFieldState.VALUE:
-            desired = tuple((*target.value, *(item for item in candidate.value.value if item not in target.value)))
+            desired = (
+                tuple(_add_audiobook_taxonomy_members(current, desired))
+                if proposal.media_kind == "audiobook"
+                else tuple((*target.value, *(item for item in candidate.value.value if item not in target.value)))
+            )
         elif option == "fill_empty" and target.state not in _EMPTY:
             return _preserved(field, option, target, current)
         elif option not in {"fill_empty", "add", "replace"}:
@@ -356,6 +364,12 @@ def _project(
     elif field == "series":
         if candidate.value.kind is not ProposalValueKind.SERIES:
             return _abstain(field, option, target, current, "no_candidate")
+        if option == "add_qualified" and target.state is TargetFieldState.VALUE:
+            desired = (
+                tuple(_add_series_associations(current, desired))
+                if proposal.media_kind == "audiobook"
+                else [*current, *(item for item in desired if item not in current)]
+            )
         if option == "all_qualified":
             desired = (candidate.value.value[0],)
             if _data_value(desired) == current:
@@ -730,6 +744,15 @@ def _automatic_description_candidate(
     )
     if not qualified:
         return None, (), "description_quality_floor_not_met"
+    authority_order = _DESCRIPTION_AUTHORITY_ORDER
+    if all(
+        retained_claims[reference].candidate is not None
+        and any(binding.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                and binding.scope is ClaimScope.EDITION
+                for binding in retained_claims[reference].candidate.evidence)
+        for _, references in qualified for reference in references
+    ):
+        authority_order = (*authority_order, "audible_catalog", "audnexus")
     ranked: list[tuple[int, ProposalAlternative, tuple[str, ...]]] = []
     for candidate, references in qualified:
         by_authority: dict[str, list[str]] = {}
@@ -737,7 +760,7 @@ def _automatic_description_candidate(
             retained = retained_claims[reference]
             if (
                 type(retained.provider) is ProviderObservation
-                and retained.provider.authority in _DESCRIPTION_AUTHORITY_ORDER
+                and retained.provider.authority in authority_order
             ):
                 by_authority.setdefault(retained.provider.authority, []).append(
                     reference
@@ -746,11 +769,11 @@ def _automatic_description_candidate(
             return None, (), "ambiguous_evidence"
         authority = min(
             by_authority,
-            key=_DESCRIPTION_AUTHORITY_ORDER.index,
+            key=authority_order.index,
         )
         ranked.append(
             (
-                _DESCRIPTION_AUTHORITY_ORDER.index(authority),
+                authority_order.index(authority),
                 candidate,
                 tuple(by_authority[authority]),
             )
@@ -782,7 +805,7 @@ def _description(
         )
     if candidate is None:
         return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
-    if option not in {"safe_plain_text", "google_visible_text"}:
+    if option not in {"safe_plain_text", "google_visible_text", "replace_safe_plain_text"}:
         return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
     candidate_references = (
         candidate.evidence_references
@@ -803,7 +826,7 @@ def _description(
     )
     if option == "google_visible_text" and not google_references:
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
-    if option == "safe_plain_text" and not ordinary_references:
+    if option in {"safe_plain_text", "replace_safe_plain_text"} and not ordinary_references:
         return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
     source_references = (
         google_references if option == "google_visible_text" else ordinary_references
@@ -1119,6 +1142,77 @@ def project_f20_automatic_decision_value(
             raise RichMetadataPreviewError("rich automatic projection is oversized")
         return {"kind": "list", "value": values}
     raise RichMetadataPreviewError("rich automatic projection is unavailable")
+
+
+def project_audiobook_automatic_decision_value(
+    destination: str,
+    field: str,
+    qualified_option: str,
+    candidate_value: object,
+    current_value: object,
+) -> dict[str, object]:
+    """Reconstruct the operation before removing its qualification suffix."""
+    option = qualified_option.rsplit(":", 1)[0]
+    if type(candidate_value) is not dict or set(candidate_value) != {"kind", "value"}:
+        raise RichMetadataPreviewError("rich automatic projection is invalid")
+    if field == "series" and option in {"add_qualified", "replace_qualified"}:
+        values = candidate_value["value"]
+        if candidate_value["kind"] != "series" or type(values) is not list or not values:
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        if option == "add_qualified" and current_value is not None:
+            current = _data_value(current_value)
+            if type(current) not in {list, tuple}:
+                raise RichMetadataPreviewError("rich automatic projection is invalid")
+            values = _add_series_associations(current, values)
+        projected: dict[str, object] = {"kind": "series", "value": values}
+    elif field in {"genres", "tags"} and option == "add" and current_value is not None:
+        projected = project_f20_automatic_decision_value(
+            field, "replace", {
+                "kind": candidate_value["kind"],
+                "value": _add_audiobook_taxonomy_members(current_value, candidate_value["value"]),
+            }, None,
+        )
+    else:
+        projected = project_f20_automatic_decision_value(
+            field,
+            "safe_plain_text" if option == "replace_safe_plain_text" else option,
+            candidate_value,
+            current_value,
+        )
+    identity = identity_for_effect(
+        destination, field, option, _data_value(current_value), projected["value"]
+    )
+    if identity != f"{field}:{qualified_option}":
+        raise RichMetadataPreviewError("rich automatic operation is unqualified")
+    return projected
+
+
+def _add_audiobook_taxonomy_members(current: object, desired: object) -> list[str]:
+    """Keep incumbent taxonomy spelling when an admitted member is equivalent."""
+    if (
+        type(current) not in {list, tuple} or type(desired) not in {list, tuple}
+        or any(type(item) is not str for item in (*current, *desired))
+    ):
+        raise RichMetadataPreviewError("rich automatic projection is invalid")
+    return [*current, *(item for item in desired if not any(
+        values_match(TargetDestination.GENRES, existing, item) for existing in current
+    ))]
+
+
+def _add_series_associations(current: object, desired: object) -> list[object]:
+    """Retain existing displays while adding only distinct bound series pairs."""
+    if type(current) not in {list, tuple} or type(desired) not in {list, tuple}:
+        raise RichMetadataPreviewError("rich automatic projection is invalid")
+    def identity(item: object) -> tuple[str, str | None]:
+        if (
+            type(item) is not dict or set(item) != {"name", "sequence"}
+            or type(item["name"]) is not str
+            or (item["sequence"] is not None and type(item["sequence"]) is not str)
+        ):
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        return series_name_equivalence_key(item["name"]), item["sequence"]
+    existing = {identity(item) for item in current}
+    return [*current, *(item for item in desired if identity(item) not in existing)]
 
 
 def _data_value(value: object) -> object:

@@ -19,6 +19,11 @@ from collections.abc import Callable
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    F46_COVER_FILL_IDENTITY,
+    AudiobookQualificationError,
+    qualification_manifest_sha256,
+)
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
 from mechanical_librarian.domain.deterministic_cover_election import (
     strictly_better_cover_rank,
@@ -103,6 +108,15 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             or report.target.fingerprint != case.target_fingerprint
         ):
             return
+        qualification_identity = None
+        if report.audio is not None:
+            if policy_report.get("actual_target_state") != "known_empty":
+                return
+            try:
+                qualification_manifest_sha256(F46_COVER_FILL_IDENTITY)
+            except AudiobookQualificationError:
+                return
+            qualification_identity = F46_COVER_FILL_IDENTITY
         target = case.target
         connection_name, library_name, item_id = (
             target.get("connection"),
@@ -208,6 +222,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             return
         supersedes = None if prior is None else prior["decision_id"]
         decision = CoverAutomaticDecision.create(
+            qualification_identity=qualification_identity,
             review_case_id=case.review_case_id,
             report_id=case.report_id,
             proposal_set_id=case.proposal_set_id,

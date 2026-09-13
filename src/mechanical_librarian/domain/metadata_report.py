@@ -77,7 +77,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v42"
+REPORT_SCHEMA = "metadata-report-v43"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -2661,6 +2661,7 @@ def provider_candidate_work_identity_admission(
     if claims is None:
         return WorkIdentityAdmission(False)
     title, authors, work_identity, variant_excluded = claims
+    ordered = tuple(sorted(candidate.claims, key=lambda claim: claim.raw_order))
     return replay_provider_work_identity_admission(
         local_title=local_title,
         local_authors=local_authors,
@@ -2669,6 +2670,29 @@ def provider_candidate_work_identity_admission(
         provider_work_identity=work_identity,
         dispatch_lineage=dispatch_lineage,
         variant_excluded=variant_excluded,
+        provider_series=tuple(
+            (name.value, sequence.value)
+            for name, sequence in zip(ordered, ordered[1:], strict=False)
+            if name.kind is ClaimKind.SERIES
+            and sequence.kind is ClaimKind.SERIES_SEQUENCE
+            and name.scope is ClaimScope.WORK
+            and sequence.scope is ClaimScope.WORK
+            and name.state is FieldState.VALID
+            and sequence.state is FieldState.VALID
+            and name.value is not None
+            and sequence.value is not None
+            and sequence.raw_order == name.raw_order + 1
+            and sum(claim.kind is ClaimKind.SERIES for claim in ordered) == 1
+            and not any(
+                claim.kind is ClaimKind.SUBTITLE
+                and claim.state is not FieldState.ABSENT
+                and not (
+                    claim.state is FieldState.VALID
+                    and claim.value == f"{name.value}, Book {sequence.value}"
+                )
+                for claim in ordered
+            )
+        ),
     )
 
 
@@ -4189,7 +4213,23 @@ def manifestation_publication_compatible(
     candidate: ProviderCandidate,
     local: tuple[LocalClaim, ...],
 ) -> bool:
-    """Require an exact usable local ISBN family and no closed contradiction."""
+    """Bind dates through an ISBN family or retained recording admission.
+
+    Audiobook adapters initially retain the source's typed release statement.
+    Application admission removes both its date and marketplace when recording
+    support is insufficient; this predicate does not establish ISBN format.
+    """
+    if any(
+        evidence.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        and evidence.scope is ClaimScope.EDITION
+        for evidence in candidate.evidence
+    ) and any(
+        claim.kind is ClaimKind.ASIN
+        and claim.state is FieldState.VALID
+        and canonical_asin(claim.value) is not None
+        for claim in candidate.claims
+    ):
+        return True
     local_families = {
         family
         for claim in local

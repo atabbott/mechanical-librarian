@@ -5,9 +5,35 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Current title-consumer qualification (#1007)
+## Expanded audiobook candidate (#967)
 
-The current [v29 candidate](../reference/f20-rich-metadata-qualification-candidate-v29.json)
+The F46 registry names actual preserve/fill/normalize/add/replace operations,
+including explicit series add/replace and description replace choices. Each
+operation binds its current target value before an effect is reconstructed.
+Existing F20 options and historical v31 bytes retain their ebook meaning.
+The presentation successor reserves space for Evidence below expanded descriptions;
+The review successor also retains valid book fields beside malformed taxonomy
+members and makes all returned sampled Policy outcomes expandable before activation.
+Policy guidance also wraps within its field at enlarged text sizes.
+All twelve retained parser responses are unchanged; frozen quality and completed
+correspondence remain bound to their original sources.
+The [F46 v7 record](../reference/f46-audiobook-qualification-candidate-v7.json)
+registers 44 accepted operations in six fields, bound by
+[F19a v24](../reference/f19a-qualification-manifest-v24.json) and
+[F20 v38](../reference/f20-rich-metadata-qualification-candidate-v38.json).
+Retained Automatic/effect correspondence passed at the recorded source; Ask previews
+expose candidate evidence without granting effect authority.
+
+Report v43 preserves candidate-associated series-title decoration honestly;
+packet v8 and decision policy v13 consume recomputable recording support.
+Shadow outcome v5, metadata policy profile v3 and cover automatic decision v2
+require a clean rebuild. No predecessor bytes are relabelled or adopted.
+
+## Historical title-consumer qualification (#1007)
+
+The following records that qualification stage, not the current F46 registration.
+
+The historical [v29 candidate](../reference/f20-rich-metadata-qualification-candidate-v29.json)
 binds #1007's title and packet consumers, including replacement-only and
 complete ordered creator corrections. Published v25 remains immutable historical
 evidence. The current continuity proof is
@@ -400,47 +426,29 @@ all historical measurements remain byte-frozen; no rescoring or fresh holdout is
 claimed. V20 decisions remain readable history but are stale for new effects;
 only the current qualification can authorize newly prepared automatic effects.
 
-## Audiobook tranches (#967)
+## Audiobook operation qualification (#967)
 
-F20 measured ebook proposals, so its record answers for an ebook and for
-nothing else. `narrators` stays in the candidate's `excluded_destinations` for
-that reason: the destination is not unqualifiable, it is qualified elsewhere.
-F46 owns it, alongside audiobook series fill and the audiobook ASIN, each under
-its own identity and its own record
+F20 retains its ebook authority; F46 separately qualifies audiobook operations
 ([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
+The current 44 identities cover supported title, author, narrator, language,
+series and genre operations. Complete recording credits and admitted work
+associations reach current proposal, decision and guarded-effect consumers.
+ASIN and other unqualified operations remain manual.
 
-No F46 record is published. `F46_PASSING_AUTOMATIC_OPTIONS` is empty and
-`F46_QUALIFICATION_MANIFEST_SHA256` is `None`, so every audiobook proposal is
-the owner's exactly as it was before: the projection abstains for the whole
-recording and mints nothing. Activating one tranche is three tokens -- the
-record file in `docs/reference/`, its digest, and the identity in the passing
-set -- and changes no wiring.
+Title and author preserve operations are withheld because retained software
+correspondence rejected author no-change authority and suspended title
+preservation admission. Their independently accepted source quality is unchanged.
+The remaining registration passed all 530 retained software scenarios, with
+1,165 verified synthetic-service effects, 162 no-change facts and no errors,
+value/operation mismatches or unintended suspension. These repeated scenarios
+are not independent books. The default policy produced 25 actual changes across
+six of the twelve source-quality books; eleven source-correct title/author
+preservations remain manual after the operation withdrawal.
 
-Changing the passing set once audiobook outcomes exist is not a free edit in
-either direction: a stored outcome is replayed against the current set, so
-adding a second identity would turn a stored `ask` into an `automatic` and
-withdrawing one would do the reverse, and the recompute refuses both rather
-than reinterpreting them. Nothing can merge into that state while no record
-exists, and unit C owes the adoption path that both directions travel before
-the first one is published.
-
-A published record widens what the owner may route to Automatic, which is how
-`asin` becomes routable at all. It does not widen what an ebook does under that
-routing: an ebook's `asin` is still decided by the F20 record, which leaves it
-at Ask.
-
-Two of the three tranches cannot yet produce a candidate even under a record,
-because their destination is not projectable: `narrators` is not a supported
-destination of the deterministic shadow decision policy, and the audiobook
-series election is refused by the work-applicability gate (#971). Both are
-projection questions F46's qualification must settle before those tranches can
-be measured; the ASIN tranche is reachable today.
-
-The marketplace an ASIN belongs to is recorded on the provider candidate's
-evidence and stays there: it is not carried onto the decision or the field
-view, because doing so needs a `review-case-view` bump this unit does not
-make. The ASIN statement names the runtime gate that corroborated the
-recording instead.
+Adding or withdrawing qualification changes persisted interpretation. The exact
+shadow-outcome successor and clean rebuild prevent old stored decisions from
+being reinterpreted under the new set. Ordinary startup accepts absent or
+exact-current state only; no adoption or relabelling is offered.
 
 ## Provider recovery explanations source closure (#891)
 
@@ -505,3 +513,29 @@ the shared projection closure: its two persistence adapters and the review web
 application. The digests both manifests published before that restatement
 remain readable history only, and no option, score, measurement or authority
 rule moves.
+
+
+## Current expanded audiobook source bindings (#967)
+
+The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v7.json)
+names 44 accepted field/operation identities across title, authors, narrators,
+language, series and genres. Its source-quality corpus and candidate operations
+are frozen separately from subsequent Automatic/effect correspondence. Dates,
+publisher, description, ASIN and cover lack the required selected-positive
+confirmation floor; subtitle/tags lack the source floor, and ISBN/explicit
+semantics remain unresolved. No new authority is inferred from those candidates.
+The [F19a v24](../reference/f19a-qualification-manifest-v24.json) and
+[F20 v38](../reference/f20-rich-metadata-qualification-candidate-v38.json)
+successors bind the current consumers without rewriting historical records or
+claiming fresh ebook scoring. Report v43, shadow outcome v5 and policy profile
+v3 require a clean rebuild; prior state is never relabelled as current.
+
+Title and author preserve operations remain withheld after retained software
+correspondence failures; their source quality was not rejected. Other registered
+operations retain their independent qualification.
+
+The current correction retains complete Audiosilo credit sets and ordered series
+pairs, including malformed companions that prevent partial Automatic values.
+Recording-bound WORK subtitles are available for owner review under proposal
+policy v26; subtitle Automatic remains withheld. These consumer corrections
+do not claim fresh source scoring or repeat the historical 530-scenario run.

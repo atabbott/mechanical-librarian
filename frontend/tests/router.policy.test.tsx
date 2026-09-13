@@ -9,12 +9,12 @@ import { createHttp, inertAudiobookQualification, renderRoute } from './fixtures
 import { view } from './settingsFixtures'
 
 describe('Policy route', () => {
-  it('explains empty-series filling, all three representations and provider numbering limits', async () => {
+  it('explains empty-series filling, fill and explicit add/replace representations and provider numbering limits', async () => {
     renderRoute('/policy?section=publication')
     const series = await screen.findByRole('region', { name: 'Series memberships' })
     expect(
       within(series).getByText(
-        'Automatic fills an empty Series field only and preserves existing memberships.',
+        'Fill empty Series, add supported memberships, or explicitly replace the current list.',
       ),
     ).toBeVisible()
     await userEvent.setup().click(within(series).getByText('What this changes'))
@@ -23,6 +23,8 @@ describe('Policy route', () => {
     expect(within(series).getByText('Primary narrative:')).toBeVisible()
     expect(within(series).getByText('First source membership:')).toBeVisible()
     expect(within(series).getByText('All qualified memberships:')).toBeVisible()
+    expect(within(series).getByText('Add supported memberships:')).toBeVisible()
+    expect(within(series).getByText('Replace with supported memberships:')).toBeVisible()
     expect(within(series).getByText(/with only its first membership/u)).toBeVisible()
   })
 
@@ -148,7 +150,7 @@ describe('Policy route', () => {
         schema_version: 'metadata-policy-notebook-v1',
         policy_id: 'policy-1',
         profile: {
-          schema_version: 'metadata-policy-profile-v2',
+          schema_version: 'metadata-policy-profile-v3',
           name: 'Default',
           options: {},
           destinations: {},
@@ -159,9 +161,19 @@ describe('Policy route', () => {
             automatic_available: true,
             destination: 'asin',
             field: 'asin',
-            identity: 'asin:preserve_exact:audiobook_gate_corroborated',
+            identity: 'asin:preserve_exact:audiobook_asin_fill',
+            operation: 'fill',
             option: 'preserve_exact',
             record_sha256: 'c'.repeat(64),
+          },
+          {
+            automatic_available: false,
+            destination: 'asin',
+            field: 'asin',
+            identity: 'asin:preserve_exact:audiobook_asin_replace_recording',
+            operation: 'replace_recording',
+            option: 'preserve_exact',
+            record_sha256: null,
           },
           ...inertAudiobookQualification.filter((entry) => entry.field !== 'asin'),
         ],
@@ -171,6 +183,10 @@ describe('Policy route', () => {
     const asin = await screen.findByRole('region', { name: 'ASIN' })
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic mode not supported')).toBeNull()
+    await user.click(within(asin).getByText('Audiobook operations'))
+    expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
+    expect(within(asin).getByText(/Replace a valid ASIN — Review required/u)).toBeVisible()
+
     // The record qualified one option, so the other one this field offers is
     // still the owner's.
     await user.click(within(asin).getByRole('combobox', { name: 'ASIN representation' }))
@@ -218,7 +234,7 @@ describe('Policy route', () => {
       if (path === 'validate' && ++validationCalls === 1) throw new ApiError(422, 'invalid_policy')
       if (path === 'drafts' && ++draftSaves > 1) throw new AmbiguousMutationError()
       if (path === 'drafts')
-        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
       if (path === 'preview') {
         activePolicyId = 'policy-preview-authority'
         return {
@@ -239,7 +255,7 @@ describe('Policy route', () => {
         }
       }
       if (path === 'activate') throw new ApiError(409, 'policy_activation_is_stale')
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -247,7 +263,7 @@ describe('Policy route', () => {
         schema_version: 'metadata-policy-notebook-v1',
         policy_id: activePolicyId,
         profile: {
-          schema_version: 'metadata-policy-profile-v2',
+          schema_version: 'metadata-policy-profile-v3',
           name: 'Qualified default',
           options,
           destinations,
@@ -420,9 +436,9 @@ describe('Policy route', () => {
     await user.click(help)
     expect(help.closest('details')).toHaveAttribute('open')
     const helpLines = within(description).getAllByRole('listitem')
-    expect(helpLines).toHaveLength(2)
+    expect(helpLines).toHaveLength(3)
     expect(helpLines[0]).toHaveTextContent(
-      'Safe plain text: Fills an empty Description only; abstains when target-work applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, transformed, or unsupported.',
+      'Safe plain text: Fills an empty Description only; abstains when applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, or unsupported.',
     )
     expect(helpLines[1]).toHaveTextContent(
       'Visible Google text: Fills an empty Description only; abstains without it and never falls back to Hardcover.',
@@ -527,6 +543,102 @@ describe('Policy route', () => {
     ])
   })
 
+  it('reveals material outcomes beyond six rows without changing preview authority', async () => {
+    const user = userEvent.setup()
+    const unchanged = Array.from({ length: 6 }, (_, index) => ({
+      current_value: `Retained ${String(index)}`,
+      desired_value: `Retained ${String(index)}`,
+      field: `unchanged_${String(index)}`,
+      narrowed_for_target: false,
+      option: 'preserve',
+      outcome: 'projected',
+      qualified_value: `Retained ${String(index)}`,
+      reason: null,
+      target_state: 'available',
+    }))
+    const policyCommand = vi.fn<(path: string, body: unknown) => Promise<unknown>>(async (path) => {
+      if (path === 'drafts')
+        return { policy_id: 'policy-reviewed', schema_version: 'metadata-policy-profile-v3' }
+      if (path === 'preview')
+        return {
+          active_policy_id: 'policy-preview-authority',
+          policy_id: 'policy-reviewed',
+          schema_version: 'metadata-policy-preview-v1',
+          libraries: [
+            {
+              library: 'Fiction',
+              affected_categories: ['contributor_names'],
+              cases_total: 1,
+              cases_truncated: false,
+              current_unapplied_count: 1,
+              resolved_policy_id: 'resolved-policy',
+              cases: [
+                {
+                  fields: [
+                    ...unchanged,
+                    {
+                      ...unchanged[0],
+                      field: 'contributor_names',
+                      option: 'canonical',
+                      current_value: 'Previous narrator',
+                      desired_value: 'Complete recording cast',
+                      qualified_value: 'Complete recording cast',
+                    },
+                  ],
+                  proposal_set_id: 'proposal-1',
+                  report_id: 'report-1',
+                  resolved_policy_id: 'resolved-policy',
+                  work_label: 'Recording book',
+                },
+              ],
+            },
+          ],
+        }
+      if (path === 'activate') throw new ApiError(409, 'policy_transition_is_processing')
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
+    })
+    const http: ReviewHttp = {
+      ...createHttp(),
+      policyCommand: <T,>(path: string, body: unknown) => policyCommand(path, body) as Promise<T>,
+    }
+    renderRoute('/policy?section=identity', http)
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    const showMore = await screen.findByRole('button', { name: 'Show 1 more outcome' })
+    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
+    expect(showMore).toHaveAttribute('aria-expanded', 'false')
+    showMore.focus()
+    await user.keyboard('{Enter}')
+    expect(screen.getByText('· Previous narrator → Complete recording cast')).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Show fewer outcomes' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    )
+    await user.click(screen.getByRole('button', { name: 'Show fewer outcomes' }))
+    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Show 1 more outcome' }))
+    await user.click(screen.getByRole('button', { name: 'Back to editing' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    expect(await screen.findByRole('button', { name: 'Show 1 more outcome' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Show 1 more outcome' }))
+    await user.click(screen.getByRole('button', { name: 'Review activation' }))
+    expect(screen.getByText('· Previous narrator → Complete recording cast')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Activate policy' }))
+    await waitFor(() =>
+      expect(policyCommand).toHaveBeenCalledWith('activate', {
+        policy_id: 'policy-reviewed',
+        expected_active_policy_id: 'policy-preview-authority',
+      }),
+    )
+    expect(policyCommand.mock.calls.filter(([path]) => path === 'activate')).toHaveLength(1)
+    expect(policyCommand.mock.calls.filter(([path]) => path === 'preview')).toHaveLength(2)
+  })
+
   it('identifies each affected work beside its exact policy outcome', async () => {
     const user = userEvent.setup()
     const field = (current_value: string, desired_value: string, name = 'title_layout') => ({
@@ -542,7 +654,7 @@ describe('Policy route', () => {
     })
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts')
-        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
       if (path === 'preview')
         return {
           active_policy_id: 'policy-active',
@@ -594,7 +706,7 @@ describe('Policy route', () => {
             },
           ],
         }
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -621,7 +733,7 @@ describe('Policy route', () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts')
-        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
       if (path === 'preview')
         return {
           active_policy_id: 'policy-active',
@@ -639,7 +751,7 @@ describe('Policy route', () => {
             },
           ],
         }
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -678,7 +790,7 @@ describe('Policy route', () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts')
-        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
       if (path === 'preview')
         return {
           active_policy_id: 'policy-active',
@@ -692,7 +804,7 @@ describe('Policy route', () => {
           schema_version: 'metadata-policy-activation-v1',
           transition: null,
         }
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -734,7 +846,7 @@ describe('Policy route', () => {
       const user = userEvent.setup()
       const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
         if (path === 'drafts')
-          return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+          return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
         if (path === 'preview')
           return {
             active_policy_id: 'policy-active',
@@ -743,7 +855,7 @@ describe('Policy route', () => {
             libraries: [],
           }
         if (path === 'activate') throw activationError
-        return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
+        return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
       })
       const http: ReviewHttp = {
         ...createHttp(),
@@ -774,7 +886,7 @@ describe('Policy route', () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts')
-        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
       if (path === 'preview')
         return {
           active_policy_id: 'policy-active',
@@ -783,7 +895,7 @@ describe('Policy route', () => {
           libraries: [],
         }
       if (path === 'activate') return {}
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -811,7 +923,7 @@ describe('Policy route', () => {
     const user = userEvent.setup()
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts')
-        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v2' }
+        return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
       if (path === 'preview')
         return {
           active_policy_id: 'policy-active',
@@ -820,7 +932,7 @@ describe('Policy route', () => {
           libraries: [],
         }
       if (path === 'activate') throw new ApiError(409, 'policy_transition_is_processing')
-      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v2' }
+      return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
       ...createHttp(),

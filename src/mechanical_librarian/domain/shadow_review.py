@@ -29,6 +29,7 @@ from mechanical_librarian.domain.metadata_report import (
     PublicationDateRelation,
     ReportValueError,
     TargetDestination,
+    canonical_asin,
     normalize_date_value,
 )
 from mechanical_librarian.domain.proposal_set import (
@@ -48,7 +49,7 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
     validate_proposal_decision_summary,
 )
 
-PACKET_SCHEMA = "shadow-review-packet-v7"
+PACKET_SCHEMA = "shadow-review-packet-v8"
 MAX_PACKET_BYTES = 1_048_576
 # The generated schema is ASCII-only. Embedding it as a JSON string can add at
 # most one escape byte per schema byte; the remaining allowance covers the
@@ -64,7 +65,6 @@ _COMBINATION_ID = re.compile(r"^bibliographic_combination_[0-9a-f]{64}$")
 _REPRESENTATION_ID = re.compile(r"^representation_[0-9a-f]{64}$")
 _PROVIDER_REFERENCE = re.compile(r"^provider_[0-9a-f]{64}$")
 _PROVIDER_NAME = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
-_ASIN = re.compile(r"^B[0-9A-Z]{9}$")
 _PROVIDER_DATE_EVIDENCE = frozenset(
     {
         ProviderEvidenceKind.COPYRIGHT_DATE,
@@ -1208,7 +1208,7 @@ def _validate_provider_linkage(
                 "shadow-review provider linkage is invalid"
             ) from error
         if (
-            kind is ClaimKind.ASIN and _ASIN.fullmatch(fact["value"]) is None
+            kind is ClaimKind.ASIN and canonical_asin(fact["value"]) != fact["value"]
         ) or reconstructed.reference != fact["reference"]:
             raise ShadowReviewValueError("shadow-review provider linkage is invalid")
         expected_references.append(fact["reference"])

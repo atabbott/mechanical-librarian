@@ -105,6 +105,35 @@ Once a record exists, Automatic is withdrawn from every destination on that
 recording the record does not name, so an unqualified identity is always the
 owner's answer to give and never an authority failure.
 
+The [F46 qualification record](../reference/f46-audiobook-qualification-candidate-v7.json)
+names 44 accepted operations across title, authors, narrators, language, series
+and genres. Other operation identities remain manual. Date, publisher,
+description, ASIN and cover did not meet the selected-positive confirmation
+floor; subtitle and typed tags lacked the independent source floor. This bounded
+corpus supports no population-accuracy claim.
+
+Title and author preserve operations remain withheld after retained software
+correspondence failures; their source quality was not rejected. Other registered
+operations retain their independent qualification.
+
+F46 qualifies each actual field operation separately. One applicable independent
+source can suffice for a supported work or recording field; material conflicts,
+incomplete credits and unexplained title suffixes still require review. Existing
+fill-only choices preserve populated values. Explicit series addition retains
+current associations, including equivalent existing spelling, while replacement
+requires the separately chosen and qualified replacement operation. Unknown audio ISBNs, explicit-content semantics,
+subtitle and typed-tag operations without scorable evidence, and cover replacement
+remain withheld. Cover fill uses the existing deterministic image path without
+model calls. Candidate availability does not itself grant Automatic authority.
+
+Audiobook Automatic dates require the Full date option and a valid full calendar
+day accepted by the existing target reader. Year options and year/month-only
+source dates remain manual; no date precision is invented or reduced.
+Audiobook language comparison recognizes equivalent ISO codes and the observed
+English display name without discarding region or script. Both language options
+retain the admitted source string; neither renders a new display name. Genre and
+opt-in tag addition retain equivalent incumbent spelling and add only new members.
+
 F35 (#884) adds a closed, provider-consensus title election to the v14
 ProposalSet policy: one exact local noisy title, one exact reversible pattern,
 byte-identical clean work or edition title observations from at least two

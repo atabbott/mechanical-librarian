@@ -3510,3 +3510,16 @@ def test_retained_decoration_series_preserves_qualified_projection(option):
     field = _automatic_series_preview(retained_decoration_report("series"), option)
     assert field.outcome == "projected"
     assert field.desired_value == ({"name": "The Sequence", "sequence": None},)
+
+
+@pytest.mark.parametrize("field", ("genres", "tags"))
+def test_ebook_add_keeps_its_existing_exact_membership_comparison(field):
+    preview = _list_preview(field, "add", ("FANTASY", "EPIC"))
+    assert preview.outcome == "projected"
+    assert preview.desired_value == ("FANTASY", "EPIC", "Fantasy", "Epic")
+    assert project_f20_automatic_decision_value(
+        field,
+        "add",
+        {"kind": "list", "value": ["Fantasy", "Epic"]},
+        ["FANTASY", "EPIC"],
+    ) == {"kind": "list", "value": ["FANTASY", "EPIC", "Fantasy", "Epic"]}

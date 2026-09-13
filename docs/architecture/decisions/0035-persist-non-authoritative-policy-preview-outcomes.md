@@ -20,7 +20,9 @@ It grants no authority. While Preview is active, the existing projection stage
 computes the exact F19 decision set for a newly eligible exact-current case and
 atomically persists one immutable shadow outcome. F20 extends the outcome with
 independent series, genres, tags, description, and ISBN categories, so the
-current persisted contract is `shadow-outcome-set-v4`.
+F20 persisted contract at that increment was `shadow-outcome-set-v4`.
+[ADR-0073](0073-audiobook-decision-qualification.md) subsequently defines the
+current `shadow-outcome-set-v5` contract and its clean-rebuild requirement.
 
 At this F19a preview increment, Automatic was accepted as policy intent only
 while the stored posture was exactly `preview`; the qualified Automatic set was

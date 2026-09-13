@@ -2082,28 +2082,30 @@ def _admitted_candidate_shape(
 def _corroborated_edition_claim(claim: ProviderClaim, corroborated: bool) -> bool:
     """Whether a corroborated candidate may keep one edition-bearing claim.
 
-    A work admission retains what names a work. Once the runtime band has said
-    that this candidate is this exact recording, four more statements become
-    true of the item rather than of some edition of its work: the marketplace
-    identifier, the running time that proved it, and who read it.
-
-    Every one is required to be a stated, readable value. An `ABSENT` narrator
-    is the provider saying it does not know, and an ASIN outside its canonical
-    grammar names no product, so neither is retained as though it did.
+    Retain bounded contributor outcomes and roles so incomplete credits cannot
+    become an apparently complete narrator ensemble. Their retention grants no
+    value authority. Other recording fields require a valid stated value; an
+    unlabelled ISBN remains unknown rather than gaining recording applicability.
     """
     if not corroborated:
         return False
+    if claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.CONTRIBUTOR:
+        return True
     if claim.state is not FieldState.VALID:
         return False
     if claim.scope is ClaimScope.EDITION and claim.kind is ClaimKind.ASIN:
         return canonical_asin(claim.value) is not None
-    if claim.scope is ClaimScope.EDITION and claim.kind is ClaimKind.DURATION:
+    if claim.scope is ClaimScope.EDITION and claim.kind is ClaimKind.ISBN:
+        return claim.applicability == "unknown"
+    if claim.scope is ClaimScope.EDITION and claim.kind in {
+        ClaimKind.DURATION,
+        ClaimKind.LANGUAGE,
+        ClaimKind.PUBLISHER,
+        ClaimKind.IMPRINT,
+        ClaimKind.PUBLICATION_DATE,
+    }:
         return True
-    return (
-        claim.scope is ClaimScope.WORK
-        and claim.kind is ClaimKind.CONTRIBUTOR
-        and claim.role == "narrator"
-    )
+    return claim.scope is ClaimScope.WORK and claim.kind is ClaimKind.SUBTITLE
 
 
 def _complete_work_creators(

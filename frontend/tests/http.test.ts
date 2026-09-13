@@ -1661,7 +1661,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'metadata-policy-notebook-v1',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v2',
+        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: {},
         destinations: {},
@@ -1672,7 +1672,8 @@ describe('ReviewApiClient', () => {
           automatic_available: false,
           destination: 'asin',
           field: 'asin',
-          identity: 'asin:preserve_exact:audiobook_gate_corroborated',
+          identity: 'asin:preserve_exact:audiobook_asin_fill',
+          operation: 'fill',
           option: 'preserve_exact',
           record_sha256: null,
         },
@@ -1680,13 +1681,17 @@ describe('ReviewApiClient', () => {
           automatic_available: false,
           destination: 'narrators',
           field: 'contributor_names',
-          identity: 'contributor_names:canonical:audiobook_narrators_fill_empty',
+          identity: 'contributor_names:canonical:audiobook_narrators_fill',
+          operation: 'fill',
           option: 'canonical',
           record_sha256: null,
         },
       ],
     } as never
-    expect(policyAutomaticQualification(state)).toEqual(rich)
+    expect(policyAutomaticQualification(state)).toEqual([
+      ...(state as unknown as PolicyStateView).audiobook_qualification,
+      ...rich,
+    ])
     const qualified = {
       ...(state as unknown as PolicyStateView),
       audiobook_qualification: [
@@ -1694,7 +1699,8 @@ describe('ReviewApiClient', () => {
           automatic_available: true,
           destination: 'asin',
           field: 'asin',
-          identity: 'asin:preserve_exact:audiobook_gate_corroborated',
+          identity: 'asin:preserve_exact:audiobook_asin_fill',
+          operation: 'fill',
           option: 'preserve_exact',
           record_sha256: 'b'.repeat(64),
         },
@@ -1702,7 +1708,8 @@ describe('ReviewApiClient', () => {
           automatic_available: false,
           destination: 'narrators',
           field: 'contributor_names',
-          identity: 'contributor_names:canonical:audiobook_narrators_fill_empty',
+          identity: 'contributor_names:canonical:audiobook_narrators_fill',
+          operation: 'fill',
           option: 'canonical',
           record_sha256: null,
         },
@@ -1710,11 +1717,10 @@ describe('ReviewApiClient', () => {
     } as never
     const entries = policyAutomaticQualification(qualified)
     expect(entries.filter((entry) => entry.field === 'asin')).toEqual([
-      { automatic_available: true, field: 'asin', option: 'preserve_exact' },
+      (qualified as unknown as PolicyStateView).audiobook_qualification[0],
+      rich[0],
     ])
-    // The ebook record it overrode is replaced, not doubled, and no other
-    // record moves.
-    expect(entries).toHaveLength(rich.length)
+    expect(entries).toHaveLength(rich.length + 2)
     expect(entries.filter((entry) => entry.field === 'series')).toEqual([rich[1]])
   })
 
@@ -1728,7 +1734,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'metadata-policy-notebook-v1',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v2',
+        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { title_layout: 'preserve' },
         destinations: { title_layout: 'ask' },
@@ -1749,7 +1755,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'metadata-policy-notebook-v1',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v2',
+        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { first: 'one', second: 'two' },
         destinations: { first: 'ask', second: 'ignore' },
@@ -1788,7 +1794,7 @@ describe('ReviewApiClient', () => {
       schema_version: 'metadata-policy-notebook-v1',
       policy_id: 'policy-1',
       profile: {
-        schema_version: 'metadata-policy-profile-v2',
+        schema_version: 'metadata-policy-profile-v3',
         name: 'Active',
         options: { title_layout: 'preserve' },
         destinations: {},

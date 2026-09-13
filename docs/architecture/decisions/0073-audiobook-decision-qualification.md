@@ -21,13 +21,17 @@ a category name.
 
 ## Decision
 
-An audiobook decision identity is `category:option:audiobook_reason`. The first
-two segments are the owner's existing policy category and option, so
-`OPTION_CATALOGUE` never grows and no persisted profile is invalidated; the
-third names the exact audiobook shape a record qualified. Three identities are
-named: `series:primary_narrative:audiobook_fill_empty`,
-`asin:preserve_exact:audiobook_gate_corroborated` and
-`contributor_names:canonical:audiobook_narrators_fill_empty`.
+An audiobook decision identity is `category:option:audiobook_field_operation`.
+The operation describes the actual effect on the report-bound current value:
+preserve, fill, normalize, add or replace. Fill evidence never qualifies a
+populated replacement. Valid-ASIN supersession is distinct from replacing an
+invalid incumbent. The closed registry names supported field/option operations;
+only identities in the published passing set grant authority.
+
+Existing fill-only description and series options retain their meaning. Explicit
+`description_fill:replace_safe_plain_text`, `series:add_qualified` and
+`series:replace_qualified` choices express additional owner intent; defaults are
+unchanged. The profile vocabulary is therefore an exact v3 successor.
 
 Authority comes from an F46 record and nowhere else. No F19a, F20, F38 or cover
 digest admits an audiobook identity, and an audiobook record admits none of
@@ -51,19 +55,24 @@ does under that routing is still decided by the ebook envelope, which leaves
 
 - A measured audiobook class can earn automatic authority through the same
   route every other option used, without widening any ebook authority.
-- Activation is a record, not a code change, and withdrawal is the same edit
-  in reverse -- but only while nothing has been persisted under the record.
-  Once audiobook outcomes exist, any change to the passing set changes what
-  the projection produces for cases already stored, and the
-  recompute-and-compare in `adapters/persistence/metadata_reports.py` raises
-  `shadow outcome persistence is invalid` for exactly those cases. This is
-  true of withdrawing an identity and equally of adding a second one, which
-  turns a stored `ask` into an `automatic` on replay. Nothing merges into
-  that state, because no audiobook outcome can exist until the first record
-  is published; unit C must define one adoption path -- the version or
-  migration a passing-set change carries -- and it must cover both
-  directions, before that first record.
-- Ebook replay is byte-identical whatever an audiobook record says.
+- Adding or withdrawing qualification changes persisted interpretation. This
+  delivery requires a clean rebuild under report v43, shadow outcome v5,
+  metadata policy profile v3 and cover automatic decision v2, with
+  proposal policy `fixed-conservative-v26` under unchanged proposal-set-v7. Earlier state is
+  refused without conversion or mutation, in accordance with ADR-0013.
+- The report v43 provider-associated series-suffix production is replayed from
+  the same candidate's complete structured association and author identity.
+  Packet v8 carries recomputable recording support; it is never an independent
+  source of authority.
+- Packet provider linkage uses the report/proposal `canonical_asin` grammar,
+  including ISBN-10-shaped identifiers. This supersedes ADR-0064's deferred
+  `B0`-only linkage restriction; it does not establish recording applicability
+  or grant Automatic ASIN authority, which remains withheld. Provider identity,
+  claim-reference provenance and field-specific guards are still validated.
+- Audio cover fill reuses the existing deterministic classifier and election,
+  binds its own F46 identity, and never dispatches an image observer. A populated
+  cover cannot borrow empty-fill authority.
+- Ebook decision semantics remain unchanged; schema- and source-derived identities use exact successors.
 
 ### Negative
 
@@ -72,8 +81,8 @@ does under that routing is still decided by the ebook envelope, which leaves
 - The marketplace an ASIN belongs to is recorded on the provider candidate's
   evidence only. It is not surfaced on the decision or the field view, because
   carrying it there needs a `review-case-view` bump outside this unit.
-- Until a record exists the wiring is inert, which is deliberate but means the
-  tranches carry no owner-visible behaviour on merge.
+- Qualification remains field/operation-specific. The first bounded record
+  names six fields; other available candidates remain owner review.
 
 This supersedes ADR-0069's statement that nothing automatic is ever offered a
 recording. Everything else ADR-0069 records -- the case, the terminals, and the

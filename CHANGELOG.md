@@ -8,6 +8,13 @@
 
 ## Unreleased
 
+- Qualified audiobook Automatic choices cover title, authors, narrators,
+  language, series and genres, with complete credits and explicit list operations.
+  Recording-bound subtitles remain available for owner review;
+  unknown identifiers, subtitle/tags and cover Automatic stay withheld.
+  Policy shows all sampled outcomes and wraps enlarged guidance; malformed taxonomy retains valid fields.
+  Expanded descriptions keep Evidence clear; state requires a clean rebuild. (#967)
+
 - Complete audiobook chapters can support owner review when overall runtime is
   unavailable, including target-asserted and WORK-derived recording lookups.
   Conflicting runtimes and different chapter cuts remain unqualified; Library

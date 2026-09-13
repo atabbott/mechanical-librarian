@@ -24,6 +24,16 @@ import { fieldLabel } from '../labels'
 import { policyRoute, useReviewContext } from '../router'
 import type { PolicyCritical } from '../router'
 
+const audiobookOperationLabels = {
+  fill: 'Fill an empty field',
+  preserve: 'Keep the current value',
+  normalize: 'Normalize the representation',
+  add: 'Add supported members',
+  replace: 'Replace the current value',
+  replace_invalid: 'Replace an invalid ASIN',
+  replace_recording: 'Replace a valid ASIN',
+} as const
+
 interface FieldDefinition {
   key: string
   label: string
@@ -120,12 +130,21 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'series',
     label: 'Series memberships',
-    meaning: 'Automatic fills an empty Series field only and preserves existing memberships.',
-    options: ['primary_narrative', 'source_order', 'all_qualified'],
+    meaning:
+      'Fill empty Series, add supported memberships, or explicitly replace the current list.',
+    options: [
+      'primary_narrative',
+      'source_order',
+      'all_qualified',
+      'add_qualified',
+      'replace_qualified',
+    ],
     optionLabels: {
       primary_narrative: 'Primary narrative',
       source_order: 'First source membership',
       all_qualified: 'All qualified memberships',
+      add_qualified: 'Add supported memberships',
+      replace_qualified: 'Replace with supported memberships',
     },
     chapter: 'publication',
     automatic: false,
@@ -162,10 +181,11 @@ const fields: readonly FieldDefinition[] = [
     label: 'Description',
     meaning:
       'Deterministic selection uses one provider description. Optional description advice can separately rewrite or combine text.',
-    options: ['safe_plain_text', 'google_visible_text'],
+    options: ['safe_plain_text', 'google_visible_text', 'replace_safe_plain_text'],
     optionLabels: {
       safe_plain_text: 'Safe plain text',
       google_visible_text: 'Visible Google text',
+      replace_safe_plain_text: 'Replace with safe plain text',
     },
     chapter: 'curation',
     automatic: false,
@@ -262,14 +282,14 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     transformation: 'records the option without reducing the candidate',
     effect:
       'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision',
-    fallback: 'abstains when no decision is qualified',
+    fallback: 'unavailable for audiobook Automatic; requires a qualified decision for ebooks',
   },
   'date_precision:full_date': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without changing candidate precision',
     effect:
       'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision',
-    fallback: 'abstains when no decision is qualified',
+    fallback: 'audiobook Automatic requires a full calendar day and a qualified operation',
   },
   'publisher_preference:publisher': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
@@ -314,6 +334,18 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     effect:
       'keeps the full context while Automatic fills an empty Series field with only its first membership',
     fallback: 'abstains when no membership is qualified',
+  },
+  'series:add_qualified': {
+    admitted: 'supported series and sequence associations for this work',
+    transformation: 'retains current memberships and adds missing associations',
+    effect: 'extends Series only when this operation is qualified for the media',
+    fallback: 'requires review when addition is unqualified or evidence is ambiguous',
+  },
+  'series:replace_qualified': {
+    admitted: 'supported series and sequence associations for this work',
+    transformation: 'uses the complete selected list',
+    effect: 'replaces Series only when this operation is qualified for the media',
+    fallback: 'requires review when replacement is unqualified or evidence is ambiguous',
   },
   'genres:fill_empty': {
     admitted: 'one exact eligible source list',
@@ -361,10 +393,16 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     admitted:
       'one applicable bounded plain-text description; competing descriptions must also pass the fixed quality floor',
     transformation:
-      'does not transform HTML and uses the fixed Hardcover, Google Books, then Open Library authority order',
+      'uses safe source text; admitted audiobook descriptions may use bounded visible text from provider HTML',
     effect: 'fills an empty Description only',
     fallback:
-      'abstains when target-work applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, transformed, or unsupported',
+      'abstains when applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, or unsupported',
+  },
+  'description_fill:replace_safe_plain_text': {
+    admitted: 'one useful description from an applicable source',
+    transformation: 'uses bounded safe visible text',
+    effect: 'replaces Description only when replacement is qualified for the media',
+    fallback: 'requires review when replacement is unqualified or source evidence is ambiguous',
   },
   'description_fill:google_visible_text': {
     admitted: 'eligible Google Books visible text only',
@@ -609,15 +647,22 @@ const automaticQualified = (
   field: FieldDefinition,
   option: string,
   qualification: readonly {
+    readonly identity?: string
     readonly automatic_available: boolean
     readonly field: string
     readonly option: string
   }[],
 ) => {
-  const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
-  return rich
-    ? rich.automatic_available
-    : field.automatic && !(field.key === 'publisher_preference' && option === 'imprint')
+  const entries = qualification.filter(
+    (entry) => entry.field === field.key && entry.option === option,
+  )
+  const rich = entries.find((entry) => entry.identity === undefined)
+  return (
+    entries.some((entry) => entry.automatic_available) ||
+    (rich === undefined &&
+      field.automatic &&
+      !(field.key === 'publisher_preference' && option === 'imprint'))
+  )
 }
 // The disclosure lists one consequence per representation. The catalogue's
 // admitted/transformation halves are qualification mechanics; the owner is
@@ -647,6 +692,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const [snapshotId, setSnapshotId] = useState<string>()
   const [previewActivePolicyId, setPreviewActivePolicyId] = useState<string>()
   const [preview, setPreview] = useState<PolicyPreviewView>()
+  const [expandedPreview, setExpandedPreview] = useState<PolicyPreviewView>()
   const [stage, setStage] = useState<PolicyStage>('editing')
   const [status, setStatus] = useState<{
     tone: 'neutral' | 'success' | 'error' | 'warning'
@@ -1157,6 +1203,26 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       {changed ? <small>Draft changed</small> : null}
                     </span>
                     <p>{field.meaning}</p>
+                    {data.state.audiobook_qualification.some(
+                      (entry) => entry.field === field.key && entry.option === option,
+                    ) ? (
+                      <details className="cm-policy-field-guidance">
+                        <summary>Audiobook operations</summary>
+                        <ul>
+                          {data.state.audiobook_qualification
+                            .filter((entry) => entry.field === field.key && entry.option === option)
+                            .map((entry) => (
+                              <li key={entry.identity} data-qualification-identity={entry.identity}>
+                                {fieldLabel(entry.destination)}:{' '}
+                                {audiobookOperationLabels[entry.operation]} —{' '}
+                                {entry.automatic_available
+                                  ? 'Automatic available'
+                                  : 'Review required'}
+                              </li>
+                            ))}
+                        </ul>
+                      </details>
+                    ) : null}
                     <details className="cm-policy-field-guidance">
                       <summary>What this changes</summary>
                       {field.key === 'series' ? (
@@ -1443,29 +1509,31 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     {String(impactTotals?.changedWorks ?? 0)}
                   </b>
                 </header>
-                <div className="cm-policy-preview-list">
+                <div id="policy-preview-outcomes" className="cm-policy-preview-list">
                   {previewRows.length
-                    ? previewRows.slice(0, 6).map((row) => (
-                        <div key={row.id} className={row.impact.changed ? 'is-change' : ''}>
-                          <span className="cm-policy-work-mark" aria-hidden="true">
-                            {row.work.slice(0, 2).toUpperCase()}
-                          </span>
-                          <span>
-                            <strong>{row.work}</strong>
-                            <small>
-                              {row.library} · {row.field}
-                            </small>
-                          </span>
-                          <span className="cm-policy-impact">
-                            <b>{row.impact.title}</b>
-                            <small>· {row.impact.detail}</small>
-                            <details>
-                              <summary>Technical detail</summary>
-                              <code>{row.impact.technicalDetail}</code>
-                            </details>
-                          </span>
-                        </div>
-                      ))
+                    ? previewRows
+                        .slice(0, expandedPreview === preview ? undefined : 6)
+                        .map((row) => (
+                          <div key={row.id} className={row.impact.changed ? 'is-change' : ''}>
+                            <span className="cm-policy-work-mark" aria-hidden="true">
+                              {row.work.slice(0, 2).toUpperCase()}
+                            </span>
+                            <span>
+                              <strong>{row.work}</strong>
+                              <small>
+                                {row.library} · {row.field}
+                              </small>
+                            </span>
+                            <span className="cm-policy-impact">
+                              <b>{row.impact.title}</b>
+                              <small>· {row.impact.detail}</small>
+                              <details>
+                                <summary>Technical detail</summary>
+                                <code>{row.impact.technicalDetail}</code>
+                              </details>
+                            </span>
+                          </div>
+                        ))
                     : preview.libraries.map((library) => (
                         <div key={library.library}>
                           <span className="cm-policy-work-mark" aria-hidden="true">
@@ -1494,7 +1562,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 </div>
                 {previewRows.length > 6 ? (
                   <footer>
-                    Plus {String(previewRows.length - 6)} more exact field outcomes in this preview
+                    <button
+                      type="button"
+                      aria-expanded={expandedPreview === preview}
+                      aria-controls="policy-preview-outcomes"
+                      onClick={() =>
+                        setExpandedPreview(expandedPreview === preview ? undefined : preview)
+                      }
+                    >
+                      {expandedPreview === preview
+                        ? 'Show fewer outcomes'
+                        : `Show ${String(previewRows.length - 6)} more ${previewRows.length === 7 ? 'outcome' : 'outcomes'}`}
+                    </button>
                   </footer>
                 ) : preview.libraries.some((library) => library.cases_truncated) ? (
                   <footer>

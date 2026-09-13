@@ -54,7 +54,11 @@ from mechanical_librarian.domain.metadata_report import (
     TargetField,
     TargetFieldState,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalSet,
+    evaluate_report,
+)
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.unit.test_review_pipeline import _PRODUCER, _entry, _report
 
@@ -1599,4 +1603,213 @@ def test_changed_inflight_extraction_is_new_work_not_old_cohort_completion(
     next_action = repository.claim_review_pipeline_action(33)
     assert next_action is not None
     assert "provider" == next_action.stage
+    repository.close()
+
+
+@pytest.mark.parametrize("option", ("add_qualified", "replace_qualified"))
+@pytest.mark.parametrize("populated", (False, True))
+def test_audio_only_series_options_complete_mixed_media_transition_without_ebook_authority(
+    state_path, option, populated
+):
+    from mechanical_librarian.application.proposal_sets import CreateProposalSet
+    from mechanical_librarian.application.review_cases import AdmitReviewCase
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPreparationPipeline,
+    )
+    from mechanical_librarian.domain.automatic_decision import (
+        AutomaticDecision,
+        AutomaticSafetyState,
+    )
+    from mechanical_librarian.domain.metadata_report import TargetSeries
+    from tests.support.provider_recovery_rail import (
+        _automatic_series_report,
+        _series_provider,
+    )
+    from tests.unit.test_audiobook_review_decisions import _audiosilo_consumer_report
+
+    audio = _audiosilo_consumer_report(populated=False, multiple_series=False)
+    ebook = _automatic_series_report(
+        _series_provider("hardcover", "edition-1", "hardcover"),
+        _series_provider("open_library", "edition-2", "open_library"),
+    )
+    if populated:
+        ebook = MetadataReport.create(
+            target=replace(
+                ebook.target,
+                fields=tuple(
+                    TargetField(
+                        TargetDestination.SERIES,
+                        TargetFieldState.VALUE,
+                        (TargetSeries("Old Cycle", "1"),),
+                    )
+                    if field.destination is TargetDestination.SERIES
+                    else field
+                    for field in ebook.target.fields
+                ),
+            ),
+            file=ebook.file,
+            local_claims=ebook.local_claims,
+            local_reasons=ebook.local_reasons,
+            providers=ebook.providers,
+        )
+    reports = {report.target.item: report for report in (audio, ebook)}
+    repository = open_repository(state_path)
+    assert repository.enter_shadow_preview(1) == "preview"
+    for report in reports.values():
+        baseline = resolve_policy(
+            MetadataPolicyProfile.builtin(), report.target.library
+        )
+        assert (
+            repository.bind_initial_metadata_policy_resolution(baseline.canonical_json)
+            == baseline.resolved_id
+        )
+        assert (
+            repository.current_resolved_metadata_policy(report.target.library)
+            == baseline
+        )
+    authority = repository.authority
+    now = 10
+
+    def factory():
+        return open_repository(state_path, create=False, authority=authority)
+
+    def propose(repo, report_id):
+        return ProposalSet.from_json(
+            CreateProposalSet(
+                repo,
+                lambda report: report == reports[report.target.item],
+                lambda report: repo.current_resolved_metadata_policy(
+                    report.target.library
+                ),
+            ).run(report_id)
+        ).proposal_set_id
+
+    def admit(repo, proposal_id):
+        def current(proposal):
+            report = MetadataReport.from_json(repo.get(proposal.report_id))
+            return (
+                report == reports[report.target.item]
+                and proposal.resolved_policy_id
+                == repo.current_resolved_metadata_policy(
+                    report.target.library
+                ).resolved_id
+            )
+
+        result = json.loads(AdmitReviewCase(repo, current).run(proposal_id))
+        return result["status"], result.get("review_case_id")
+
+    def project(repo, action):
+        return (
+            "stale"
+            if repo.persist_shadow_outcome(
+                action.review_case_id, now, staged_action=action
+            )
+            == "stale"
+            else "complete"
+        )
+
+    def extract(repo, action, _claim_next):
+        report = reports[action.item_id]
+        repo.publish(report, lambda: reports[action.item_id] == report)
+        return report.report_id, False
+
+    libraries = tuple(
+        ("primary", report.target.library, "lib-1", _PRODUCER)
+        for report in (audio, ebook)
+    )
+
+    def discover(_connection, library):
+        report = next(
+            value for value in reports.values() if value.target.library == library
+        )
+        entry = replace(
+            _entry(report.target.item, report.file.identity),
+            library=library,
+            has_ebook=report.audio is None,
+            has_audio=report.audio is not None,
+            format=report.file.format,
+            service_path="/synthetic.m4b" if report.audio else "/synthetic.epub",
+            mount="audiobooks" if report.audio else "books",
+        )
+        return 1, "a" * 64, (entry,)
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=factory,
+        libraries=libraries,
+        discover=discover,
+        extract=extract,
+        providers=lambda *_: (),
+        propose=propose,
+        admit=admit,
+        project=project,
+        clock=lambda: now,
+    )
+    for _, library, _, _ in libraries:
+        pipeline.request("primary", library)
+    for _ in range(6):
+        if not pipeline.run_next():
+            break
+    assert all(
+        status is not None and status.state == "completed"
+        for status in pipeline.status()[0]
+    ), pipeline.status()
+    profile = MetadataPolicyProfile.create(
+        "Audio series in a mixed library",
+        {**dict(DEFAULT_OPTIONS), "series": option},
+        {
+            key: "automatic"
+            if key == "series"
+            else "unsupported"
+            if key == "explicit"
+            else "ask"
+            for key in OPTION_CATALOGUE
+        },
+    )
+    repository.create_metadata_policy_draft(profile.canonical_json)
+    resolutions = tuple(
+        resolve_policy(profile, library) for _, library, _, _ in libraries
+    )
+    transition = repository.activate_metadata_policy(
+        profile.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        tuple(
+            (value.library, value.resolved_id, value.canonical_json)
+            for value in resolutions
+        ),
+        21,
+    )
+    assert transition is not None and transition.total == 2
+    now = 30
+    for _ in range(6):
+        if not pipeline.run_next():
+            break
+    transition = repository.metadata_policy_transition()
+    assert transition is not None
+    assert (transition.state, transition.completed, transition.failed) == (
+        "completed",
+        2,
+        0,
+    )
+    repository.activate_qualified_automatic(31)
+    case_ids = []
+    for document, _ in repository.list_current_review_case_documents(None, 50, 0, None):
+        case = ReviewCase.from_json(document)
+        case_ids.append((case.review_case_id, case.media_kind))
+        outcome = json.loads(repository.persist_shadow_outcome(case.review_case_id, 32))
+        series = next(
+            value for value in outcome["outcomes"] if value["destination"] == "series"
+        )
+        if case.media_kind == "ebook":
+            assert series["disposition"] == "abstention"
+    repository.close()
+    repository = open_repository(state_path)
+    for case_id, media in case_ids:
+        decisions = [
+            AutomaticDecision.from_json(value)
+            for value in repository.get_review_case_decisions(case_id)
+        ]
+        assert bool(decisions) is (media == "audiobook")
+        if decisions:
+            assert decisions[0].policy_option.endswith(":audiobook_series_fill")
+    assert repository.automatic_safety_state() == AutomaticSafetyState(False, None, ())
     repository.close()

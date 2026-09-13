@@ -1099,7 +1099,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v42" == report.schema_version
+    assert "metadata-report-v43" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -2997,12 +2997,9 @@ def test_an_admitted_audiobook_reaches_the_same_destinations_an_ebook_does() -> 
         }
     }
     assert ProposalOutcome.PROPOSE_CHANGE is outcomes[TargetDestination.ASIN].outcome
-    # One provider naming a cast the recording never mentions is a single
-    # source, so the narrator alternative is offered rather than settled.
-    assert ("insufficient_independent_corroboration",) == outcomes[
-        TargetDestination.NARRATORS
-    ].reasons
-    assert ("audiobook_cover_withheld",) == outcomes[TargetDestination.COVER].reasons
+    # The complete cast belongs to an independently admitted recording.
+    assert ("unique_typed_candidate",) == outcomes[TargetDestination.NARRATORS].reasons
+    assert ("no_supported_evidence",) == outcomes[TargetDestination.COVER].reasons
 
 
 @pytest.mark.parametrize(

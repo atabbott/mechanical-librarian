@@ -30,6 +30,7 @@ from mechanical_librarian.domain.proposal_set import (
     PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,
     PROVIDER_CONSENSUS_TITLE_REASONS,
     ProposalSet,
+    canonical_target_fields,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -46,7 +47,7 @@ from mechanical_librarian.domain.shadow_decision import (
 )
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v4"
+SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v5"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
@@ -270,24 +271,18 @@ class ShadowFieldOutcome:
 
 
 def _audiobook_policy_identity(
-    destination: str, category: object, option: object
+    destination: str,
+    category: object,
+    option: object,
+    current: object,
+    desired: object,
 ) -> str | None:
-    """Name the F46 identity a recording's destination would act under.
-
-    A recording is not an ebook, so an ebook's qualification never speaks for
-    one. Only these three destinations have an audiobook route at all, and only
-    while the resolved option is the exact one the tranche was measured for
-    (#967).
-    """
-    identity = audiobook_decision_qualification.F46_IDENTITY_BY_DESTINATION.get(
-        destination
+    """Name only the qualification matching the actual bound field effect."""
+    if type(category) is not str or type(option) is not str:
+        return None
+    return audiobook_decision_qualification.identity_for_effect(
+        destination, category, option, current, desired
     )
-    if identity is None:
-        return None
-    base_category, base_option = identity.rsplit(":", 1)[0].split(":", 1)
-    if category != base_category or option != base_option:
-        return None
-    return identity
 
 
 def _audiobook_destination(identity: str | None, policy_destination: str) -> str:
@@ -301,15 +296,6 @@ def _audiobook_destination(identity: str | None, policy_destination: str) -> str
         return policy_destination
     passing = audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
     return "automatic" if identity is not None and identity in passing else "ask"
-
-
-def _narrators_target_is_empty(report: MetadataReport) -> bool:
-    """Whether this recording states no narrator at all today."""
-    return not any(
-        field.destination is TargetDestination.NARRATORS
-        and field.state is TargetFieldState.VALUE
-        for field in report.target.fields
-    )
 
 
 def _rich_field_outcome(
@@ -473,6 +459,13 @@ class ShadowOutcomeSet:
             raise ShadowOutcomeError("shadow outcome source is invalid")
         destinations = dict(policy.destinations)
         options = dict(policy.options)
+        targets = canonical_target_fields(report.target.fields)
+        current_values = {
+            key.value: value.to_data()["value"]
+            if value.state is TargetFieldState.VALUE
+            else None
+            for key, value in targets.items()
+        }
         fields: list[ShadowFieldOutcome] = []
         title_layout_subtitle: ShadowFieldOutcome | None = None
         provider_consensus_contributor_display_proposals: set[str] = set()
@@ -553,13 +546,30 @@ class ShadowOutcomeSet:
                 )
                 policy_option = None if category is None else options[category]
             if media_kind == "audiobook":
-                identity = _audiobook_policy_identity(
-                    decision.destination, category, policy_option
+                category = _POLICY_CATEGORY_BY_DESTINATION.get(decision.destination)
+                policy_option = None if category is None else options[category]
+                current = current_values[decision.destination]
+                selected = next(
+                    (
+                        alternative
+                        for result in proposal.results
+                        if result.destination.value == decision.destination
+                        for alternative in result.alternatives
+                        if alternative.alternative_id == decision.candidate_id
+                    ),
+                    None,
                 )
-                if identity is not None and (
-                    decision.destination != "narrators"
-                    or _narrators_target_is_empty(report)
-                ):
+                desired = (
+                    current
+                    if decision.recommendation == "recommend_keep_current"
+                    else (
+                        None if selected is None else selected.value.to_data()["value"]
+                    )
+                )
+                identity = _audiobook_policy_identity(
+                    decision.destination, category, policy_option, current, desired
+                )
+                if identity is not None:
                     category, policy_option = identity.split(":", 1)
                 else:
                     identity = None
@@ -657,7 +667,11 @@ class ShadowOutcomeSet:
             rich_option: str | None = None
             if media_kind == "audiobook":
                 identity = _audiobook_policy_identity(
-                    destination, category, options[category]
+                    destination,
+                    category,
+                    options[category],
+                    current_values[destination],
+                    rich[category].desired_value,
                 )
                 rich_destination = _audiobook_destination(identity, rich_destination)
                 rich_option = None if identity is None else identity.split(":", 1)[1]
@@ -687,12 +701,34 @@ class ShadowOutcomeSet:
                     category="subtitle",
                     destination="subtitle",
                     policy_destination=_audiobook_destination(
-                        None, destinations["subtitle"]
+                        _audiobook_policy_identity(
+                            "subtitle",
+                            "subtitle",
+                            options["subtitle"],
+                            current_values["subtitle"],
+                            rich["subtitle"].desired_value,
+                        ),
+                        destinations["subtitle"],
                     )
                     if media_kind == "audiobook"
                     else destinations["subtitle"],
                     proposal_id=proposals["subtitle"],
                     catalogue_sha256=decisions.catalogue_sha256,
+                    policy_option=(
+                        identity.split(":", 1)[1]
+                        if media_kind == "audiobook"
+                        and (
+                            identity := _audiobook_policy_identity(
+                                "subtitle",
+                                "subtitle",
+                                options["subtitle"],
+                                current_values["subtitle"],
+                                rich["subtitle"].desired_value,
+                            )
+                        )
+                        is not None
+                        else None
+                    ),
                 )
             )
         elif title_layout_subtitle is not None:

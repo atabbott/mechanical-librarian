@@ -38,8 +38,11 @@ admitted, decided, and read exactly as an ebook's, and the decision it records
 carries `application='apply'` on either medium: it plans and applies through
 the one guarded path
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
-Nothing automatic reaches a recording -- the shadow projection abstains before
-it reads policy -- so an audiobook case is the owner's alone until F46. A
+Audiobook Automatic requires the exact F46 field, option and actual operation
+identity. Unqualified candidates remain owner decisions. A fill record cannot
+authorize replacement: creation, reopening and guarded effect reconstruction
+bind the desired value to the recorded pre-value and qualification digest.
+Ask, Ignore, owner-final and pause retain their existing authority. A
 `recorded_only` document retained from before audiobook writes existed is
 readable history on an audiobook case only: it is stale against an ebook case,
 is refused as a new command, is excluded from both pending-write queries, is

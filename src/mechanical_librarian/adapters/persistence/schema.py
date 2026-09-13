@@ -81,7 +81,7 @@ _REPORTS_SQL = (
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, "
     "file_identity TEXT NOT NULL CHECK (length(file_identity) = 64 AND file_identity NOT GLOB '*[^0-9a-f]*'), "
     "content_digest TEXT NOT NULL CHECK (length(content_digest) = 64 AND content_digest NOT GLOB '*[^0-9a-f]*'), "
-    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v42'), "
+    "schema_version TEXT NOT NULL CHECK (schema_version = 'metadata-report-v43'), "
     "document_digest TEXT NOT NULL CHECK (length(document_digest) = 64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
@@ -580,7 +580,7 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "resolved_policy_id TEXT NOT NULL CHECK(resolved_policy_id GLOB 'resolved_policy_[0-9a-f]*' AND length(resolved_policy_id)=80), "
     "source_decision_set_id TEXT NOT NULL, evaluated_at INTEGER NOT NULL CHECK(evaluated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
-    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v4'))"
+    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v5'))"
 )
 _SHADOW_OUTCOME_FIELD_FACTS_SQL = (
     "CREATE TABLE shadow_outcome_field_facts ("

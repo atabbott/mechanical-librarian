@@ -1596,6 +1596,6 @@ class ContinuousGuardedApplication:
             return HumanDecision.from_json(document)
         if raw.get("schema_version") == "automatic-decision-v1":
             return AutomaticDecision.from_json(document)
-        if raw.get("schema_version") == "cover-automatic-decision-v1":
+        if raw.get("schema_version") == "cover-automatic-decision-v2":
             return parse_automatic_authority(document)
         raise FieldEffectError("authority_binding")
