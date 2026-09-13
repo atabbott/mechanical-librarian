@@ -62,14 +62,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v36.json"
+    "f20-rich-metadata-qualification-candidate-v37.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v22.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v23.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -2019,13 +2019,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v21.json",
-            "df7d676444bbc74e168c30f1e7991184d61a32a2d235609554674b093bd6fd43",
+            "f19a-qualification-manifest-v22.json",
+            "32949b585f0be6460b5e82961fe73139eec36ca77b0db9a892f41c631ef0f495",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v35.json",
-            "bf8c9f29704e71ff96e820e7b973bca2a7ec13d5a5304e3474bfcf5e777ad676",
+            "f20-rich-metadata-qualification-candidate-v36.json",
+            "1677b44ad6a8c2a8a53cba6cd821424b213e366f47e6d64e214225742338628c",
         ),
     ):
         assert (
@@ -2412,7 +2412,7 @@ def test_complete_chapter_successors_refresh_sources_without_measurement_or_auth
 
 
 def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
-    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v5.json")
+    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v6.json")
     document = json.loads(path.read_bytes())
     assert (
         hashlib.sha256(path.read_bytes()).hexdigest()
@@ -2532,9 +2532,9 @@ def test_withdrawn_preservation_authority_retains_adverse_receipts():
 
 def test_final_record_preserves_verified_rules_and_exact_passing_set():
     document = json.loads(
-        MANIFEST.with_name("f46-audiobook-qualification-candidate-v5.json").read_bytes()
+        MANIFEST.with_name("f46-audiobook-qualification-candidate-v6.json").read_bytes()
     )
-    prior = MANIFEST.with_name("f46-audiobook-qualification-candidate-v4.json")
+    prior = MANIFEST.with_name("f46-audiobook-qualification-candidate-v5.json")
     assert (
         hashlib.sha256(prior.read_bytes()).hexdigest()
         == document["prior_manifest_sha256"]
@@ -2606,7 +2606,14 @@ def test_presentation_successor_is_only_the_approved_description_clearance():
         assert document[key] == prior[key]
     delta = document["presentation_source_delta"]
     assert delta["path"] == "frontend/src/styles.css"
-    current = (MANIFEST.parents[2] / delta["path"]).read_text()
+    current = (
+        (MANIFEST.parents[2] / delta["path"])
+        .read_text()
+        .replace(
+            ".cm-policy-field-guidance { min-width:0; margin-top:.08rem; }",
+            ".cm-policy-field-guidance { margin-top:.08rem; }",
+        )
+    )
     assert current.count(delta["current_rule"]) == 1
     assert hashlib.sha256(current.encode()).hexdigest() == delta["current_sha256"]
     assert (
@@ -2670,4 +2677,41 @@ def test_review_successor_binds_only_approved_parser_and_preview_corrections():
     assert comparison["candidate_full_json_and_diagnostics_equal"] is True
     assert comparison["receipt_sha256"] == (
         "40842a4c75f4408554eaf71a6ee9068b4ba04748e1054d9d2ddf9e267bfa5bd5"
+    )
+
+
+def test_text_zoom_successor_changes_only_guidance_grid_minimum():
+    document = json.loads(
+        MANIFEST.with_name("f46-audiobook-qualification-candidate-v6.json").read_bytes()
+    )
+    prior_path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v5.json")
+    prior = json.loads(prior_path.read_bytes())
+    assert hashlib.sha256(prior_path.read_bytes()).hexdigest() == (
+        "e8da9073a9c8a2f51e9dec387f91e748e24680ead21ae8e181347dc7c49be0ed"
+    )
+    for key in (
+        "source_closure",
+        "completed_correspondence",
+        "passing_automatic_options",
+        "binding_only_source_equivalence",
+        "software_correspondence_attempt",
+        "presentation_source_delta",
+        "review_correction_delta",
+    ):
+        assert document[key] == prior[key]
+    delta = document["text_zoom_source_delta"]
+    assert delta["source_sha"] == "3c052ae162e6b7145749b7fafa075a8f1f3e93ca"
+    assert delta["path"] == "frontend/src/styles.css"
+    assert delta["prior_rule"] == ".cm-policy-field-guidance { margin-top:.08rem; }"
+    assert delta["current_rule"] == (
+        ".cm-policy-field-guidance { min-width:0; margin-top:.08rem; }"
+    )
+    current = (MANIFEST.parents[2] / delta["path"]).read_text()
+    assert current.count(delta["current_rule"]) == 1
+    assert hashlib.sha256(current.encode()).hexdigest() == delta["current_sha256"]
+    restored = current.replace(delta["current_rule"], delta["prior_rule"])
+    assert (
+        hashlib.sha256(restored.encode()).hexdigest()
+        == (delta["prior_sha256"])
+        == prior["presentation_source_delta"]["current_sha256"]
     )

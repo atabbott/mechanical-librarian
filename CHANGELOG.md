@@ -12,7 +12,7 @@
   language, series and genres, with complete credits and explicit list operations.
   Other fields remain available for review within their evidence limits;
   unknown identifiers, subtitle/tags and cover authority stay withheld.
-  Policy previews reveal all sampled outcomes; malformed taxonomy retains valid fields.
+  Policy shows all sampled outcomes and wraps enlarged guidance; malformed taxonomy retains valid fields.
   Expanded descriptions keep Evidence clear; state requires a clean rebuild. (#967)
 
 - Complete audiobook chapters can support owner review when overall runtime is
