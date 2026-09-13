@@ -8,6 +8,7 @@ stays readable history the planner refuses by name (ADR-0071, #968).
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -29,6 +30,7 @@ from mechanical_librarian.application.review_web import (
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
     project_decision_value,
@@ -44,6 +46,8 @@ from mechanical_librarian.domain.metadata_report import (
     FieldState,
     MetadataReport,
     ProviderClaim,
+    ProviderEvidence,
+    ProviderEvidenceKind,
     ProviderQueryKind,
     TargetDestination,
     TargetField,
@@ -56,11 +60,15 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_audiobook_automatic_decision_value,
 )
 from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
-from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+from mechanical_librarian.domain.shadow_review import (
+    ShadowReviewPacket,
+    ShadowReviewValueError,
+)
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
     asin_lane_observation,
     asserted_asin_report,
+    audiobook_candidate,
     chapter_runtime_report,
     corroborated_audiobook_report,
     retained_recorded_only_decision,
@@ -74,6 +82,191 @@ from tests.unit.test_proposal_authors import _narrator as _epub_narrator
 
 def _case(report: MetadataReport) -> ReviewCase:
     return ReviewCase.create(evaluate_report(report), report)
+
+
+@pytest.mark.parametrize(
+    "variant",
+    ("single", "aliases", "date_conflict", "recording_mismatch", "wrong_event"),
+)
+def test_recording_publication_uses_one_earned_authority_and_preserves_conflicts(
+    variant,
+):
+    base = asserted_asin_report(provider_duration="58200.000")
+    providers = []
+    for ordinal in range(
+        2 if variant in {"aliases", "date_conflict", "wrong_event"} else 1
+    ):
+        name = "catalogue" if ordinal == 0 else "mirror"
+        candidate = audiobook_candidate(
+            base.local_claims,
+            provider=name,
+            duration="12000.000" if variant == "recording_mismatch" else "58200.000",
+        )
+        publication = ProviderClaim.create(
+            provider=name,
+            candidate=candidate.identity,
+            kind=ClaimKind.PUBLICATION_DATE,
+            value="2024-01-02"
+            if ordinal and variant in {"date_conflict", "wrong_event"}
+            else "2025-02-03",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+            date_event=DateEvent.MANIFESTATION_PUBLICATION,
+            raw_order=5,
+        )
+        publisher_claim = ProviderClaim.create(
+            provider=name,
+            candidate=candidate.identity,
+            kind=ClaimKind.PUBLISHER,
+            value="Example Audio",
+            state=FieldState.VALID,
+            scope=ClaimScope.EDITION,
+            applicability="not_applicable",
+            raw_order=6,
+        )
+        observation = replace(
+            asin_lane_observation(base.local_claims),
+            provider=name,
+            candidates=(
+                replace(
+                    candidate,
+                    claims=(
+                        *candidate.claims,
+                        *(
+                            (publication,)
+                            if not (ordinal and variant == "wrong_event")
+                            else ()
+                        ),
+                        publisher_claim,
+                    ),
+                    evidence=(
+                        *candidate.evidence,
+                        *(
+                            (
+                                ProviderEvidence(
+                                    ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
+                                    "2024-01-02",
+                                    ClaimScope.WORK,
+                                ),
+                            )
+                            if ordinal and variant == "wrong_event"
+                            else ()
+                        ),
+                    ),
+                ),
+            ),
+        )
+        providers.append(
+            qualify_provider_observation(
+                observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+            )
+        )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=tuple(providers),
+        audio=base.audio,
+    )
+    report = MetadataReport.from_json(report.to_json())
+    proposal = evaluate_report(report)
+    results = {value.destination: value for value in proposal.results}
+    date = results[TargetDestination.PUBLISHED_DATE]
+    publisher = results[TargetDestination.PUBLISHER]
+    if variant == "recording_mismatch":
+        assert not date.alternatives and not publisher.alternatives
+        return
+    assert len(publisher.alternatives) == 1
+    assert publisher.alternatives[0].value.value == "Example Audio"
+    assert len(publisher.alternatives[0].correlations) == 1
+    assert len(date.alternatives) == (2 if variant == "date_conflict" else 1)
+    assert all(
+        value.date_event is DateEvent.MANIFESTATION_PUBLICATION
+        and value.date_precision is DatePrecision.DAY
+        for value in date.alternatives
+    )
+    if variant != "date_conflict":
+        assert date.alternatives[0].value.value == "2025-02-03"
+        assert len(date.alternatives[0].correlations) == 1
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    reopened = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    decisions = decide_shadow_packet(reopened)
+    if variant == "date_conflict":
+        assert date.selected_alternative_id is None
+        assert not any(
+            value.destination == "publishedDate"
+            and value.recommendation == "recommend_candidate"
+            for value in decisions.decisions
+        )
+
+
+def test_numeric_recording_asin_survives_actual_packet_linkage_and_reopen():
+    base = asserted_asin_report(provider_duration="58200.000")
+    observation = asin_lane_observation(base.local_claims)
+    candidate = audiobook_candidate(
+        base.local_claims, identity="audio-product-1234567890", asin="1234567890"
+    )
+    date = ProviderClaim.create(
+        provider=observation.provider,
+        candidate=candidate.identity,
+        kind=ClaimKind.PUBLICATION_DATE,
+        value="2025-02-03",
+        state=FieldState.VALID,
+        scope=ClaimScope.EDITION,
+        applicability="not_applicable",
+        raw_order=5,
+    )
+    observation = replace(
+        observation, candidates=(replace(candidate, claims=(*candidate.claims, date)),)
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        audio=base.audio,
+        providers=(
+            qualify_provider_observation(
+                observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+            ),
+        ),
+    )
+    report = MetadataReport.from_json(report.to_json())
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    assert ShadowReviewPacket.from_json(packet.to_json(), report, proposal) == packet
+    citation = next(
+        value for value in packet.citations if value["citation_id"] == date.reference
+    )
+    assert citation["fact"]["linkage"]["identifier_facts"][0]["value"] == "1234567890"
+    for invalid in (
+        "123456789",
+        "12345678901",
+        "123456789!",
+        "１２３４５６７８９０",
+        "B000000001",
+    ):
+        document = json.loads(packet.to_json())
+        changed = next(
+            value
+            for value in document["citations"]
+            if value["citation_id"] == date.reference
+        )
+        changed["fact"]["linkage"]["identifier_facts"][0]["value"] = invalid
+        with pytest.raises(ShadowReviewValueError):
+            ShadowReviewPacket.from_json(
+                json.dumps(
+                    document, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ),
+                report,
+                proposal,
+            )
 
 
 @pytest.mark.parametrize(

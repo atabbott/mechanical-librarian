@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from dataclasses import replace
 from typing import Any, Callable
 
@@ -31,6 +32,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
+    ReportValueError,
     TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
@@ -56,16 +58,20 @@ _ASIN = "B08G9PRS1K"
 @pytest.mark.parametrize(
     "failure", (None, "series", "sequence", "author", "subtitle", "residual")
 )
+@pytest.mark.parametrize("side", ("provider", "local"))
 def test_provider_series_suffix_admission_replays_the_actual_association(
     failure,
+    side,
     tmp_path,
 ) -> None:
     title = "Synthetic Journey"
+    decorated = (
+        title + ": Example Cycle, Book 2" + (" extra" if failure == "residual" else "")
+    )
+    lookup_title = decorated if side == "local" else title
     product = {
         "asin": _ASIN,
-        "title": title
-        + ": Example Cycle, Book 2"
-        + (" extra" if failure == "residual" else ""),
+        "title": decorated if side == "provider" else title,
         "authors": [
             {"name": "Other Author" if failure == "author" else "Example Author"}
         ],
@@ -81,7 +87,9 @@ def test_provider_series_suffix_admission_replays_the_actual_association(
     }
     if failure == "subtitle":
         product["subtitle"] = "A genuine subtitle"
-    plan = work_plan(local_runtime_claim(), title=title, authors=("Example Author",))
+    plan = work_plan(
+        local_runtime_claim(), title=lookup_title, authors=("Example Author",)
+    )
     observation = (
         _provider(lambda request: _json({"products": [product]}))
         .observe(plan)
@@ -95,7 +103,7 @@ def test_provider_series_suffix_admission_replays_the_actual_association(
     base = admitted_audiobook_report()
     report = MetadataReport.create(
         target=replace(
-            base.target, fields=audio_target(title, ("Example Author",)).fields
+            base.target, fields=audio_target(lookup_title, ("Example Author",)).fields
         ),
         file=base.file,
         local_claims=plan.local_claims,
@@ -150,6 +158,18 @@ def test_provider_series_suffix_admission_replays_the_actual_association(
         reopened.providers[0].lanes[0].transformation_lineage.production
         == "provider_associated_series_suffix"
     )
+    assert (
+        reopened.providers[0].lanes[0].transformation_lineage.applications[0].side.value
+        == side
+    )
+    changed = json.loads(report.to_json())
+    changed["providers"][0]["lanes"][0]["transformation_lineage"]["applications"][0][
+        "side"
+    ] = "local" if side == "provider" else "provider"
+    with pytest.raises(
+        ReportValueError, match="provider work identity lineage is inconsistent"
+    ):
+        MetadataReport.from_json(json.dumps(changed))
 
 
 def _json(value: object, status_code: int = 200, **headers: str) -> httpx.Response:

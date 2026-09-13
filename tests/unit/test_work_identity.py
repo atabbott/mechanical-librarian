@@ -208,7 +208,11 @@ def test_closed_rule_table_has_one_independent_row_per_family() -> None:
     assert tuple(rule.family for rule in WORK_TITLE_TRANSFORMATION_RULES) == tuple(
         WorkTitleTransformationFamily
     )
-    assert all(rule.query_enabled for rule in WORK_TITLE_TRANSFORMATION_RULES)
+    assert {
+        rule.family
+        for rule in WORK_TITLE_TRANSFORMATION_RULES
+        if not rule.query_enabled
+    } == {WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX}
     assert [] == [
         rule.family
         for rule in WORK_TITLE_TRANSFORMATION_RULES
@@ -636,6 +640,7 @@ def test_constituent_families_stay_query_only_in_the_rule_table() -> None:
     }
 
     assert admitting == {
+        WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,
         WorkTitleTransformationFamily.FILENAME_AUTHOR_TITLE_PREFIX,
         WorkTitleTransformationFamily.FILENAME_UNDERSCORES,
         WorkTitleTransformationFamily.LATIN_COMBINING_MARKS,

@@ -1412,10 +1412,15 @@ def _observations(
                             candidate,
                             report.local_claims,
                         )
-                        and _accepted_provider_manifestation_anchor(
-                            report,
-                            provider.provider,
-                            candidate,
+                        and (
+                            _accepted_provider_manifestation_anchor(
+                                report,
+                                provider.provider,
+                                candidate,
+                            )
+                            or provider_candidate_represents_target_recording(
+                                report, provider, candidate
+                            )
                         )
                     )
                 ):
@@ -3469,17 +3474,32 @@ def _publication_results(
         )
         for value in publication_values
     )
-    dates = _strongest_independently_corroborated_date(
-        publication_values,
-        direct_dates,
-        month_dates,
-        years,
-        frozenset(
-            _provider_correlation(provider)
-            for provider in report.providers
-            if provider.authority is not None
-        ),
-        _local_correlation(report),
+    recording_date_references = {
+        claim.reference
+        for provider in report.providers
+        for candidate in provider.candidates
+        if provider_candidate_represents_target_recording(report, provider, candidate)
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.PUBLICATION_DATE
+    }
+    dates = (
+        publication_values
+        if any(
+            recording_date_references.intersection(value.references)
+            for value in publication_values
+        )
+        else _strongest_independently_corroborated_date(
+            publication_values,
+            direct_dates,
+            month_dates,
+            years,
+            frozenset(
+                _provider_correlation(provider)
+                for provider in report.providers
+                if provider.authority is not None
+            ),
+            _local_correlation(report),
+        )
     )
     date_result = _evaluate(
         TargetDestination.PUBLISHED_DATE,

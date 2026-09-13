@@ -394,13 +394,12 @@ def _application_ordinal(
 def _lineage_production(
     applications: tuple[WorkTitleTransformationApplication, ...],
 ) -> str | None:
-    if applications == (
-        WorkTitleTransformationApplication(
-            WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,
-            WorkTitleTransformationSide.PROVIDER,
-            WorkTitleTransformationField.TITLE,
-            None,
-        ),
+    if (
+        len(applications) == 1
+        and applications[0].family
+        is WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX
+        and applications[0].field is WorkTitleTransformationField.TITLE
+        and applications[0].ordinal is None
     ):
         return "provider_associated_series_suffix"
     compound = (
@@ -744,12 +743,21 @@ def replay_provider_work_identity_admission(
     if not admission.admitted and len(provider_series) == 1:
         series, sequence = provider_series[0]
         suffix = f": {series}, Book {sequence}"
-        if provider_title.endswith(suffix):
-            clean = provider_title[: -len(suffix)]
+        for decorated, side in (
+            (provider_title, WorkTitleTransformationSide.PROVIDER),
+            (local_title, WorkTitleTransformationSide.LOCAL),
+        ):
+            if not decorated.endswith(suffix):
+                continue
+            clean = decorated[: -len(suffix)]
             exact = admit_provider_work_identity(
-                local_title=local_title,
+                local_title=clean
+                if side is WorkTitleTransformationSide.LOCAL
+                else local_title,
                 local_authors=local_authors,
-                provider_title=clean,
+                provider_title=clean
+                if side is WorkTitleTransformationSide.PROVIDER
+                else provider_title,
                 provider_authors=provider_authors,
                 provider_work_identity=provider_work_identity,
                 variant_excluded=variant_excluded,
@@ -762,13 +770,14 @@ def replay_provider_work_identity_admission(
                         (
                             WorkTitleTransformationApplication(
                                 WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,
-                                WorkTitleTransformationSide.PROVIDER,
+                                side,
                                 WorkTitleTransformationField.TITLE,
                                 None,
                             ),
                         )
                     ),
                 )
+                break
     if not admission.admitted or dispatch_lineage is None:
         return WorkIdentityAdmission(False)
     queries = work_query_ladder(local_title, local_authors)
