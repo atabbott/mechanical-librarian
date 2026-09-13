@@ -2850,7 +2850,7 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
     ]
     available = {entry["identity"] for entry in entries if entry["automatic_available"]}
     assert available == audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(available) == 48
+    assert len(available) == 44
     assert {
         entry["destination"] for entry in entries if entry["automatic_available"]
     } == {"title", "authors", "narrators", "language", "series", "genres"}

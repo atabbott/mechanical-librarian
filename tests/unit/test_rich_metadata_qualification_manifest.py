@@ -61,14 +61,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v32.json"
+    "f20-rich-metadata-qualification-candidate-v33.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v18.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v19.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -2018,13 +2018,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v17.json",
-            "e3f687cdf4eb191ce0782c1d0a8f036587d4e2eb8dd33e4fa47c9f59f7655147",
+            "f19a-qualification-manifest-v18.json",
+            "09d99f036e562e8134b948694d3bd6651ffefcf5b1948532adeba1b49c3dc6f6",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v31.json",
-            "d053558970478289c677e4ace49b7f997bfa46a84def0c3bbb0c997177229bb1",
+            "f20-rich-metadata-qualification-candidate-v32.json",
+            "f91bf7c73869d8b3aca8b189c614eb808442b4dbeec13ac106705ecd754e82de",
         ),
     ):
         assert (
@@ -2411,7 +2411,7 @@ def test_complete_chapter_successors_refresh_sources_without_measurement_or_auth
 
 
 def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
-    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v1.json")
+    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v2.json")
     document = json.loads(path.read_bytes())
     assert (
         hashlib.sha256(path.read_bytes()).hexdigest()
@@ -2425,7 +2425,7 @@ def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
         == "accepted_candidate_quality_pending_automatic_correspondence"
     )
     assert set(document["passing_automatic_options"]) == F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 48
+    assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 44
     assert document["passing_fields"] == [
         "authors",
         "genres",
@@ -2487,3 +2487,43 @@ def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
                 hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
                 == digest
             )
+
+
+def test_withdrawn_preservation_authority_retains_adverse_receipts():
+    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v2.json")
+    document = json.loads(path.read_bytes())
+    prior = MANIFEST.with_name("f46-audiobook-qualification-candidate-v1.json")
+    assert (
+        hashlib.sha256(prior.read_bytes()).hexdigest()
+        == document["prior_manifest_sha256"]
+    )
+    withdrawn = set(document["withdrawn_after_software_correspondence"])
+    assert withdrawn == {
+        f"contributor_names:{option}:audiobook_authors_preserve"
+        for option in ("preserve", "canonical")
+    } | {
+        f"title_layout:{option}:audiobook_title_preserve"
+        for option in ("preserve", "title_and_subtitle")
+    }
+    assert (
+        set(json.loads(prior.read_bytes())["passing_automatic_options"]) - withdrawn
+        == F46_PASSING_AUTOMATIC_OPTIONS
+    )
+    assert (
+        document["software_correspondence_attempt"]["author_preservation_failures"]
+        == 318
+    )
+    assert (
+        document["software_correspondence_attempt"][
+            "title_category_suspension_scenarios"
+        ]
+        == 50
+    )
+    assert (
+        document["software_correspondence_attempt"]["no_wrong_values_written"] is True
+    )
+    assert len(document["software_receipts"]) == 3
+    assert all(
+        re.fullmatch("[0-9a-f]{64}", value)
+        for value in document["software_receipts"].values()
+    )

@@ -20,7 +20,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "a3a6d59df9eec0ecf2806ac757004f7c2017168e810dfbeecd0a5704f9e4f1e5"
+    "c0b91e7664125a4c4fd88489d101f2f9075d574991ac5157e65dab752011f308"
 )
 
 _FIELD_OPTIONS: Final = {
@@ -168,7 +168,6 @@ def _language_effect_equivalent(current: object, desired: object) -> bool:
 F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
     {
         "contributor_names:canonical:audiobook_authors_fill",
-        "contributor_names:canonical:audiobook_authors_preserve",
         "contributor_names:canonical:audiobook_authors_replace",
         "contributor_names:canonical:audiobook_narrators_add",
         "contributor_names:canonical:audiobook_narrators_fill",
@@ -176,7 +175,6 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "contributor_names:canonical:audiobook_narrators_preserve",
         "contributor_names:canonical:audiobook_narrators_replace",
         "contributor_names:preserve:audiobook_authors_fill",
-        "contributor_names:preserve:audiobook_authors_preserve",
         "contributor_names:preserve:audiobook_authors_replace",
         "genres:add:audiobook_genres_add",
         "genres:add:audiobook_genres_fill",
@@ -210,10 +208,8 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "series:source_order:audiobook_series_fill",
         "series:source_order:audiobook_series_preserve",
         "title_layout:preserve:audiobook_title_fill",
-        "title_layout:preserve:audiobook_title_preserve",
         "title_layout:preserve:audiobook_title_replace",
         "title_layout:title_and_subtitle:audiobook_title_fill",
-        "title_layout:title_and_subtitle:audiobook_title_preserve",
         "title_layout:title_and_subtitle:audiobook_title_replace",
     }
 )
