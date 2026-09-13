@@ -1,8 +1,8 @@
 """Closed field/operation identities for independently qualified audiobook effects.
 
 The registry names candidates, not authority. A record must qualify each actual
-operation; an ebook record never authorizes an audiobook. The passing set stays
-empty until independent qualification is accepted. Public metadata contains no
+operation; an ebook record never authorizes an audiobook. The passing set names only
+independently accepted field operations. Public metadata contains no
 candidate values or private evidence.
 """
 
@@ -19,7 +19,9 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_date_value,
 )
 
-F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = None
+F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
+    "a3a6d59df9eec0ecf2806ac757004f7c2017168e810dfbeecd0a5704f9e4f1e5"
+)
 
 _FIELD_OPTIONS: Final = {
     "title": ("title_layout", ("preserve", "title_and_subtitle")),
@@ -163,7 +165,58 @@ def _language_effect_equivalent(current: object, desired: object) -> bool:
     return left is not None and left == right
 
 
-F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset()
+F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
+    {
+        "contributor_names:canonical:audiobook_authors_fill",
+        "contributor_names:canonical:audiobook_authors_preserve",
+        "contributor_names:canonical:audiobook_authors_replace",
+        "contributor_names:canonical:audiobook_narrators_add",
+        "contributor_names:canonical:audiobook_narrators_fill",
+        "contributor_names:canonical:audiobook_narrators_normalize",
+        "contributor_names:canonical:audiobook_narrators_preserve",
+        "contributor_names:canonical:audiobook_narrators_replace",
+        "contributor_names:preserve:audiobook_authors_fill",
+        "contributor_names:preserve:audiobook_authors_preserve",
+        "contributor_names:preserve:audiobook_authors_replace",
+        "genres:add:audiobook_genres_add",
+        "genres:add:audiobook_genres_fill",
+        "genres:add:audiobook_genres_preserve",
+        "genres:fill_empty:audiobook_genres_fill",
+        "genres:fill_empty:audiobook_genres_preserve",
+        "genres:replace:audiobook_genres_add",
+        "genres:replace:audiobook_genres_fill",
+        "genres:replace:audiobook_genres_normalize",
+        "genres:replace:audiobook_genres_preserve",
+        "genres:replace:audiobook_genres_replace",
+        "language_rendering:display_name:audiobook_language_fill",
+        "language_rendering:display_name:audiobook_language_normalize",
+        "language_rendering:display_name:audiobook_language_preserve",
+        "language_rendering:display_name:audiobook_language_replace",
+        "language_rendering:preserve:audiobook_language_fill",
+        "language_rendering:preserve:audiobook_language_normalize",
+        "language_rendering:preserve:audiobook_language_preserve",
+        "language_rendering:preserve:audiobook_language_replace",
+        "series:add_qualified:audiobook_series_add",
+        "series:add_qualified:audiobook_series_fill",
+        "series:add_qualified:audiobook_series_preserve",
+        "series:all_qualified:audiobook_series_fill",
+        "series:all_qualified:audiobook_series_preserve",
+        "series:primary_narrative:audiobook_series_fill",
+        "series:primary_narrative:audiobook_series_preserve",
+        "series:replace_qualified:audiobook_series_fill",
+        "series:replace_qualified:audiobook_series_normalize",
+        "series:replace_qualified:audiobook_series_preserve",
+        "series:replace_qualified:audiobook_series_replace",
+        "series:source_order:audiobook_series_fill",
+        "series:source_order:audiobook_series_preserve",
+        "title_layout:preserve:audiobook_title_fill",
+        "title_layout:preserve:audiobook_title_preserve",
+        "title_layout:preserve:audiobook_title_replace",
+        "title_layout:title_and_subtitle:audiobook_title_fill",
+        "title_layout:title_and_subtitle:audiobook_title_preserve",
+        "title_layout:title_and_subtitle:audiobook_title_replace",
+    }
+)
 
 
 class AudiobookQualificationError(ValueError):

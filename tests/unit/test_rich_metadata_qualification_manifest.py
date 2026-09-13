@@ -9,6 +9,10 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    F46_PASSING_AUTOMATIC_OPTIONS,
+    F46_QUALIFICATION_MANIFEST_SHA256,
+)
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     F19A_QUALIFIED_POLICY_OPTIONS,
@@ -57,14 +61,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v31.json"
+    "f20-rich-metadata-qualification-candidate-v32.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v17.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v18.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -1186,7 +1190,7 @@ def test_f19a_authority_is_preserved_and_exact_f20_is_added() -> None:
         "tags:replace",
         "isbn_form:preserve_exact",
         "isbn_form:prefer_isbn13",
-    } == QUALIFIED_POLICY_OPTIONS
+    } == QUALIFIED_POLICY_OPTIONS - F46_PASSING_AUTOMATIC_OPTIONS
     assert {
         "title_layout",
         "date_precision",
@@ -1989,6 +1993,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     expected.add(
         "src/mechanical_librarian/adapters/persistence/qualification_state_bridge.py"
     )
+    expected |= {
+        "frontend/src/routes/PolicyPage.tsx",
+        "src/mechanical_librarian/adapters/persistence/cover_considerations.py",
+        "src/mechanical_librarian/application/cover_consideration.py",
+        "src/mechanical_librarian/application/cover_identity.py",
+        "src/mechanical_librarian/domain/cover_automatic_decision.py",
+    }
     assert set(rich["source_closure"]) == expected
     assert set(title["source_closure"]) == expected - {
         "src/mechanical_librarian/domain/automatic_decision.py"
@@ -1998,7 +2009,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
         (title, LATEST_F19A_MANIFEST, F19A_QUALIFICATION_MANIFEST_SHA256),
     ):
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
-        assert manifest["proposal_policy_version"] == "fixed-conservative-v24"
+        assert manifest["proposal_policy_version"] == "fixed-conservative-v25"
         for name, source_digest in manifest["source_closure"].items():
             assert (
                 hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
@@ -2007,13 +2018,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v16.json",
-            "7b29aaac0a8b08a31930e10c1197c983d85dc1b1c6b39a4822c9bd130891f2d1",
+            "f19a-qualification-manifest-v17.json",
+            "e3f687cdf4eb191ce0782c1d0a8f036587d4e2eb8dd33e4fa47c9f59f7655147",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v30.json",
-            "4dc19885cb3aa98cfb6b79450d42bddc6b7d6e6ac4aec12ae8e1b4bf8e00d121",
+            "f20-rich-metadata-qualification-candidate-v31.json",
+            "d053558970478289c677e4ace49b7f997bfa46a84def0c3bbb0c997177229bb1",
         ),
     ):
         assert (
@@ -2374,7 +2385,10 @@ def test_base_integration_retains_both_exact_historical_manifest_origins(
 
 
 def test_complete_chapter_successors_refresh_sources_without_measurement_or_authority():
-    for path in (LATEST_MANIFEST, LATEST_F19A_MANIFEST):
+    for path in (
+        MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v31.json"),
+        MANIFEST.with_name("f19a-qualification-manifest-v17.json"),
+    ):
         current = json.loads(path.read_bytes())
         prior = json.loads(
             (MANIFEST.parents[2] / current["prior_manifest_path"]).read_bytes()
@@ -2394,3 +2408,82 @@ def test_complete_chapter_successors_refresh_sources_without_measurement_or_auth
         for key in ("options", "passing_automatic_options", "qualified_policy_options"):
             if key in prior:
                 assert current[key] == prior[key]
+
+
+def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
+    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v1.json")
+    document = json.loads(path.read_bytes())
+    assert (
+        hashlib.sha256(path.read_bytes()).hexdigest()
+        == F46_QUALIFICATION_MANIFEST_SHA256
+    )
+    assert (
+        document["frozen_candidate_sha"] == "be6cb086d14aff4c61e6e9ae983f23ed3a996b94"
+    )
+    assert (
+        document["status"]
+        == "accepted_candidate_quality_pending_automatic_correspondence"
+    )
+    assert set(document["passing_automatic_options"]) == F46_PASSING_AUTOMATIC_OPTIONS
+    assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 48
+    assert document["passing_fields"] == [
+        "authors",
+        "genres",
+        "language",
+        "narrators",
+        "series",
+        "title",
+    ]
+    assert document["corpus"]["selected_positive_books_per_split"] == [3, 2, 1]
+    assert document["corpus"]["model_requests"] == 0
+    assert document["corpus"]["media_or_library_writes"] == 0
+    assert set(document["evidence_receipts"]) == {
+        split + suffix
+        for split in ("development", "confirmation", "final")
+        for suffix in ("_source_labels", "_candidate_operations")
+    }
+    assert all(
+        re.fullmatch("[0-9a-f]{64}", digest)
+        for digest in document["evidence_receipts"].values()
+    )
+    assert (
+        sum(
+            item["selected_field_values"]
+            for item in document["natural_selected_values"].values()
+        )
+        == 36
+    )
+    assert (
+        sum(item["changes"] for item in document["natural_selected_values"].values())
+        == 25
+    )
+    assert (
+        sum(
+            item["preservations"]
+            for item in document["natural_selected_values"].values()
+        )
+        == 11
+    )
+    for path in (LATEST_MANIFEST, LATEST_F19A_MANIFEST):
+        successor = json.loads(path.read_bytes())
+        assert (
+            successor["audiobook_activation"]["manifest_sha256"]
+            == F46_QUALIFICATION_MANIFEST_SHA256
+        )
+        assert successor["audiobook_activation"]["passing_options"] == sorted(
+            F46_PASSING_AUTOMATIC_OPTIONS
+        )
+        assert successor["audiobook_activation"]["clean_rebuild_required"] is True
+    # The only bound production changes after the freeze are registry/manifest
+    # literals. Other rule consumers retain their exact frozen bytes.
+    exceptions = {
+        "src/mechanical_librarian/domain/audiobook_decision_qualification.py",
+        "src/mechanical_librarian/domain/automatic_decision.py",
+        "tests/unit/test_shadow_outcome_persistence.py",
+    }
+    for name, digest in document["source_closure"].items():
+        if name not in exceptions:
+            assert (
+                hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+                == digest
+            )

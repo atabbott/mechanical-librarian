@@ -293,7 +293,9 @@ def _case(repository):
     return admitted["review_case_id"]
 
 
-def test_a_recording_is_never_offered_to_the_automatic_lane() -> None:
+def test_a_recording_without_a_qualification_record_has_no_automatic_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A6: the projection abstains for an audiobook, whatever its fields say.
 
     F46 owns automatic audiobook authority, so nothing automatic may act on a
@@ -301,6 +303,12 @@ def test_a_recording_is_never_offered_to_the_automatic_lane() -> None:
     shadow outcome exists for a later automatic decision to be minted from
     (#966).
     """
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_PASSING_AUTOMATIC_OPTIONS", frozenset()
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", None
+    )
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         report = admitted_audiobook_report()
@@ -7860,6 +7868,7 @@ def _audiobook_preview(
 @pytest.mark.parametrize("chapter_runtime", (False, True))
 def test_an_unqualified_audiobook_tranche_routed_automatic_stays_the_owners(
     chapter_runtime: bool,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The F46 guard: an empty passing set can never mint or fail authority.
 
@@ -7869,6 +7878,12 @@ def test_an_unqualified_audiobook_tranche_routed_automatic_stays_the_owners(
     and automatic safety is untouched -- an unqualified identity is the owner's
     answer to give, never an authority defect (#967).
     """
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_PASSING_AUTOMATIC_OPTIONS", frozenset()
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", None
+    )
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         report = (
@@ -8095,20 +8110,32 @@ def test_an_ebook_projection_is_byte_identical_beside_an_audiobook_record(
 ) -> None:
     """A published audiobook record never reaches an ebook (#967)."""
 
+    accepted_options = audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+    accepted_digest = audiobook_decision_qualification.F46_QUALIFICATION_MANIFEST_SHA256
+
     def project(record: bool) -> str:
         if record:
             monkeypatch.setattr(
                 audiobook_decision_qualification,
                 "F46_PASSING_AUTOMATIC_OPTIONS",
-                frozenset(audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES),
+                accepted_options,
             )
             monkeypatch.setattr(
                 audiobook_decision_qualification,
                 "F46_QUALIFICATION_MANIFEST_SHA256",
-                "7" * 64,
+                accepted_digest,
             )
         else:
-            monkeypatch.undo()
+            monkeypatch.setattr(
+                audiobook_decision_qualification,
+                "F46_PASSING_AUTOMATIC_OPTIONS",
+                frozenset(),
+            )
+            monkeypatch.setattr(
+                audiobook_decision_qualification,
+                "F46_QUALIFICATION_MANIFEST_SHA256",
+                None,
+            )
         with tempfile.TemporaryDirectory() as temporary:
             repository = open_repository(Path(temporary) / "reports.sqlite")
             report = _report()
@@ -8123,7 +8150,13 @@ def test_an_ebook_projection_is_byte_identical_beside_an_audiobook_record(
             repository.close()
         return document
 
-    assert project(False) == project(True)
+    without = json.loads(project(False))
+    with_record = json.loads(project(True))
+    assert without == with_record
+    changed = json.loads(json.dumps(with_record))
+    assert changed["outcomes"]
+    changed["outcomes"][0]["reason_code"] = "changed_nested_semantics"
+    assert without != changed
 
 
 @pytest.mark.parametrize("populated", (False, True))
@@ -8345,6 +8378,57 @@ def test_audio_unsupported_date_shape_cannot_mint_automatic_authority(
             json.loads(value)["destination"] != "publishedDate"
             for value in repository.get_review_case_decisions(case_id)
         )
+        assert repository.automatic_safety_state() == AutomaticSafetyState(
+            False, None, ()
+        )
+    finally:
+        repository.close()
+
+
+def test_accepted_audio_record_reaches_only_its_registered_effects(tmp_path):
+    report = corroborated_audiobook_report()
+    path = tmp_path / "accepted.sqlite"
+    repository = open_repository(path)
+    case_id, resolved = _audiobook_preview(
+        repository, report, ("contributor_names", "series")
+    )
+    outcome = ShadowOutcomeSet.from_json(repository.persist_shadow_outcome(case_id, 4))
+    assert (
+        next(
+            item for item in outcome.outcomes if item.destination == "asin"
+        ).policy_destination
+        == "ask"
+    )
+    repository.close()
+    repository = open_repository(path)
+    try:
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        decisions = [
+            AutomaticDecision.from_json(value)
+            for value in repository.get_review_case_decisions(case_id)
+        ]
+        assert not any(item.destination == "asin" for item in decisions)
+        for destination in ("narrators", "series"):
+            decision = next(
+                item for item in decisions if item.destination == destination
+            )
+            identity = decision.policy_category + ":" + decision.policy_option
+            assert (
+                identity
+                in audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+            )
+            assert (
+                decision.qualification_manifest_sha256
+                == audiobook_decision_qualification.F46_QUALIFICATION_MANIFEST_SHA256
+            )
+            assert _automatic_decision_value(decision, case, report, proposal, outcome)[
+                "value"
+            ]
         assert repository.automatic_safety_state() == AutomaticSafetyState(
             False, None, ()
         )

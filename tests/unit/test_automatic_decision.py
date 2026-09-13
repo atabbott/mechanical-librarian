@@ -739,7 +739,12 @@ def test_an_audiobook_identity_binds_the_f46_manifest_and_nothing_prior(
         "bundle_id": None,
     }
 
-    assert identity not in QUALIFIED_POLICY_OPTIONS
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_PASSING_AUTOMATIC_OPTIONS", frozenset()
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", None
+    )
     for offered in (
         record,
         F19A_QUALIFICATION_MANIFEST_SHA256,

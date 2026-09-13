@@ -519,3 +519,17 @@ the shared projection closure: its two persistence adapters and the review web
 application. The digests both manifests published before that restatement
 remain readable history only, and no option, score, measurement or authority
 rule moves.
+
+
+The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v1.json)
+names 48 accepted field/operation identities across title, authors, narrators,
+language, series and genres. Its source-quality corpus and candidate operations
+are frozen separately from subsequent Automatic/effect correspondence. Dates,
+publisher, description, ASIN and cover lack the required selected-positive
+confirmation floor; subtitle/tags lack the source floor, and ISBN/explicit
+semantics remain unresolved. No new authority is inferred from those candidates.
+The [F19a v18](../reference/f19a-qualification-manifest-v18.json) and
+[F20 v32](../reference/f20-rich-metadata-qualification-candidate-v32.json)
+successors bind the current consumers without rewriting historical records or
+claiming fresh ebook scoring. Report v43, shadow outcome v5 and policy profile
+v3 require a clean rebuild; prior state is never relabelled as current.

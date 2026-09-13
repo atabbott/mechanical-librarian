@@ -810,6 +810,12 @@ def test_the_policy_state_names_every_audiobook_tranche_and_a_record_opens_one(
     category and option routable and moves no ebook record and no other
     tranche, so activation needs no further change on any surface (#967).
     """
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_PASSING_AUTOMATIC_OPTIONS", frozenset()
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", None
+    )
     web.login()
     inert = web.client.get("/api/v1/metadata-policy/state").json()
     entries = inert["audiobook_qualification"]
@@ -2835,3 +2841,27 @@ def test_recording_identity_wire_references_are_bounded_canonical_text(
     }
     with pytest.raises(ValidationError):
         _RecordingIdentityBasis.model_validate({**data, field: value})
+
+
+def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
+    web.login()
+    entries = web.client.get("/api/v1/metadata-policy/state").json()[
+        "audiobook_qualification"
+    ]
+    available = {entry["identity"] for entry in entries if entry["automatic_available"]}
+    assert available == audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+    assert len(available) == 48
+    assert {
+        entry["destination"] for entry in entries if entry["automatic_available"]
+    } == {"title", "authors", "narrators", "language", "series", "genres"}
+    assert all(
+        entry["record_sha256"]
+        == audiobook_decision_qualification.F46_QUALIFICATION_MANIFEST_SHA256
+        for entry in entries
+        if entry["automatic_available"]
+    )
+    assert all(
+        entry["record_sha256"] is None
+        for entry in entries
+        if not entry["automatic_available"]
+    )

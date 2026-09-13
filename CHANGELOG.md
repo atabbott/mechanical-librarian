@@ -8,11 +8,11 @@
 
 ## Unreleased
 
-- Audiobook candidates retain supported recording metadata and complete credits,
-  with explicit series add/replace and description replacement choices.
-  Associated covers can reach deterministic review without model calls.
-  Automatic activation awaits operation-specific qualification; existing
-  application state requires a clean rebuild. (#967)
+- Qualified audiobook Automatic choices cover title, authors, narrators,
+  language, series and genres, with complete credits and explicit list operations.
+  Other fields remain available for review within their evidence limits;
+  unknown identifiers, subtitle/tags and cover authority stay withheld.
+  Existing application state requires a clean rebuild. (#967)
 
 - Complete audiobook chapters can support owner review when overall runtime is
   unavailable, including target-asserted and WORK-derived recording lookups.

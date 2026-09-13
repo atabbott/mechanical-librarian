@@ -76,8 +76,8 @@ does under that routing is still decided by the ebook envelope, which leaves
 - The marketplace an ASIN belongs to is recorded on the provider candidate's
   evidence only. It is not surfaced on the decision or the field view, because
   carrying it there needs a `review-case-view` bump outside this unit.
-- Until a record exists the wiring is inert, which is deliberate but means the
-  tranches carry no owner-visible behaviour on merge.
+- Qualification remains field/operation-specific. The first bounded record
+  names six fields; other available candidates remain owner review.
 
 This supersedes ADR-0069's statement that nothing automatic is ever offered a
 recording. Everything else ADR-0069 records -- the case, the terminals, and the
