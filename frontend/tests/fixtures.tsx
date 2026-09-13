@@ -167,14 +167,14 @@ export const activity = (
   }
 }
 
-// Exactly what the API states while no F46 record is published: every
-// audiobook tranche named, none of them qualified, no digest.
+// Representative inert operation entries; no fixture entry grants authority.
 export const inertAudiobookQualification: PolicyStateView['audiobook_qualification'] = [
   {
     automatic_available: false,
     destination: 'asin',
     field: 'asin',
-    identity: 'asin:preserve_exact:audiobook_gate_corroborated',
+    identity: 'asin:preserve_exact:audiobook_asin_fill',
+    operation: 'fill',
     option: 'preserve_exact',
     record_sha256: null,
   },
@@ -182,7 +182,8 @@ export const inertAudiobookQualification: PolicyStateView['audiobook_qualificati
     automatic_available: false,
     destination: 'narrators',
     field: 'contributor_names',
-    identity: 'contributor_names:canonical:audiobook_narrators_fill_empty',
+    identity: 'contributor_names:canonical:audiobook_narrators_fill',
+    operation: 'fill',
     option: 'canonical',
     record_sha256: null,
   },
@@ -190,7 +191,8 @@ export const inertAudiobookQualification: PolicyStateView['audiobook_qualificati
     automatic_available: false,
     destination: 'series',
     field: 'series',
-    identity: 'series:primary_narrative:audiobook_fill_empty',
+    identity: 'series:primary_narrative:audiobook_series_fill',
+    operation: 'fill',
     option: 'primary_narrative',
     record_sha256: null,
   },
@@ -299,7 +301,7 @@ export const createHttp = (): ReviewHttp => ({
     schema_version: 'metadata-policy-notebook-v1',
     policy_id: 'policy-1',
     profile: {
-      schema_version: 'metadata-policy-profile-v2',
+      schema_version: 'metadata-policy-profile-v3',
       name: 'Default',
       options: {},
       destinations: {},

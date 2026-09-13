@@ -8,6 +8,8 @@ stays readable history the planner refuses by name (ADR-0071, #968).
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from mechanical_librarian.application.field_effects import (
@@ -15,12 +17,17 @@ from mechanical_librarian.application.field_effects import (
     authority_from_decision,
 )
 from mechanical_librarian.application.metadata_report import (
+    MetadataLookup,
     admitted_audiobook_identity,
+    qualify_provider_observation,
     recording_identity_basis,
 )
 from mechanical_librarian.application.review_web import (
     _attention_item,
     _decision_projection,
+)
+from mechanical_librarian.domain.audiobook_decision_qualification import (
+    identity_for_effect,
 )
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
@@ -32,15 +39,27 @@ from mechanical_librarian.domain.human_decision import (
     HumanDecisionError,
 )
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    ClaimScope,
     FieldState,
     MetadataReport,
+    ProviderClaim,
+    ProviderQueryKind,
     TargetDestination,
+    TargetField,
+    TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.rich_metadata_preview import (
+    RichMetadataPreviewError,
+    project_audiobook_automatic_decision_value,
+)
+from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
+    asin_lane_observation,
     asserted_asin_report,
     chapter_runtime_report,
     corroborated_audiobook_report,
@@ -55,6 +74,114 @@ from tests.unit.test_proposal_authors import _narrator as _epub_narrator
 
 def _case(report: MetadataReport) -> ReviewCase:
     return ReviewCase.create(evaluate_report(report), report)
+
+
+@pytest.mark.parametrize(
+    "duration, supported", (("58200.000", True), ("12000.000", False))
+)
+def test_recording_support_is_recomputed_through_packet_reopen(duration, supported):
+    report = asserted_asin_report(provider_duration=duration)
+    proposal = evaluate_report(report)
+    case = ReviewCase.create(proposal, report)
+    packet = ShadowReviewPacket.create(case, proposal, report)
+    reopened = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    summaries = [
+        candidate["decision_summary"]
+        for result in reopened.proposals
+        for candidate in result["candidates"]
+    ]
+    assert any(summary["recording_support"] for summary in summaries) is supported
+    decisions = decide_shadow_packet(reopened)
+    if supported:
+        narrator = next(
+            value for value in decisions.decisions if value.destination == "narrators"
+        )
+        assert narrator.recommendation == "recommend_candidate"
+        assert narrator.reason_code == "unique_supported_candidate"
+    else:
+        assert not any(
+            value.destination == "narrators"
+            and value.recommendation == "recommend_candidate"
+            for value in decisions.decisions
+        )
+
+
+@pytest.mark.parametrize(
+    "state, role, supported",
+    (
+        (FieldState.MALFORMED, "narrator", False),
+        (FieldState.VALID, "translator", False),
+        (FieldState.VALID, "narrator", True),
+    ),
+)
+def test_incomplete_or_mixed_narrator_credits_cannot_gain_packet_authority(
+    state, role, supported
+):
+    base = asserted_asin_report(provider_duration="58200.000")
+    observation = asin_lane_observation(base.local_claims)
+    candidate = observation.candidates[0]
+    extra = ProviderClaim.create(
+        provider=observation.provider,
+        candidate=candidate.identity,
+        kind=ClaimKind.CONTRIBUTOR,
+        value=None if state is FieldState.MALFORMED else "Other Contributor",
+        state=state,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+        role=role,
+        raw_order=5,
+    )
+    observation = replace(
+        observation, candidates=(replace(candidate, claims=(*candidate.claims, extra)),)
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        audio=base.audio,
+        providers=(
+            qualify_provider_observation(
+                observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+            ),
+        ),
+    )
+    proposal = evaluate_report(report)
+    case = ReviewCase.create(proposal, report)
+    packet = ShadowReviewPacket.create(case, proposal, report)
+    reopened = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    if state is FieldState.MALFORMED:
+        result = next(
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.NARRATORS
+        )
+        assert result.reasons == ("no_supported_evidence",)
+        assert not any(
+            value["destination"] == "narrators" for value in reopened.proposals
+        )
+        assert not any(
+            value.destination == "narrators"
+            for value in decide_shadow_packet(reopened).decisions
+        )
+        return
+    narrator = next(
+        value for value in reopened.proposals if value["destination"] == "narrators"
+    )
+    assert narrator["candidates"]
+    assert (
+        any(
+            value["decision_summary"]["recording_support"]
+            for value in narrator["candidates"]
+        )
+        is supported
+    )
+    decision = next(
+        value
+        for value in decide_shadow_packet(reopened).decisions
+        if value.destination == "narrators"
+    )
+    assert (decision.recommendation == "recommend_candidate") is supported
 
 
 def _accept(case: ReviewCase, destination: TargetDestination) -> HumanDecision:
@@ -656,3 +783,114 @@ def test_unlaned_chapter_support_requires_actual_local_asin_references(
     assert admitted_audiobook_identity(MetadataReport.from_json(report.to_json())) is (
         basis == "embedded_tag"
     )
+
+
+@pytest.mark.parametrize(
+    "current,desired,operation",
+    [
+        (None, ["Example Narrator"], "fill"),
+        (["Example Narrator"], ["Example Narrator"], "preserve"),
+        (["Example Narrator"], ["EXAMPLE NARRATOR"], "normalize"),
+        (["Example Narrator"], ["Example Narrator", "Another Narrator"], "add"),
+        (["Different Narrator"], ["Example Narrator"], "replace"),
+    ],
+)
+def test_narrator_qualification_names_actual_effect(current, desired, operation):
+    assert identity_for_effect(
+        "narrators", "contributor_names", "canonical", current, desired
+    ) == ("contributor_names:canonical:audiobook_narrators_" + operation)
+
+
+def test_rich_effect_reconstruction_rejects_fill_identity_for_replacement():
+    candidate = {"kind": "text", "value": "A supported source description."}
+    with pytest.raises(RichMetadataPreviewError, match="operation is unqualified"):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_fill",
+            candidate,
+            "An existing description.",
+        )
+    assert (
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_replace",
+            candidate,
+            "An existing description.",
+        )
+        == candidate
+    )
+
+
+def test_series_add_effect_retains_bound_members_and_rejects_forged_fill():
+    current = [{"name": "Existing Cycle", "sequence": "3"}]
+    candidate = {
+        "kind": "series",
+        "value": [{"name": "Example Cycle", "sequence": "2"}],
+    }
+    expected = {"kind": "series", "value": [*current, *candidate["value"]]}
+    assert (
+        project_audiobook_automatic_decision_value(
+            "series",
+            "series",
+            "add_qualified:audiobook_series_add",
+            candidate,
+            current,
+        )
+        == expected
+    )
+    with pytest.raises(RichMetadataPreviewError, match="operation is unqualified"):
+        project_audiobook_automatic_decision_value(
+            "series",
+            "series",
+            "add_qualified:audiobook_series_fill",
+            candidate,
+            current,
+        )
+    assert (
+        identity_for_effect(
+            "series", "series", "source_order", current, candidate["value"]
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize("empty", (False, True))
+def test_asserted_asin_work_fields_do_not_require_matching_current_title_or_authors(
+    empty,
+):
+    base = asserted_asin_report(provider_duration="58200.000")
+    fields = tuple(
+        TargetField(field.destination, TargetFieldState.MISSING)
+        if empty
+        and field.destination in {TargetDestination.TITLE, TargetDestination.AUTHORS}
+        else TargetField(
+            TargetDestination.TITLE, TargetFieldState.VALUE, "Wrong synthetic title"
+        )
+        if field.destination is TargetDestination.TITLE
+        else TargetField(
+            TargetDestination.AUTHORS, TargetFieldState.VALUE, ("Different Author",)
+        )
+        if field.destination is TargetDestination.AUTHORS
+        else field
+        for field in base.target.fields
+    )
+    report = MetadataReport.create(
+        target=replace(base.target, fields=fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+    )
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    restored = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
+    decisions = {
+        value.destination: value for value in decide_shadow_packet(restored).decisions
+    }
+    assert decisions["title"].recommendation == "recommend_candidate"
+    assert decisions["authors"].recommendation == "recommend_candidate"

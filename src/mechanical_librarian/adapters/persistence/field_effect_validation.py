@@ -15,7 +15,9 @@ from typing import cast
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_decision_qualification import (
+    F46_COVER_FILL_IDENTITY,
     audiobook_identity,
+    identity_for_effect,
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
@@ -59,6 +61,7 @@ from mechanical_librarian.domain.proposal_set import (
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
+    project_audiobook_automatic_decision_value,
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
@@ -146,6 +149,11 @@ def _automatic_decision_value(
     source_outcome: ShadowOutcomeSet,
 ) -> object:
     """Project one persisted automatic decision to its exact target envelope."""
+    if (
+        audiobook_identity(decision.policy_category, decision.policy_option) is not None
+        and report.audio is None
+    ):
+        raise FieldEffectError("authority_binding")
     if decision.outcome not in {"candidate", "keep_current"}:
         raise FieldEffectError("authority_binding")
     source = _validate_automatic_decision_authority(
@@ -188,6 +196,15 @@ def _automatic_decision_value(
         else None
     )
     if decision.outcome == "keep_current":
+        identity = audiobook_identity(decision.policy_category, decision.policy_option)
+        if identity is not None and identity != identity_for_effect(
+            decision.destination,
+            decision.policy_category,
+            decision.policy_option.rsplit(":", 1)[0],
+            pre_value,
+            pre_value,
+        ):
+            raise FieldEffectError("authority_binding")
         preservation = tuple(
             value
             for value in alternatives or ()
@@ -343,27 +360,46 @@ def _automatic_decision_value(
         "isbn_form",
         "subtitle",
     }:
-        # A recording's authority is the whole F46 identity, and it stays on
-        # the decision: that identity is what the authority check above
-        # matched against the source outcome, and what the envelope binds.
-        # Only the shape of the projected value is asked for here, and that
-        # shape is the base option's rule -- the audiobook segment names which
-        # shape a record qualified, not a different one. Translating it for
-        # this one call is what lets an activated tranche project at all; an
-        # unqualified identity never reaches here, because it is never
-        # minted (#967).
-        projected_option = decision.policy_option
-        if audiobook_identity(decision.policy_category, decision.policy_option):
-            projected_option = decision.policy_option.rsplit(":", 1)[0]
         try:
-            value = project_f20_automatic_decision_value(
-                decision.policy_category,
-                projected_option,
-                value,
-                pre_value,
-            )
+            if audiobook_identity(decision.policy_category, decision.policy_option):
+                value = project_audiobook_automatic_decision_value(
+                    decision.destination,
+                    decision.policy_category,
+                    decision.policy_option,
+                    value,
+                    pre_value,
+                )
+            else:
+                value = project_f20_automatic_decision_value(
+                    decision.policy_category,
+                    decision.policy_option,
+                    value,
+                    pre_value,
+                )
         except RichMetadataPreviewError as error:
             raise FieldEffectError("authority_binding") from error
+    identity = audiobook_identity(decision.policy_category, decision.policy_option)
+    if (
+        identity is not None
+        and decision.policy_category
+        not in {
+            "series",
+            "genres",
+            "tags",
+            "description_fill",
+            "isbn_form",
+            "subtitle",
+        }
+        and identity
+        != identity_for_effect(
+            decision.destination,
+            decision.policy_category,
+            decision.policy_option.rsplit(":", 1)[0],
+            pre_value,
+            project_decision_value(decision.destination, value),
+        )
+    ):
+        raise FieldEffectError("authority_binding")
     return value
 
 
@@ -375,6 +411,20 @@ def _cover_automatic_decision_value(
     consideration_document: str,
 ) -> object:
     """Bind qualified cover authority to its exact current consideration."""
+    if report.audio is not None:
+        target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
+        if (
+            decision.qualification_identity != F46_COVER_FILL_IDENTITY
+            or target.state
+            not in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+        ):
+            raise FieldEffectError("authority_binding")
+    elif decision.qualification_identity is not None:
+        raise FieldEffectError("authority_binding")
     try:
         consideration = json.loads(consideration_document)
         candidate = next(

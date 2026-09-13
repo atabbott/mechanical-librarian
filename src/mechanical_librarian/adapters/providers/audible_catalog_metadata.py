@@ -89,6 +89,7 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
     comparison_links,
     finalize_candidate_comparisons,
+    normalize_date_value,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -807,7 +808,7 @@ def _candidate(
             value=exact,
             state=state,
             scope=scope,
-            applicability="not_applicable",
+            applicability="unknown" if kind is ClaimKind.ISBN else "not_applicable",
             role=role,
             raw_order=len(claims),
         )
@@ -819,7 +820,7 @@ def _candidate(
                 value=exact,
                 state=state,
                 scope=scope,
-                applicability="not_applicable",
+                applicability="unknown" if kind is ClaimKind.ISBN else "not_applicable",
                 role=role,
                 raw_order=len(claims),
                 links=comparison_links(bare, local_claims),
@@ -839,14 +840,16 @@ def _candidate(
         add(ClaimKind.CONTRIBUTOR, narrator, role="narrator")
     if not narrators:
         add(ClaimKind.CONTRIBUTOR, None, role="narrator")
-    series, sequence = _series(product.get("series"), schema_rejections)
-    add(ClaimKind.SERIES, series)
-    add(ClaimKind.SERIES_SEQUENCE, sequence)
+    for series, sequence in _series(product.get("series"), schema_rejections):
+        add(ClaimKind.SERIES, series)
+        add(ClaimKind.SERIES_SEQUENCE, sequence)
     description, description_transformed = projected_description(
         product.get("short_description"), product.get("publisher_summary")
     )
     add(ClaimKind.DESCRIPTION, description)
     add(ClaimKind.LANGUAGE, product.get("language"))
+    add(ClaimKind.PUBLISHER, product.get("publisher_name"))
+    add(ClaimKind.PUBLICATION_DATE, product.get("release_date"))
     add(
         ClaimKind.DURATION,
         _duration(product.get("runtime_length_min"), schema_rejections),
@@ -919,47 +922,53 @@ def _canonical_evidence(
     return ordered
 
 
-def _names(value: object, schema_rejections: Callable[[int], None]) -> tuple[str, ...]:
+def _names(
+    value: object, schema_rejections: Callable[[int], None]
+) -> tuple[object, ...]:
     """Read a contributor list, keeping every member the projection admits."""
     if value is None:
         return ()
     if type(value) is not list or len(value) > _MAX_VALUES:
         schema_rejections(1)
-        return ()
-    names: list[str] = []
+        return (_UNPROJECTABLE,)
+    names: list[object] = []
     for item in value:
         if type(item) is not dict:
             schema_rejections(1)
+            names.append(_UNPROJECTABLE)
             continue
         try:
             names.append(_text(item.get("name")))
         except (ValueError, EvidenceValueError):
             schema_rejections(1)
+            names.append(_UNPROJECTABLE)
     return tuple(names)
 
 
 def _series(
     value: object, schema_rejections: Callable[[int], None]
-) -> tuple[object, object]:
-    """Read the first stated series name and its sequence, or two absences."""
+) -> tuple[tuple[object, object], ...]:
+    """Retain each ordered series association, including malformed members."""
     if value is None:
-        return None, None
+        return ((None, None),)
     if type(value) is not list or len(value) > _MAX_VALUES:
         schema_rejections(1)
-        return None, None
+        return ((_UNPROJECTABLE, _UNPROJECTABLE),)
+    memberships: list[tuple[object, object]] = []
     for item in value:
         if type(item) is not dict:
             schema_rejections(1)
+            memberships.append((_UNPROJECTABLE, _UNPROJECTABLE))
             continue
         title = item.get("title")
         if type(title) is not str:
             schema_rejections(1)
-            continue
+            title = _UNPROJECTABLE
         sequence = item.get("sequence")
         if type(sequence) is int and not isinstance(sequence, bool):
             sequence = str(sequence)
-        return title, sequence
-    return None, None
+        memberships.append((title, sequence))
+    return tuple(memberships) or ((None, None),)
 
 
 def _duration(value: object, schema_rejections: Callable[[int], None]) -> object:
@@ -981,7 +990,10 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         else MAX_SCALAR_CHARACTERS
     )
     try:
-        return FieldState.VALID, _text(value, maximum)
+        text = _text(value, maximum)
+        if kind is ClaimKind.PUBLICATION_DATE:
+            normalize_date_value(text)
+        return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
         return (
             FieldState.OVERSIZED

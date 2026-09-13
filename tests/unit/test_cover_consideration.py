@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from typing import cast
 from unittest.mock import patch
 
@@ -28,6 +29,7 @@ from mechanical_librarian.application.reviewer_access import (
 from mechanical_librarian.application.reviewer_contracts import ReviewerDispatch
 from mechanical_librarian.domain.cover_evidence import CoverSourceKind
 from mechanical_librarian.domain.metadata_report import MetadataReport
+from tests.support.audiobook_reports import asserted_asin_report
 from tests.unit.test_cover_packets import (
     _audiobook_cover_source,
     _audiobook_report,
@@ -713,7 +715,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_1bb7c8633829342bff0bf0677cb5499269449e42151854fdc190bcd658688130"
+        "cover_replay_52e3385691a66acdf235e551986dffed7ec5d32c4ebcfad447a841e91b4a1760"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -756,7 +758,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_627bdd7d96e8d7e27f26216d203c6d6ba35ec59bd87fff670382cd9f3dda2240"
+        "cover_replay_54ceec1345ca7528ea965b105d4b714df08af9706f6616be12a634527243f363"
     )
     assert (
         replayed_qualified.ensure(
@@ -765,6 +767,14 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         == first_qualified["consideration_id"]
     )
     assert len(dispatches) == 1
+    replayed = replayed_qualified.ensure(
+        qualified_case_id, case.report.to_json(), case.proposal
+    )
+    assert replayed["candidates"] == first_qualified["candidates"]
+    assert (
+        model_free.ensure(case_id, case.report.to_json(), case.proposal)["candidates"]
+        == first["candidates"]
+    )
 
 
 def test_legacy_observations_never_project_as_complete_current_visual_checks(
@@ -1154,3 +1164,48 @@ def test_an_audiobook_consideration_dispatches_no_observer(
     assert case.service.ensure(
         "review_case_" + "f" * 64, case.report.to_json(), case.proposal
     )["candidates"]
+
+
+@pytest.mark.parametrize(
+    "duration,supported", [("58200.000", True), ("100.000", False)]
+)
+def test_recording_bound_cover_reaches_deterministic_consumer_without_observer(
+    duration: str, supported: bool
+) -> None:
+    service, original_document, dispatches, proposal = _audiobook_case()
+    original = MetadataReport.from_json(original_document)
+    base = asserted_asin_report(provider_duration=duration)
+    provider = base.providers[0]
+    candidate = provider.candidates[0]
+    source = original.cover_sources[0]
+    assert source.provenance is not None
+    source = replace(
+        source,
+        provenance=replace(
+            source.provenance,
+            provider=provider.provider,
+            work_identity=candidate.work_identity,
+            edition_identity=candidate.identity,
+        ),
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
+        cover_sources=(source,),
+    )
+    request = service.prepare_observation("review_case_" + "e" * 64, report.to_json())
+    assert request.packet_payload is None
+    actual = service.ensure("review_case_" + "e" * 64, report.to_json(), proposal)
+    assert dispatches == []
+    assert actual["reviewer_status"] == "unavailable"
+    assert len(actual["candidates"]) == int(supported)
+    if supported:
+        elected = actual["candidates"][0]
+        assert elected["identity"]["outcome"] == "verified_work_match"
+        assert elected["identity"]["reasons"] == ["retained_recording_admission"]
+        assert elected["selectable"] is True
+        assert elected["deterministic_rank"] == 1

@@ -330,6 +330,12 @@ A recording reads the same way. Until an F46 record qualifies an audiobook
 identity every field on it is the owner's; a field a record did decide states
 its candidate, the authorities behind it and the gate that admitted it, and
 leaves the attention queue like any other settled field.
+Policy discloses audiobook availability for each actual operation: filling an
+empty field does not qualify replacing a populated one. The existing fill-only
+choices preserve populated descriptions and series; explicit replacement or
+addition choices require their own qualified effect. Unsupported or unqualified
+operations continue to ask the owner, even when another operation on the same
+field is available automatically.
 Recorded owner outcomes remain inspectable. Unsupported or suspended fields
 retain their current value and a specific explanation, never a selectable
 ``Not set`` placeholder. Equal current and proposed values render as one

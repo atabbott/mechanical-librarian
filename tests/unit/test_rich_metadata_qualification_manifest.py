@@ -925,7 +925,13 @@ def test_historical_v11_retains_its_exact_option_metrics_and_evidence() -> None:
         f"{field}:{option}"
         for field in RICH_FIELDS
         for option in OPTION_CATALOGUE[field]
-    } - {"tags:off"}
+    } - {
+        "tags:off",
+        # These later F46-only choices were not part of the immutable v11 corpus.
+        "description_fill:replace_safe_plain_text",
+        "series:add_qualified",
+        "series:replace_qualified",
+    }
     actual = {entry["identity"] for entry in manifest["options"]}
     assert expected == actual
     assert ["tags:off"] == manifest["policy_only_options"]

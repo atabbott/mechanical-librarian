@@ -1653,7 +1653,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             ],
             "rich_qualification": list(_RICH_QUALIFICATION),
             "profile": {
-                "schema_version": "metadata-policy-profile-v2",
+                "schema_version": "metadata-policy-profile-v3",
                 "name": "Household metadata policy",
                 "options": {
                     "title_layout": "title_and_subtitle",
@@ -1693,7 +1693,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
         state = rich_payload("/api/v1/metadata-policy/state")
         assert isinstance(state, dict)
         return {
-            "schema_version": "metadata-policy-profile-v2",
+            "schema_version": "metadata-policy-profile-v3",
             "policy_id": "policy_" + "d" * 64,
             "profile": state["profile"],
             "rich_qualification": state["rich_qualification"],
@@ -1701,7 +1701,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/metadata-policy/drafts":
         return {
             "policy_id": "policy_" + "d" * 64,
-            "schema_version": "metadata-policy-profile-v2",
+            "schema_version": "metadata-policy-profile-v3",
         }
     if path == "/api/v1/metadata-policy/preview":
         fields = [

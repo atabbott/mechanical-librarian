@@ -1096,6 +1096,20 @@ decoder child also states each image's 64-bit perceptual hash, computed beside
 the preview from the bytes it already decoded, so no other process decodes an
 untrusted image to obtain one.
 
+The #967 parser expansion retains bounded typed publisher, release date,
+language, taxonomy and contributor outcomes from existing audiobook responses.
+Malformed or differently attributed credits remain completeness evidence;
+they cannot silently disappear and authorize a partial cast. Publisher and
+imprint, genre and explicitly typed tag, and unknown-format ISBN remain distinct.
+The only added title admission grammar removes a whole suffix explained by the
+same candidate's structured series and sequence, with author agreement and
+replayable lineage. It grants no broader subtitle or recording authority.
+Audiobook cover consideration uses existing bounded descriptors and deterministic
+recording evidence with no model observer. Its separately qualified Automatic
+fill requires a known-empty target at creation, reopening and effect validation;
+it cannot authorize replacement. Existing source, owner-final and concurrency
+checks still precede authority and effect.
+
 Open Library's enabled configuration requires a non-secret contact email, held
 only long enough to identify its fixed-origin requests; it enters no
 fingerprint, report, ID, manifest, persisted artifact, log, or diagnostic.

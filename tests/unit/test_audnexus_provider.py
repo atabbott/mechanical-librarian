@@ -19,6 +19,7 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     Comparison,
     ComparisonMethod,
+    FieldState,
     ProviderEvidenceKind,
     ProviderQueryKind,
     ProviderStatus,
@@ -130,6 +131,65 @@ def test_a_book_lookup_maps_the_captured_record_onto_report_claims() -> None:
     assert ("us",) == tuple(
         value.value
         for value in _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
+    )
+
+
+def test_typed_audio_fields_and_source_associations_survive_the_adapter() -> None:
+    book = {
+        "asin": _ASIN,
+        "title": "Synthetic Journey",
+        "authors": [{"name": "Example Author"}],
+        "narrators": [{"name": "Example Reader"}],
+        "publisherName": "Example Audio",
+        "releaseDate": "2025-02-03T00:00:00.000Z",
+        "isbn": "9780306406157",
+        "language": "english",
+        "seriesPrimary": {"name": "Example Cycle", "position": "2"},
+        "seriesSecondary": {"name": "Example Collection", "position": "5"},
+        "genres": [
+            {"type": "genre", "name": "Fantasy"},
+            {"type": "tag", "name": "Adventure"},
+            {"type": "genre", "name": 42},
+        ],
+    }
+    _seen, handle = _recorder(book=_json(book))
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
+    assert _claims(candidate, ClaimKind.PUBLISHER)[0].value == "Example Audio"
+    date = _claims(candidate, ClaimKind.PUBLICATION_DATE)[0]
+    assert (date.value, date.date_event.value, date.date_precision.value) == (
+        "2025-02-03",
+        "manifestation_publication",
+        "day",
+    )
+    assert _claims(candidate, ClaimKind.ISBN)[0].applicability == "unknown"
+    assert [claim.value for claim in _claims(candidate, ClaimKind.SERIES)] == [
+        "Example Cycle",
+        "Example Collection",
+    ]
+    assert [claim.value for claim in _claims(candidate, ClaimKind.SERIES_SEQUENCE)] == [
+        "2",
+        "5",
+    ]
+    assert [
+        (claim.value, claim.state) for claim in _claims(candidate, ClaimKind.GENRE)
+    ] == [("Fantasy", FieldState.VALID), (None, FieldState.MALFORMED)]
+    assert [claim.value for claim in _claims(candidate, ClaimKind.TAG)] == ["Adventure"]
+
+
+def test_partial_cast_and_malformed_release_remain_explicit_invalid_claims() -> None:
+    book = {
+        "asin": _ASIN,
+        "narrators": [{"name": "Example Reader"}, {"name": 42}],
+        "releaseDate": "2025-99-99",
+    }
+    _seen, handle = _recorder(book=_json(book))
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
+    assert [claim.state for claim in _claims(candidate, ClaimKind.CONTRIBUTOR)] == [
+        FieldState.VALID,
+        FieldState.MALFORMED,
+    ]
+    assert (
+        _claims(candidate, ClaimKind.PUBLICATION_DATE)[0].state is FieldState.MALFORMED
     )
 
 

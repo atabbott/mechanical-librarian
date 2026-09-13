@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Audiobook candidates retain supported recording metadata and complete credits,
+  with explicit series add/replace and description replacement choices.
+  Associated covers can reach deterministic review without model calls.
+  Automatic activation awaits operation-specific qualification; existing
+  application state requires a clean rebuild. (#967)
+
 - Complete audiobook chapters can support owner review when overall runtime is
   unavailable, including target-asserted and WORK-derived recording lookups.
   Conflicting runtimes and different chapter cuts remain unqualified; Library

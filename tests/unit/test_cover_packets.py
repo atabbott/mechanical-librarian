@@ -2559,6 +2559,7 @@ def test_title_supported_provider_discovery_is_plausible_despite_edition_noise()
         ),
     )
     report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider,
@@ -2578,6 +2579,7 @@ def test_title_supported_provider_discovery_is_plausible_despite_edition_noise()
         [],
     )
     work_report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider,
@@ -2616,6 +2618,7 @@ def test_explicit_creator_disagreement_vetoes_title_supported_plausible_match() 
         ),
     )
     report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider,
@@ -2654,6 +2657,7 @@ def test_creator_or_contributor_evidence_agreement_defeats_disagreement_noise() 
         ),
     )
     report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider,
@@ -2678,6 +2682,7 @@ def test_missing_creator_is_neutral_for_title_supported_plausible_match() -> Non
         evidence=(),
     )
     report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider,
@@ -2709,6 +2714,7 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
         reference="provider_" + "a" * 64,
     )
     report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider, candidates=(candidate,)
@@ -2734,7 +2740,9 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
     assert (
         _classify_sources(
             SimpleNamespace(
-                providers=report.providers, identifier_evidence=(associated,)
+                audio=None,
+                providers=report.providers,
+                identifier_evidence=(associated,),
             ),
             (work_source,),
         )[0]
@@ -2750,6 +2758,7 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
     assert (
         _classify_sources(
             SimpleNamespace(
+                audio=None,
                 providers=report.providers,
                 identifier_evidence=(associated,),
             ),
@@ -2759,14 +2768,16 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
     )
     assert (
         _classify_sources(
-            SimpleNamespace(providers=report.providers, identifier_evidence=()),
+            SimpleNamespace(
+                audio=None, providers=report.providers, identifier_evidence=()
+            ),
             (source,),
         )[0]
         == "unknown"
     )
     assert (
         _classify_sources(
-            SimpleNamespace(providers=(), identifier_evidence=()), (source,)
+            SimpleNamespace(audio=None, providers=(), identifier_evidence=()), (source,)
         )[0]
         == "unknown"
     )
@@ -2779,6 +2790,7 @@ def test_every_outcome_is_closed_and_does_not_project_hostile_values() -> None:
     assert (
         _classify_sources(
             SimpleNamespace(
+                audio=None,
                 providers=(
                     SimpleNamespace(
                         provider=source.provenance.provider, candidates=(conflicting,)
@@ -2813,7 +2825,10 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         candidates=(candidate,),
     )
     report = SimpleNamespace(
-        providers=(provider,), identifier_evidence=(identifier,), local_claims=()
+        audio=None,
+        providers=(provider,),
+        identifier_evidence=(identifier,),
+        local_claims=(),
     )
     assert _classify_sources(report, (source,)) == (
         "conflict",
@@ -2836,6 +2851,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
     )
     conflicting = SimpleNamespace(**{**candidate.__dict__, "claims": (title,)})
     report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider,
@@ -2876,6 +2892,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         }
     )
     report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider,
@@ -2911,6 +2928,7 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         }
     )
     report = SimpleNamespace(
+        audio=None,
         providers=(
             SimpleNamespace(
                 provider=source.provenance.provider,
@@ -2933,7 +2951,10 @@ def test_deterministic_contradictions_and_title_supported_discovery() -> None:
         **{**identifier.__dict__, "relation": IdentifierRelation.ACCEPTED}
     )
     report = SimpleNamespace(
-        providers=(provider,), identifier_evidence=(accepted,), local_claims=()
+        audio=None,
+        providers=(provider,),
+        identifier_evidence=(accepted,),
+        local_claims=(),
     )
     with mock.patch(
         "mechanical_librarian.application.cover_identity.manifestation_publication_compatible",

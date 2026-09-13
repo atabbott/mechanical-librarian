@@ -1217,14 +1217,14 @@ class _PolicyDraftRequest(_ClosedModel):
 
 class _PolicyDraftResponse(_ClosedModel):
     policy_id: str
-    schema_version: Literal["metadata-policy-profile-v2"] = "metadata-policy-profile-v2"
+    schema_version: Literal["metadata-policy-profile-v3"] = "metadata-policy-profile-v3"
 
 
 class _PolicyProfile(_ClosedModel):
     destinations: dict[StrictStr, StrictStr] = Field(max_length=16)
     name: StrictStr = Field(min_length=1, max_length=80)
     options: dict[StrictStr, StrictStr] = Field(max_length=16)
-    schema_version: Literal["metadata-policy-profile-v2"]
+    schema_version: Literal["metadata-policy-profile-v3"]
 
 
 class _RichQualificationBase(_ClosedModel):
@@ -1345,10 +1345,68 @@ class _AudiobookQualification(_ClosedModel):
     """
 
     automatic_available: StrictBool
-    destination: Literal["asin", "narrators", "series"]
-    field: Literal["asin", "contributor_names", "series"]
+    destination: Literal[
+        "title",
+        "subtitle",
+        "authors",
+        "narrators",
+        "series",
+        "genres",
+        "tags",
+        "description",
+        "publishedDate",
+        "publisher",
+        "language",
+        "asin",
+        "cover",
+    ]
+    field: Literal[
+        "title_layout",
+        "subtitle",
+        "contributor_names",
+        "series",
+        "genres",
+        "tags",
+        "description_fill",
+        "date_precision",
+        "publisher_preference",
+        "language_rendering",
+        "asin",
+        "cover_order",
+    ]
     identity: StrictStr = Field(max_length=128, pattern=r"^[a-z_]+:[a-z_]+:[a-z_]+$")
-    option: Literal["canonical", "preserve_exact", "primary_narrative"]
+    option: Literal[
+        "preserve",
+        "title_and_subtitle",
+        "fill_empty",
+        "corroborated_split",
+        "canonical",
+        "primary_narrative",
+        "source_order",
+        "all_qualified",
+        "add_qualified",
+        "replace_qualified",
+        "add",
+        "replace",
+        "safe_plain_text",
+        "replace_safe_plain_text",
+        "year",
+        "full_date",
+        "publisher",
+        "imprint",
+        "display_name",
+        "preserve_exact",
+        "fixed_source_order",
+    ]
+    operation: Literal[
+        "fill",
+        "preserve",
+        "normalize",
+        "add",
+        "replace",
+        "replace_invalid",
+        "replace_recording",
+    ]
     record_sha256: StrictStr | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
@@ -1560,7 +1618,7 @@ class _ShadowOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: Literal["shadow-outcome-set-v4"]
+    schema_version: Literal["shadow-outcome-set-v5"]
     source_decision_set_id: str
     target_fingerprint: str
 

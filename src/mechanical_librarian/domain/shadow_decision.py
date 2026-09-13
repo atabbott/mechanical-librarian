@@ -23,11 +23,11 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v12"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v13"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
-    {"title", "authors", "language", "publisher", "publishedDate"}
+    {"title", "authors", "narrators", "language", "publisher", "publishedDate"}
 )
 _REPORT_ONLY_SOURCE_DESTINATIONS = frozenset(
     {"authors", "language", "publisher", "publishedDate"}
@@ -51,6 +51,12 @@ _REASON_CODES = frozenset(
     }
 )
 _RULE_TABLE = {
+    "audiobook_recording": {
+        "report_derived_candidate_binding": True,
+        "minimum_independent_authorities": 1,
+        "local_field_agreement_required": False,
+        "retained_recording_admission_required": True,
+    },
     "candidate": {
         "compiler_admission_required": True,
         "local_evidence": 1,
@@ -126,6 +132,7 @@ class _CandidateSummary(TypedDict):
     creator_roles: dict[str, object]
     evidence_scope: str
     independent_title: bool
+    recording_support: bool
     publication: dict[str, object] | None
     selected_manifestation_binding: str
     support: dict[str, int]
@@ -499,6 +506,9 @@ def _candidate_is_eligible(
         and len(reasons) == 1
         and reasons[0] in DECORATION_TIDY_TITLE_REASONS
     )
+    recording_support = summary["recording_support"]
+    if destination == "narrators" and not recording_support:
+        return False
     independent_title = summary["independent_title"]
     if reasons == [EVIDENCE_LED_TITLE_REASON] and not independent_title:
         return False
@@ -506,16 +516,20 @@ def _candidate_is_eligible(
     proposal_target_only_preservation = cast(
         "_ProposalSummary", proposal["decision_summary"]
     )["target_only_preservation"]
-    minimum_provider_correlations = 2 if provider_consensus_title else 1
+    minimum_provider_correlations = (
+        2 if provider_consensus_title and not recording_support else 1
+    )
     if (
         (
             not source_evidence_report_only
+            and not recording_support
             and not independent_title
             and proposal_target_only_preservation != (1 if title_election else 0)
         )
         or support["target_only_preservation"] != 0
         or (
             destination != "publishedDate"
+            and not recording_support
             and not decoration_tidy_title
             and not independent_title
             and support["local_evidence"] != (0 if provider_consensus_title else 1)
@@ -544,8 +558,10 @@ def _candidate_is_eligible(
             return False
         if (
             candidate["date_precision"] not in {"year", "month", "day"}
-            or support["local_evidence"] != 1
-            or support["independent_provider_correlations"] < 2
+            or not recording_support
+            and support["local_evidence"] != 1
+            or support["independent_provider_correlations"]
+            < (1 if recording_support else 2)
         ):
             return False
     return True
@@ -589,6 +605,12 @@ def _eligible_actions(
     elif (
         sufficiency == "candidate"
         or proposal["destination"] in _REPORT_ONLY_SOURCE_DESTINATIONS
+        or any(
+            cast("_CandidateSummary", candidate["decision_summary"])[
+                "recording_support"
+            ]
+            for candidate in cast("list[dict[str, object]]", proposal["candidates"])
+        )
     ):
         for action in catalogue.actions:
             if (
@@ -609,8 +631,11 @@ def _base_reason(
 ) -> str:
     # Packet entry validated both summary shapes and the candidate list.
     summary = cast("_ProposalSummary", proposal["decision_summary"])
-    source_evidence_report_only = (
-        proposal["destination"] in _REPORT_ONLY_SOURCE_DESTINATIONS
+    source_evidence_report_only = proposal[
+        "destination"
+    ] in _REPORT_ONLY_SOURCE_DESTINATIONS or any(
+        cast("_CandidateSummary", candidate["decision_summary"])["recording_support"]
+        for candidate in cast("list[dict[str, object]]", proposal["candidates"])
     )
     if not source_evidence_report_only and summary["evidence_sufficiency"] == "manual":
         return "evidence_sufficiency_manual"
@@ -775,7 +800,15 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
         proposal_id = cast("str", proposal["proposal_id"])
         destination = proposal["destination"]
         eligible = eligible_by_proposal[proposal_id]
-        if destination not in _SUPPORTED_DESTINATIONS:
+        if destination not in _SUPPORTED_DESTINATIONS or (
+            destination == "narrators"
+            and not any(
+                cast("_CandidateSummary", candidate["decision_summary"])[
+                    "recording_support"
+                ]
+                for candidate in cast("list[dict[str, object]]", proposal["candidates"])
+            )
+        ):
             action = _manual_action(catalogue, proposal_id)
             reason = "unsupported_destination"
         elif (

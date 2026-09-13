@@ -5,6 +5,20 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Expanded audiobook candidate (#967)
+
+The F46 registry names actual preserve/fill/normalize/add/replace operations,
+including explicit series add/replace and description replace choices. Each
+operation binds its current target value before an effect is reconstructed.
+Existing F20 options and historical v31 bytes retain their ebook meaning.
+F46 remains inert until its independent qualification disposition is accepted;
+Ask previews expose candidate evidence without granting effect authority.
+
+Report v43 preserves candidate-associated series-title decoration honestly;
+packet v8 and decision policy v13 consume recomputable recording support.
+Shadow outcome v5, metadata policy profile v3 and cover automatic decision v2
+require a clean rebuild. No predecessor bytes are relabelled or adopted.
+
 ## Current title-consumer qualification (#1007)
 
 The current [v29 candidate](../reference/f20-rich-metadata-qualification-candidate-v29.json)

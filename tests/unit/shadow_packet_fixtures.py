@@ -23,6 +23,7 @@ def synthetic_packet() -> ShadowReviewPacket:
                         "decision_summary": {
                             "bibliographic_compatibility_ids": [],
                             "independent_title": False,
+                            "recording_support": False,
                             "creator_roles": {"excluded": [], "included": []},
                             "evidence_scope": "work",
                             "publication": None,

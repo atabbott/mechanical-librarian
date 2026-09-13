@@ -2600,18 +2600,37 @@
           },
           "destination": {
             "enum": [
-              "asin",
+              "title",
+              "subtitle",
+              "authors",
               "narrators",
-              "series"
+              "series",
+              "genres",
+              "tags",
+              "description",
+              "publishedDate",
+              "publisher",
+              "language",
+              "asin",
+              "cover"
             ],
             "title": "Destination",
             "type": "string"
           },
           "field": {
             "enum": [
-              "asin",
+              "title_layout",
+              "subtitle",
               "contributor_names",
-              "series"
+              "series",
+              "genres",
+              "tags",
+              "description_fill",
+              "date_precision",
+              "publisher_preference",
+              "language_rendering",
+              "asin",
+              "cover_order"
             ],
             "title": "Field",
             "type": "string"
@@ -2622,11 +2641,42 @@
             "title": "Identity",
             "type": "string"
           },
+          "operation": {
+            "enum": [
+              "fill",
+              "preserve",
+              "normalize",
+              "add",
+              "replace",
+              "replace_invalid",
+              "replace_recording"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
           "option": {
             "enum": [
+              "preserve",
+              "title_and_subtitle",
+              "fill_empty",
+              "corroborated_split",
               "canonical",
+              "primary_narrative",
+              "source_order",
+              "all_qualified",
+              "add_qualified",
+              "replace_qualified",
+              "add",
+              "replace",
+              "safe_plain_text",
+              "replace_safe_plain_text",
+              "year",
+              "full_date",
+              "publisher",
+              "imprint",
+              "display_name",
               "preserve_exact",
-              "primary_narrative"
+              "fixed_source_order"
             ],
             "title": "Option",
             "type": "string"
@@ -2649,7 +2699,8 @@
           "destination",
           "field",
           "identity",
-          "option"
+          "option",
+          "operation"
         ],
         "title": "_AudiobookQualification",
         "type": "object"
@@ -5879,8 +5930,8 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "metadata-policy-profile-v2",
-            "default": "metadata-policy-profile-v2",
+            "const": "metadata-policy-profile-v3",
+            "default": "metadata-policy-profile-v3",
             "title": "Schema Version",
             "type": "string"
           }
@@ -6045,7 +6096,7 @@
             "type": "object"
           },
           "schema_version": {
-            "const": "metadata-policy-profile-v2",
+            "const": "metadata-policy-profile-v3",
             "title": "Schema Version",
             "type": "string"
           }
@@ -8035,7 +8086,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "shadow-outcome-set-v4",
+            "const": "shadow-outcome-set-v5",
             "title": "Schema Version",
             "type": "string"
           },

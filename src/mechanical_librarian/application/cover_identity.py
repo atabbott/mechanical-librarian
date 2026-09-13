@@ -47,6 +47,9 @@ from mechanical_librarian.domain.metadata_report import (
     creator_comparison_key,
     manifestation_publication_compatible,
 )
+from mechanical_librarian.domain.proposal_set import (
+    provider_candidate_represents_target_recording,
+)
 
 SCHEMA_VERSION = "cover-identity-report-v1"
 _OUTCOMES = frozenset(
@@ -72,6 +75,7 @@ _CLASSIFIER_RULES = (
     "provider-isbn-lane-title-insufficient-or-unopposed-creator-disagreement:unknown",
     "legacy-discovery-without-lane-candidate-mappings:aggregate-fallback",
     "audiobook-cross-authority-cover-perceptual-hash:work-scope-corroboration",
+    "source-bound-retained-recording-admission:verified-work",
 )
 CLASSIFIER_REFERENCE = (
     "cover_identity_classifier_"
@@ -409,6 +413,9 @@ def _classify_sources(
                         observation.provider,
                         candidate,
                         _is_isbn_discovery_candidate(observation, candidate),
+                        provider_candidate_represents_target_recording(
+                            report, observation, candidate
+                        ),
                     )
                 )
     if not matches:
@@ -419,7 +426,14 @@ def _classify_sources(
     creator_or_contributor_disagreement = False
     manifestation = False
     work = False
-    for source, provider, candidate, isbn_discovery_supported in matches:
+    recording = False
+    for (
+        source,
+        provider,
+        candidate,
+        isbn_discovery_supported,
+        recording_supported,
+    ) in matches:
         if any(
             item.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
             for item in candidate.evidence
@@ -441,6 +455,13 @@ def _classify_sources(
         if unrelated:
             return "conflict", ["unrelated_identifier"], unrelated
 
+        if recording_supported and source.kind in AUDIOBOOK_COVER_SOURCE_KINDS:
+            recording = True
+            evidence.extend(
+                claim.reference
+                for claim in candidate.claims
+                if claim.kind is ClaimKind.ASIN
+            )
         if isbn_discovery_supported:
             (
                 candidate_title_agreement,
@@ -502,6 +523,8 @@ def _classify_sources(
             ["accepted_manifestation_identifier"],
             evidence,
         )
+    if recording:
+        return "verified_work_match", ["retained_recording_admission"], evidence
     if work:
         return (
             "verified_work_match",

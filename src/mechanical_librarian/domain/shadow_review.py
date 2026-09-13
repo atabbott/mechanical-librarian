@@ -48,7 +48,7 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
     validate_proposal_decision_summary,
 )
 
-PACKET_SCHEMA = "shadow-review-packet-v7"
+PACKET_SCHEMA = "shadow-review-packet-v8"
 MAX_PACKET_BYTES = 1_048_576
 # The generated schema is ASCII-only. Embedding it as a JSON string can add at
 # most one escape byte per schema byte; the remaining allowance covers the

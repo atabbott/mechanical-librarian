@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 ACTION_CATALOGUE_SCHEMA = "shadow-review-action-catalogue-v1"
-ACTION_POLICY_VERSION = "shadow-review-action-policy-v2"
+ACTION_POLICY_VERSION = "shadow-review-action-policy-v3"
 _ACTION_KINDS = frozenset({"manual", "recommend_candidate", "recommend_keep_current"})
 _ASSESSMENTS = frozenset({"fills_empty", "preserves_target", "replaces_target"})
 _BIBLIOGRAPHIC_DESTINATIONS = frozenset({"title", "subtitle", "series"})
@@ -428,6 +428,8 @@ def _candidate_action(
     if type(summary) is not dict:
         summary = {}
         reasons.add("candidate_decision_summary_missing")
+    if destination == "narrators" and summary.get("recording_support") is not True:
+        reasons.add("recording_support_absent")
     references.update(_role_references(summary))
     if not references or not references.issubset(known_citations):
         reasons.add("citation_closure_failed")

@@ -89,7 +89,7 @@ PROPOSAL_SCHEMA = "proposal-set-v7"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v24"
+POLICY_VERSION = "fixed-conservative-v25"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -100,7 +100,7 @@ _ALTERNATIVE_ID = re.compile(r"^alternative_[0-9a-f]{64}$")
 _COMBINATION_ID = re.compile(r"^bibliographic_combination_[0-9a-f]{64}$")
 _REPRESENTATION_ID = re.compile(r"^representation_[0-9a-f]{64}$")
 _EVIDENCE_REFERENCE = re.compile(
-    r"^(?:local|provider|evidence|abs|epub|hardcover|open_library|inventaire)_[0-9a-f]{64}$"
+    r"^(?:local|provider|evidence|abs|epub|hardcover|open_library|inventaire|audible_catalog|itunes_search)_[0-9a-f]{64}$"
 )
 _CORRELATION = re.compile(r"^correlation_[0-9a-f]{64}$")
 _REASON = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -2220,6 +2220,21 @@ def _provider_consensus_contributor_display_election(
     )
 
 
+def provider_candidate_supports_complete_narrators(
+    candidate: ProviderCandidate, evidence_references: tuple[str, ...]
+) -> bool:
+    """Bind the selected ensemble to every retained, correctly attributed credit."""
+    credits = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.CONTRIBUTOR
+    )
+    return bool(credits) and all(
+        claim.state is FieldState.VALID
+        and claim.role == "narrator"
+        and claim.reference in evidence_references
+        for claim in credits
+    )
+
+
 def _narrator_corroboration_guard(
     report: MetadataReport, result: ProposalResult
 ) -> ProposalResult:
@@ -2230,6 +2245,15 @@ def _narrator_corroboration_guard(
     single source rather than agreement. The owner still sees the alternative
     and can accept it; the proposal only stops calling it settled (#966).
     """
+    if len(result.alternatives) == 1 and any(
+        provider_candidate_represents_target_recording(report, provider, candidate)
+        and provider_candidate_supports_complete_narrators(
+            candidate, result.alternatives[0].evidence_references
+        )
+        for provider in report.providers
+        for candidate in provider.candidates
+    ):
+        return result
     if any(
         claim.kind is ClaimKind.CONTRIBUTOR
         and claim.role == "narrator"
@@ -2670,6 +2694,8 @@ def _corroborated_untyped_author_observations(
 def _complete_provider_creator_set(
     candidate: ProviderCandidate,
     role: str | None,
+    *,
+    allow_narrators: bool = False,
 ) -> (
     tuple[tuple[ProviderClaim, ...], tuple[ProviderIdentityBinding, ...] | None] | None
 ):
@@ -2687,7 +2713,9 @@ def _complete_provider_creator_set(
             for claim in creators
         )
         or any(
-            claim.kind is ClaimKind.CONTRIBUTOR and claim.scope is ClaimScope.WORK
+            claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.scope is ClaimScope.WORK
+            and not (allow_narrators and claim.role == "narrator")
             for claim in candidate.claims
         )
         or len({creator_comparison_key(claim.value or "") for claim in creators})
@@ -2902,6 +2930,8 @@ def provider_candidate_represents_target_work(
     candidate: ProviderCandidate,
 ) -> bool:
     """Prove one retained candidate describes the target work through its lane."""
+    if provider_candidate_represents_target_recording(report, provider, candidate):
+        return True
     context = target_work_identity_context(report.target)
     if context is None or not _target_backed_lookup_contains(
         report, provider, candidate
@@ -2968,6 +2998,39 @@ def provider_candidate_represents_target_work(
         ):
             return True
     return False
+
+
+def provider_candidate_represents_target_recording(
+    report: MetadataReport,
+    provider: ProviderObservation,
+    candidate: ProviderCandidate,
+) -> bool:
+    """Reuse retained recording admission without requiring correct target text.
+
+    Marketplace evidence survives an audiobook identifier lookup only when an
+    item-surface ASIN or independent runtime/chapter evidence admits it. A
+    target assertion alone loses that evidence during report construction.
+    """
+    return (
+        report.audio is not None
+        and provider in report.providers
+        and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and provider.status is ProviderStatus.CANDIDATES
+        and candidate in provider.candidates
+        and _complete_provider_creator_set(candidate, "author", allow_narrators=True)
+        is not None
+        and any(
+            claim.kind is ClaimKind.TITLE
+            and claim.scope is ClaimScope.WORK
+            and claim.state is FieldState.VALID
+            for claim in candidate.claims
+        )
+        and any(
+            value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+            and value.scope is ClaimScope.EDITION
+            for value in candidate.evidence
+        )
+    )
 
 
 def provider_candidate_represents_target_series_work(
@@ -3305,6 +3368,9 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
         for candidate in provider.candidates:
             if (
                 work_context is not None
+                and not provider_candidate_represents_target_recording(
+                    report, provider, candidate
+                )
                 and provider_candidate_work_identity_contradiction(
                     candidate, *work_context
                 )
@@ -3505,10 +3571,11 @@ def _date_compatible_with_projection(
 
 
 def _cover_result(report: MetadataReport, target: TargetField) -> ProposalResult:
-    if report.file.format in AUDIO_FILE_FORMATS:
-        # F45 forms text proposals only. An audiobook's artwork stays where it
-        # is until the cover field is unlocked for recordings, so the owner is
-        # never asked to choose one here (#966).
+    if report.file.format in AUDIO_FILE_FORMATS and not any(
+        provider_candidate_represents_target_recording(report, provider, candidate)
+        for provider in report.providers
+        for candidate in provider.candidates
+    ):
         return ProposalResult(
             TargetDestination.COVER,
             ProposalOutcome.INELIGIBLE,
@@ -4054,9 +4121,23 @@ def _eligible_provider_manifestation(
         return True
     if claim.applicability == "ebook":
         return True
+    if destination is TargetDestination.SUBTITLE and any(
+        name.kind is ClaimKind.SERIES
+        and sequence.kind is ClaimKind.SERIES_SEQUENCE
+        and name.state is FieldState.VALID
+        and sequence.state is FieldState.VALID
+        and sequence.raw_order == name.raw_order + 1
+        and claim.value == f"{name.value}, Book {sequence.value}"
+        for name, sequence in zip(candidate.claims, candidate.claims[1:], strict=False)
+    ):
+        return False
     return (
-        destination is TargetDestination.ASIN
-        and claim.scope is ClaimScope.EDITION
+        (
+            destination is TargetDestination.ASIN
+            and claim.scope is ClaimScope.EDITION
+            or destination is TargetDestination.SUBTITLE
+            and claim.scope is ClaimScope.WORK
+        )
         and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         and any(
             value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
@@ -4247,6 +4328,14 @@ def ordinary_provider_description_source_is_safe(
         and not any(
             evidence.kind is ProviderEvidenceKind.DESCRIPTION_TRANSFORMATION
             and evidence.scope is ClaimScope.WORK
+            and not (
+                evidence.value == "html-visible-text-v1"
+                and any(
+                    binding.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                    and binding.scope is ClaimScope.EDITION
+                    for binding in candidate.evidence
+                )
+            )
             for evidence in candidate.evidence
         )
     )

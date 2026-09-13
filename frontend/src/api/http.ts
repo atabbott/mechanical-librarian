@@ -737,35 +737,21 @@ const sameResolvedPolicy = (
   )
 
 export interface PolicyQualificationEntry {
+  readonly identity?: string
+  readonly destination?: string
+  readonly operation?: string
   readonly automatic_available: boolean
   readonly field: string
   readonly option: string
 }
 
-// Routing is one owner choice for the whole library, so a category an
-// audiobook record qualifies is routable even where the ebook envelope leaves
-// it unqualified. Only a qualified tranche is carried: an unqualified one says
-// nothing about the ebook record that already answers for the option, so while
-// no audiobook record exists this returns exactly the rich records and the
-// page reads what it reads today.
+// Preserve operation identities while callers aggregate routing availability.
 export const policyAutomaticQualification = (
   state: PolicyStateView,
-): readonly PolicyQualificationEntry[] => {
-  const qualified = state.audiobook_qualification.filter((entry) => entry.automatic_available)
-  return [
-    ...qualified.map((entry) => ({
-      automatic_available: true,
-      field: entry.field,
-      option: entry.option,
-    })),
-    ...state.rich_qualification.filter(
-      (entry) =>
-        !qualified.some(
-          (audiobook) => audiobook.field === entry.field && audiobook.option === entry.option,
-        ),
-    ),
-  ]
-}
+): readonly PolicyQualificationEntry[] => [
+  ...state.audiobook_qualification,
+  ...state.rich_qualification,
+]
 
 export const derivePolicyDraftDisplay = (
   active: PolicyStateView,

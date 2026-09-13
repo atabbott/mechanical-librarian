@@ -80,6 +80,7 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
     comparison_links,
     finalize_candidate_comparisons,
+    normalize_date_value,
 )
 
 AUDNEXUS_ORIGIN = "https://api.audnex.us"
@@ -538,7 +539,7 @@ def _candidate(
             value=exact,
             state=state,
             scope=scope,
-            applicability="not_applicable",
+            applicability="unknown" if kind is ClaimKind.ISBN else "not_applicable",
             role=role,
             raw_order=len(claims),
         )
@@ -550,7 +551,7 @@ def _candidate(
                 value=exact,
                 state=state,
                 scope=scope,
-                applicability="not_applicable",
+                applicability="unknown" if kind is ClaimKind.ISBN else "not_applicable",
                 role=role,
                 raw_order=len(claims),
                 links=comparison_links(bare, local_claims),
@@ -570,9 +571,12 @@ def _candidate(
         add(ClaimKind.CONTRIBUTOR, narrator, role="narrator")
     if not narrators:
         add(ClaimKind.CONTRIBUTOR, None, role="narrator")
-    series, sequence = _series(payload.get("seriesPrimary"), schema_rejections)
-    add(ClaimKind.SERIES, series)
-    add(ClaimKind.SERIES_SEQUENCE, sequence)
+    for key in ("seriesPrimary", "seriesSecondary"):
+        if key == "seriesSecondary" and payload.get(key) is None:
+            continue
+        series, sequence = _series(payload.get(key), schema_rejections)
+        add(ClaimKind.SERIES, series)
+        add(ClaimKind.SERIES_SEQUENCE, sequence)
     # Audnexus publishes a plain `description` and an HTML `summary` of the
     # same text. The plain one is preferred; the summary is read only when the
     # provider states no plain one, and the shared renderer makes it visible
@@ -582,6 +586,9 @@ def _candidate(
     )
     add(ClaimKind.DESCRIPTION, description)
     add(ClaimKind.LANGUAGE, payload.get("language"))
+    add(ClaimKind.PUBLISHER, payload.get("publisherName"))
+    add(ClaimKind.PUBLICATION_DATE, payload.get("releaseDate"))
+    add(ClaimKind.ISBN, payload.get("isbn"))
     add(
         ClaimKind.DURATION,
         _duration(payload.get("runtimeLengthMin"), schema_rejections),
@@ -599,6 +606,28 @@ def _candidate(
             ClaimScope.EDITION,
         ),
     ]
+    taxonomy = payload.get("genres")
+    if taxonomy is not None:
+        if type(taxonomy) is not list or len(taxonomy) > 32:
+            schema_rejections(1)
+            add(ClaimKind.GENRE, _UNPROJECTABLE)
+            add(ClaimKind.TAG, _UNPROJECTABLE)
+        else:
+            for item in taxonomy:
+                if type(item) is not dict or item.get("type") not in {"genre", "tag"}:
+                    schema_rejections(1)
+                    continue
+                kind = ClaimKind.GENRE if item["type"] == "genre" else ClaimKind.TAG
+                add(kind, item.get("name", _UNPROJECTABLE))
+                if claims[-1].state is FieldState.VALID:
+                    evidence.append(
+                        ProviderEvidence(
+                            ProviderEvidenceKind.TAXONOMY,
+                            claims[-1].value or "",
+                            ClaimScope.WORK,
+                            taxonomy_type=item["type"],
+                        )
+                    )
     if description_transformed:
         evidence.append(
             ProviderEvidence(
@@ -697,21 +726,25 @@ def _canonical_evidence(
     return ordered
 
 
-def _names(value: object, schema_rejections: Callable[[int], None]) -> tuple[str, ...]:
+def _names(
+    value: object, schema_rejections: Callable[[int], None]
+) -> tuple[object, ...]:
     if value is None:
         return ()
     if type(value) is not list or len(value) > _MAX_VALUES:
         schema_rejections(1)
-        return ()
-    names: list[str] = []
+        return (_UNPROJECTABLE,)
+    names: list[object] = []
     for item in value:
         if type(item) is not dict:
             schema_rejections(1)
+            names.append(_UNPROJECTABLE)
             continue
         try:
             names.append(_text(item.get("name")))
         except (ValueError, EvidenceValueError):
             schema_rejections(1)
+            names.append(_UNPROJECTABLE)
     return tuple(names)
 
 
@@ -751,7 +784,13 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         else MAX_SCALAR_CHARACTERS
     )
     try:
-        return FieldState.VALID, _text(value, maximum)
+        text = _text(value, maximum)
+        if kind is ClaimKind.PUBLICATION_DATE:
+            # This provider transports day-valued releases at UTC midnight.
+            # Other timestamps do not silently lose their stated precision.
+            text = text.removesuffix("T00:00:00.000Z")
+            normalize_date_value(text)
+        return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
         return (
             FieldState.OVERSIZED

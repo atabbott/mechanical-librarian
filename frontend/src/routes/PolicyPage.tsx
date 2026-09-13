@@ -24,6 +24,16 @@ import { fieldLabel } from '../labels'
 import { policyRoute, useReviewContext } from '../router'
 import type { PolicyCritical } from '../router'
 
+const audiobookOperationLabels = {
+  fill: 'Fill an empty field',
+  preserve: 'Keep the current value',
+  normalize: 'Normalize the representation',
+  add: 'Add supported members',
+  replace: 'Replace the current value',
+  replace_invalid: 'Replace an invalid ASIN',
+  replace_recording: 'Replace a valid ASIN',
+} as const
+
 interface FieldDefinition {
   key: string
   label: string
@@ -120,12 +130,21 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'series',
     label: 'Series memberships',
-    meaning: 'Automatic fills an empty Series field only and preserves existing memberships.',
-    options: ['primary_narrative', 'source_order', 'all_qualified'],
+    meaning:
+      'Fill empty Series, add supported memberships, or explicitly replace the current list.',
+    options: [
+      'primary_narrative',
+      'source_order',
+      'all_qualified',
+      'add_qualified',
+      'replace_qualified',
+    ],
     optionLabels: {
       primary_narrative: 'Primary narrative',
       source_order: 'First source membership',
       all_qualified: 'All qualified memberships',
+      add_qualified: 'Add supported memberships',
+      replace_qualified: 'Replace with supported memberships',
     },
     chapter: 'publication',
     automatic: false,
@@ -162,10 +181,11 @@ const fields: readonly FieldDefinition[] = [
     label: 'Description',
     meaning:
       'Deterministic selection uses one provider description. Optional description advice can separately rewrite or combine text.',
-    options: ['safe_plain_text', 'google_visible_text'],
+    options: ['safe_plain_text', 'google_visible_text', 'replace_safe_plain_text'],
     optionLabels: {
       safe_plain_text: 'Safe plain text',
       google_visible_text: 'Visible Google text',
+      replace_safe_plain_text: 'Replace with safe plain text',
     },
     chapter: 'curation',
     automatic: false,
@@ -315,6 +335,18 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
       'keeps the full context while Automatic fills an empty Series field with only its first membership',
     fallback: 'abstains when no membership is qualified',
   },
+  'series:add_qualified': {
+    admitted: 'supported series and sequence associations for this work',
+    transformation: 'retains current memberships and adds missing associations',
+    effect: 'extends Series only when this operation is qualified for the media',
+    fallback: 'requires review when addition is unqualified or evidence is ambiguous',
+  },
+  'series:replace_qualified': {
+    admitted: 'supported series and sequence associations for this work',
+    transformation: 'uses the complete selected list',
+    effect: 'replaces Series only when this operation is qualified for the media',
+    fallback: 'requires review when replacement is unqualified or evidence is ambiguous',
+  },
   'genres:fill_empty': {
     admitted: 'one exact eligible source list',
     transformation: 'keeps the list unchanged',
@@ -361,10 +393,16 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     admitted:
       'one applicable bounded plain-text description; competing descriptions must also pass the fixed quality floor',
     transformation:
-      'does not transform HTML and uses the fixed Hardcover, Google Books, then Open Library authority order',
+      'uses safe source text; admitted audiobook descriptions may use bounded visible text from provider HTML',
     effect: 'fills an empty Description only',
     fallback:
-      'abstains when target-work applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, transformed, or unsupported',
+      'abstains when applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, or unsupported',
+  },
+  'description_fill:replace_safe_plain_text': {
+    admitted: 'one useful description from an applicable source',
+    transformation: 'uses bounded safe visible text',
+    effect: 'replaces Description only when replacement is qualified for the media',
+    fallback: 'requires review when replacement is unqualified or source evidence is ambiguous',
   },
   'description_fill:google_visible_text': {
     admitted: 'eligible Google Books visible text only',
@@ -609,15 +647,22 @@ const automaticQualified = (
   field: FieldDefinition,
   option: string,
   qualification: readonly {
+    readonly identity?: string
     readonly automatic_available: boolean
     readonly field: string
     readonly option: string
   }[],
 ) => {
-  const rich = qualification.find((entry) => entry.field === field.key && entry.option === option)
-  return rich
-    ? rich.automatic_available
-    : field.automatic && !(field.key === 'publisher_preference' && option === 'imprint')
+  const entries = qualification.filter(
+    (entry) => entry.field === field.key && entry.option === option,
+  )
+  const rich = entries.find((entry) => entry.identity === undefined)
+  return (
+    entries.some((entry) => entry.automatic_available) ||
+    (rich === undefined &&
+      field.automatic &&
+      !(field.key === 'publisher_preference' && option === 'imprint'))
+  )
 }
 // The disclosure lists one consequence per representation. The catalogue's
 // admitted/transformation halves are qualification mechanics; the owner is
@@ -1157,6 +1202,26 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       {changed ? <small>Draft changed</small> : null}
                     </span>
                     <p>{field.meaning}</p>
+                    {data.state.audiobook_qualification.some(
+                      (entry) => entry.field === field.key && entry.option === option,
+                    ) ? (
+                      <details className="cm-policy-field-guidance">
+                        <summary>Audiobook operations</summary>
+                        <ul>
+                          {data.state.audiobook_qualification
+                            .filter((entry) => entry.field === field.key && entry.option === option)
+                            .map((entry) => (
+                              <li key={entry.identity} data-qualification-identity={entry.identity}>
+                                {fieldLabel(entry.destination)}:{' '}
+                                {audiobookOperationLabels[entry.operation]} —{' '}
+                                {entry.automatic_available
+                                  ? 'Automatic available'
+                                  : 'Review required'}
+                              </li>
+                            ))}
+                        </ul>
+                      </details>
+                    ) : null}
                     <details className="cm-policy-field-guidance">
                       <summary>What this changes</summary>
                       {field.key === 'series' ? (

@@ -105,6 +105,16 @@ Once a record exists, Automatic is withdrawn from every destination on that
 recording the record does not name, so an unqualified identity is always the
 owner's answer to give and never an authority failure.
 
+F46 qualifies each actual field operation separately. One applicable independent
+source can suffice for a supported work or recording field; material conflicts,
+incomplete credits and unexplained title suffixes still require review. Existing
+fill-only choices preserve populated values. Explicit series addition retains
+current associations, while replacement requires the separately chosen and
+qualified replacement operation. Unknown audio ISBNs, explicit-content semantics,
+subtitle and typed-tag operations without scorable evidence, and cover replacement
+remain withheld. Cover fill uses the existing deterministic image path without
+model calls. Candidate availability does not itself grant Automatic authority.
+
 F35 (#884) adds a closed, provider-consensus title election to the v14
 ProposalSet policy: one exact local noisy title, one exact reversible pattern,
 byte-identical clean work or edition title observations from at least two

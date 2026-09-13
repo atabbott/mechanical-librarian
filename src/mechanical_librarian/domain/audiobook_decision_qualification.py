@@ -1,46 +1,142 @@
-"""Public, aggregate-safe F46 audiobook decision qualification envelope.
+"""Closed field/operation identities for independently qualified audiobook effects.
 
-This module deliberately contains no candidate values or private evidence. It
-names the three audiobook decision identities F45 measured as dominant and pins
-which of them a published F46 record has qualified. While the passing set is
-empty every audiobook proposal is the owner's exactly as it is today, and a
-tranche is activated by three tokens and no wiring change: the manifest file in
-`docs/reference/`, its digest here, and its identity in the passing set.
-
-An identity is `category:option:audiobook_reason`. The first two segments are
-the owner's existing policy category and option, so the shipped
-`OPTION_CATALOGUE` never grows and no persisted profile is invalidated; the
-third names the exact audiobook shape the record qualified, so an ebook
-qualification of the same option can never speak for a recording, nor a
-recording's for an ebook (#967).
+The registry names candidates, not authority. A record must qualify each actual
+operation; an ebook record never authorizes an audiobook. The passing set stays
+empty until independent qualification is accepted. Public metadata contains no
+candidate values or private evidence.
 """
 
 from __future__ import annotations
 
 from types import MappingProxyType
-from typing import Final, Mapping
+from typing import Final, Mapping, Sequence, cast
+
+from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.metadata_report import (
+    TargetDestination,
+    canonical_asin,
+)
 
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = None
 
-F46_NARRATORS_IDENTITY: Final = (
-    "contributor_names:canonical:audiobook_narrators_fill_empty"
-)
-F46_SERIES_IDENTITY: Final = "series:primary_narrative:audiobook_fill_empty"
-F46_ASIN_IDENTITY: Final = "asin:preserve_exact:audiobook_gate_corroborated"
+_FIELD_OPTIONS: Final = {
+    "title": ("title_layout", ("preserve", "title_and_subtitle")),
+    "subtitle": ("subtitle", ("fill_empty", "corroborated_split")),
+    "authors": ("contributor_names", ("preserve", "canonical")),
+    "narrators": ("contributor_names", ("canonical",)),
+    "series": (
+        "series",
+        (
+            "primary_narrative",
+            "source_order",
+            "all_qualified",
+            "add_qualified",
+            "replace_qualified",
+        ),
+    ),
+    "genres": ("genres", ("fill_empty", "add", "replace")),
+    "tags": ("tags", ("fill_empty", "add", "replace")),
+    "description": ("description_fill", ("safe_plain_text", "replace_safe_plain_text")),
+    "publishedDate": ("date_precision", ("year", "full_date")),
+    "publisher": ("publisher_preference", ("publisher", "imprint")),
+    "language": ("language_rendering", ("preserve", "display_name")),
+    "asin": ("asin", ("preserve_exact",)),
+    "cover": ("cover_order", ("fixed_source_order",)),
+}
 
-F46_AUDIOBOOK_IDENTITIES: Final[frozenset[str]] = frozenset(
-    {F46_NARRATORS_IDENTITY, F46_SERIES_IDENTITY, F46_ASIN_IDENTITY}
-)
-# One destination per identity. A destination absent from this map has no
-# audiobook qualification route at all, so on a recording it is always the
-# owner's.
-F46_IDENTITY_BY_DESTINATION: Final[Mapping[str, str]] = MappingProxyType(
+
+def _operations(destination: str, option: str) -> tuple[str, ...]:
+    if destination in {"subtitle", "cover"} or option in {
+        "fill_empty",
+        "primary_narrative",
+        "source_order",
+        "all_qualified",
+        "safe_plain_text",
+    }:
+        return ("fill", "preserve")
+    if option in {"add", "add_qualified"}:
+        return ("fill", "preserve", "normalize", "add")
+    if destination == "asin":
+        return ("fill", "preserve", "normalize", "replace_invalid", "replace_recording")
+    return (
+        ("fill", "preserve", "normalize", "add", "replace")
+        if destination in {"authors", "narrators", "series", "genres", "tags"}
+        else ("fill", "preserve", "normalize", "replace")
+    )
+
+
+def _identity(destination: str, category: str, option: str, operation: str) -> str:
+    return f"{category}:{option}:audiobook_{destination.lower()}_{operation}"
+
+
+F46_IDENTITIES_BY_DESTINATION: Final[Mapping[str, tuple[str, ...]]] = MappingProxyType(
     {
-        "asin": F46_ASIN_IDENTITY,
-        "narrators": F46_NARRATORS_IDENTITY,
-        "series": F46_SERIES_IDENTITY,
+        destination: tuple(
+            _identity(destination, category, option, operation)
+            for option in options
+            for operation in _operations(destination, option)
+        )
+        for destination, (category, options) in _FIELD_OPTIONS.items()
     }
 )
+F46_AUDIOBOOK_IDENTITIES: Final[frozenset[str]] = frozenset(
+    identity
+    for identities in F46_IDENTITIES_BY_DESTINATION.values()
+    for identity in identities
+)
+F46_IDENTITY_BY_DESTINATION: Final[Mapping[str, str]] = MappingProxyType(
+    {
+        destination: identities[0]
+        for destination, identities in F46_IDENTITIES_BY_DESTINATION.items()
+    }
+)
+F46_NARRATORS_IDENTITY: Final = _identity(
+    "narrators", "contributor_names", "canonical", "fill"
+)
+F46_SERIES_IDENTITY: Final = _identity("series", "series", "primary_narrative", "fill")
+F46_COVER_FILL_IDENTITY: Final = _identity(
+    "cover", "cover_order", "fixed_source_order", "fill"
+)
+F46_ASIN_IDENTITY: Final = _identity("asin", "asin", "preserve_exact", "fill")
+
+
+def identity_for_effect(
+    destination: str, category: str, option: str, current: object, desired: object
+) -> str | None:
+    """Bind qualification to the actual effect on the retained pre-value."""
+    if current == desired or (
+        type(current) in {list, tuple}
+        and type(desired) in {list, tuple}
+        and list(cast(Sequence[object], current))
+        == list(cast(Sequence[object], desired))
+    ):
+        operation = "preserve"
+    elif current in (None, "", [], ()):
+        operation = "fill"
+    elif values_match(TargetDestination(destination), current, desired):
+        operation = "normalize"
+    elif (
+        destination in {"authors", "narrators", "series", "genres", "tags"}
+        and type(current) in {list, tuple}
+        and type(desired) in {list, tuple}
+        and all(
+            member in cast(Sequence[object], desired)
+            for member in cast(Sequence[object], current)
+        )
+    ):
+        operation = "add"
+    elif destination == "asin":
+        operation = (
+            "replace_invalid"
+            if type(current) is not str or canonical_asin(current) is None
+            else "replace_recording"
+        )
+    else:
+        operation = "replace"
+    identity = _identity(destination, category, option, operation)
+    return identity if identity in F46_AUDIOBOOK_IDENTITIES else None
+
+
 F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset()
 
 
@@ -92,13 +188,17 @@ def public_summary() -> tuple[dict[str, object], ...]:
             "field": field,
             "identity": identity,
             "option": option,
+            "operation": identity.split(":", 2)[2].removeprefix(
+                f"audiobook_{destination.lower()}_"
+            ),
             "record_sha256": (
                 F46_QUALIFICATION_MANIFEST_SHA256
                 if identity in F46_PASSING_AUTOMATIC_OPTIONS
                 else None
             ),
         }
-        for destination, identity in sorted(F46_IDENTITY_BY_DESTINATION.items())
+        for destination, identities in sorted(F46_IDENTITIES_BY_DESTINATION.items())
+        for identity in identities
         for field, option in (identity.rsplit(":", 1)[0].split(":", 1),)
     )
 
@@ -106,6 +206,8 @@ def public_summary() -> tuple[dict[str, object], ...]:
 __all__ = [
     "F46_ASIN_IDENTITY",
     "F46_AUDIOBOOK_IDENTITIES",
+    "F46_COVER_FILL_IDENTITY",
+    "F46_IDENTITIES_BY_DESTINATION",
     "F46_IDENTITY_BY_DESTINATION",
     "F46_NARRATORS_IDENTITY",
     "F46_PASSING_AUTOMATIC_OPTIONS",
@@ -113,6 +215,7 @@ __all__ = [
     "F46_SERIES_IDENTITY",
     "AudiobookQualificationError",
     "audiobook_identity",
+    "identity_for_effect",
     "public_summary",
     "qualification_manifest_sha256",
     "qualified_policy_bases",
