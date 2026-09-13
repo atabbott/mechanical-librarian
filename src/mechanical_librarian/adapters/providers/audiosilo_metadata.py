@@ -559,9 +559,9 @@ def _candidate(
         add(ClaimKind.CONTRIBUTOR, narrator, role="narrator")
     if not narrators:
         add(ClaimKind.CONTRIBUTOR, None, role="narrator")
-    series, sequence = _series(work.get("series"), schema_rejections)
-    add(ClaimKind.SERIES, series)
-    add(ClaimKind.SERIES_SEQUENCE, sequence)
+    for series, sequence in _series(work.get("series"), schema_rejections):
+        add(ClaimKind.SERIES, series)
+        add(ClaimKind.SERIES_SEQUENCE, sequence)
     add(ClaimKind.LANGUAGE, work.get("language"))
     add(ClaimKind.DURATION, _duration(recording.get("runtime_min"), schema_rejections))
 
@@ -687,45 +687,54 @@ def _canonical_evidence(
     return ordered
 
 
-def _names(value: object, schema_rejections: Callable[[int], None]) -> tuple[str, ...]:
+def _names(
+    value: object, schema_rejections: Callable[[int], None]
+) -> tuple[object, ...]:
     if value is None:
         return ()
     if type(value) is not list or len(value) > _MAX_VALUES:
         schema_rejections(1)
-        return ()
-    names: list[str] = []
+        return (_UNPROJECTABLE,)
+    names: list[object] = []
     for item in value:
         if type(item) is not dict:
             schema_rejections(1)
+            names.append(_UNPROJECTABLE)
             continue
         try:
             names.append(_text(item.get("name")))
         except (ValueError, EvidenceValueError):
             schema_rejections(1)
+            names.append(_UNPROJECTABLE)
     return tuple(names)
 
 
 def _series(
     value: object, schema_rejections: Callable[[int], None]
-) -> tuple[object, object]:
-    if value is None:
-        return None, None
+) -> tuple[tuple[object, object], ...]:
+    if value is None or value == []:
+        return ((None, None),)
     if type(value) is not list or len(value) > _MAX_VALUES:
         schema_rejections(1)
-        return None, None
+        return ((_UNPROJECTABLE, _UNPROJECTABLE),)
+    pairs: list[tuple[object, object]] = []
     for item in value:
         if type(item) is not dict:
             schema_rejections(1)
+            pairs.append((_UNPROJECTABLE, _UNPROJECTABLE))
             continue
-        name = item.get("name")
+        name = item.get("name", _UNPROJECTABLE)
         if type(name) is not str:
             schema_rejections(1)
-            continue
+            name = _UNPROJECTABLE
         sequence = item.get("sequence")
-        if type(sequence) is int and not isinstance(sequence, bool):
+        if type(sequence) is int:
             sequence = str(sequence)
-        return name, sequence
-    return None, None
+        elif sequence is not None and type(sequence) is not str:
+            schema_rejections(1)
+            sequence = _UNPROJECTABLE
+        pairs.append((name, sequence))
+    return tuple(pairs)
 
 
 def _duration(value: object, schema_rejections: Callable[[int], None]) -> object:

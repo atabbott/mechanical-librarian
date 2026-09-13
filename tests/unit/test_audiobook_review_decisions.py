@@ -1345,3 +1345,328 @@ def test_audio_add_actual_preview_matches_effect_reconstruction(field, new_membe
     preview_value = preview.desired_value
     assert type(preview_value) is list or type(preview_value) is tuple
     assert effect["value"] == list(preview_value)
+
+
+def _audiosilo_consumer_report(
+    *, malformed=None, runtime=970, populated=True, multiple_series=True
+):
+    """A synthetic target-ASIN response traverses runtime-gated admission."""
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_asin_feed_plan,
+        audiobook_discovery_plan,
+    )
+    from mechanical_librarian.domain.metadata_report import TargetFacts, TargetSeries
+    from tests.support.audiobook_providers import (
+        audio_claim,
+        audio_target,
+        target_asin_claim,
+    )
+    from tests.unit.test_audiosilo_provider import _json, _provider
+
+    base = asserted_asin_report(provider_duration="58200.000")
+    target = audio_target("Synthetic Expedition", ("Synthetic Author",))
+    target = replace(
+        target,
+        fields=tuple(
+            TargetField(TargetDestination.ASIN, TargetFieldState.VALUE, "B000000001")
+            if field.destination is TargetDestination.ASIN
+            else field
+            for field in target.fields
+        ),
+    )
+    local = (
+        audio_claim(ClaimKind.TITLE, "Synthetic Expedition"),
+        audio_claim(ClaimKind.CREATOR, "Synthetic Author", 2, role="author"),
+        target_asin_claim("B000000001"),
+        audio_claim(ClaimKind.DURATION, "58200.000", 4),
+    )
+    plan = audiobook_asin_feed_plan(target, audiobook_discovery_plan(target, local), ())
+    assert plan is not None
+    work = {
+        "id": "synthetic-work",
+        "title": "Synthetic Expedition",
+        "authors": [{"name": "Synthetic Author"}, {"name": "Second Author"}],
+        "language": "en",
+        "series": [
+            {"name": "First Cycle", "sequence": 2},
+            {"name": "Shared Universe", "sequence": 7},
+        ],
+        "recordings": [
+            {
+                "id": "synthetic-recording",
+                "narrators": [{"name": "First Narrator"}, {"name": "Second Narrator"}],
+                "runtime_min": runtime,
+                "asin": [{"region": "us", "asin": "B000000001"}],
+                "chapter_count": 0,
+            }
+        ],
+    }
+    if not multiple_series:
+        work["series"] = work["series"][:1]
+    if malformed == "authors":
+        work["authors"][1] = {}
+    elif malformed == "narrators":
+        work["recordings"][0]["narrators"][1] = {}
+    elif malformed == "series":
+        work["series"][1] = {"name": "Shared Universe", "sequence": []}
+    observation = (
+        _provider(
+            lambda request: _json(
+                {
+                    "work": {"id": "synthetic-work"},
+                    "recording_id": "synthetic-recording",
+                }
+                if request.url.path.endswith("/lookup")
+                else work
+            )
+        )
+        .observe(plan)
+        .observation
+    )
+    fields = tuple(
+        TargetField(
+            field.destination,
+            TargetFieldState.VALUE,
+            (TargetSeries("Old Cycle", "1"),)
+            if field.destination is TargetDestination.SERIES
+            else ("Old Narrator",)
+            if field.destination is TargetDestination.NARRATORS
+            else ("Old Author",),
+        )
+        if populated
+        and field.destination
+        in {
+            TargetDestination.AUTHORS,
+            TargetDestination.NARRATORS,
+            TargetDestination.SERIES,
+        }
+        else TargetField(field.destination, TargetFieldState.MISSING)
+        if field.destination
+        in {
+            TargetDestination.AUTHORS,
+            TargetDestination.NARRATORS,
+            TargetDestination.SERIES,
+        }
+        else field
+        for field in target.fields
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "synthetic-work", fields),
+        file=base.file,
+        local_claims=local,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+    return MetadataReport.from_json(report.to_json())
+
+
+@pytest.mark.parametrize("malformed", (None, "authors", "narrators", "series"))
+@pytest.mark.parametrize("populated", (False, True))
+def test_audiosilo_complete_sets_survive_or_refuse_at_reopened_effect_boundary(
+    tmp_path, malformed, populated
+):
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _automatic_decision_value,
+    )
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.domain.automatic_decision import (
+        AutomaticDecision,
+        AutomaticSafetyState,
+    )
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+    from tests.unit.test_shadow_outcome_persistence import _audiobook_preview
+
+    report = _audiosilo_consumer_report(malformed=malformed, populated=populated)
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    case_id, resolved = _audiobook_preview(
+        repository,
+        report,
+        ("contributor_names", "series"),
+        selected_options={
+            "contributor_names": "canonical",
+            "series": "replace_qualified",
+        },
+    )
+    stored = repository.persist_shadow_outcome(case_id, 4)
+    repository.close()
+    repository = open_repository(path)
+    outcome = ShadowOutcomeSet.from_json(stored)
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    case = ReviewCase.create(proposal, report)
+    decisions = [
+        AutomaticDecision.from_json(value)
+        for value in repository.get_review_case_decisions(case_id)
+    ]
+    for field in ("authors", "narrators", "series"):
+        matching = [decision for decision in decisions if decision.destination == field]
+        if (
+            field == malformed
+            or malformed == "authors"
+            or (field == "series" and populated)
+        ):
+            assert not matching
+            continue
+        assert len(matching) == 1, field
+        value = _automatic_decision_value(matching[0], case, report, proposal, outcome)[
+            "value"
+        ]
+        assert (
+            value
+            == {
+                "authors": ["Synthetic Author", "Second Author"],
+                "narrators": ["First Narrator", "Second Narrator"],
+                "series": [
+                    {"name": "First Cycle", "sequence": "2"},
+                    {"name": "Shared Universe", "sequence": "7"},
+                ],
+            }[field]
+        )
+    assert repository.automatic_safety_state() == AutomaticSafetyState(False, None, ())
+    assert repository.persist_shadow_outcome(case_id, 5) == stored
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "variant", ("supported", "wrong_recording", "series_display", "malformed")
+)
+def test_recording_work_subtitle_reaches_manual_sql_case_only(tmp_path, variant):
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        TargetSnapshot,
+        audiobook_asin_feed_plan,
+        audiobook_discovery_plan,
+    )
+    from mechanical_librarian.domain.automatic_decision import (
+        AutomaticDecision,
+        AutomaticSafetyState,
+    )
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
+    from tests.unit.test_audnexus_provider import _json, _provider
+    from tests.unit.test_shadow_outcome_persistence import _audiobook_preview
+
+    base = _audiosilo_consumer_report(populated=False)
+    target = TargetSnapshot(
+        "audiobook", base.target.current_title, (), fields=base.target.fields
+    )
+    plan = audiobook_asin_feed_plan(
+        target, audiobook_discovery_plan(target, base.local_claims), ()
+    )
+    assert plan is not None
+    subtitle = {
+        "supported": "A Synthetic Expedition",
+        "wrong_recording": "A Synthetic Expedition",
+        "series_display": "First Cycle, Book 2",
+        "malformed": [],
+    }[variant]
+    raw = {
+        "asin": "B000000001",
+        "title": "Synthetic Expedition",
+        "subtitle": subtitle,
+        "authors": [{"name": "Synthetic Author"}],
+        "narrators": [{"name": "First Narrator"}],
+        "runtimeLengthMin": 100 if variant == "wrong_recording" else 970,
+        "seriesPrimary": {"name": "First Cycle", "position": "2"},
+    }
+    observation = (
+        _provider(
+            lambda request: (
+                _json({}, 404) if request.url.path.endswith("/chapters") else _json(raw)
+            )
+        )
+        .observe(plan)
+        .observation
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+    report = MetadataReport.from_json(report.to_json())
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    case_id, resolved = _audiobook_preview(
+        repository,
+        report,
+        ("contributor_names",),
+        selected_options={"title_layout": "preserve"},
+    )
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    result = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.SUBTITLE
+    )
+    assert bool(result.alternatives) is (variant == "supported")
+    if variant == "supported":
+        assert result.alternatives[0].value.value == "A Synthetic Expedition"
+        assert result.alternatives[0].scope.value == "work"
+    stored = repository.persist_shadow_outcome(case_id, 4)
+    repository.close()
+    repository = open_repository(path)
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    subtitle_result = next(
+        value["result"]
+        for value in case.proposals
+        if value["destination"] == "subtitle"
+    )
+    assert bool(subtitle_result["alternatives"]) is (variant == "supported")
+    assert not any(
+        AutomaticDecision.from_json(value).destination == "subtitle"
+        for value in repository.get_review_case_decisions(case_id)
+    )
+    assert repository.automatic_safety_state() == AutomaticSafetyState(False, None, ())
+    assert repository.persist_shadow_outcome(case_id, 5) == stored
+    repository.close()
+
+
+@pytest.mark.parametrize("runtime", (970, 100))
+def test_audiosilo_single_series_fill_requires_actual_recording_admission(
+    tmp_path, runtime
+):
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.domain.automatic_decision import (
+        AutomaticDecision,
+        AutomaticSafetyState,
+    )
+    from tests.unit.test_shadow_outcome_persistence import _audiobook_preview
+
+    report = _audiosilo_consumer_report(
+        runtime=runtime, populated=False, multiple_series=False
+    )
+    repository = open_repository(tmp_path / "reports.sqlite")
+    case_id, _ = _audiobook_preview(
+        repository,
+        report,
+        ("contributor_names", "series"),
+        selected_options={"contributor_names": "canonical", "series": "add_qualified"},
+    )
+    repository.persist_shadow_outcome(case_id, 4)
+    decisions = [
+        AutomaticDecision.from_json(value)
+        for value in repository.get_review_case_decisions(case_id)
+    ]
+    for field in ("narrators", "series"):
+        matching = [value for value in decisions if value.destination == field]
+        assert bool(matching) is (runtime == 970)
+        if matching:
+            assert matching[0].policy_option.endswith("_fill")
+    assert repository.automatic_safety_state() == AutomaticSafetyState(False, None, ())
+    repository.close()

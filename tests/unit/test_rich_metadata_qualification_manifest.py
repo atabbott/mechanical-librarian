@@ -62,14 +62,14 @@ V22_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v22
 V23_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v23.json")
 V24_MANIFEST = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v24.json")
 LATEST_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v37.json"
+    "f20-rich-metadata-qualification-candidate-v38.json"
 )
 ASSOCIATION_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v6.json")
 V7_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v7.json")
 V8_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v8.json")
 V9_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v9.json")
 V10_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v10.json")
-LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v23.json")
+LATEST_F19A_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v24.json")
 HISTORICAL_MANIFEST = (
     Path(__file__).parents[2]
     / "docs/reference/f20-rich-metadata-qualification-candidate-v10.json"
@@ -2010,7 +2010,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
         (title, LATEST_F19A_MANIFEST, F19A_QUALIFICATION_MANIFEST_SHA256),
     ):
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
-        assert manifest["proposal_policy_version"] == "fixed-conservative-v25"
+        assert manifest["proposal_policy_version"] == "fixed-conservative-v26"
         for name, source_digest in manifest["source_closure"].items():
             assert (
                 hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
@@ -2019,13 +2019,13 @@ def test_current_title_successors_bind_complete_consumer_source_inventory() -> N
     for current, filename, expected_digest in (
         (
             title,
-            "f19a-qualification-manifest-v22.json",
-            "32949b585f0be6460b5e82961fe73139eec36ca77b0db9a892f41c631ef0f495",
+            "f19a-qualification-manifest-v23.json",
+            "00d8aa094f1a1e18a89741a37af670636c913bff48ba8dd56eb0ed722cfb9889",
         ),
         (
             rich,
-            "f20-rich-metadata-qualification-candidate-v36.json",
-            "1677b44ad6a8c2a8a53cba6cd821424b213e366f47e6d64e214225742338628c",
+            "f20-rich-metadata-qualification-candidate-v37.json",
+            "c4411ecceb94ae86549e62c7d68a199af4ea42cd201cb17ce947e905a39c4e6e",
         ),
     ):
         assert (
@@ -2412,7 +2412,7 @@ def test_complete_chapter_successors_refresh_sources_without_measurement_or_auth
 
 
 def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
-    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v6.json")
+    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v7.json")
     document = json.loads(path.read_bytes())
     assert (
         hashlib.sha256(path.read_bytes()).hexdigest()
@@ -2472,8 +2472,8 @@ def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
             F46_PASSING_AUTOMATIC_OPTIONS
         )
         assert successor["audiobook_activation"]["clean_rebuild_required"] is True
-    # The approved presentation delta is checked exactly below; other rule
-    # consumers retain frozen bytes apart from bound manifest literals.
+    # Historical source bindings remain frozen. Each later correction is
+    # checked separately, and current F19a/F20 closure binds every consumer.
     exceptions = {
         "src/mechanical_librarian/domain/audiobook_decision_qualification.py",
         "src/mechanical_librarian/domain/automatic_decision.py",
@@ -2481,6 +2481,8 @@ def test_f46_accepted_record_binds_exact_six_field_candidate_registration():
         "frontend/src/styles.css",
         "frontend/src/routes/PolicyPage.tsx",
         "src/mechanical_librarian/adapters/providers/audnexus_metadata.py",
+        "src/mechanical_librarian/adapters/providers/audiosilo_metadata.py",
+        "src/mechanical_librarian/domain/proposal_set.py",
     }
     for name, digest in document["source_closure"].items():
         if name not in exceptions:
@@ -2715,3 +2717,42 @@ def test_text_zoom_successor_changes_only_guidance_grid_minimum():
         == (delta["prior_sha256"])
         == prior["presentation_source_delta"]["current_sha256"]
     )
+
+
+def test_consumer_correction_is_not_historical_rule_equivalence():
+    path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v7.json")
+    document = json.loads(path.read_bytes())
+    prior_path = MANIFEST.with_name("f46-audiobook-qualification-candidate-v6.json")
+    prior = json.loads(prior_path.read_bytes())
+    assert (
+        document["prior_manifest_sha256"]
+        == hashlib.sha256(prior_path.read_bytes()).hexdigest()
+    )
+    for key in (
+        "source_closure",
+        "completed_correspondence",
+        "passing_automatic_options",
+        "natural_selected_values",
+        "evidence_receipts",
+        "binding_only_source_equivalence",
+    ):
+        assert document[key] == prior[key]
+    delta = document["consumer_correction_delta"]
+    assert delta["classification"] == "provider_parser_and_manual_proposal_correction"
+    assert delta["proposal_policy_version"] == "fixed-conservative-v26"
+    assert delta["clean_rebuild_required"] is True
+    assert delta["fresh_quality_scoring"] is False
+    assert delta["fresh_530_scenario_claim"] is False
+    assert delta["passing_set_changed"] is False
+    assert set(delta["source_changes"]) == {
+        "src/mechanical_librarian/adapters/providers/audiosilo_metadata.py",
+        "src/mechanical_librarian/domain/proposal_set.py",
+    }
+    for name, change in delta["source_changes"].items():
+        assert change["prior_sha256"] == prior["source_closure"][name]
+        assert (
+            change["current_sha256"]
+            == hashlib.sha256((MANIFEST.parents[2] / name).read_bytes()).hexdigest()
+        )
+    for successor in (LATEST_MANIFEST, LATEST_F19A_MANIFEST):
+        assert json.loads(successor.read_bytes())["consumer_correction_delta"] == delta

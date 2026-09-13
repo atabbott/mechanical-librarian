@@ -58,7 +58,7 @@ does under that routing is still decided by the ebook envelope, which leaves
 - Adding or withdrawing qualification changes persisted interpretation. This
   delivery requires a clean rebuild under report v43, shadow outcome v5,
   metadata policy profile v3 and cover automatic decision v2, with
-  proposal policy `fixed-conservative-v25` under unchanged proposal-set-v7. Earlier state is
+  proposal policy `fixed-conservative-v26` under unchanged proposal-set-v7. Earlier state is
   refused without conversion or mutation, in accordance with ADR-0013.
 - The report v43 provider-associated series-suffix production is replayed from
   the same candidate's complete structured association and author identity.

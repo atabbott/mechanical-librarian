@@ -17,10 +17,10 @@ members and makes all returned sampled Policy outcomes expandable before activat
 Policy guidance also wraps within its field at enlarged text sizes.
 All twelve retained parser responses are unchanged; frozen quality and completed
 correspondence remain bound to their original sources.
-The [F46 v6 record](../reference/f46-audiobook-qualification-candidate-v6.json)
+The [F46 v7 record](../reference/f46-audiobook-qualification-candidate-v7.json)
 registers 44 accepted operations in six fields, bound by
-[F19a v23](../reference/f19a-qualification-manifest-v23.json) and
-[F20 v37](../reference/f20-rich-metadata-qualification-candidate-v37.json).
+[F19a v24](../reference/f19a-qualification-manifest-v24.json) and
+[F20 v38](../reference/f20-rich-metadata-qualification-candidate-v38.json).
 Retained Automatic/effect correspondence passed at the recorded source; Ask previews
 expose candidate evidence without granting effect authority.
 
@@ -517,15 +517,15 @@ rule moves.
 
 ## Current expanded audiobook source bindings (#967)
 
-The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v6.json)
+The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v7.json)
 names 44 accepted field/operation identities across title, authors, narrators,
 language, series and genres. Its source-quality corpus and candidate operations
 are frozen separately from subsequent Automatic/effect correspondence. Dates,
 publisher, description, ASIN and cover lack the required selected-positive
 confirmation floor; subtitle/tags lack the source floor, and ISBN/explicit
 semantics remain unresolved. No new authority is inferred from those candidates.
-The [F19a v23](../reference/f19a-qualification-manifest-v23.json) and
-[F20 v37](../reference/f20-rich-metadata-qualification-candidate-v37.json)
+The [F19a v24](../reference/f19a-qualification-manifest-v24.json) and
+[F20 v38](../reference/f20-rich-metadata-qualification-candidate-v38.json)
 successors bind the current consumers without rewriting historical records or
 claiming fresh ebook scoring. Report v43, shadow outcome v5 and policy profile
 v3 require a clean rebuild; prior state is never relabelled as current.
@@ -533,3 +533,9 @@ v3 require a clean rebuild; prior state is never relabelled as current.
 Title and author preserve operations remain withheld after retained software
 correspondence failures; their source quality was not rejected. Other registered
 operations retain their independent qualification.
+
+The current correction retains complete Audiosilo credit sets and ordered series
+pairs, including malformed companions that prevent partial Automatic values.
+Recording-bound WORK subtitles are available for owner review under proposal
+policy v26; subtitle Automatic remains withheld. These consumer corrections
+do not claim fresh source scoring or repeat the historical 530-scenario run.

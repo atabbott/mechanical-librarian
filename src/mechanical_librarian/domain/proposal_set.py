@@ -89,7 +89,7 @@ PROPOSAL_SCHEMA = "proposal-set-v7"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v25"
+POLICY_VERSION = "fixed-conservative-v26"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -1382,7 +1382,18 @@ def _observations(
             for claim in candidate.claims:
                 if (
                     claim.kind in kinds
-                    and claim.scope is provider_scope
+                    and (
+                        claim.scope is provider_scope
+                        or (
+                            destination is TargetDestination.SUBTITLE
+                            and claim.scope is ClaimScope.WORK
+                            and report.audio is not None
+                            and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+                            and provider_candidate_represents_target_recording(
+                                report, provider, candidate
+                            )
+                        )
+                    )
                     and claim.state is FieldState.VALID
                     and claim.value is not None
                     and _eligible_identifier(

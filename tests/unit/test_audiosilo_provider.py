@@ -323,3 +323,53 @@ def test_one_adapter_serves_one_observation() -> None:
     assert (
         ProviderStatus.UNAVAILABLE is (provider.observe(asin_plan())).observation.status
     )
+
+
+@pytest.mark.parametrize("member", ({}, {"name": []}, "not a credit"))
+@pytest.mark.parametrize("field", ("authors", "narrators"))
+def test_malformed_credit_members_remain_closed_set_evidence(field, member):
+    work = copy.deepcopy(payload("audiosilo_work"))
+    owner = work if field == "authors" else work["recordings"][0]
+    owner[field] = [{"name": "Synthetic Credit"}, member]
+    _seen, handle = _recorder(work=_json(work))
+    observation = _provider(handle).observe(asin_plan()).observation
+    kind = ClaimKind.CREATOR if field == "authors" else ClaimKind.CONTRIBUTOR
+    claims = _claims(observation.candidates[0], kind)
+    assert [(claim.value, claim.state.value) for claim in claims] == [
+        ("Synthetic Credit", "valid"),
+        (None, "malformed"),
+    ]
+    assert observation.diagnostics[0].count == 1
+
+
+@pytest.mark.parametrize(
+    "companion",
+    (
+        {"name": "Second Cycle", "sequence": 7},
+        {},
+        {"name": "Second Cycle", "sequence": []},
+    ),
+)
+def test_series_keeps_ordered_pairs_and_malformed_companions(companion):
+    work = copy.deepcopy(payload("audiosilo_work"))
+    work["series"] = [{"name": "First Cycle", "sequence": "2"}, companion]
+    _seen, handle = _recorder(work=_json(work))
+    candidate = _provider(handle).observe(asin_plan()).observation.candidates[0]
+    claims = tuple(
+        claim
+        for claim in candidate.claims
+        if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+    )
+    assert len(claims) == 4
+    assert [claim.kind for claim in claims] == [
+        ClaimKind.SERIES,
+        ClaimKind.SERIES_SEQUENCE,
+    ] * 2
+    assert [claim.raw_order for claim in claims] == list(
+        range(claims[0].raw_order, claims[0].raw_order + 4)
+    )
+    assert [claim.value for claim in claims[:2]] == ["First Cycle", "2"]
+    assert claims[2].value == companion.get("name")
+    assert claims[3].value == ("7" if companion.get("sequence") == 7 else None)
+    if not companion or type(companion.get("sequence")) is list:
+        assert any(claim.state.value == "malformed" for claim in claims[2:])

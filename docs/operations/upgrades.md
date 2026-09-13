@@ -11,7 +11,7 @@ migration, conversion, import, repair, or downgrade is supplied by #872, #873,
 
 #967 requires current `metadata-report-v43`, `shadow-outcome-set-v5`,
 `metadata-policy-profile-v3`, `shadow-review-packet-v8`, and
-`cover-automatic-decision-v2`, with `fixed-conservative-v25` under the unchanged
+`cover-automatic-decision-v2`, with `fixed-conservative-v26` under the unchanged
 `proposal-set-v7` document shape. These recording-support and qualification
 contracts require a clean application rebuild. Historical records and their
 measurements remain unchanged; no adoption or rescoring is supplied.
