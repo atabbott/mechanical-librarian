@@ -176,6 +176,7 @@ def test_preview_categories_are_the_exact_resolved_delta_from_active_policy() ->
         "tags",
         "description_fill",
         "isbn_form",
+        "cover_order",
     ) == preview.libraries[0].affected_categories
     assert (
         "title_layout",
@@ -188,6 +189,7 @@ def test_preview_categories_are_the_exact_resolved_delta_from_active_policy() ->
         "genres",
         "description_fill",
         "isbn_form",
+        "cover_order",
     ) == preview.libraries[1].affected_categories
 
 

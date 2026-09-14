@@ -2277,7 +2277,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         expect(page.locator("#policy-curation")).to_be_focused()
         cover_policy = page.get_by_role("region", name="Cover")
         cover_policy.get_by_text(
-            "Choose the best identity-confirmed cover by one deterministic order.",
+            "Use a confirmed cover. Audiobooks keep an adequate cover and replace only a small incumbent with a materially larger match.",
             exact=True,
         ).wait_for()
         automatic_cover = cover_policy.get_by_role("button", name="Automatic")
@@ -2288,8 +2288,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         cover_representation = cover_policy.get_by_role(
             "combobox", name="Cover representation"
         )
-        expect(cover_representation).to_be_disabled()
-        expect(cover_representation).to_have_text("Deterministic confirmed order")
+        expect(cover_representation).to_be_enabled()
+        expect(cover_representation).to_have_text("Fill from confirmed order")
+        cover_representation.click()
+        expect(page.get_by_role("option")).to_have_text(
+            ["Fill from confirmed order", "Replace with a material improvement"]
+        )
+        page.get_by_role("option", name="Fill from confirmed order", exact=True).click()
         automatic_cover.click()
         expect(automatic_cover).to_have_attribute("aria-pressed", "true")
         cover_policy.get_by_role("button", name="Ask me").click()

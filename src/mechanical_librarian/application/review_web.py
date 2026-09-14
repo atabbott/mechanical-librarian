@@ -26,6 +26,9 @@ from mechanical_librarian.domain.audio_health import (
     media_unreadable_observation,
 )
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
+from mechanical_librarian.domain.audiobook_corroboration import (
+    candidate_recording_runtime_veto,
+)
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
@@ -789,7 +792,7 @@ class InspectCurrentReviewCase:
                 destinations = destinations_by_reference.setdefault(reference, [])
                 if destination not in destinations:
                     destinations.append(destination)
-        observations = _review_identifier_evidence(
+        observations = _review_unselectable_evidence(
             report, set(destinations_by_reference)
         )
         for reference, observation in observations.items():
@@ -1900,35 +1903,52 @@ def _bounded_token(value: object) -> bool:
     return type(value) is str and 32 <= len(value) <= 128 and value.strip() == value
 
 
-def _review_identifier_evidence(
+def _review_unselectable_evidence(
     report: MetadataReport, linked: set[str]
 ) -> dict[str, dict[str, object]]:
-    """Keep non-voting audiobook identifiers visible without making them choices."""
+    """Keep bounded nonselectable audiobook observations visible for review."""
     if report.audio is None:
         return {}
     observations: dict[str, dict[str, object]] = {}
     for provider in report.providers:
         for candidate in (*provider.candidates, *provider.recording_lookup_candidates):
             for claim in candidate.claims:
+                narrator = (
+                    claim.kind is ClaimKind.CONTRIBUTOR
+                    and claim.role == "narrator"
+                    and candidate_recording_runtime_veto(
+                        candidate, report.local_claims, report.audio
+                    )
+                )
                 if (
                     claim.kind not in {ClaimKind.ISBN, ClaimKind.ASIN}
+                    and not narrator
                     or claim.reference in linked
                 ):
                     continue
+                label = "Narrator" if narrator else claim.kind.value.upper()
+                destination = "narrators" if narrator else claim.kind.value
+                reason = (
+                    "Recording timing is invalid or conflicts with this item. "
+                    if narrator
+                    else ""
+                )
                 value = (
                     _choice_text(claim.value)
                     if claim.state is FieldState.VALID and type(claim.value) is str
+                    else "No valid narrator retained"
+                    if narrator
                     else "No valid identifier retained"
                 )
                 observations.setdefault(
                     claim.reference,
                     {
-                        "destinations": [claim.kind.value],
+                        "destinations": [destination],
                         "role": "external_observation",
                         "source": _provider_label(provider.authority),
                         "observation": (
-                            f"{claim.kind.value.upper()}: {value}. Retained for review only; "
-                            "not an eligible choice. "
+                            f"{label}: {value}. Retained for review only; "
+                            f"not an eligible choice. {reason}"
                             f"Scope: {claim.scope.value}; state: {claim.state.value}; "
                             f"applicability: {claim.applicability}. "
                             f"Source record: {_choice_text(candidate.identity)}. "

@@ -6453,17 +6453,18 @@ def test_original_work_date_precision_reaches_current_guarded_effect(effects, so
     assert result.state == "verified"
     assert service.apply(operation.plan.plan_id).state == "verified"
     assert result.plan.desired_value == source
-    with closing(open_repository(effects.database_path)) as reopened:
-        assert (
-            reopened.get_field_effect(operation.plan.plan_id).to_data()
-            == result.to_data()
-        )
-        assert PersistedFieldEffectAuthority(reopened).resolve(
-            decision
-        ).decision_value == {
-            "kind": "text",
-            "value": source,
-        }
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path, create=False)
+    assert (
+        effects.repository.get_field_effect(operation.plan.plan_id).to_data()
+        == result.to_data()
+    )
+    assert PersistedFieldEffectAuthority(effects.repository).resolve(
+        decision
+    ).decision_value == {
+        "kind": "text",
+        "value": source,
+    }
 
 
 def test_isbn_refusal_history_pagination_filter_and_reader_cache(tmp_path):

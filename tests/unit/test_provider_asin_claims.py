@@ -150,7 +150,15 @@ def test_packet_linkage_accepts_canonical_asin_and_rejects_changed_facts(
         audio=base.audio,
         providers=(
             qualify_provider_observation(
-                observation, MetadataLookup(ProviderQueryKind.ASIN, base.local_claims)
+                observation,
+                MetadataLookup(
+                    ProviderQueryKind.ASIN,
+                    base.local_claims,
+                    audio=base.audio,
+                    work_title=base.target.current_title,
+                    work_authors=("Andy Weir",),
+                    requested_asin=value,
+                ),
             ),
         ),
     )

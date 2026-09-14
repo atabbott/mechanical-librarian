@@ -2855,6 +2855,12 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "frontend/src/api/http.ts",
             "frontend/src/router.tsx",
         }
+        assert set(continuity["changed_admission_sources"]) == {
+            "src/mechanical_librarian/domain/proposal_set.py",
+        }
+        for name, delta in continuity["changed_admission_sources"].items():
+            assert delta["current_sha256"] == document["source_closure"][name]
+            assert delta["measured_sha256"] != delta["current_sha256"]
         unchanged = {
             name: document["source_closure"][name]
             for name in continuity["unchanged_source_paths"]

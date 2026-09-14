@@ -47,7 +47,7 @@ def audiobook_cover_environment(
     unknown_incumbent: bool = False,
     option: str = "replace_if_strictly_better",
 ) -> Iterator[Any]:
-    out.mkdir()
+    out.mkdir(mode=0o700)
     originals = [synthetic_image("PNG", size) for size in sizes]
     decoded = [decoder.decode_cover(payload) for payload in originals]
     report = asserted_asin_report(provider_duration="58200.000")

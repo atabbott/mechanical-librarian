@@ -1094,7 +1094,7 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
         (origin, known, collision)
         for origin in ("target", "work")
         for known in (False, True)
-        for collision in ("cross_asin", "runtime_band")
+        for collision in ("cross_asin", "runtime_band", "runtime_tolerance")
     ]
     + [("local", False, "cross_asin")],
 )
@@ -1183,12 +1183,17 @@ def test_recording_collision_cannot_add_owner_choices(
             if request.url.path.endswith("/chapters"):
                 response = {
                     "runtimeLengthSec": 2494
-                    if bad and collision == "runtime_band"
+                    if bad and collision in {"runtime_band", "runtime_tolerance"}
                     else 2476,
                     "chapters": [
                         {
                             "lengthMs": v * 1000
-                            + (2900 if bad and collision == "runtime_band" else 0)
+                            + (
+                                (3900 if collision == "runtime_band" else 2900)
+                                if bad
+                                and collision in {"runtime_band", "runtime_tolerance"}
+                                else 0
+                            )
                         }
                         for v in vector
                     ],
@@ -1199,7 +1204,9 @@ def test_recording_collision_cannot_add_owner_choices(
                     returned_bad if bad and collision == "cross_asin" else asin
                 )
                 response["runtimeLengthMin"] = (
-                    43 if bad and collision == "runtime_band" else 41
+                    43
+                    if bad and collision in {"runtime_band", "runtime_tolerance"}
+                    else 41
                 )
                 response["narrators"] = [
                     {
@@ -1306,10 +1313,189 @@ def test_recording_collision_cannot_add_owner_choices(
             {p["destination"]: p["result"]["alternatives"] for p in case.proposals}
         )
         assert "Matching Recording Narrator" in alternatives
-        assert "Different Recording Narrator" not in alternatives
+        permitted = collision == "runtime_tolerance"
+        assert ("Different Recording Narrator" in alternatives) is permitted
         assert (
-            returned_bad if collision == "cross_asin" else requested_bad
-        ) not in alternatives
+            (returned_bad if collision == "cross_asin" else requested_bad)
+            in alternatives
+        ) is permitted
+        if collision != "cross_asin":
+            from mechanical_librarian.domain.audiobook_corroboration import (
+                candidate_recording_runtime_veto,
+            )
+
+            enrichment = next(p for p in replay.providers if p.provider == "enrichment")
+            other = next(
+                c
+                for c in enrichment.candidates
+                if any(
+                    c.kind is ClaimKind.ASIN and c.value == requested_bad
+                    for c in c.claims
+                )
+            )
+            assert (
+                candidate_recording_runtime_veto(
+                    other, replay.local_claims, replay.audio
+                )
+                is not permitted
+            )
+            assert any(
+                claim.value == "Different Recording Narrator" for claim in other.claims
+            )
+            assert any(claim.kind is ClaimKind.TITLE for claim in other.claims)
+            assert any(claim.kind is ClaimKind.CREATOR for claim in other.claims)
+
+            repository.close()
+            repository = open_repository(
+                tmp_path / "reports.sqlite", create=False, cross_thread=True
+            )
+            assert (
+                MetadataReport.from_json(
+                    repository.get_proposal_input(report.report_id)
+                )
+                == replay
+            )
+            from contextlib import nullcontext
+
+            from mechanical_librarian.application.review_web import (
+                InspectCurrentReviewCase,
+                RecordHumanDecision,
+                ReviewWebError,
+            )
+
+            narrator = next(
+                p for p in case.proposals if p["destination"] == "narrators"
+            )
+            proposal_id = narrator["proposal_id"]
+            assert type(proposal_id) is str
+            command = RecordHumanDecision(repository, lambda: 1000)
+            with (
+                nullcontext()
+                if permitted
+                else pytest.raises(ReviewWebError, match="invalid_selection")
+            ):
+                result = command.run(
+                    case.review_case_id,
+                    proposal_id=proposal_id,
+                    target_fingerprint=case.target_fingerprint,
+                    destination="narrators",
+                    actor="owner",
+                    outcome="accept",
+                    selected_value={
+                        "kind": "list",
+                        "value": ["Different Recording Narrator"],
+                    },
+                    idempotency_key="recording-collision-owner-0001",
+                )
+                assert result["outcome"] == "accept"
+            detail = InspectCurrentReviewCase(repository).run(case.review_case_id)
+            projected = next(
+                f for f in detail["fields"] if f["destination"] == "narrators"
+            )
+            assert (
+                {"kind": "list", "value": ["Different Recording Narrator"]}
+                in projected["proposed_values"]
+            ) is permitted
+            from argon2 import PasswordHasher
+            from fastapi.testclient import TestClient
+
+            from tests.unit.review_app_fixture import create_transport_test_app
+
+            password = tmp_path / "owner.hash"
+            password.write_text(PasswordHasher().hash("correct horse"))
+            password.chmod(0o600)
+            app = create_transport_test_app(
+                repository,
+                ReviewWebConfiguration(
+                    tls_certificate_file="/synthetic/review.crt",
+                    tls_private_key_file="/synthetic/review.key",
+                    canonical_origin="https://review.test",
+                    owner_password_hash_file=str(password),
+                ),
+                clock=lambda: 1000,
+            )
+            with TestClient(app, base_url="https://review.test") as client:
+                assert (
+                    client.post(
+                        "/api/v1/session/login",
+                        json={"password": "correct horse"},
+                        headers={"Origin": "https://review.test"},
+                    ).status_code
+                    == 200
+                )
+                response = client.get(f"/api/v1/review-cases/{case.review_case_id}")
+                assert response.status_code == 200
+                api_field = next(
+                    field
+                    for field in response.json()["fields"]
+                    if field["destination"] == "narrators"
+                )
+                assert api_field["proposed_values"] == projected["proposed_values"]
+                evidence = client.get(
+                    f"/api/v1/review-cases/{case.review_case_id}/evidence"
+                )
+                assert evidence.status_code == 200
+                evidence_items = evidence.json()["items"]
+                cursor = evidence.json()["next_cursor"]
+                while cursor is not None:
+                    page = client.get(
+                        f"/api/v1/review-cases/{case.review_case_id}/evidence",
+                        params={"cursor": cursor},
+                    )
+                    assert page.status_code == 200
+                    evidence_items.extend(page.json()["items"])
+                    cursor = page.json()["next_cursor"]
+                retained = [
+                    item
+                    for item in evidence_items
+                    if "Different Recording Narrator" in item["observation"]
+                ]
+                assert len(retained) == 1
+                if not permitted:
+                    claim = next(c for c in other.claims if c.role == "narrator")
+                    assert retained[0]["role"] == "external_observation"
+                    assert retained[0]["destinations"] == ["narrators"]
+                    assert "not an eligible choice" in retained[0]["observation"]
+                    assert (
+                        "Recording timing is invalid or conflicts"
+                        in retained[0]["observation"]
+                    )
+                    assert claim.reference in retained[0]["observation"]
+                    assert other.identity in retained[0]["observation"]
+                    assert (
+                        f"Scope: {claim.scope.value}; state: {claim.state.value}"
+                        in retained[0]["observation"]
+                    )
+            if not permitted:
+                from types import SimpleNamespace
+
+                from mechanical_librarian.adapters.field_effect_authority import (
+                    PersistedFieldEffectAuthority,
+                )
+                from tests.support.automatic_decisions import _automatic_decisions
+
+                automatic_home = tmp_path / "automatic"
+                automatic_home.mkdir(mode=0o700)
+                automatic_repository = open_repository(automatic_home / "state.sqlite")
+                try:
+                    decisions = _automatic_decisions(
+                        SimpleNamespace(repository=automatic_repository),
+                        replay,
+                        "contributor_names",
+                        "canonical",
+                        qualified=True,
+                    )
+                    automatic = next(
+                        d for d in decisions if d.destination == "narrators"
+                    )
+                    assert PersistedFieldEffectAuthority(automatic_repository).resolve(
+                        automatic
+                    ).decision_value == {
+                        "kind": "list",
+                        "value": ["Matching Recording Narrator"],
+                    }
+                finally:
+                    automatic_repository.close()
         for table in ("automatic_decisions", "field_effects", "field_effect_consents"):
             assert repository._connection.execute(
                 f"SELECT count(*) FROM {table}"

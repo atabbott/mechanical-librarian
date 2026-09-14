@@ -1041,10 +1041,15 @@ def test_work_query_requires_exact_complete_title_and_author_order() -> None:
         if value.kind is ProviderEvidenceKind.PUBLICATION_DATE_TEXT
     )
     assert () == retained.links
-    assert all(
-        value.scope is ClaimScope.WORK or value is retained
+    relation = next(
+        value
         for value in observation.candidates[0].evidence
+        if value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
     )
+    assert relation.scope is ClaimScope.EDITION
+    assert relation.value == "unresolved"
+    assert relation.links == ()
+    assert set(observation.candidates[0].evidence) == {retained, relation}
 
 
 @pytest.mark.parametrize(

@@ -967,6 +967,29 @@ def test_lookup_runtime_veto_precedes_source_selection(
     assert admitted_audiobook_identity(reopened) is admitted
     assert bool(recording_identity_basis(reopened)) is admitted
     assert reopened.providers[0 if hint_provider == "alpha" else 1].candidates == ()
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    retained = reopened.providers[0 if hint_provider == "alpha" else 1]
+    narrator_references = {
+        claim.reference
+        for candidate in retained.recording_lookup_candidates
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.CONTRIBUTOR and claim.role == "narrator"
+    }
+    assert narrator_references
+    narrator = next(
+        result
+        for result in evaluate_report(reopened).results
+        if result.destination is TargetDestination.NARRATORS
+    )
+    offered_references = {
+        reference
+        for alternative in narrator.alternatives
+        for reference in alternative.evidence_references
+    }
+    assert narrator_references.issubset(offered_references) is admitted
+    if not admitted:
+        assert narrator_references.isdisjoint(offered_references)
 
 
 @pytest.mark.parametrize("basis", ("embedded_tag", "target_metadata"))

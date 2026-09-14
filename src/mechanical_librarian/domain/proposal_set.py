@@ -2345,6 +2345,9 @@ def _plausible_narrator_candidates(
             candidate, report.local_claims, report.target.current_title or ""
         )
         is None
+        and not candidate_recording_runtime_veto(
+            candidate, report.local_claims, report.audio
+        )
         and (
             (
                 candidate in provider.candidates
@@ -2715,6 +2718,14 @@ def _list_observations(
                 ),
             )
         for candidate in candidates:
+            if (
+                destination is TargetDestination.NARRATORS
+                and report.audio is not None
+                and candidate_recording_runtime_veto(
+                    candidate, report.local_claims, report.audio
+                )
+            ):
+                continue
             if destination is TargetDestination.AUTHORS and _mixed_author_creator_roles(
                 candidate
             ):
