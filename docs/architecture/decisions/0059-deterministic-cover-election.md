@@ -36,6 +36,12 @@ separate result. A known-empty target may use the first ranked candidate; a
 confirmed target may use one only when its complete seven-part rank is strictly
 better than the confirmed incumbent. Missing or inconsistent incumbent facts
 abstain automatically while retaining the owner's ranked choices.
+For audiobooks, ADR-0073 and #1055 supersede that rank-only replacement test:
+the bound incumbent's shorter edge must be below 300 pixels, and an applicable
+portrait/square alternative must reach 500 pixels and twice the incumbent's
+shorter edge. The first eligible candidate in the existing order wins, even
+when an earlier candidate fails those limits. Adequate or unknown incumbents
+are preserved. This measured materiality rule does not change ebook election.
 Checking and running are active; queued retry/backoff waiting is quiescent.
 Readiness, rank and citations are persisted with the consideration. A changed
 fetching state or evidence creates a successor rather than rewriting history.
@@ -50,7 +56,8 @@ decision and guarded effect path as other automatic fields, including current
 policy, consent, capability, backup, optimistic-currentness, recovery and
 read-back verification. A later strictly better candidate may supersede an
 automatic cover decision while automatic authority remains active. The first
-automatic decision and every later one use the same strict rank comparison. Any manual
+automatic decision and every later one use the same media-appropriate replacement
+test. Any manual
 owner cover decision is final for this slice and prevents reopening or
 supersession.
 

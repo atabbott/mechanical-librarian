@@ -1128,3 +1128,40 @@ def test_an_ebook_with_a_cover_reference_still_follows_the_item_timestamp() -> N
         )
 
     assert fingerprints[0] != fingerprints[1]
+
+
+def test_nested_cover_declarations_are_bound_into_catalogue_fingerprint():
+    declarations: tuple[tuple[tuple[str, object], ...], ...] = (
+        (),
+        (("media", None),),
+        (("media", ""),),
+        (("media", "/a"),),
+        (("media", True),),
+        (("media", 1),),
+        (("media", {}),),
+        (("media", []),),
+        (("media", "/a"), ("metadata", None)),
+        (("media", "/a"), ("metadata", "/a")),
+        (("media", "/a"), ("metadata", "/b")),
+    )
+    fingerprints = set()
+    for declaration in declarations:
+        detail = _item()
+        for location, value in declaration:
+            mapping = (
+                detail["media"] if location == "media" else detail["media"]["metadata"]
+            )
+            mapping["coverPath"] = value
+        entry = catalogue_entry(
+            "primary",
+            _library(),
+            None,
+            {
+                "id": "item-1",
+                "libraryId": "library-1",
+                "updatedAt": detail["updatedAt"],
+            },
+            detail,
+        )
+        fingerprints.add(entry.source_fingerprint)
+    assert len(fingerprints) == len(declarations)

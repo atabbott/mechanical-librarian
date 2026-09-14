@@ -986,6 +986,10 @@ describe('ReviewApiClient', () => {
         },
       ],
     })
+    expect(
+      mapEvidence({ ...payload, items: [{ ...payload.items[0], role: 'external_observation' }] })
+        .items[0]?.role,
+    ).toBe('external_observation')
     for (const invalid of [
       { ...payload, schema_version: 'review-case-evidence-v3' },
       { ...payload, items: [{ fact: '{}', kind: 'raw', reference: 'evidence-1' }] },

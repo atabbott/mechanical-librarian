@@ -7,6 +7,8 @@ read one description of the recording rather than two (#966).
 
 from __future__ import annotations
 
+from typing import Any
+
 from mechanical_librarian.application.metadata_report import (
     MetadataLookup,
     qualify_provider_observation,
@@ -14,6 +16,7 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.domain import human_decision
 from mechanical_librarian.domain.audio_inspection import AudioChapter
 from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -318,7 +321,13 @@ def asserted_asin_report(
         providers=(
             qualify_provider_observation(
                 observation,
-                MetadataLookup(ProviderQueryKind.ASIN, claims),
+                MetadataLookup(
+                    ProviderQueryKind.ASIN,
+                    claims,
+                    work_title="Project Hail Mary",
+                    work_authors=("Andy Weir",),
+                    audio=single_track_audio_facts("b" * 64),
+                ),
             ),
         ),
         audio=single_track_audio_facts("b" * 64),
@@ -571,3 +580,314 @@ def recording_lookup_report(
         ),
         audio=single_track_audio_facts(),
     )
+
+
+def synthetic_audiobook_bibliographic_report(
+    *,
+    adult_product: object = None,
+    source_authors: tuple[str, ...] = ("Example Author",),
+    target_authors: tuple[str, ...] = ("Example Author",),
+) -> MetadataReport:
+    """A real adapter produces a fully synthetic title/subtitle pair."""
+    import httpx
+
+    from mechanical_librarian.adapters.providers.audnexus_metadata import (
+        AudnexusMetadataProvider,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_discovery_plan,
+    )
+    from tests.support.audiobook_providers import (
+        audio_claim,
+        audio_target,
+        target_title_claim,
+    )
+
+    title = "Synthetic Journey: A Tale of Courage"
+    target = audio_target(title, target_authors)
+    claims = (
+        target_title_claim(title),
+        audio_claim(ClaimKind.ASIN, "B000000001", 1),
+        audio_claim(ClaimKind.ASIN, "B000000002", 2),
+    )
+    audio = single_track_audio_facts("b" * 64)
+    plan = audiobook_discovery_plan(target, claims, audio=audio)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chapters"):
+            return httpx.Response(404, json={})
+        return httpx.Response(
+            200,
+            json={
+                "asin": request.url.path.split("/")[2],
+                "title": "Synthetic Journey",
+                "subtitle": "A Tale of Courage",
+                "isAdult": adult_product,
+                "authors": [{"name": name} for name in source_authors],
+            },
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        provider = AudnexusMetadataProvider(
+            "audnexus",
+            client,
+            262_144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1_700_000_000.0,
+            sleep=lambda value: None,
+            jitter=lambda: 0.0,
+        )
+        observation = provider.observe(plan).observation
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", target.fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=audio,
+    )
+    return MetadataReport.from_json(report.to_json())
+
+
+def synthetic_audiobook_product_lookup_report(
+    products: tuple[dict[str, object], ...], *, unavailable: bool = False
+) -> MetadataReport:
+    """Real discovery and per-product adapters, without independent local ASINs."""
+    import httpx
+
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        AudibleCatalogMetadataProvider,
+    )
+    from mechanical_librarian.adapters.providers.audnexus_metadata import (
+        AudnexusMetadataProvider,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_asin_feed_plan,
+        audiobook_discovery_plan,
+        observe_provider,
+    )
+    from tests.support.audiobook_providers import audio_target, target_title_claim
+
+    target = audio_target("Synthetic Journey", ("Example Author",))
+    claims = (target_title_claim("Synthetic Journey"),)
+    audio = single_track_audio_facts("b" * 64)
+    plan = audiobook_discovery_plan(target, claims, audio=audio)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "api.audible.com":
+            return httpx.Response(
+                200,
+                json={
+                    "products": [
+                        {
+                            "asin": product["asin"],
+                            "title": "Synthetic Journey",
+                            "authors": [{"name": "Example Author"}],
+                            "narrators": product.get("narrators"),
+                        }
+                        for product in products
+                    ],
+                    "total_results": len(products),
+                },
+            )
+        if unavailable:
+            raise httpx.ReadTimeout("synthetic unavailable", request=request)
+        if request.url.path.endswith("/chapters"):
+            return httpx.Response(404, json={})
+        asin = request.url.path.split("/")[2]
+        return httpx.Response(
+            200, json=next(product for product in products if product["asin"] == asin)
+        )
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        discovery_provider = AudibleCatalogMetadataProvider(
+            "audible",
+            client,
+            262_144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1_700_000_000.0,
+            sleep=lambda value: None,
+            jitter=lambda: 0.0,
+        )
+        discovery = observe_provider(
+            "audible", "audible_catalog", discovery_provider, plan
+        ).observation
+    feed = audiobook_asin_feed_plan(target, plan, (discovery,))
+    assert feed is not None
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        lookup_provider = AudnexusMetadataProvider(
+            "audnexus",
+            client,
+            262_144,
+            5.0,
+            marketplaces=("us",),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1_700_000_000.0,
+            sleep=lambda value: None,
+            jitter=lambda: 0.0,
+        )
+        lookup = observe_provider(
+            "audnexus", "audnexus", lookup_provider, feed
+        ).observation
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item-1", target.fields),
+        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
+        local_claims=claims,
+        local_reasons=("target_metadata_title",),
+        providers=(discovery, lookup),
+        audio=audio,
+    )
+    return MetadataReport.from_json(report.to_json())
+
+
+def publish_audiobook_preview(
+    repository: Any,
+    report: MetadataReport,
+    automatic: tuple[str, ...],
+    *,
+    selected_options: dict[str, str] | None = None,
+) -> tuple[str, ResolvedMetadataPolicy]:
+    """Publish one recording under a policy routing `automatic` to Automatic."""
+    import json
+    from typing import cast
+
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        OPTION_CATALOGUE,
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    options = dict(DEFAULT_OPTIONS)
+    options.update(selected_options or {})
+    destinations = {
+        name: "unsupported" if name == "explicit" else "ask"
+        for name in OPTION_CATALOGUE
+    }
+    for category in automatic:
+        destinations[category] = "automatic"
+    profile = MetadataPolicyProfile.create("F46 tranche", options, destinations)
+    resolved = resolve_policy(profile, report.target.library)
+    repository.enter_shadow_preview(1)
+    repository.create_metadata_policy_draft(profile.canonical_json)
+    repository.activate_metadata_policy(
+        profile.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+        2,
+    )
+    repository.activate_qualified_automatic(3)
+    proposal = evaluate_report(
+        report, resolved.resolved_id, human_review_destinations(resolved)
+    )
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    admitted = json.loads(repository.admit_review_case(proposal))
+    return cast(str, admitted["review_case_id"]), resolved
+
+
+def synthetic_audiobook_isbn_reason_report(shape: str) -> MetadataReport:
+    values: tuple[object, object] = {
+        "absent": (None, None),
+        "unassociated": ("9781250077004", None),
+        "conflict": ("9781250077004", "9780593135204"),
+        "malformed": ("9781250077004", {}),
+        "unavailable": (None, None),
+    }[shape]
+    return synthetic_audiobook_product_lookup_report(
+        tuple(
+            {
+                "asin": f"B00000000{index + 1}",
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+                "narrators": [{"name": f"Narrator {index}"}],
+                "isbn": value,
+            }
+            for index, value in enumerate(values)
+        ),
+        unavailable=shape == "unavailable",
+    )
+
+
+def synthetic_audiobook_original_date_report(
+    current: str | None = None, source: str = "2025-02-03"
+) -> MetadataReport:
+    """Replay the complete synthetic linked-work source, retaining date precision."""
+    import json
+    from dataclasses import replace
+    from pathlib import Path
+
+    import httpx
+
+    from mechanical_librarian.adapters.providers.open_library_metadata import (
+        OpenLibraryMetadataProvider,
+        OpenLibraryPacer,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_discovery_plan,
+        observe_provider,
+    )
+    from tests.support.audiobook_providers import audio_target
+
+    base = synthetic_audiobook_product_lookup_report(
+        (
+            {
+                "asin": "B000000001",
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+            },
+        )
+    )
+    fields = tuple(
+        TargetField(
+            field.destination,
+            TargetFieldState.MISSING if current is None else TargetFieldState.VALUE,
+            current,
+        )
+        if field.destination is TargetDestination.PUBLISHED_DATE
+        else field
+        for field in base.target.fields
+    )
+    plan = audiobook_discovery_plan(
+        audio_target("Synthetic Journey", ("Example Author",)),
+        base.local_claims,
+        audio=base.audio,
+    )
+    path = (
+        Path(__file__).with_name("audiobook_provider_payloads")
+        / "open_library_original_date.json"
+    )
+    responses = json.loads(path.read_text())
+    responses["/works/OL5W.json"]["first_publish_date"] = source
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path in responses
+        return httpx.Response(200, json=responses[request.url.path])
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            client,
+            262_144,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1_700_000_000.0,
+        )
+        observation = observe_provider(
+            "open_library", "open_library", provider, plan
+        ).observation
+    report = MetadataReport.create(
+        target=replace(base.target, fields=fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+    return MetadataReport.from_json(report.to_json())

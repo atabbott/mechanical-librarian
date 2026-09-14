@@ -930,10 +930,12 @@ def test_an_asin_lane_without_a_local_asin_is_corroboration_gated(
     )
 
     assert ProviderStatus.CANDIDATES is qualified.status
-    assert expected == {claim.kind for claim in qualified.candidates[0].claims}
+    assert expected | {ClaimKind.CONTRIBUTOR} == {
+        claim.kind for claim in qualified.candidates[0].claims
+    }
 
 
-def test_a_local_asin_lane_is_never_corroboration_gated() -> None:
+def test_a_local_asin_retains_candidate_without_inventing_recording_support() -> None:
     """The item's own identifier is the warrant, so nothing re-derives it."""
     local_claims = (*_feed_claims(), _audio_claim(ClaimKind.ASIN, "B08G9PRS1K", 9))
     candidate = _audiobook_candidate(local_claims, duration="51000.000")
@@ -949,7 +951,12 @@ def test_a_local_asin_lane_is_never_corroboration_gated() -> None:
         MetadataLookup(ProviderQueryKind.ASIN, local_claims),
     )
 
-    assert (candidate,) == qualified.candidates
+    assert len(qualified.candidates) == 1
+    assert qualified.candidates[0].identity == candidate.identity
+    assert not any(
+        e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        for e in qualified.candidates[0].evidence
+    )
 
 
 def test_a_plan_refuses_two_lanes_for_one_asin() -> None:
@@ -1099,7 +1106,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v43" == report.schema_version
+    assert "metadata-report-v44" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):
@@ -2869,6 +2876,7 @@ def test_a_runtime_corroborated_audiobook_candidate_keeps_its_edition_identity()
     assert {
         ProviderEvidenceKind.ASIN_MARKETPLACE,
         ProviderEvidenceKind.CHAPTER_STRUCTURE,
+        ProviderEvidenceKind.EDITION_WORK_RELATION,
     } == {value.kind for value in candidate.evidence}
     assert "us" == next(
         value.value
@@ -2910,10 +2918,16 @@ def test_an_uncorroborated_audiobook_candidate_keeps_only_its_work_shape(
         _audio_local_claims(local_duration), duration=provider_duration
     ).candidates[0]
 
-    assert {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.ASIN, ClaimKind.DURATION} == {
-        claim.kind for claim in candidate.claims
-    }
-    assert () == candidate.evidence
+    assert {
+        ClaimKind.TITLE,
+        ClaimKind.CREATOR,
+        ClaimKind.CONTRIBUTOR,
+        ClaimKind.ASIN,
+        ClaimKind.DURATION,
+    } == {claim.kind for claim in candidate.claims}
+    assert all(
+        e.kind is ProviderEvidenceKind.EDITION_WORK_RELATION for e in candidate.evidence
+    )
 
 
 def test_an_ebook_authority_never_reaches_the_widening() -> None:
@@ -2929,10 +2943,13 @@ def test_an_ebook_authority_never_reaches_the_widening() -> None:
             0
         ]
 
-        assert {ClaimKind.TITLE, ClaimKind.CREATOR} == {
+        assert {ClaimKind.TITLE, ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR} == {
             claim.kind for claim in candidate.claims
         }
-        assert () == candidate.evidence
+        assert all(
+            e.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+            for e in candidate.evidence
+        )
 
 
 def test_several_corroborated_candidates_break_the_tie_on_identity() -> None:

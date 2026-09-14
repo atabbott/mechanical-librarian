@@ -287,7 +287,8 @@ def test_a_qualified_automatic_decision_reaches_activity_without_raw_inserts(
     )
     assert automatic["category"] == "automatic"
     assert automatic["state"] == "recorded"
-    assert automatic["change"] == "Chose a title value automatically"
+    assert decision.outcome == "keep_current"
+    assert automatic["change"] == "Kept Secret History"
     assert _facts(automatic)["New value"] == "Secret History"
 
 

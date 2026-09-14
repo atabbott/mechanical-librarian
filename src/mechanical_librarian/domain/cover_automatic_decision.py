@@ -8,7 +8,7 @@ import re
 from dataclasses import dataclass
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
-    F46_COVER_FILL_IDENTITY,
+    F46_IDENTITIES_BY_DESTINATION,
     qualification_manifest_sha256,
 )
 from mechanical_librarian.domain.automatic_decision import (
@@ -199,7 +199,10 @@ class CoverAutomaticDecision:
         ):
             raise AutomaticDecisionError("invalid")
         if self.qualification_identity is not None:
-            if self.qualification_identity != F46_COVER_FILL_IDENTITY:
+            if (
+                self.qualification_identity
+                not in F46_IDENTITIES_BY_DESTINATION["cover"]
+            ):
                 raise AutomaticDecisionError("invalid")
             qualification_manifest_sha256(self.qualification_identity)
         core = self._core()

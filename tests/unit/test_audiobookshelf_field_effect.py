@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
@@ -21,14 +20,12 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_field_effect 
     AudiobookshelfFieldEffectCapabilities,
     AudiobookshelfFieldEffectTarget,
 )
-from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.private_recovery import PrivateCoverRecoveryStore
 from mechanical_librarian.application.field_effects import (
     GuardedFieldApplication,
     TargetServiceUnavailable,
 )
-from mechanical_librarian.domain.cover_evidence import CoverArtifact
 from mechanical_librarian.domain.field_effect import (
     EffectAuthority,
     EffectConsent,
@@ -41,83 +38,8 @@ if TYPE_CHECKING:
     # Imported for the `cast` below only, which is a runtime no-op.
     from collections.abc import Callable
 
-_PNG = b"\x89PNG\r\n\x1a\nsynthetic-cover"
-
-
-class _Case:
-    """The staged artifacts, mock transport and target a `setUp` carried."""
-
-    def __init__(self) -> None:
-        self.directory = tempfile.TemporaryDirectory()
-        self.artifacts = CoverArtifactStore(Path(self.directory.name) / "artifacts")
-        artifact = CoverArtifact.create(_PNG, b"preview", "image/png", 1, 1)
-        self.artifacts.stage(artifact, _PNG, b"preview")
-        self.cover = artifact.artifact_id
-        self.requests: list[httpx.Request] = []
-        self.events: list[str] = []
-        self.detail = {
-            "id": "item-1",
-            "libraryId": "library-1",
-            "mediaType": "book",
-            "updatedAt": 7,
-            "media": {
-                "metadata": {"title": "Before", "genres": ["old"]},
-                "tags": ["old"],
-            },
-        }
-        self.cover_bytes: bytes | None = None
-        self.write_status = 200
-
-        def handle(request: httpx.Request) -> httpx.Response:
-            self.requests.append(request)
-            self.events.append(request.method)
-            if request.method == "GET" and request.url.path == "/api/items/item-1":
-                return httpx.Response(
-                    200, headers={"content-type": "application/json"}, json=self.detail
-                )
-            if (
-                request.method == "GET"
-                and request.url.path == "/api/items/item-1/cover"
-            ):
-                if self.cover_bytes is None:
-                    return httpx.Response(404)
-                return httpx.Response(
-                    200, headers={"content-type": "image/png"}, content=self.cover_bytes
-                )
-            if request.method == "PATCH":
-                payload = json.loads(request.content)
-                if "tags" in payload:
-                    assert set(payload) == {"tags"}
-                    self.detail["media"]["tags"] = payload["tags"]
-                else:
-                    assert set(payload) == {"metadata"}
-                    metadata = payload["metadata"]
-                    assert isinstance(metadata, dict)
-                    assert 1 == len(metadata)
-                    self.detail["media"]["metadata"].update(metadata)
-                self.detail["updatedAt"] = 8
-                return httpx.Response(self.write_status, json={"updated": True})
-            if request.method == "POST":
-                assert b'name="cover"' in request.content
-                assert b'filename="cover.png"' in request.content
-                assert _PNG in request.content
-                self.cover_bytes = _PNG
-                self.detail["updatedAt"] = 9
-                return httpx.Response(self.write_status, json={"success": True})
-            return httpx.Response(500)
-
-        self.target = AudiobookshelfFieldEffectTarget(
-            client_factory=lambda: httpx.Client(
-                transport=httpx.MockTransport(handle),
-                headers={"Authorization": "Bearer test-key"},
-            ),
-            endpoint="https://abs.example.invalid",
-            library_id="library-1",
-            artifacts=self.artifacts,
-        )
-
-    def close(self) -> None:
-        self.directory.cleanup()
+from tests.support.audiobookshelf_targets import SYNTHETIC_COVER_PNG as _PNG
+from tests.support.audiobookshelf_targets import FieldEffectTargetCase as _Case
 
 
 @pytest.fixture
@@ -202,6 +124,7 @@ def test_metadata_effect_is_destination_minimal_and_readable(case: _Case) -> Non
         "description",
         "isbn",
         "asin",
+        "explicit",
     ),
 )
 def test_rich_metadata_target_shapes_read_apply_and_read_back(
@@ -217,6 +140,7 @@ def test_rich_metadata_target_shapes_read_apply_and_read_back(
             "description": None,
             "isbn": None,
             "asin": None,
+            "explicit": None,
         }
     )
     case.detail["media"]["tags"] = []
@@ -229,6 +153,7 @@ def test_rich_metadata_target_shapes_read_apply_and_read_back(
         "description": "Synthetic description.",
         "isbn": "9780306406157",
         "asin": "B000000001",
+        "explicit": True,
     }
     desired = values[destination]
     plan = _plan(destination, None, desired)
@@ -828,7 +753,7 @@ def test_post_dispatch_status_and_transport_loss_reconcile_through_application(
 
 
 @pytest.mark.parametrize(
-    "value,readable", (("2025-02-03", True), ("2025", False), ("2025-02", False))
+    "value,readable", (("2025-02-03", True), ("2025", True), ("2025-02", True))
 )
 def test_publication_date_transport_and_report_reader_define_the_supported_shape(
     case, value, readable

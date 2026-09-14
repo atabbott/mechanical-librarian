@@ -1304,7 +1304,11 @@ describe('Library route', () => {
       expect(
         within(health).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
       ).toBeVisible()
-      expect(within(health).getByText(/within 90 seconds/u)).toBeVisible()
+      expect(
+        within(health).getByText(
+          'Expected rule: The local running time is within 90 seconds of the running time the matched edition states.',
+        ),
+      ).toBeVisible()
       expect(
         within(health).getByText('Read from local evidence, audible-product-B08G9PRS1K'),
       ).toBeVisible()
@@ -1831,6 +1835,7 @@ describe('Library route', () => {
     expect(screen.getByText('External corroboration')).toBeVisible()
     expect(screen.queryByText('Preserved catalogue record')).not.toBeInTheDocument()
     expect(screen.getAllByText('Competing evidence').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Different source tag lists')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
     expect(
       within(fieldRail).getByRole('button', { name: /Series.*Resolved automatically/u }),
@@ -1948,6 +1953,62 @@ describe('Library route', () => {
       expect(await screen.findByText('Candidate source')).toBeVisible()
       expect(screen.queryByText('Current source')).toBeNull()
       if (!editable) expect(screen.queryByRole('button', { name: /Choose /u })).toBeNull()
+    },
+  )
+
+  it.each([
+    ['m4b', true],
+    ['m4a', true],
+    ['mp3', true],
+    ['epub', true],
+    ['unknown', true],
+    ['m4b', false],
+  ] as const)(
+    'uses neutral description alternatives only for a validated audiobook selection (%s, %s)',
+    async (mediaKind, selected) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('workspace fixture requires a field')
+      const candidate = { kind: 'text' as const, value: 'A safe regional synopsis.' }
+      const field = {
+        ...base,
+        destination: 'description' as const,
+        humanDecision: null,
+        notices: ['competing_evidence'],
+        currentRaw: null,
+        currentValue: '',
+        automaticDecision: selected
+          ? {
+              candidate_id: 'description-1',
+              decision_id: 'automatic-description',
+              destination: 'description' as const,
+              occurred_at: 1,
+              outcome: 'candidate' as const,
+              proposal_id: base.proposalId,
+              review_case_id: 'case-1',
+              selected_value: candidate,
+              target_fingerprint: base.targetFingerprint,
+            }
+          : null,
+        proposedValues: [
+          candidate,
+          { kind: 'text' as const, value: 'Another regional description.' },
+        ],
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=description', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({
+          ...detail,
+          target: { ...detail.target, mediaKind },
+          fields: [field],
+        })),
+      })
+      const neutral = selected && ['m4b', 'm4a', 'mp3'].includes(mediaKind)
+      expect(
+        await screen.findByText(neutral ? 'Different source descriptions' : 'Competing evidence'),
+      ).toBeVisible()
+      expect(
+        screen.queryByText(neutral ? 'Competing evidence' : 'Different source descriptions'),
+      ).toBeNull()
     },
   )
 
@@ -2266,6 +2327,102 @@ describe('Library route', () => {
     },
   )
 
+  it.each([
+    { ownerTags: [], mediaKind: 'm4b' },
+    { ownerTags: ['Owner tag'], mediaKind: 'm4b' },
+    { ownerTags: ['Owner tag'], mediaKind: 'm4a' },
+    { ownerTags: ['Owner tag'], mediaKind: 'mp3' },
+    { ownerTags: ['Owner tag'], mediaKind: 'ebook' },
+    { ownerTags: ['Owner tag'], mediaKind: 'epub' },
+    { ownerTags: ['Owner tag'], mediaKind: 'unknown' },
+    { ownerTags: ['Owner tag'], mediaKind: 'audiobook' },
+  ])(
+    'shows combined tags only for $mediaKind with $ownerTags',
+    async ({ ownerTags, mediaKind }) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('workspace fixture requires a field')
+      const sourceLists = [
+        ['First', 'Shared'],
+        ['Shared', 'Second'],
+      ]
+      const field = {
+        ...base,
+        destination: 'tags' as const,
+        notices: ['competing_evidence'],
+        currentValue: ownerTags.join(', ') || 'Not set',
+        currentRaw: ownerTags,
+        automaticDecision: {
+          candidate_id: 'derived-tags',
+          decision_id: 'automatic-tags',
+          destination: 'tags' as const,
+          occurred_at: 1,
+          outcome: 'candidate' as const,
+          proposal_id: base.proposalId,
+          review_case_id: 'case-1',
+          selected_value: {
+            kind: 'list' as const,
+            value: [...ownerTags, 'First', 'Shared', 'Second'],
+          },
+          target_fingerprint: base.targetFingerprint,
+        },
+        humanDecision: null,
+        decisionActions: ['keep_current', 'accept'] as const,
+        editable: true,
+        needsAttention: false,
+        navigationRole: 'resolved' as const,
+        proposedValues: sourceLists.map((value) => ({ kind: 'list' as const, value })),
+        choiceContexts: sourceLists.map((value, index) => ({
+          alternativeId: `source-tags-${String(index)}`,
+          evidence: value.map((tag) => ({
+            observation: `Metadata: ${tag}`,
+            role: 'external_corroboration' as const,
+            source: `Source record ${String(index + 1)}`,
+          })),
+          limitations: [],
+          rationale: 'Complete source tag list.',
+          recommendation: 'no_recommendation' as const,
+          recommendationReason: 'Source alternative retained.',
+          selection: 'proposed' as const,
+        })),
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=tags', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({
+          ...detail,
+          target: { ...detail.target, mediaKind },
+          fields: [field],
+        })),
+      })
+      await screen.findByRole('region', { name: 'Tags recorded choices' })
+      expect(
+        screen.getByRole('button', { name: 'Choose proposed value: First · Shared' }),
+      ).toBeVisible()
+      expect(
+        screen.getByRole('button', { name: 'Choose proposed value: Shared · Second' }),
+      ).toBeVisible()
+      if (['ebook', 'epub', 'unknown', 'audiobook'].includes(mediaKind)) {
+        expect(screen.queryByRole('region', { name: 'Tags recorded outcome' })).toBeNull()
+        expect(screen.getByText('Competing evidence')).toBeVisible()
+        expect(screen.queryByText('Different source tag lists')).toBeNull()
+        expect(
+          screen.queryByText('Compatible source tags were combined, retaining any existing tags.'),
+        ).toBeNull()
+        return
+      }
+      const recorded = await screen.findByRole('region', { name: 'Tags recorded outcome' })
+      expect(recorded).toHaveTextContent('First · Shared · Second')
+      if (ownerTags.length) expect(recorded).toHaveTextContent('Owner tag')
+      expect(recorded).toHaveTextContent('Compatible source tags were combined')
+      expect(screen.getByText('Different source tag lists')).toBeVisible()
+      expect(screen.queryByText('Competing evidence')).toBeNull()
+      await userEvent.click(within(recorded).getByRole('button', { name: 'Evidence' }))
+      expect(recorded).toHaveTextContent('Source record 1')
+      expect(recorded).toHaveTextContent('Source record 2')
+      expect(recorded).toHaveTextContent('Metadata: First')
+      expect(recorded).toHaveTextContent('Metadata: Second')
+    },
+  )
+
   it('keeps the provider-consensus contributor statement visible while revisiting choices', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('workspace fixture requires a field')
@@ -2544,7 +2701,7 @@ describe('Library route', () => {
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
   })
 
-  it('keeps the current cover pinned beside a complete eligible gallery and retains advisory reasons', async () => {
+  it.each(['epub', 'm4b'])('retains %s cover checks', async (mediaKind) => {
     const user = userEvent.setup()
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
@@ -2724,7 +2881,7 @@ describe('Library route', () => {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => ({
         ...detail,
-        target: { ...detail.target, mediaKind: 'epub' },
+        target: { ...detail.target, mediaKind },
         fields: [coverField],
       })),
     }
@@ -2751,17 +2908,32 @@ describe('Library route', () => {
     const singleFlagChecks = within(comparison).getByLabelText('Alternative 4 cover visual checks')
     const singleFlagSummary = singleFlagChecks.querySelector<HTMLElement>('.cover-defect-summary')
     if (!singleFlagSummary) throw new Error('single-flag cover summary is missing')
-    expect(within(singleFlagSummary).getByText('1 visual issue flagged')).toBeVisible()
-    expect(within(singleFlagSummary).getByText('Audiobook branding')).toBeVisible()
+    if (mediaKind === 'epub') {
+      expect(within(singleFlagSummary).getByText('1 visual issue flagged')).toBeVisible()
+      expect(within(singleFlagSummary).getByText('Audiobook branding')).toBeVisible()
+    } else {
+      expect(within(singleFlagSummary).getByText('No visual defects flagged')).toBeVisible()
+      expect(within(singleFlagSummary).queryByText('Audiobook branding')).toBeNull()
+    }
     const flaggedChecks = within(comparison).getByLabelText('Alternative 5 cover visual checks')
     const flaggedSummary = flaggedChecks.querySelector<HTMLElement>('.cover-defect-summary')
     if (!flaggedSummary) throw new Error('flagged cover summary is missing')
-    expect(within(flaggedSummary).getByText('2 visual issues flagged')).toBeVisible()
+    expect(
+      within(flaggedSummary).getByText(
+        mediaKind === 'epub' ? '2 visual issues flagged' : '3 visual issues flagged',
+      ),
+    ).toBeVisible()
     expect(within(flaggedSummary).getByText('Overlay or marking')).toBeVisible()
     expect(within(flaggedSummary).getByText('Degraded reproduction')).toBeVisible()
-    expect(within(flaggedSummary).queryByText('Text-edition branding')).not.toBeInTheDocument()
+    if (mediaKind === 'epub') {
+      expect(within(flaggedSummary).queryByText('Text-edition branding')).not.toBeInTheDocument()
+    } else {
+      expect(within(flaggedSummary).getByText('Text-edition branding')).toBeVisible()
+    }
     await user.click(within(flaggedChecks).getByText('Visual observation details'))
-    expect(within(flaggedChecks).getByText('Text-edition branding')).toBeVisible()
+    const observationDetails = flaggedChecks.querySelector('details')
+    if (!observationDetails) throw new Error('cover observation details are missing')
+    expect(within(observationDetails).getByText('Text-edition branding')).toBeVisible()
     await user.click(within(comparison).getByText('Reasons retained'))
     expect(within(comparison).getByText('Preview unavailable')).toBeVisible()
     expect(
@@ -2779,7 +2951,7 @@ describe('Library route', () => {
       recordDecision,
       getCaseDetail: vi.fn(async () => ({
         ...detail,
-        target: { ...detail.target, mediaKind: 'epub' },
+        target: { ...detail.target, mediaKind },
         fields: [
           {
             ...coverField,
@@ -2860,7 +3032,7 @@ describe('Library route', () => {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => ({
         ...detail,
-        target: { ...detail.target, mediaKind: 'epub' },
+        target: { ...detail.target, mediaKind },
         fields: [{ ...coverField, coverConsideration: recommended }],
       })),
     })
@@ -2896,7 +3068,7 @@ describe('Library route', () => {
         ...createHttp(),
         getCaseDetail: vi.fn(async () => ({
           ...detail,
-          target: { ...detail.target, mediaKind: 'epub' },
+          target: { ...detail.target, mediaKind },
           fields: [{ ...coverField, coverConsideration: ownerReady }],
         })),
       })

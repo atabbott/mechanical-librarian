@@ -197,7 +197,8 @@ shaped from the 0.20.0 production measurement recorded on #749.
 | --- | --- | --- | --- |
 | F44 Multi-file audiobook evidence | #965 | Every multi-file item of a mounted audiobook library produces the F43 closed evidence set with per-file provenance, composed duration and chapters, and cross-file consistency evidence, then enters the same provider path. | Delivered. |
 | F45 Audiobook review cases | #966 | An audiobook with an admitted work identity produces proposals and, where policy leaves a choice, a review case; every prepared audiobook ends in a first-class completed state; decisions are recorded but not applied. | Delivered. |
-| F46 Qualified automatic audiobook decisions | #967 | The dominant audiobook decision classes earn automatic authority through the #445 route against an audiobook golden corpus and sealed holdout. | In progress. Expanded supported field/operation candidates are implemented with separate evidence identities and explicit add/replace choices. Independent source quality supports 44 registered operations in six fields; retained Automatic/effect correspondence passed, with 25 default-policy changes across six of twelve books. Installed acceptance and delivery review remain pending. Title/author preserve operations failed software correspondence and are withheld alongside unsupported or unscored operations. |
+| F46 Qualified automatic audiobook decisions | #967 | Audiobook decision classes earn their own measured field/operation authority, independently of ebook qualification. | Delivered. The first expanded record registered 44 operations across six fields; its frozen source quality and software correspondence remain historical evidence. |
+| F46a Useful automatic audiobook metadata | #1047; #1046–#1056 | Supported work and recording facts reach useful automatic decisions and guarded effects, including complete narrator/tag sets, original dates, paired title/subtitle, positive-only explicit and bounded cover replacement. | Combined implementation and activation, preserving F46's prior authority and existing owner, consent and recovery boundaries. #877 remains a separate closing measurement. |
 | F47 Guarded audiobook application | #968 | Exact-current human and qualified automatic audiobook decisions apply through the existing guarded Audiobookshelf path, canary first. | Delivered. |
 | F51 Chapter-based recording corroboration | #1004 | Complete reliable local/provider chapters establish an attributed owner-reviewable recording match when overall runtime is unavailable, across local-ASIN, target-asserted, promoted-ASIN and WORK-derived acquisition. | First increment delivered through #1042/#1043. The ADR-0064/0069 amendment defines the broad activation increment; The assigned Ready activation increment implements complete missing-runtime support and bounded lookup-only acquisition; exact-candidate qualification remains required. Only the complete qualified activation outcome closes #1004. |
 | F08 Audiobook media-health observations | #144 | The audiobook report states typed, cited media-health observations distinct from metadata evidence. | Delivered. Unit 1 states the derived media-health section over retained evidence, the six composed set observations, and the zero-byte reclassification; unit 2 adds the probe's container, codec and encryption facts, preparation-time truncation for the lanes publication demotes, and `metadata-report-v40`. |
@@ -210,7 +211,8 @@ closes with it. #877 is the joint 0.19.0 and 0.21.0 closing measurement, and
 #969 closed as superseded by it.
 
 No release, tag, deployment, chapter or cover or media write, transcription
-(#24), ebook-provider audio dispatch (#962), or ebook format-ladder work
+(#24), broader ebook-provider audio dispatch (#962) beyond qualified existing
+Open Library/Hardcover WORK projections, or ebook format-ladder work
 (#751 rungs 1–2) is included.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation

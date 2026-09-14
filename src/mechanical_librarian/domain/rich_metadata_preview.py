@@ -7,9 +7,9 @@ the option-specific retained-evidence checks needed for manual preview.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
-from typing import Final
+from dataclasses import dataclass
+from typing import Final, cast
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
@@ -17,28 +17,47 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 )
 from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
-from mechanical_librarian.domain.rich_metadata_qualification import (
-    F20_PASSING_AUTOMATIC_OPTIONS,
-)
 from mechanical_librarian.domain.metadata_report import (
-    MAX_TAGS, ClaimKind, ClaimScope, FieldState, IdentifierRelation,
-    MetadataReport, ProviderCandidate, ProviderClaim, ProviderEvidenceKind,
-    ProviderObservation, ProviderQueryKind, ProviderStatus,
-    TargetDestination, TargetField, TargetFieldState, WorkIdentityContradiction,
-    isbn_family, normalize_title, provider_candidate_work_identity_contradiction,
+    MAX_TAGS,
+    ClaimKind,
+    ClaimScope,
+    FieldState,
+    IdentifierRelation,
+    MetadataReport,
+    ProviderCandidate,
+    ProviderClaim,
+    ProviderEvidenceKind,
+    ProviderObservation,
+    ProviderQueryKind,
+    ProviderStatus,
+    TargetDestination,
+    TargetField,
+    TargetFieldState,
+    WorkIdentityContradiction,
+    isbn_family,
+    normalize_title,
+    provider_candidate_work_identity_contradiction,
     target_work_identity_context,
 )
 from mechanical_librarian.domain.proposal_set import (
-    BibliographicSelectionKind, ProposalAlternative, ProposalAssessment,
-    ProposalOutcome, ProposalResult, ProposalSet,
-    ProposalValueKind, VERIFIED_MANIFESTATION_ISBN_REASON,
+    RECORDING_ASSOCIATED_ISBN_REASON,
+    VERIFIED_MANIFESTATION_ISBN_REASON,
+    BibliographicSelectionKind,
+    ProposalAlternative,
+    ProposalAssessment,
+    ProposalOutcome,
+    ProposalResult,
+    ProposalSet,
+    ProposalValueKind,
     ordinary_provider_description_source_is_safe,
-    provider_candidate_represents_target_work,
     provider_candidate_represents_target_series_work,
-    series_name_equivalence_key,
+    provider_candidate_represents_target_work,
     segment_corroboration,
+    series_name_equivalence_key,
 )
-
+from mechanical_librarian.domain.rich_metadata_qualification import (
+    F20_PASSING_AUTOMATIC_OPTIONS,
+)
 
 _DESTINATIONS: Final = {
     "subtitle": TargetDestination.SUBTITLE,
@@ -50,7 +69,9 @@ _DESTINATIONS: Final = {
     "asin": TargetDestination.ASIN,
     "explicit": TargetDestination.EXPLICIT,
 }
-_EMPTY: Final = frozenset({TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY})
+_EMPTY: Final = frozenset(
+    {TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY}
+)
 _ISBN13: Final = re.compile(r"^97[89][0-9]{10}$")
 _SUBTITLE_SEPARATORS: Final = (": ", " — ", " – ", " - ")
 _DESCRIPTION_AUTHORITY_ORDER: Final = (
@@ -78,6 +99,8 @@ class _RetainedClaim:
 class _AutomaticWorkEvidence:
     alternatives: tuple[ProposalAlternative, ...]
     references: dict[str, tuple[str, ...]]
+    audiobook: bool = False
+    sources: tuple[ProviderCandidate, ...] = ()
 
 
 def _retained_claims(report: MetadataReport) -> dict[str, _RetainedClaim]:
@@ -120,7 +143,17 @@ def _automatic_work_evidence(
         if admitted:
             alternatives.append(alternative)
             references[alternative.alternative_id] = admitted
-    return _AutomaticWorkEvidence(tuple(alternatives), references)
+    return _AutomaticWorkEvidence(
+        tuple(alternatives),
+        references,
+        report.audio is not None,
+        tuple(
+            candidate
+            for provider in report.providers
+            for candidate in provider.candidates
+            if provider_candidate_represents_target_work(report, provider, candidate)
+        ),
+    )
 
 
 def _automatic_genre_evidence(
@@ -235,10 +268,26 @@ def _project(
     retained_claims: dict[str, _RetainedClaim],
 ) -> RichFieldPreview:
     current = _data_value(target.value)
-    if field == "explicit":
-        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "explicit_unsupported")
+    if field == "explicit" and option == "unsupported":
+        return RichFieldPreview(
+            field,
+            option,
+            target.state.value,
+            current,
+            "abstain",
+            None,
+            "explicit_unsupported",
+        )
     if destination == "ignore":
-        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_ignored")
+        return RichFieldPreview(
+            field,
+            option,
+            target.state.value,
+            current,
+            "abstain",
+            None,
+            "policy_ignored",
+        )
     if (
         destination == "automatic"
         and f"{field}:{option}" not in F20_PASSING_AUTOMATIC_OPTIONS
@@ -250,29 +299,66 @@ def _project(
             and f"{field}:{option}" in qualified_policy_bases()
         )
     ):
-        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "automatic_unqualified")
+        return RichFieldPreview(
+            field,
+            option,
+            target.state.value,
+            current,
+            "abstain",
+            None,
+            "automatic_unqualified",
+        )
     if target.state not in _EMPTY and target.state is not TargetFieldState.VALUE:
-        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "target_state_unusable")
+        return RichFieldPreview(
+            field,
+            option,
+            target.state.value,
+            current,
+            "abstain",
+            None,
+            "target_state_unusable",
+        )
     if field == "tags" and option == "off":
-        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, "policy_off")
+        return RichFieldPreview(
+            field, option, target.state.value, current, "abstain", None, "policy_off"
+        )
     if target.state is TargetFieldState.VALUE and (
-        field in {"subtitle", "isbn_form"}
+        (field == "subtitle" and option != "replace_descriptive")
+        or (
+            field == "isbn_form"
+            and (
+                proposal.media_kind != "audiobook"
+                or any(alt.value.value == current for alt in result.alternatives)
+            )
+        )
         or (field == "description_fill" and option != "replace_safe_plain_text")
         or (field == "asin" and proposal.media_kind != "audiobook")
         or (field in {"genres", "tags"} and option == "fill_empty")
-        or (field == "series" and destination == "automatic" and option not in {"add_qualified", "replace_qualified"})
+        or (
+            field == "series"
+            and destination == "automatic"
+            and option not in {"add_qualified", "replace_qualified"}
+        )
+    ):
+        return _preserved(field, option, target, current)
+    if (
+        field == "subtitle"
+        and option == "replace_descriptive"
+        and (
+            proposal.media_kind != "audiobook"
+            or (
+                target.state is TargetFieldState.VALUE
+                and not _promotional_subtitle(current)
+            )
+        )
     ):
         return _preserved(field, option, target, current)
     automatic_work = None
     if destination == "automatic":
         if field == "genres":
-            automatic_work = _automatic_genre_evidence(
-                report, result, retained_claims
-            )
+            automatic_work = _automatic_genre_evidence(report, result, retained_claims)
         elif field in {"description_fill", "tags"}:
-            automatic_work = _automatic_work_evidence(
-                report, result, retained_claims
-            )
+            automatic_work = _automatic_work_evidence(report, result, retained_claims)
     if (
         automatic_work is not None
         and result.alternatives
@@ -300,6 +386,34 @@ def _project(
             retained_claims,
             automatic_work,
         )
+    if field == "explicit":
+        if proposal.media_kind != "audiobook" or option != "adult_product":
+            return _abstain(field, option, target, current, "explicit_unsupported")
+        candidates = tuple(
+            a
+            for a in result.alternatives
+            if a.value.kind is ProposalValueKind.BOOLEAN and a.value.value is True
+        )
+        if len(candidates) != 1:
+            return _preserved(field, option, target, current)
+        candidate = candidates[0]
+        if current is True:
+            return _preserved(field, option, target, current)
+        if current is not None and type(current) is not bool:
+            return _abstain(field, option, target, current, "target_state_unusable")
+        return RichFieldPreview(
+            field,
+            option,
+            target.state.value,
+            current,
+            "projected",
+            True,
+            "adult_product",
+            False,
+            None,
+            candidate.alternative_id,
+            candidate.evidence_references,
+        )
     if field == "isbn_form":
         return _isbn(field, option, target, result, report)
     if field == "asin":
@@ -307,13 +421,30 @@ def _project(
     candidate = (
         _combination_member(proposal, TargetDestination.SERIES)
         if field == "series" and option == "primary_narrative"
-        else _series_candidate(result)
+        else _series_candidate(
+            result,
+            audiobook=proposal.media_kind == "audiobook",
+            current=current,
+            option=option,
+            destination=destination,
+        )
         if field == "series"
+        else audiobook_tag_union_candidate(report, result, option)
+        if field == "tags"
+        and proposal.media_kind == "audiobook"
+        and automatic_work is not None
+        and option in {"fill_empty", "add"}
+        else _nested_audiobook_tags(automatic_work, retained_claims)
+        if field == "tags"
+        and proposal.media_kind == "audiobook"
+        and automatic_work is not None
         else _one_list_candidate(
             result,
             None if automatic_work is None else automatic_work.alternatives,
         )
         if field in {"genres", "tags"}
+        else _descriptive_audiobook_subtitle(result, report)
+        if field == "subtitle" and proposal.media_kind == "audiobook"
         else _candidate(result)
     )
     if field == "series" and destination == "automatic":
@@ -328,11 +459,15 @@ def _project(
             return _abstain(field, option, target, current, reason)
     if candidate is None:
         reason = _candidate_reason(result)
-        return RichFieldPreview(field, option, target.state.value, current, "abstain", None, reason)
+        return RichFieldPreview(
+            field, option, target.state.value, current, "abstain", None, reason
+        )
     references = (
         candidate.evidence_references
         if automatic_work is None
-        else automatic_work.references[candidate.alternative_id]
+        else automatic_work.references.get(
+            candidate.alternative_id, candidate.evidence_references
+        )
     )
     if field == "subtitle" and destination == "automatic":
         # The corroborating local claim is the decisive eligibility evidence;
@@ -353,14 +488,25 @@ def _project(
             desired = (
                 tuple(_add_audiobook_taxonomy_members(current, desired))
                 if proposal.media_kind == "audiobook"
-                else tuple((*target.value, *(item for item in candidate.value.value if item not in target.value)))
+                else tuple(
+                    (
+                        *target.value,
+                        *(
+                            item
+                            for item in candidate.value.value
+                            if item not in target.value
+                        ),
+                    )
+                )
             )
         elif option == "fill_empty" and target.state not in _EMPTY:
             return _preserved(field, option, target, current)
         elif option not in {"fill_empty", "add", "replace"}:
             return _abstain(field, option, target, current, "policy_option_unavailable")
         if len(desired) > MAX_TAGS:
-            return _abstain(field, option, target, current, "target_projection_oversized")
+            return _abstain(
+                field, option, target, current, "target_projection_oversized"
+            )
     elif field == "series":
         if candidate.value.kind is not ProposalValueKind.SERIES:
             return _abstain(field, option, target, current, "no_candidate")
@@ -373,26 +519,54 @@ def _project(
         if option == "all_qualified":
             desired = (candidate.value.value[0],)
             if _data_value(desired) == current:
-                return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
+                return RichFieldPreview(
+                    field,
+                    option,
+                    target.state.value,
+                    current,
+                    "no_op",
+                    current,
+                    "unchanged",
+                )
             return RichFieldPreview(
-                field, option, target.state.value, current, "projected",
-                _data_value(desired), None, True, _data_value(candidate.value.value),
-                candidate.alternative_id, candidate.evidence_references,
+                field,
+                option,
+                target.state.value,
+                current,
+                "projected",
+                _data_value(desired),
+                None,
+                True,
+                _data_value(candidate.value.value),
+                candidate.alternative_id,
+                candidate.evidence_references,
                 _candidate_combination_ids(proposal, candidate),
             )
         if option == "primary_narrative":
             member = _combination_member(proposal, TargetDestination.SERIES)
             if member is None:
-                return _abstain(field, option, target, current, "atomic_bundle_unavailable")
+                return _abstain(
+                    field, option, target, current, "atomic_bundle_unavailable"
+                )
             desired = (member.value.value[0],)
         if option in {"source_order", "primary_narrative"}:
             desired = (candidate.value.value[0],)
     if _data_value(desired) == current:
-        return RichFieldPreview(field, option, target.state.value, current, "no_op", current, "unchanged")
+        return RichFieldPreview(
+            field, option, target.state.value, current, "no_op", current, "unchanged"
+        )
     return RichFieldPreview(
-        field, option, target.state.value, current, "projected",
-        _data_value(desired), None, False, None,
-        candidate.alternative_id, references,
+        field,
+        option,
+        target.state.value,
+        current,
+        "projected",
+        _data_value(desired),
+        None,
+        False,
+        None,
+        candidate.alternative_id,
+        references,
         _candidate_combination_ids(proposal, candidate),
     )
 
@@ -414,7 +588,7 @@ def _selected_verified_manifestation_isbn_candidate(
     """Return the explicitly elected ISBN while retaining competing offers."""
     if (
         result.outcome is not ProposalOutcome.PROPOSE_CHANGE
-        or result.reasons != (VERIFIED_MANIFESTATION_ISBN_REASON,)
+        or result.reasons not in {(VERIFIED_MANIFESTATION_ISBN_REASON,), (RECORDING_ASSOCIATED_ISBN_REASON,)}
         or result.selected_alternative_id is None
     ):
         return None
@@ -428,7 +602,7 @@ def _selected_verified_manifestation_isbn_candidate(
     return None
 
 
-def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
+def _series_candidate(result: ProposalResult, *, audiobook: bool = False, current: object = None, option: str | None = None, destination: str | None = None) -> ProposalAlternative | None:
     """Series projection may narrow an admitted target-preserving alternative."""
     if len(result.alternatives) != 1:
         return None
@@ -438,11 +612,63 @@ def _series_candidate(result: ProposalResult) -> ProposalAlternative | None:
     if result.outcome is ProposalOutcome.PROPOSE_CHANGE:
         return _candidate(result)
     if (
+        audiobook
+        and destination == "automatic"
+        and option == "replace_qualified"
+        and alternative.value.value
+        and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
+        and result.reasons == ("insufficient_independent_corroboration",)
+        and type(current) in {list, tuple}
+        and not any(
+            series_name_equivalence_key(incumbent["name"])
+            == series_name_equivalence_key(member["name"])
+            and incumbent["sequence"] != member["sequence"]
+            for incumbent in current
+            for member in _data_value(alternative.value.value)
+        )
+    ):
+        return alternative
+    if (
+        audiobook
+        and result.reasons == ("insufficient_independent_corroboration",)
+        and type(current) in {list, tuple}
+        and all(member in _data_value(alternative.value.value) for member in current)
+    ):
+        return alternative
+    if (
         result.outcome is ProposalOutcome.KEEP
         and alternative.assessment is ProposalAssessment.PRESERVES_TARGET
     ):
         return alternative
     return None
+
+
+def _promotional_subtitle(value: object) -> bool:
+    """Recognize whole-field announcements while retaining descriptive wording."""
+    if type(value) is not str:
+        return False
+    normalized = " ".join(value.split())
+    return re.fullmatch(
+        r"(?:winner of (?:the )?.+\b(?:award|prize)(?: \d{4})?"
+        r"|(?:the |a |an )?(?:(?:international|new york times|sunday times|#1|number one) )?bestseller"
+        r"|now (?:a|an) (?:major )?(?:motion picture|film|television series|tv series|netflix series))",
+        normalized, re.IGNORECASE,
+    ) is not None
+
+
+def _descriptive_audiobook_subtitle(result: ProposalResult, report: MetadataReport) -> ProposalAlternative | None:
+    retained = _retained_claims(report)
+    candidates = [candidate for candidate in result.alternatives
+                  if candidate.value.kind is ProposalValueKind.TEXT
+                  and not _promotional_subtitle(candidate.value.value)
+                  and any((held := retained.get(reference)) is not None
+                          and type(held.claim) is ProviderClaim
+                          and held.claim.kind is ClaimKind.SUBTITLE
+                          and held.claim.state is FieldState.VALID
+                          and held.claim.scope is ClaimScope.WORK
+                          and provider_candidate_represents_target_series_work(report, held.provider, held.candidate)
+                          for reference in candidate.evidence_references)]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def _automatic_subtitle_abstention(
@@ -461,6 +687,14 @@ def _automatic_subtitle_abstention(
     if candidate is None or type(candidate.value.value) is not str:
         return None
     retained = _retained_claims(report)
+    if report.audio is not None and any(
+        (held := retained.get(reference)) is not None
+        and type(held.claim) is ProviderClaim and held.claim.kind is ClaimKind.SUBTITLE
+        and held.claim.state is FieldState.VALID and held.claim.scope is ClaimScope.WORK
+        and provider_candidate_represents_target_series_work(report, held.provider, held.candidate)
+        for reference in candidate.evidence_references
+    ):
+        return None
     if not any(
         reference.startswith("provider_")
         and (held := retained.get(reference)) is not None
@@ -668,6 +902,77 @@ def _series_membership_positions(
     return tuple(values)
 
 
+def audiobook_tag_union_candidate(
+    report: MetadataReport, result: ProposalResult, option: str
+) -> ProposalAlternative | None:
+    """Reconstruct the same bounded typed union for preview and persisted effects."""
+    if (
+        report.audio is None
+        or result.destination is not TargetDestination.TAGS
+        or option not in {"fill_empty", "add"}
+    ):
+        return None
+    retained = _retained_claims(report)
+    evidence = _automatic_work_evidence(report, result, retained)
+    alternatives = evidence.alternatives
+    sources = evidence.sources
+    if not alternatives or any(
+        a.value.kind is not ProposalValueKind.LIST for a in alternatives
+    ):
+        return None
+    if any(
+        claim.kind is ClaimKind.TAG
+        and claim.state not in {FieldState.VALID, FieldState.ABSENT}
+        for source in sources
+        for claim in source.claims
+    ):
+        return None
+    values: list[str] = []
+    references: set[str] = set()
+    for source in sources:
+        for claim in sorted(source.claims, key=lambda c: c.raw_order):
+            if (
+                claim.kind is ClaimKind.TAG
+                and claim.state is FieldState.VALID
+                and claim.value is not None
+            ):
+                references.add(claim.reference)
+                if not any(
+                    values_match(TargetDestination.TAGS, claim.value, value)
+                    for value in values
+                ):
+                    values.append(claim.value)
+    if not values or len(values) > MAX_TAGS:
+        return None
+    first = alternatives[0]
+    return ProposalAlternative.create(
+        type(first.value)(ProposalValueKind.LIST, tuple(values)),
+        first.assessment,
+        tuple(sorted(references)),
+        tuple(sorted({c for a in alternatives for c in a.correlations})),
+        first.scope,
+    )
+
+
+def _nested_audiobook_tags(
+    evidence: _AutomaticWorkEvidence,
+    retained: dict[str, _RetainedClaim],
+) -> ProposalAlternative | None:
+    """Choose an existing containing typed list, never synthesize a union."""
+    alternatives = evidence.alternatives
+    if not alternatives or any(a.value.kind is not ProposalValueKind.LIST for a in alternatives):
+        return None
+    sources = [retained[r].candidate for a in alternatives for r in evidence.references[a.alternative_id]]
+    if any(claim.kind is ClaimKind.TAG and claim.state not in {FieldState.VALID, FieldState.ABSENT}
+           for source in sources for claim in source.claims):
+        return None
+    containing = [a for a in alternatives if all(
+        any(values_match(TargetDestination.TAGS, value, other) for value in a.value.value)
+        for b in alternatives for other in b.value.value
+    )]
+    return min(containing, key=lambda a: a.alternative_id) if containing else None
+
+
 def _one_list_candidate(
     result: ProposalResult,
     alternatives: tuple[ProposalAlternative, ...] | None = None,
@@ -716,6 +1021,18 @@ def _automatic_description_candidate(
     evidence: _AutomaticWorkEvidence,
     retained_claims: dict[str, _RetainedClaim],
 ) -> tuple[ProposalAlternative | None, tuple[str, ...], str | None]:
+    if evidence.audiobook:
+        for source in evidence.sources:
+            for claim in source.claims:
+                if claim.kind is not ClaimKind.DESCRIPTION or claim.state is FieldState.ABSENT:
+                    continue
+                retained = retained_claims[claim.reference]
+                if not ordinary_provider_description_source_is_safe(
+                    claim, source,
+                    audiobook_work=type(retained.provider) is ProviderObservation
+                    and retained.provider.authority in {"audnexus", "audible_catalog"},
+                ) or (type(claim.value) is str and claim.value.rstrip().endswith(_DESCRIPTION_VISIBLE_CUTOFFS)):
+                    return None, (), "description_quality_floor_not_met"
     candidates: list[tuple[ProposalAlternative, tuple[str, ...]]] = []
     for alternative in evidence.alternatives:
         if alternative.value.kind is not ProposalValueKind.TEXT:
@@ -723,10 +1040,24 @@ def _automatic_description_candidate(
         references = tuple(
             reference
             for reference in evidence.references[alternative.alternative_id]
-            if _ordinary_description_reference(reference, alternative, retained_claims)
+            if _ordinary_description_reference(
+                reference, alternative, retained_claims, audiobook=evidence.audiobook
+            )
         )
         if references:
             candidates.append((alternative, references))
+    if evidence.audiobook:
+        candidates = [
+            (candidate, references)
+            for candidate, references in candidates
+            if type(candidate.value.value) is str
+            and candidate.value.value.strip()
+            and not candidate.value.value.rstrip().endswith(
+                _DESCRIPTION_VISIBLE_CUTOFFS
+            )
+        ]
+        if not candidates:
+            return None, (), "description_quality_floor_not_met"
     if len(candidates) <= 1:
         if len(candidates) == 1:
             candidate, references = candidates[0]
@@ -736,21 +1067,25 @@ def _automatic_description_candidate(
         (candidate, references)
         for candidate, references in candidates
         if type(candidate.value.value) is str
-        and len(candidate.value.value) >= _DESCRIPTION_MINIMUM_CHARACTERS
-        and len(candidate.value.value.split()) >= _DESCRIPTION_MINIMUM_WORDS
-        and not candidate.value.value.rstrip().endswith(
-            _DESCRIPTION_VISIBLE_CUTOFFS
+        and (
+            evidence.audiobook
+            or len(candidate.value.value) >= _DESCRIPTION_MINIMUM_CHARACTERS
+            and len(candidate.value.value.split()) >= _DESCRIPTION_MINIMUM_WORDS
         )
+        and not candidate.value.value.rstrip().endswith(_DESCRIPTION_VISIBLE_CUTOFFS)
     )
     if not qualified:
         return None, (), "description_quality_floor_not_met"
     authority_order = _DESCRIPTION_AUTHORITY_ORDER
-    if all(
+    if evidence.audiobook or all(
         retained_claims[reference].candidate is not None
-        and any(binding.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
-                and binding.scope is ClaimScope.EDITION
-                for binding in retained_claims[reference].candidate.evidence)
-        for _, references in qualified for reference in references
+        and any(
+            binding.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+            and binding.scope is ClaimScope.EDITION
+            for binding in retained_claims[reference].candidate.evidence
+        )
+        for _, references in qualified
+        for reference in references
     ):
         authority_order = (*authority_order, "audible_catalog", "audnexus")
     ranked: list[tuple[int, ProposalAlternative, tuple[str, ...]]] = []
@@ -781,9 +1116,38 @@ def _automatic_description_candidate(
     best_rank = min(rank for rank, _, _ in ranked)
     winners = tuple(item for item in ranked if item[0] == best_rank)
     if len(winners) != 1:
-        return None, (), "ambiguous_evidence"
+        if not evidence.audiobook:
+            return None, (), "ambiguous_evidence"
+        # Equally preferred regional source records are stable text choices,
+        # not independent votes or evidence that one synopsis is better.
+        sources: dict[tuple[str, str], tuple[ProposalAlternative, list[str]]] = {}
+        for _, candidate, references in winners:
+            for reference in references:
+                retained = retained_claims[reference]
+                provider = cast(ProviderObservation, retained.provider)
+                source = cast(ProviderCandidate, retained.candidate)
+                key = (provider.provider, source.identity)
+                prior = sources.get(key)
+                if prior is not None and prior[0].alternative_id != candidate.alternative_id:
+                    return None, (), "ambiguous_evidence"
+                sources.setdefault(key, (candidate, []))[1].append(reference)
+        candidate, selected = sources[min(sources)]
+        return candidate, tuple(sorted(selected)), None
     _, candidate, references = winners[0]
     return candidate, references, None
+
+
+def audiobook_description_candidate(
+    report: MetadataReport, result: ProposalResult,
+) -> tuple[ProposalAlternative, tuple[str, ...]] | None:
+    """Reconstruct synopsis selection and exact citations for persisted authority."""
+    if report.audio is None or result.destination is not TargetDestination.DESCRIPTION:
+        return None
+    retained = _retained_claims(report)
+    candidate, references, _ = _automatic_description_candidate(
+        result, _automatic_work_evidence(report, result, retained), retained,
+    )
+    return (candidate, references) if candidate is not None else None
 
 
 def _description(
@@ -804,16 +1168,34 @@ def _description(
             retained_claims,
         )
     if candidate is None:
-        return _abstain(field, option, target, _data_value(target.value), reason or "no_candidate")
-    if option not in {"safe_plain_text", "google_visible_text", "replace_safe_plain_text"}:
-        return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
+        return _abstain(
+            field, option, target, _data_value(target.value), reason or "no_candidate"
+        )
+    if option not in {
+        "safe_plain_text",
+        "google_visible_text",
+        "replace_safe_plain_text",
+    }:
+        return _abstain(
+            field,
+            option,
+            target,
+            _data_value(target.value),
+            "policy_option_unavailable",
+        )
     candidate_references = (
         candidate.evidence_references
         if source_references is None
         else source_references
     )
     if not candidate_references:
-        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+        return _abstain(
+            field,
+            option,
+            target,
+            _data_value(target.value),
+            "option_evidence_unavailable",
+        )
     google_references = tuple(
         reference
         for reference in candidate_references
@@ -822,12 +1204,32 @@ def _description(
     ordinary_references = tuple(
         reference
         for reference in candidate_references
-        if _ordinary_description_reference(reference, candidate, retained_claims)
+        if _ordinary_description_reference(
+            reference,
+            candidate,
+            retained_claims,
+            audiobook=automatic_evidence is not None and automatic_evidence.audiobook,
+        )
     )
     if option == "google_visible_text" and not google_references:
-        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
-    if option in {"safe_plain_text", "replace_safe_plain_text"} and not ordinary_references:
-        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+        return _abstain(
+            field,
+            option,
+            target,
+            _data_value(target.value),
+            "option_evidence_unavailable",
+        )
+    if (
+        option in {"safe_plain_text", "replace_safe_plain_text"}
+        and not ordinary_references
+    ):
+        return _abstain(
+            field,
+            option,
+            target,
+            _data_value(target.value),
+            "option_evidence_unavailable",
+        )
     source_references = (
         google_references if option == "google_visible_text" else ordinary_references
     )
@@ -875,6 +1277,8 @@ def _ordinary_description_reference(
     reference: str,
     alternative: ProposalAlternative,
     retained_claims: dict[str, _RetainedClaim],
+    *,
+    audiobook: bool = False,
 ) -> bool:
     retained = retained_claims.get(reference)
     return bool(
@@ -883,9 +1287,60 @@ def _ordinary_description_reference(
         and retained.claim.value == alternative.value.value
         and type(retained.candidate) is ProviderCandidate
         and ordinary_provider_description_source_is_safe(
-            retained.claim, retained.candidate
+            retained.claim,
+            retained.candidate,
+            audiobook_work=audiobook
+            and retained.provider is not None
+            and retained.provider.authority in {"audnexus", "audible_catalog"},
         )
     )
+
+
+def _audiobook_isbn_refusal(report: MetadataReport) -> str:
+    """Explain the reached identifier election without implying absent evidence."""
+    claims = tuple(
+        claim
+        for provider in report.providers
+        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.ISBN
+    )
+    if any(
+        claim.state not in {FieldState.VALID, FieldState.ABSENT} for claim in claims
+    ) or any(
+        provider.status
+        in {
+            ProviderStatus.MALFORMED,
+            ProviderStatus.INCOMPLETE,
+            ProviderStatus.OVERSIZED,
+            ProviderStatus.CANDIDATE_LIMIT_EXCEEDED,
+            ProviderStatus.QUERY_LIMIT_EXCEEDED,
+        }
+        for provider in report.providers
+    ):
+        return "source_value_malformed_or_incomplete"
+    families = {
+        family
+        for claim in claims
+        if claim.state is FieldState.VALID
+        and (family := isbn_family(claim.value)) is not None
+    }
+    if len(families) > 1:
+        return "source_values_conflict"
+    if families:
+        return "source_value_insufficient_association"
+    if any(
+        provider.status
+        in {
+            ProviderStatus.AUTHENTICATION,
+            ProviderStatus.AUTHORIZATION,
+            ProviderStatus.RATE_LIMITED,
+            ProviderStatus.UNAVAILABLE,
+        }
+        for provider in report.providers
+    ):
+        return "source_unavailable"
+    return "source_value_absent"
 
 
 def _isbn(
@@ -895,31 +1350,54 @@ def _isbn(
     result: ProposalResult,
     report: MetadataReport,
 ) -> RichFieldPreview:
-    if (
-        target.state in _EMPTY
-        and result.reasons != (VERIFIED_MANIFESTATION_ISBN_REASON,)
-    ):
+    if target.state in _EMPTY and result.reasons not in {
+        (VERIFIED_MANIFESTATION_ISBN_REASON,),
+        (RECORDING_ASSOCIATED_ISBN_REASON,),
+    }:
         return _abstain(
             field,
             option,
             target,
             _data_value(target.value),
-            "manifestation_verification_required",
+            _audiobook_isbn_refusal(report)
+            if report.audio is not None
+            else "manifestation_verification_required",
         )
     candidate = _selected_verified_manifestation_isbn_candidate(result)
     if candidate is None:
-        return _abstain(field, option, target, _data_value(target.value), "no_candidate")
+        return _abstain(
+            field, option, target, _data_value(target.value), "no_candidate"
+        )
     if option not in {"preserve_exact", "prefer_isbn13"}:
-        return _abstain(field, option, target, _data_value(target.value), "policy_option_unavailable")
+        return _abstain(
+            field,
+            option,
+            target,
+            _data_value(target.value),
+            "policy_option_unavailable",
+        )
     value = select_isbn_representation(report, candidate, option)
     if value is None:
-        return _abstain(field, option, target, _data_value(target.value), "option_evidence_unavailable")
+        return _abstain(
+            field,
+            option,
+            target,
+            _data_value(target.value),
+            "option_evidence_unavailable",
+        )
     return RichFieldPreview(
-        field, option, target.state.value, _data_value(target.value),
-        "projected", value, VERIFIED_MANIFESTATION_ISBN_REASON, False, None,
-        candidate.alternative_id, candidate.evidence_references,
+        field,
+        option,
+        target.state.value,
+        _data_value(target.value),
+        "projected",
+        value,
+        result.reasons[0],
+        False,
+        None,
+        candidate.alternative_id,
+        candidate.evidence_references,
     )
-
 
 
 def select_isbn_representation(
@@ -931,7 +1409,7 @@ def select_isbn_representation(
     accepted = {
         evidence.reference
         for evidence in report.identifier_evidence
-        if evidence.relation is IdentifierRelation.ACCEPTED
+        if evidence.relation in {IdentifierRelation.ACCEPTED, IdentifierRelation.RECORDING_ASSOCIATED}
     }
     retained_claims = _retained_claims(report)
     family = isbn_family(
@@ -956,7 +1434,7 @@ def select_isbn_representation(
             return None
         values.append((value, retained.provider is None))
     if option == "preserve_exact":
-        values = [value for value in values if value[1]]
+        values = [value for value in values if value[1] or report.audio is not None]
     else:
         values = [
             value
@@ -1063,7 +1541,17 @@ def _subtitle_bundle(
             "corroborated_split_unavailable",
         )
     desired = {"title": _data_value(title_candidate.value.value), "subtitle": _data_value(candidate.value.value)}
-    return RichFieldPreview(field, option, target.state.value, _data_value(target.value), "projected", desired, None)
+    return RichFieldPreview(
+        field, option, target.state.value, _data_value(target.value), "projected", desired, None,
+        source_candidate_id=candidate.alternative_id,
+        source_evidence_references=candidate.evidence_references,
+        source_combination_ids=tuple(sorted(
+            combination.combination_id for combination in proposal.bibliographic_combinations
+            if all(any(selection.destination is destination and selection.alternative_id == alternative.alternative_id
+                       for selection in combination.selections)
+                   for destination, alternative in ((TargetDestination.TITLE, title_candidate), (TargetDestination.SUBTITLE, candidate)))
+        )),
+    )
 
 
 def _combination_member(proposal: ProposalSet, destination: TargetDestination) -> ProposalAlternative | None:
@@ -1172,6 +1660,17 @@ def project_audiobook_automatic_decision_value(
                 "value": _add_audiobook_taxonomy_members(current_value, candidate_value["value"]),
             }, None,
         )
+    elif field == "explicit" and option == "adult_product":
+        if candidate_value["kind"] != "boolean" or candidate_value["value"] is not True or (current_value is not None and type(current_value) is not bool):
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        projected = {"kind": "boolean", "value": True}
+    elif field == "subtitle" and option == "replace_descriptive":
+        value = candidate_value["value"]
+        if candidate_value["kind"] != "text" or type(value) is not str or _promotional_subtitle(value):
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        if current_value not in (None, "", value) and not _promotional_subtitle(current_value):
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        projected = {"kind": "text", "value": value}
     else:
         projected = project_f20_automatic_decision_value(
             field,
@@ -1222,7 +1721,10 @@ def _data_value(value: object) -> object:
 
 
 __all__ = [
-    "RichFieldPreview", "RichMetadataPreview", "RichMetadataPreviewError",
-    "compile_rich_metadata_preview", "project_f20_automatic_decision_value",
+    "RichFieldPreview",
+    "RichMetadataPreview",
+    "RichMetadataPreviewError",
+    "compile_rich_metadata_preview",
+    "project_f20_automatic_decision_value",
     "select_isbn_representation",
 ]

@@ -31,8 +31,13 @@ one request and read-back on both pinned images -- the 2.26.0 floor and the
 
 ## Decision
 
-The guarded envelope is the fifteen book-media destinations, the same set on
-both media. Narrators joins it: it is written as `metadata.narrators`, a plain
+The original guarded envelope contained fifteen book-media destinations, the same
+set on both media. F46a (#1047/#1056) extends that set to sixteen with `explicit`.
+Its exact boolean representation may set true from a qualified adult-product
+positive; false or missing source evidence never clears a value. Existing
+consents lapse because the whole destination-set digest changes; an owner must
+grant new consent, and automatic application remains off by default.
+Narrators is written as `metadata.narrators`, a plain
 list of strings, stored whole and read back whole, and an absent cast reads as
 no value. A service that answers narrators in any other shape disables that
 destination alone -- the capability reads `field_unavailable` and the library
@@ -60,9 +65,12 @@ one, and Activity discloses narrators' readiness and re-offers consent before
 any write is scheduled. No schema version moves; `human-decision-v2` is
 unchanged.
 
-Chapters, duration, media files, tag files and embedded writes stay excluded,
-as does the audiobook cover, which remains ineligible behind provider recovery.
-Subtitle stays withheld on a recording (ADR-0069).
+Chapters, duration, media files, tag files and embedded writes stay excluded.
+ADR-0073 governs the later qualified audiobook cover and subtitle operations.
+Its paired title/subtitle effect extends the existing claim and audit with the
+exact companion, both decisions and both consents; one PATCH must verify both
+values before the pair is reported applied. It does not create a second
+audiobook lifecycle or weaken ambiguous-response recovery.
 
 ## Consequences
 
@@ -74,9 +82,8 @@ Negative. Every library needs exactly one fresh consent after this build is
 installed, because the envelope identity moved. Decisions retained under F45
 never apply; an owner who wants those values written decides them again.
 
-Neutral and deferred. F46 owns automatic audiobook authority; until it lands
-the audiobook lane is human-decided only. The audiobook cover stays behind
-provider recovery. The F20 rich-metadata manifest keeps narrators in its
+Neutral and deferred. F46 and F46a own automatic audiobook authority under
+ADR-0073. The F20 rich-metadata manifest keeps narrators in its
 excluded destinations, and re-pins the behaviour-source digests this change
 edits without any option being re-measured.
 

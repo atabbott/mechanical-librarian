@@ -40,6 +40,7 @@ from mechanical_librarian.domain.metadata_report import (
     comparison_links,
     default_target_fields,
 )
+from tests.support.audiobook_reports import chapter_runtime_report
 from tests.support.metadata_report_doubles import single_track_audio_facts
 
 
@@ -723,3 +724,96 @@ def test_subsecond_variation_does_not_make_uniform_chapters_discriminating() -> 
     )
     assert local_chapter_durations_seconds(audio) == (291,) * 6
     assert not complete_chapter_runtime_agreement(audio, report.local_claims, structure)
+
+
+@pytest.mark.parametrize(
+    ("local", "provider", "expected"),
+    [
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            True,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (12, 18, 101, 203, 307, 409, 503, 607, 40),
+            True,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (75, 30, 101, 203, 307, 409, 503, 607, 40),
+            False,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (175, 30, 101, 203, 307, 409, 503, 607, 40),
+            True,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (175, 30, 101, 203, 307, 409, 503, 607, 40, 185),
+            True,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 40),
+            (12, 18, 101, 203, 307, 409, 503, 40),
+            True,
+        ),
+        ((30, 101, 203, 307, 409, 40), (12, 18, 101, 203, 307, 409, 40), False),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (12, 18, 101, 213, 297, 409, 503, 607, 40),
+            False,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (30, 101, 100, 103, 307, 409, 503, 607, 40),
+            False,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (12, 18, 101, 203, 307, 409, 503, 607, 20, 20),
+            False,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (601, 30, 101, 203, 307, 409, 503, 607, 40),
+            False,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (400, 30, 101, 203, 307, 409, 503, 607, 40, 300),
+            False,
+        ),
+        (
+            (30, 101, 203, 307, 409, 503, 607, 40),
+            (100, 100, 101, 203, 307, 409, 503, 607, 40),
+            False,
+        ),
+        (
+            (30, 100, 100, 100, 100, 100, 40),
+            (12, 18, 100, 100, 100, 100, 100, 40),
+            False,
+        ),
+    ],
+)
+def test_bounded_chapter_correspondence(
+    local: tuple[int, ...], provider: tuple[int, ...], expected: bool
+) -> None:
+    chapters = []
+    start = 0
+    for i, duration in enumerate(local, 1):
+        chapters.append(AudioChapter(i, start, start + duration * 1000, None))
+        start += duration * 1000
+    structure = ProviderChapterStructure(len(provider), sum(provider), provider)
+    report = chapter_runtime_report(
+        local_duration=f"{sum(local)}.000",
+        chapters=tuple(chapters),
+        structure=structure,
+    )
+    assert (
+        audiobook_corroboration.complete_chapter_runtime_agreement(
+            report.audio, report.local_claims, structure
+        )
+        is expected
+    )

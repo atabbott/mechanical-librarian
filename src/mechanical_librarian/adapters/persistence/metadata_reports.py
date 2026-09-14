@@ -325,6 +325,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._field_effect_activity = SQLiteFieldEffectActivityRepository(
             connection,
             binding,
+            validate_shadow_outcome_row=self._validate_shadow_outcome_row,
             review_case_accepts_authority=(
                 lambda review_case_id: self._review_case_accepts_authority(
                     review_case_id

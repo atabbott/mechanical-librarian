@@ -8,6 +8,7 @@ from typing import cast
 
 import pytest
 
+from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
@@ -54,6 +55,7 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_f20_automatic_decision_value,
     select_isbn_representation,
 )
+from tests.support.audiobook_reports import synthetic_audiobook_product_lookup_report
 from tests.support.description_advice import _description_candidate
 from tests.support.proposal_evidence import (
     _claim,
@@ -80,6 +82,160 @@ _QUALIFIED_DESCRIPTION = (
     "This complete provider description contains enough specific words to clear "
     "the conservative quality floor while remaining ordinary readable book prose."
 )
+
+
+@pytest.fixture
+def regional_synopsis_products():
+    return tuple(
+        {
+            "asin": f"B00000000{index}",
+            "title": "Synthetic Journey",
+            "authors": [{"name": "Example Author"}],
+            "summary": text,
+        }
+        for index, text in (
+            (1, "A voyage reveals a hidden city."),
+            (2, "Two explorers discover an ancient city beneath the sea."),
+        )
+    )
+
+
+@pytest.mark.parametrize("reverse", (False, True))
+@pytest.mark.parametrize("swap_texts", (False, True))
+def test_regional_synopsis_uses_stable_source_record_without_ranking_text(
+    regional_synopsis_products,
+    monkeypatch,
+    reverse,
+    swap_texts,
+):
+    products = regional_synopsis_products
+    if swap_texts:
+        products[0]["summary"], products[1]["summary"] = (
+            products[1]["summary"],
+            products[0]["summary"],
+        )
+    expected = products[0]["summary"]
+    report = synthetic_audiobook_product_lookup_report(
+        tuple(reversed(products)) if reverse else products
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+        | {"description_fill:safe_plain_text:audiobook_description_fill"},
+    )
+    proposal, fields = _target_work_preview(report)
+    field = fields["description_fill"]
+    assert field.outcome == "projected" and field.reason is None
+    assert field.desired_value == expected
+    winner = next(
+        candidate
+        for provider in report.providers
+        for candidate in provider.candidates
+        if candidate.identity == "audnexus-book-B000000001"
+    )
+    assert field.source_evidence_references == tuple(
+        claim.reference
+        for claim in winner.claims
+        if claim.kind is ClaimKind.DESCRIPTION
+    )
+    assert {
+        alternative.value.value
+        for alternative in _description_result(proposal).alternatives
+    } == {product["summary"] for product in products}
+    reopened = MetadataReport.from_json(report.to_json())
+    assert _target_work_preview(reopened)[1]["description_fill"] == field
+
+
+@pytest.mark.parametrize(
+    ("shape", "value", "reason"),
+    [
+        ("unsafe", "<script>bad()</script>", "description_quality_floor_not_met"),
+        ("malformed", {}, "description_quality_floor_not_met"),
+        ("cutoff", "A journey...", "description_quality_floor_not_met"),
+        ("wrong_work", None, "target_work_applicability_unproved"),
+    ],
+)
+def test_regional_synopsis_preserves_source_safety_and_work_refusals(
+    regional_synopsis_products,
+    monkeypatch,
+    shape,
+    value,
+    reason,
+):
+    products = regional_synopsis_products
+    if shape == "wrong_work":
+        for product in products:
+            product["title"] = "Different Work"
+    else:
+        products[0]["summary"] = value
+    report = synthetic_audiobook_product_lookup_report(products)
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+        | {"description_fill:safe_plain_text:audiobook_description_fill"},
+    )
+    proposal, fields = _target_work_preview(report)
+    field = fields["description_fill"]
+    assert (field.outcome, field.reason, field.desired_value) == (
+        "abstain",
+        reason,
+        None,
+    )
+    assert _description_result(proposal).alternatives
+
+
+def test_regional_synopsis_refuses_competing_texts_within_one_source_record(
+    regional_synopsis_products,
+    monkeypatch,
+):
+    report = synthetic_audiobook_product_lookup_report(regional_synopsis_products)
+    provider = next(value for value in report.providers if value.provider == "audnexus")
+    candidate = provider.candidates[0]
+    original = next(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DESCRIPTION
+    )
+    competing = ProviderClaim.create(
+        provider=provider.provider,
+        candidate=candidate.identity,
+        kind=ClaimKind.DESCRIPTION,
+        value="A different account supplied inside the same source record.",
+        state=FieldState.VALID,
+        scope=original.scope,
+        applicability=original.applicability,
+        raw_order=max(claim.raw_order for claim in candidate.claims) + 1,
+    )
+    changed = replace(candidate, claims=(*candidate.claims, competing))
+    report = MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        audio=report.audio,
+        providers=tuple(
+            replace(
+                value,
+                candidates=tuple(
+                    changed if item.identity == candidate.identity else item
+                    for item in value.candidates
+                ),
+            )
+            if value.provider == provider.provider
+            else value
+            for value in report.providers
+        ),
+    )
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+        | {"description_fill:safe_plain_text:audiobook_description_fill"},
+    )
+    proposal, fields = _target_work_preview(report)
+    assert fields["description_fill"].reason == "ambiguous_evidence"
+    assert fields["description_fill"].desired_value is None
+    assert len(_description_result(proposal).alternatives) == 3
 
 
 def _preview_field(report, field, option):
@@ -3282,6 +3438,7 @@ def test_isbn_representation_uses_accepted_lexicals_within_the_elected_family() 
     mixed = cast(
         MetadataReport,
         SimpleNamespace(
+            audio=None,
             local_claims=report.local_claims,
             providers=report.providers,
             identifier_evidence=tuple(
@@ -3307,6 +3464,7 @@ def test_isbn_representation_uses_accepted_lexicals_within_the_elected_family() 
     without_isbn13 = cast(
         MetadataReport,
         SimpleNamespace(
+            audio=None,
             local_claims=mixed.local_claims,
             providers=mixed.providers,
             identifier_evidence=tuple(

@@ -91,10 +91,11 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'subtitle',
     label: 'Subtitle',
-    meaning: 'Fill an empty subtitle or use a corroborated title and subtitle pair.',
-    options: ['fill_empty', 'corroborated_split'],
+    meaning: 'Use a supported descriptive subtitle, or a corroborated title and subtitle pair.',
+    options: ['fill_empty', 'replace_descriptive', 'corroborated_split'],
     optionLabels: {
       fill_empty: 'Fill only when empty',
+      replace_descriptive: 'Replace a promotional subtitle',
       corroborated_split: 'Use corroborated split',
     },
     chapter: 'identity',
@@ -103,16 +104,17 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'date_precision',
     label: 'Publication date and year',
-    meaning: 'The date and matching year move together as one edition fact.',
+    meaning:
+      'Audiobooks use original work publication; ebooks retain edition publication. Recording release dates stay separate.',
     options: ['year', 'full_date'],
-    optionLabels: { year: 'Year only', full_date: 'Full date with matching year' },
+    optionLabels: { year: 'Year only', full_date: 'Keep source date precision' },
     chapter: 'publication',
     automatic: true,
   },
   {
     key: 'publisher_preference',
     label: 'Publisher',
-    meaning: 'Choose the supported publisher level for the same manifestation.',
+    meaning: 'Choose the supported publisher or imprint for the applicable work or edition.',
     options: ['publisher', 'imprint'],
     optionLabels: { publisher: 'Prefer publisher', imprint: 'Prefer imprint' },
     chapter: 'publication',
@@ -121,7 +123,8 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'isbn_form',
     label: 'ISBN',
-    meaning: 'Preserve exact ISBN data or choose an admitted ISBN-13 representation.',
+    meaning:
+      'Use an ISBN associated with the selected audiobook recording or ebook edition; a lookup hint alone is not enough.',
     options: ['preserve_exact', 'prefer_isbn13'],
     optionLabels: { preserve_exact: 'Preserve exact ISBN', prefer_isbn13: 'Prefer ISBN-13' },
     chapter: 'publication',
@@ -165,7 +168,8 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'tags',
     label: 'Tags',
-    meaning: 'Tags are off by default and remain manual review choices.',
+    meaning:
+      'Tags are off by default. When enabled, use compatible source tags or review them yourself.',
     options: ['off', 'fill_empty', 'add', 'replace'],
     optionLabels: {
       off: 'Off',
@@ -193,16 +197,21 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'cover_order',
     label: 'Cover',
-    meaning: 'Choose the best identity-confirmed cover by one deterministic order.',
-    options: ['fixed_source_order'],
-    optionLabels: { fixed_source_order: 'Deterministic confirmed order' },
+    meaning:
+      'Use a confirmed cover. Audiobooks keep an adequate cover and replace only a small incumbent with a materially larger match.',
+    options: ['fixed_source_order', 'replace_if_strictly_better'],
+    optionLabels: {
+      fixed_source_order: 'Fill from confirmed order',
+      replace_if_strictly_better: 'Replace with a material improvement',
+    },
     chapter: 'curation',
     automatic: true,
   },
   {
     key: 'asin',
     label: 'ASIN',
-    meaning: 'Preserve exact ASIN data or select an admitted ebook manifestation.',
+    meaning:
+      'Use an ASIN associated with the audiobook recording, or select an admitted ebook manifestation.',
     options: ['preserve_exact', 'ebook_manifestation'],
     optionLabels: {
       preserve_exact: 'Preserve exact ASIN',
@@ -214,12 +223,15 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'explicit',
     label: 'Explicit-content flag',
-    meaning: 'This destination is visible but is not currently supported.',
-    options: ['unsupported'],
-    optionLabels: { unsupported: 'Not currently supported' },
+    meaning:
+      'An adult-product source may set an audiobook flag to true. Missing or false evidence never clears it or certifies clean content.',
+    options: ['unsupported', 'adult_product'],
+    optionLabels: {
+      unsupported: 'Leave flag unchanged',
+      adult_product: 'Set from adult-product evidence',
+    },
     chapter: 'unsupported',
     automatic: false,
-    unsupported: true,
   },
 ]
 
@@ -275,21 +287,30 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     admitted: 'one corroborated title and subtitle pair',
     transformation: 'splits only an admitted exact joined title',
     effect: 'sets Title and Subtitle together',
-    fallback: 'abstains when the pair or exact join is absent',
+    fallback:
+      'requires both fields to be Automatic and separately consented; either blocked member stops the whole pair',
+  },
+  'subtitle:replace_descriptive': {
+    admitted: 'a supported descriptive subtitle for this audiobook work',
+    transformation: 'replaces only a recognized whole-field promotion',
+    effect: 'fills an empty Subtitle or replaces an award, bestseller or adaptation announcement',
+    fallback: 'keeps genuine descriptive text and never clears a subtitle from missing evidence',
   },
   'date_precision:year': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without reducing the candidate',
     effect:
       'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision',
-    fallback: 'unavailable for audiobook Automatic; requires a qualified decision for ebooks',
+    fallback:
+      'requires a qualified original-work date for audiobooks; recording release dates do not qualify',
   },
   'date_precision:full_date': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
     transformation: 'records the option without changing candidate precision',
     effect:
       'Automatic writes only that exact selected Publication date or Publication year destination value for each qualified decision',
-    fallback: 'audiobook Automatic requires a full calendar day and a qualified operation',
+    fallback:
+      'audiobooks retain the supplied year, month or day precision without inventing a date; the operation must be qualified',
   },
   'publisher_preference:publisher': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
@@ -372,16 +393,16 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     fallback: 'always abstains from tag changes',
   },
   'tags:fill_empty': {
-    admitted: 'one exact eligible source list',
-    transformation: 'keeps the list unchanged',
+    admitted: 'compatible explicit tag lists from applicable sources',
+    transformation: 'audiobooks combine supported members in stable source order',
     effect: 'fills empty Tags only',
     fallback: 'abstains when Tags is populated or no list is eligible',
   },
   'tags:add': {
-    admitted: 'one exact eligible source list',
-    transformation: 'adds only values absent from Tags',
+    admitted: 'compatible explicit tag lists from applicable sources',
+    transformation: 'keeps owner tags and adds supported audiobook members in stable order',
     effect: 'extends Tags',
-    fallback: 'abstains when no list is eligible',
+    fallback: 'abstains when relevant lists are malformed, incomplete or conflicting',
   },
   'tags:replace': {
     admitted: 'one exact eligible source list',
@@ -391,12 +412,12 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   },
   'description_fill:safe_plain_text': {
     admitted:
-      'one applicable bounded plain-text description; competing descriptions must also pass the fixed quality floor',
+      'safe complete text from an applicable source; audiobook regional alternatives remain visible',
     transformation:
-      'uses safe source text; admitted audiobook descriptions may use bounded visible text from provider HTML',
+      'uses the preferred applicable source; equal audiobook sources use stable source-record order, never text length',
     effect: 'fills an empty Description only',
     fallback:
-      'abstains when applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, or unsupported',
+      'abstains for unsafe or incomplete source text, conflicting work identity, or unavailable qualification',
   },
   'description_fill:replace_safe_plain_text': {
     admitted: 'one useful description from an applicable source',
@@ -413,8 +434,16 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   'cover_order:fixed_source_order': {
     admitted: 'identity-confirmed non-current covers after provider fetching is quiescent',
     transformation: 'uses the frozen identity, aspect, size and packet tie-break order',
-    effect: 'selects the rank-one confirmed Cover candidate',
-    fallback: 'abstains while fetching or when no non-current match is confirmed',
+    effect: 'fills an empty Cover',
+    fallback: 'preserves an existing Cover',
+  },
+  'cover_order:replace_if_strictly_better': {
+    admitted: 'confirmed audiobook covers with a known small incumbent',
+    transformation: 'selects the first eligible cover in the existing confirmed order',
+    effect:
+      'replaces an incumbent below 300 pixels on its shorter edge with a candidate at least 500 pixels and twice as large on that edge',
+    fallback:
+      'preserves adequate or unknown incumbents; the candidate must have an acceptable portrait or square aspect and a qualified operation',
   },
   'asin:preserve_exact': {
     admitted: 'an already admitted exact ASIN',
@@ -428,6 +457,19 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     effect: 'sets ASIN',
     fallback: 'abstains when no ebook manifestation is admitted',
   },
+  'explicit:unsupported': {
+    admitted: 'no automatic source value',
+    transformation: 'does not interpret content',
+    effect: 'leaves the explicit-content flag unchanged',
+    fallback: 'stays off until the owner chooses an eligible representation and review mode',
+  },
+  'explicit:adult_product': {
+    admitted: 'positive adult-product evidence for the applicable audiobook',
+    transformation: 'sets only true, never false',
+    effect: 'may set the flag to true after separate application consent',
+    fallback:
+      'preserves the current flag for false or missing evidence; this does not certify clean content',
+  },
 }
 
 // The one resolution of "what this field says when the document is silent".
@@ -436,7 +478,10 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
 const fieldDefaults: Readonly<Record<string, PolicyFieldDefault>> = Object.fromEntries(
   fields.map((field) => [
     field.key,
-    { destination: field.unsupported ? 'unsupported' : 'ask', option: field.options[0] ?? '' },
+    {
+      destination: field.unsupported || field.key === 'explicit' ? 'unsupported' : 'ask',
+      option: field.options[0] ?? '',
+    },
   ]),
 )
 
@@ -458,8 +503,8 @@ const chapters: readonly { key: PolicySection; label: string; description: strin
   },
   {
     key: 'unsupported',
-    label: 'Unsupported',
-    description: 'Fields Mechanical Librarian can detect but cannot change yet.',
+    label: 'Additional fields',
+    description: 'Fields with limited support that start off until you enable them.',
   },
 ]
 
@@ -468,6 +513,15 @@ const readableCategory = (key: string) =>
 const previewValue = (value: unknown) => {
   if (value === null || value === undefined || value === '') return 'empty'
   if (typeof value === 'string') return value
+  if (
+    typeof value === 'object' &&
+    Object.keys(value).length === 2 &&
+    'title' in value &&
+    'subtitle' in value &&
+    typeof value.title === 'string' &&
+    typeof value.subtitle === 'string'
+  )
+    return `Title: ${value.title}; Subtitle: ${value.subtitle}`
   return JSON.stringify(value)
 }
 
@@ -499,7 +553,15 @@ const humanReason = (reason: string | null) => {
   if (reason === 'ambiguous_evidence') return 'evidence is ambiguous'
   if (reason === 'policy_ignored' || reason === 'policy_off')
     return 'this policy leaves the field unchanged'
-  if (reason === 'explicit_unsupported') return 'this destination is not currently supported'
+  if (reason === 'explicit_unsupported')
+    return 'this policy leaves the explicit-content flag unchanged'
+  if (reason === 'source_value_absent') return 'the source supplied no ISBN'
+  if (reason === 'source_unavailable') return 'the ISBN source could not be reached'
+  if (reason === 'source_value_malformed_or_incomplete')
+    return 'source ISBN data is malformed or incomplete'
+  if (reason === 'source_values_conflict') return 'sources supply competing ISBNs'
+  if (reason === 'source_value_insufficient_association')
+    return 'the supplied ISBN is not sufficiently linked to this recording'
   if (reason === 'verified_manifestation_isbn')
     return 'deterministic identity evidence binds it to this file’s work'
   if (reason === 'target_work_contradicted')
@@ -562,7 +624,7 @@ export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisp
   if (field.reason === 'explicit_unsupported')
     return {
       changed: false,
-      title: 'No supported value found',
+      title: 'No change',
       detail: `${current} remains — ${humanReason(field.reason)}`,
       technicalDetail,
     }
@@ -1187,7 +1249,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             {visibleFields.map((field) => {
               const option = draft.options[field.key] ?? field.options[0] ?? ''
               const destination =
-                draft.destinations[field.key] ?? (field.unsupported ? 'unsupported' : 'ask')
+                draft.destinations[field.key] ?? fieldDefaults[field.key]?.destination ?? 'ask'
               const qualified = automaticQualified(field, option, qualification)
               const automaticAvailable = qualified && automaticAllowed
               const changed = fieldChanged(field)
@@ -1260,6 +1322,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       <div className="cm-policy-mode-control">
                         <span className="cm-policy-control-heading">
                           <strong>Review mode</strong>
+                          {destination === 'unsupported' ? (
+                            <small>Off until you choose a review mode</small>
+                          ) : null}
                           {automaticAvailable ? null : <small>Automatic mode not supported</small>}
                         </span>
                         <div

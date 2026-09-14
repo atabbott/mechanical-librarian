@@ -20,6 +20,7 @@ from mechanical_librarian.domain.proposal_set import (
     EVIDENCE_LED_TITLE_REASON,
     ProposalOutcome,
     ProposalSet,
+    narrator_candidate_set_agrees,
     provider_candidate_represents_target_recording,
     provider_candidate_supports_complete_narrators,
 )
@@ -113,6 +114,7 @@ def validate_candidate_decision_summary(
             "creator_roles",
             "independent_title",
             "recording_support",
+            "narrator_agreement",
             "evidence_scope",
             "publication",
             "selected_manifestation_binding",
@@ -136,7 +138,12 @@ def validate_candidate_decision_summary(
         )
     ):
         raise DecisionSummaryValueError("candidate decision summary is invalid")
-    if type(summary["recording_support"]) is not bool:
+    if (
+        type(summary["recording_support"]) is not bool
+        or type(summary["narrator_agreement"]) is not bool
+        or summary["narrator_agreement"]
+        and destination != "narrators"
+    ):
         raise DecisionSummaryValueError("candidate decision summary is invalid")
     if type(summary["independent_title"]) is not bool or (
         summary["independent_title"]
@@ -324,11 +331,12 @@ def _creator_role_fact(claim: object) -> dict[str, object] | None:
     }
 
 
-def _creator_roles(
+def creator_role_evidence(
     report: MetadataReport,
     destination: str,
     alternative: dict[str, object],
 ) -> tuple[dict[str, object], set[str]]:
+    """Reconstruct included and excluded creator roles from one report alternative."""
     empty: dict[str, object] = {"excluded": [], "included": []}
     if destination != TargetDestination.AUTHORS.value:
         return empty, set()
@@ -484,7 +492,7 @@ def candidate_decision_summary(
     # ProposalAlternative.to_data always projects "correlations" as a list of
     # the alternative's str correlation tuple.
     correlations = set(cast("list[str]", alternative["correlations"]))
-    creator_roles, role_references = _creator_roles(
+    creator_roles, role_references = creator_role_evidence(
         report,
         destination,
         alternative,
@@ -506,7 +514,11 @@ def candidate_decision_summary(
             "report_only": True,
             "write_eligibility": "unsupported",
         }
+    narrator_agreement = destination == "narrators" and narrator_candidate_set_agrees(
+        report, tuple(cast("list[str]", alternative["evidence_references"]))
+    )
     return {
+        "narrator_agreement": narrator_agreement,
         "recording_support": any(
             provider_candidate_represents_target_recording(report, provider, candidate)
             and (
@@ -538,7 +550,11 @@ def candidate_decision_summary(
         "creator_roles": creator_roles,
         "evidence_scope": alternative["scope"],
         "publication": publication,
-        "selected_manifestation_binding": (_manifestation_binding(report, alternative)),
+        "selected_manifestation_binding": (
+            "associated_work_only"
+            if narrator_agreement
+            else _manifestation_binding(report, alternative)
+        ),
         "support": {
             "independent_provider_correlations": len(
                 correlations.intersection(provider_correlations)

@@ -587,7 +587,7 @@ class _EvidenceItem(_ClosedModel):
         min_length=1, max_length=16
     )
     observation: str = Field(max_length=1024)
-    role: Literal["external_corroboration", "local_presence"]
+    role: Literal["external_corroboration", "external_observation", "local_presence"]
     source: str = Field(max_length=128)
 
 
@@ -1359,6 +1359,8 @@ class _AudiobookQualification(_ClosedModel):
         "language",
         "asin",
         "cover",
+        "isbn",
+        "explicit",
     ]
     field: Literal[
         "title_layout",
@@ -1373,8 +1375,10 @@ class _AudiobookQualification(_ClosedModel):
         "language_rendering",
         "asin",
         "cover_order",
+        "isbn_form",
+        "explicit",
     ]
-    identity: StrictStr = Field(max_length=128, pattern=r"^[a-z_]+:[a-z_]+:[a-z_]+$")
+    identity: StrictStr = Field(max_length=128, pattern=r"^[a-z_]+:[a-z0-9_]+:[a-z_]+$")
     option: Literal[
         "preserve",
         "title_and_subtitle",
@@ -1397,6 +1401,10 @@ class _AudiobookQualification(_ClosedModel):
         "display_name",
         "preserve_exact",
         "fixed_source_order",
+        "replace_descriptive",
+        "prefer_isbn13",
+        "adult_product",
+        "replace_if_strictly_better",
     ]
     operation: Literal[
         "fill",
@@ -1618,7 +1626,7 @@ class _ShadowOutcomeSetResponse(_ClosedModel):
     report_id: str
     resolved_policy_id: str
     review_case_id: str
-    schema_version: Literal["shadow-outcome-set-v5"]
+    schema_version: Literal["shadow-outcome-set-v6"]
     source_decision_set_id: str
     target_fingerprint: str
 

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 ACTION_CATALOGUE_SCHEMA = "shadow-review-action-catalogue-v1"
-ACTION_POLICY_VERSION = "shadow-review-action-policy-v3"
+ACTION_POLICY_VERSION = "shadow-review-action-policy-v4"
 _ACTION_KINDS = frozenset({"manual", "recommend_candidate", "recommend_keep_current"})
 _ASSESSMENTS = frozenset({"fills_empty", "preserves_target", "replaces_target"})
 _BIBLIOGRAPHIC_DESTINATIONS = frozenset({"title", "subtitle", "series"})
@@ -383,10 +383,10 @@ def _publication_reasons(
     expected_precision = candidate.get("date_precision")
     if publication.get("destination") != destination:
         reasons.add("publication_destination_incompatible")
-    if (
-        publication.get("event") != "manifestation_publication"
-        or candidate.get("date_event") != "manifestation_publication"
-    ):
+    if (candidate.get("scope"), candidate.get("date_event")) not in {
+        ("edition", "manifestation_publication"),
+        ("work", "work_first_publication"),
+    } or publication.get("event") != candidate.get("date_event"):
         reasons.add("publication_event_incompatible")
     if (
         type(expected_precision) is not str
@@ -428,7 +428,14 @@ def _candidate_action(
     if type(summary) is not dict:
         summary = {}
         reasons.add("candidate_decision_summary_missing")
-    if destination == "narrators" and summary.get("recording_support") is not True:
+    narrator_agreement = (
+        destination == "narrators" and summary.get("narrator_agreement") is True
+    )
+    if (
+        destination == "narrators"
+        and summary.get("recording_support") is not True
+        and not narrator_agreement
+    ):
         reasons.add("recording_support_absent")
     references.update(_role_references(summary))
     if not references or not references.issubset(known_citations):
@@ -486,6 +493,7 @@ def _candidate_action(
     elif (
         scope == "edition"
         and binding != "established"
+        and not (narrator_agreement and binding == "associated_work_only")
         and not publication_safe
         and not combination_ids
     ):

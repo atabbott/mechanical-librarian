@@ -400,12 +400,12 @@ describe('Policy route', () => {
     ).toHaveAccessibleDescription('0 changed fields')
     expect(
       screen.getByRole('button', {
-        name: 'Unsupported Fields Mechanical Librarian can detect but cannot change yet.',
+        name: 'Additional fields Fields with limited support that start off until you enable them.',
       }),
     ).toHaveAccessibleDescription('0 changed fields')
     expect(screen.getByText('Changed fields')).toBeVisible()
-    expect(screen.getByRole('button', { name: /^Unsupported/ })).toHaveTextContent(
-      'Fields Mechanical Librarian can detect but cannot change yet.',
+    expect(screen.getByRole('button', { name: /^Additional fields/ })).toHaveTextContent(
+      'Fields with limited support that start off until you enable them.',
     )
     const isbn = screen.getByRole('region', { name: 'ISBN' })
     expect(within(isbn).getByRole('button', { name: 'Automatic' })).toBeDisabled()
@@ -421,6 +421,9 @@ describe('Policy route', () => {
     )
     await user.click(screen.getByRole('button', { name: /Curation/ }))
     const tags = screen.getByRole('region', { name: 'Tags' })
+    expect(tags).toHaveTextContent(
+      'Tags are off by default. When enabled, use compatible source tags or review them yourself.',
+    )
     expect(within(tags).getByText('Automatic mode not supported')).toBeVisible()
     expect(within(tags).getByRole('button', { name: 'Ask me' })).toBeEnabled()
     expect(within(tags).getByRole('button', { name: 'Ignore' })).toBeEnabled()
@@ -438,7 +441,7 @@ describe('Policy route', () => {
     const helpLines = within(description).getAllByRole('listitem')
     expect(helpLines).toHaveLength(3)
     expect(helpLines[0]).toHaveTextContent(
-      'Safe plain text: Fills an empty Description only; abstains when applicability is unproved, the quality floor has no survivor, or the result remains ambiguous, missing, or unsupported.',
+      'Safe plain text: Fills an empty Description only; abstains for unsafe or incomplete source text, conflicting work identity, or unavailable qualification.',
     )
     expect(helpLines[1]).toHaveTextContent(
       'Visible Google text: Fills an empty Description only; abstains without it and never falls back to Hardcover.',
@@ -477,12 +480,13 @@ describe('Policy route', () => {
       '0 changed fields',
     )
     await user.click(screen.getByRole('button', { name: /Curation/ }))
-    await user.click(screen.getByRole('button', { name: /Unsupported/ }))
+    await user.click(screen.getByRole('button', { name: /Additional fields/ }))
     const explicit = screen.getByRole('region', { name: 'Explicit-content flag' })
-    expect(within(explicit).getByText('Unsupported destination')).toBeVisible()
+    expect(within(explicit).getByText('Off until you choose a review mode')).toBeVisible()
     expect(
-      within(explicit).getByText(/shown for context only.*cannot be changed in this draft/i),
-    ).toBeVisible()
+      within(explicit).getByRole('combobox', { name: 'Explicit-content flag representation' }),
+    ).toBeEnabled()
+    expect(within(explicit).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(screen.queryByRole('region', { name: 'Title and subtitle' })).toBeNull()
     expect(screen.getAllByText(/draft has unreviewed changes/u).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
@@ -1027,3 +1031,100 @@ it('focuses the description preferences heading from its direct setup link', asy
     window.history.replaceState({}, '', '/')
   }
 })
+
+it('keeps explicit off until the owner chooses its representation and review mode', async () => {
+  const http = createHttp()
+  const command = vi.spyOn(http, 'policyCommand')
+  renderRoute('/policy?section=unsupported', {
+    ...http,
+    getShadowPosture: vi.fn(async (): Promise<ShadowPostureView> => ({
+      schema_version: 'shadow-posture-v1',
+      posture: 'preview',
+      authority: 'none',
+      can_leave_preview: false,
+    })),
+    getPolicyState: vi.fn(async (): Promise<PolicyStateView> => ({
+      schema_version: 'metadata-policy-notebook-v1',
+      policy_id: 'policy-explicit',
+      profile: {
+        schema_version: 'metadata-policy-profile-v3',
+        name: 'Default',
+        options: {},
+        destinations: {},
+      },
+      rich_qualification: [],
+      audiobook_qualification: [
+        {
+          automatic_available: true,
+          destination: 'explicit',
+          field: 'explicit',
+          identity: 'explicit:adult_product:audiobook_explicit_fill',
+          operation: 'fill',
+          option: 'adult_product',
+          record_sha256: 'c'.repeat(64),
+        },
+      ],
+    })),
+  })
+  const user = userEvent.setup()
+  const flag = await screen.findByRole('region', { name: 'Explicit-content flag' })
+  expect(within(flag).getByText('Off until you choose a review mode')).toBeVisible()
+  expect(within(flag).getByRole('button', { name: 'Automatic' })).toBeDisabled()
+  await user.click(
+    within(flag).getByRole('combobox', { name: 'Explicit-content flag representation' }),
+  )
+  await user.click(screen.getByRole('option', { name: 'Set from adult-product evidence' }))
+  expect(within(flag).getByText('Off until you choose a review mode')).toBeVisible()
+  const automatic = within(flag).getByRole('button', { name: 'Automatic' })
+  expect(automatic).toBeEnabled()
+  expect(automatic).toHaveAttribute('aria-pressed', 'false')
+  await user.click(automatic)
+  expect(automatic).toHaveAttribute('aria-pressed', 'true')
+  expect(command).not.toHaveBeenCalled()
+  expect(within(flag).getByText(/Missing or false evidence never clears it/)).toBeVisible()
+})
+
+it.each([
+  ['identity', ['Title and subtitle', 'Authors and narrators', 'Language', 'Subtitle']],
+  ['publication', ['Publication date and year', 'Publisher', 'ISBN', 'Series memberships']],
+  ['curation', ['Genres', 'Tags', 'Description', 'Cover', 'ASIN']],
+] as const)(
+  'keeps existing empty-profile destinations on Ask me in %s',
+  async (chapter, labels) => {
+    const http = createHttp()
+    http.getPolicyState = vi.fn(async (): Promise<PolicyStateView> => ({
+      schema_version: 'metadata-policy-notebook-v1',
+      policy_id: 'policy-empty-defaults',
+      profile: {
+        schema_version: 'metadata-policy-profile-v3',
+        name: 'Default',
+        options: {},
+        destinations: {},
+      },
+      rich_qualification: [],
+      audiobook_qualification: [],
+    }))
+    renderRoute(`/policy?section=${chapter}`, http)
+    for (const label of labels) {
+      const field = await screen.findByRole('region', { name: label })
+      expect(within(field).getByRole('button', { name: 'Ask me' })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+      expect(within(field).getByRole('button', { name: 'Automatic' })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      )
+    }
+    if (chapter === 'curation') {
+      const tags = screen.getByRole('region', { name: 'Tags' })
+      expect(within(tags).getByRole('combobox', { name: 'Tags representation' })).toHaveTextContent(
+        'Off',
+      )
+      const cover = screen.getByRole('region', { name: 'Cover' })
+      expect(
+        within(cover).getByRole('combobox', { name: 'Cover representation' }),
+      ).toHaveTextContent('Fill from confirmed order')
+    }
+  },
+)

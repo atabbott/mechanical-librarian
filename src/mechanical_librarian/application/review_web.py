@@ -26,6 +26,9 @@ from mechanical_librarian.domain.audio_health import (
     media_unreadable_observation,
 )
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
+from mechanical_librarian.domain.audiobook_corroboration import (
+    candidate_recording_runtime_veto,
+)
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
     parse_automatic_authority,
@@ -43,11 +46,14 @@ from mechanical_librarian.domain.human_decision import (
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    FieldState,
     MetadataReport,
     ProviderLaneObservation,
     ReportValueError,
     TargetDestination,
     TargetFacts,
+    recording_variant_conflict,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.proposal_set import (
@@ -115,6 +121,7 @@ class CurrentReviewCaseSnapshot:
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
     automatic_source_outcome_documents: tuple[str, ...] = ()
+    automatic_selected_values: tuple[tuple[str, dict[str, object]], ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
     policy_attention_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
@@ -495,14 +502,20 @@ class InspectCurrentReviewCase:
                         )
                     ),
                 )
-                candidate_id = automatic_decision.get("candidate_id")
-                selected = next(
-                    (
-                        alternative["value"]
-                        for alternative in alternatives
-                        if alternative["alternative_id"] == candidate_id
-                    ),
-                    None,
+                decision_id = automatic_decision["decision_id"]
+                assert type(decision_id) is str
+                selected = (
+                    next(
+                        (
+                            alternative["value"]
+                            for alternative in alternatives
+                            if alternative["alternative_id"]
+                            == automatic_decision["candidate_id"]
+                        ),
+                        None,
+                    )
+                    if destination == "cover"
+                    else dict(snapshot.automatic_selected_values).get(decision_id)
                 )
                 if automatic_decision["outcome"] == "candidate" and selected is None:
                     raise ReviewWebError("unavailable")
@@ -780,9 +793,16 @@ class InspectCurrentReviewCase:
                 destinations = destinations_by_reference.setdefault(reference, [])
                 if destination not in destinations:
                     destinations.append(destination)
+        observations = _review_unselectable_evidence(
+            report, set(destinations_by_reference)
+        )
+        for reference, observation in observations.items():
+            destinations_by_reference[reference] = cast(
+                list[str], observation["destinations"]
+            )
         wanted = set(destinations_by_reference)
         evidence = _evidence_by_reference(report)
-        missing_lineage_count = len(wanted.difference(evidence))
+        missing_lineage_count = len(wanted.difference(evidence, observations))
         reference_set_digest = hashlib.sha256(
             json.dumps(
                 sorted(
@@ -793,7 +813,11 @@ class InspectCurrentReviewCase:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        ordered = [reference for reference in sorted(wanted) if reference in evidence]
+        ordered = [
+            reference
+            for reference in sorted(wanted)
+            if reference in evidence or reference in observations
+        ]
         bounded_limit = min(max(limit, 1), 50)
         offset = _decode_cursor(
             cursor,
@@ -804,7 +828,9 @@ class InspectCurrentReviewCase:
         bounded = ordered[offset : offset + bounded_limit]
         return {
             "items": [
-                _choice_evidence(
+                observations[reference]
+                if reference in observations
+                else _choice_evidence(
                     evidence[reference], destinations_by_reference[reference]
                 )
                 for reference in bounded
@@ -881,18 +907,8 @@ class InspectCurrentReviewCase:
                     if current["state"] == "value"
                     else None
                 )
-                result = proposal["result"]
-                assert type(result) is dict
                 selected = (
-                    next(
-                        (
-                            value["value"]
-                            for value in result["alternatives"]
-                            if value["alternative_id"]
-                            == historical_decision.candidate_id
-                        ),
-                        None,
-                    )
+                    dict(snapshot.automatic_selected_values).get(decision_id)
                     if historical_decision.outcome == "candidate"
                     else previous
                     if historical_decision.outcome == "keep_current"
@@ -1645,7 +1661,7 @@ def _provider_source_labels(
     by_reference = {
         claim.reference: _provider_label(provider.authority)
         for provider in report.providers
-        for candidate in provider.candidates
+        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
         for claim in candidate.claims
     }
     labels = {
@@ -1888,6 +1904,83 @@ def _bounded_token(value: object) -> bool:
     return type(value) is str and 32 <= len(value) <= 128 and value.strip() == value
 
 
+def _review_unselectable_evidence(
+    report: MetadataReport, linked: set[str]
+) -> dict[str, dict[str, object]]:
+    """Keep bounded nonselectable audiobook observations visible for review."""
+    if report.audio is None:
+        return {}
+    observations: dict[str, dict[str, object]] = {}
+    for provider in report.providers:
+        for candidate in (*provider.candidates, *provider.recording_lookup_candidates):
+            for claim in candidate.claims:
+                narrator = (
+                    claim.kind is ClaimKind.CONTRIBUTOR
+                    and claim.role == "narrator"
+                    and (
+                        recording_variant_conflict(
+                            candidate,
+                            report.local_claims,
+                            report.target.current_title or "",
+                        )
+                        is not None
+                        or candidate_recording_runtime_veto(
+                            candidate, report.local_claims, report.audio
+                        )
+                    )
+                )
+                if (
+                    claim.kind not in {ClaimKind.ISBN, ClaimKind.ASIN}
+                    and not narrator
+                    or claim.reference in linked
+                ):
+                    continue
+                label = "Narrator" if narrator else claim.kind.value.upper()
+                destination = "narrators" if narrator else claim.kind.value
+                conflict = (
+                    recording_variant_conflict(
+                        candidate,
+                        report.local_claims,
+                        report.target.current_title or "",
+                    )
+                    if narrator
+                    else None
+                )
+                reason = (
+                    "Recording language conflicts with this item. "
+                    if conflict == "recording_language_conflict"
+                    else "Recording variant conflicts with this item. "
+                    if conflict is not None
+                    else "Recording timing is invalid or conflicts with this item. "
+                    if narrator
+                    else ""
+                )
+                value = (
+                    _choice_text(claim.value)
+                    if claim.state is FieldState.VALID and type(claim.value) is str
+                    else "No valid narrator retained"
+                    if narrator
+                    else "No valid identifier retained"
+                )
+                observations.setdefault(
+                    claim.reference,
+                    {
+                        "destinations": [destination],
+                        "role": "external_observation",
+                        "source": _provider_label(provider.authority),
+                        "observation": (
+                            f"{label}: {value}. Retained for review only; "
+                            f"not an eligible choice. {reason}"
+                            f"Scope: {claim.scope.value}; state: {claim.state.value}; "
+                            f"applicability: {claim.applicability}. "
+                            f"Source record: {_choice_text(candidate.identity)}. "
+                            f"Reference: {claim.reference}."
+                        ),
+                    },
+                )
+    return observations
+
+
 def _evidence_by_reference(
     report: MetadataReport,
 ) -> dict[str, dict[str, str | None]]:
@@ -1943,7 +2036,10 @@ def _evidence_by_reference(
         assert type(provider_name) is str
         authority = provider.get("authority")
         public_authority = public_provider(authority)
-        for candidate in provider["candidates"]:
+        for candidate in [
+            *provider["recording_lookup_candidates"],
+            *provider["candidates"],
+        ]:
             assert type(candidate) is dict
             candidate_identity = candidate["identity"]
             assert type(candidate_identity) is str

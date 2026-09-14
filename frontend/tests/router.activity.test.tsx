@@ -21,7 +21,8 @@ describe('Activity route', () => {
     if (!failedRow || !completedRow) throw new Error('Expected preparation rows')
     expect(within(failedRow).getByText('Description advice failed safely')).toBeVisible()
     expect(within(completedRow).getByText('Description advice completed')).toBeVisible()
-    expect(screen.getAllByText('Cover advice completed')).toHaveLength(2)
+    expect(screen.getAllByText('Completed')).toHaveLength(2)
+    expect(screen.queryByText('Cover advice completed')).toBeNull()
     expect(screen.queryByText('Cover advice failed safely')).toBeNull()
   })
 
@@ -522,17 +523,44 @@ describe('Activity route', () => {
     ],
     [
       'completed automatic cover advice',
-      { events: [{ work_label: 'Cover work', state: 'completed', origin: 'automatic_pipeline' }] },
+      {
+        events: [
+          {
+            work_label: 'Cover work',
+            destination: 'cover',
+            state: 'completed',
+            origin: 'automatic_pipeline',
+          },
+        ],
+      },
       'Cover advice completed',
     ],
     [
       'unavailable owner cover retry',
-      { events: [{ work_label: 'Cover work', state: 'unavailable', origin: 'owner_retry' }] },
+      {
+        events: [
+          {
+            work_label: 'Cover work',
+            destination: 'cover',
+            state: 'unavailable',
+            origin: 'owner_retry',
+          },
+        ],
+      },
       'Cover advice unavailable',
     ],
     [
       'failed owner cover retry',
-      { events: [{ work_label: 'Cover work', state: 'failed', origin: 'owner_retry' }] },
+      {
+        events: [
+          {
+            work_label: 'Cover work',
+            destination: 'cover',
+            state: 'failed',
+            origin: 'owner_retry',
+          },
+        ],
+      },
       'Cover advice failed safely',
     ],
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {
@@ -1043,6 +1071,7 @@ describe('Activity route', () => {
     await user.click(screen.getByRole('button', { name: 'Try again' }))
     const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
     expect(lifecycle.querySelectorAll('li')).toHaveLength(21)
+    expect(lifecycle.querySelector('li')?.textContent).toMatch(/ · Planned$/u)
     await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
     await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(25))
     expect(http.getActivityTransitions).toHaveBeenLastCalledWith(
@@ -2109,4 +2138,41 @@ describe('Activity route', () => {
       vi.useRealTimers()
     }
   })
+})
+
+it.each([
+  'The source supplied no ISBN',
+  'The ISBN source could not be reached',
+  'The source ISBN was malformed or incomplete',
+  'The sources supplied conflicting ISBNs',
+  'The supplied ISBN was not sufficiently associated with this recording',
+])('explains an unchanged ISBN without offering a write: %s', async (reason) => {
+  const http = createHttp()
+  vi.mocked(http.getActivity).mockResolvedValue(
+    activity({
+      events: [
+        {
+          event_id: 'shadow_outcome_set_synthetic:isbn',
+          destination: 'isbn',
+          field_label: 'ISBN',
+          state: 'unchanged',
+          origin: 'automatic_policy',
+          event_type: 'metadata',
+          category: 'automatic',
+          change: 'Left ISBN unchanged',
+          change_detail: 'Left ISBN unchanged',
+          evidence: [
+            { label: 'Why it stayed unchanged', value: reason },
+            { label: 'Outcome', value: 'No ISBN change was prepared at this evaluation' },
+          ],
+        },
+      ],
+    }),
+  )
+  renderRoute('/activity', http)
+  await screen.findByText('Left ISBN unchanged')
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Details' }))
+  expect(screen.getByText(reason)).toBeVisible()
+  expect(screen.getByText('No ISBN change was prepared at this evaluation')).toBeVisible()
+  expect(screen.queryByRole('button', { name: /Apply ISBN|Retry ISBN/ })).toBeNull()
 })

@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from typing import TypedDict, cast
+from typing import Any, TypedDict, cast
 
 from mechanical_librarian.domain.proposal_set import (
     DECORATION_TIDY_TITLE_REASONS,
@@ -23,7 +23,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v13"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v14"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -57,6 +57,13 @@ _RULE_TABLE = {
         "local_field_agreement_required": False,
         "retained_recording_admission_required": True,
     },
+    "audiobook_narrator_agreement": {
+        "complete_plausible_source_bound_set": True,
+        "minimum_distinct_products": 2,
+        "equivalent_complete_casts": True,
+        "recording_identity_granted": False,
+        "selected_manifestation_binding": "associated_work_only",
+    },
     "candidate": {
         "compiler_admission_required": True,
         "local_evidence": 1,
@@ -87,7 +94,12 @@ _RULE_TABLE = {
     },
     "publication": {
         "destinations": ["publishedDate"],
-        "event": "manifestation_publication",
+        "event_by_media": {
+            "ebook": "manifestation_publication",
+            "audiobook": "work_first_publication",
+        },
+        "audiobook_evidence_scope": "work",
+        "audiobook_source_bound_work_required": True,
         "published_date_precision": {
             "candidate": "year_month_or_day",
             "independent_correlation": "required",
@@ -133,6 +145,7 @@ class _CandidateSummary(TypedDict):
     evidence_scope: str
     independent_title: bool
     recording_support: bool
+    narrator_agreement: bool
     publication: dict[str, object] | None
     selected_manifestation_binding: str
     support: dict[str, int]
@@ -488,10 +501,13 @@ def _candidate_is_eligible(
     known_combinations = {
         value["combination_id"] for value in packet.bibliographic_combinations
     }
-    expected_scope = "work" if destination in _WORK_DESTINATIONS else "edition"
-    expected_binding = (
-        "associated_work_only" if destination in _WORK_DESTINATIONS else "established"
+    work_publication = (
+        destination == "publishedDate"
+        and candidate["date_event"] == "work_first_publication"
     )
+    work_destination = destination in _WORK_DESTINATIONS or work_publication
+    expected_scope = "work" if work_destination else "edition"
+    expected_binding = "associated_work_only" if work_destination else "established"
     source_evidence_report_only = destination in _REPORT_ONLY_SOURCE_DESTINATIONS
     reasons = proposal.get("reasons")
     provider_consensus_title = (
@@ -507,7 +523,11 @@ def _candidate_is_eligible(
         and reasons[0] in DECORATION_TIDY_TITLE_REASONS
     )
     recording_support = summary["recording_support"]
-    if destination == "narrators" and not recording_support:
+    narrator_agreement = destination == "narrators" and summary["narrator_agreement"]
+    field_support = recording_support or narrator_agreement or work_publication
+    if narrator_agreement:
+        expected_binding = "associated_work_only"
+    if destination == "narrators" and not field_support:
         return False
     independent_title = summary["independent_title"]
     if reasons == [EVIDENCE_LED_TITLE_REASON] and not independent_title:
@@ -517,19 +537,19 @@ def _candidate_is_eligible(
         "_ProposalSummary", proposal["decision_summary"]
     )["target_only_preservation"]
     minimum_provider_correlations = (
-        2 if provider_consensus_title and not recording_support else 1
+        2 if provider_consensus_title and not field_support else 1
     )
     if (
         (
             not source_evidence_report_only
-            and not recording_support
+            and not field_support
             and not independent_title
             and proposal_target_only_preservation != (1 if title_election else 0)
         )
         or support["target_only_preservation"] != 0
         or (
             destination != "publishedDate"
-            and not recording_support
+            and not field_support
             and not decoration_tidy_title
             and not independent_title
             and support["local_evidence"] != (0 if provider_consensus_title else 1)
@@ -551,17 +571,22 @@ def _candidate_is_eligible(
         publication = summary["publication"]
         if (
             type(publication) is not dict
-            or candidate["date_event"] != "manifestation_publication"
-            or publication["event"] != "manifestation_publication"
+            or candidate["date_event"]
+            != (
+                "work_first_publication"
+                if work_publication
+                else "manifestation_publication"
+            )
+            or publication["event"] != candidate["date_event"]
             or publication["paired_destination_consistency"] != "consistent"
         ):
             return False
         if (
             candidate["date_precision"] not in {"year", "month", "day"}
-            or not recording_support
+            or not field_support
             and support["local_evidence"] != 1
             or support["independent_provider_correlations"]
-            < (1 if recording_support else 2)
+            < (1 if field_support else 2)
         ):
             return False
     return True
@@ -763,6 +788,65 @@ def _combination_selections(
     return qualifying[0], set(_COMBINATION_DESTINATIONS)
 
 
+def _compatible_audiobook_publisher(
+    packet: ShadowReviewPacket,
+    proposal: dict[str, object],
+    eligible: tuple[PolicyAction, ...],
+) -> PolicyAction | None:
+    """Resolve only a terminal Plc spelling variation of a recording publisher."""
+    if proposal["destination"] != "publisher" or len(eligible) < 2:
+        return None
+    selected = [_candidate_for_action(proposal, action) for action in eligible]
+    if any(candidate is None for candidate in selected):
+        return None
+    # Packet construction validates the complete nested candidate and citation shapes.
+    candidates = cast(list[dict[str, Any]], selected)
+    if any(
+        not candidate["decision_summary"]["recording_support"]
+        or candidate["value"]["kind"] != "text"
+        for candidate in candidates
+    ):
+        return None
+    facts = {
+        citation["citation_id"]: cast(dict[str, Any], citation["fact"])
+        for citation in packet.citations
+    }
+    if any(
+        facts[reference].get("kind") != "publisher"
+        for candidate in candidates
+        for reference in candidate["evidence_references"]
+    ):
+        return None
+    asin_candidates = [
+        candidate
+        for item in packet.proposals
+        if item["destination"] == "asin"
+        for candidate in cast(list[dict[str, Any]], item["candidates"])
+    ]
+    recordings = [
+        {
+            asin["value"]["value"]
+            for asin in asin_candidates
+            if set(asin["correlations"]) & set(candidate["correlations"])
+        }
+        for candidate in candidates
+    ]
+    if any(not values for values in recordings) or len(set().union(*recordings)) != 1:
+        return None
+    names = [candidate["value"]["value"] for candidate in candidates]
+    if len({re.sub(r"\s+plc$", "", name.casefold()).strip() for name in names}) != 1:
+        return None
+    current = cast(dict[str, object], proposal["current"])["value"]
+    preferred = [
+        action
+        for action, candidate in zip(eligible, candidates, strict=True)
+        if candidate["value"]["value"] == current
+    ]
+    return min(
+        preferred or list(eligible), key=lambda action: action.candidate_id or ""
+    )
+
+
 def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
     """Select one closed action per proposal without provider execution or writes."""
     if type(packet) is not ShadowReviewPacket:
@@ -800,12 +884,20 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
         proposal_id = cast("str", proposal["proposal_id"])
         destination = proposal["destination"]
         eligible = eligible_by_proposal[proposal_id]
+        publisher = _compatible_audiobook_publisher(packet, proposal, eligible)
+        if publisher is not None:
+            eligible = (publisher,)
         if destination not in _SUPPORTED_DESTINATIONS or (
             destination == "narrators"
             and not any(
-                cast("_CandidateSummary", candidate["decision_summary"])[
-                    "recording_support"
-                ]
+                (
+                    cast("_CandidateSummary", candidate["decision_summary"])[
+                        "recording_support"
+                    ]
+                    or cast("_CandidateSummary", candidate["decision_summary"])[
+                        "narrator_agreement"
+                    ]
+                )
                 for candidate in cast("list[dict[str, object]]", proposal["candidates"])
             )
         ):

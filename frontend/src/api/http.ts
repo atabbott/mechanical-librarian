@@ -474,7 +474,7 @@ export interface CaseDetailView {
 export interface EvidenceObservationView {
   destinations: readonly string[]
   observation: string
-  role: 'external_corroboration' | 'local_presence'
+  role: 'external_corroboration' | 'external_observation' | 'local_presence'
   source: string
 }
 export interface EvidenceView {
@@ -2890,7 +2890,11 @@ export const mapEvidence = (value: unknown): EvidenceView => {
     items: value.items.map((item, index) => {
       if (!record(item)) throw new ApiError(502, `invalid_evidence_item_${String(index)}`)
       const role = item.role
-      if (role !== 'external_corroboration' && role !== 'local_presence')
+      if (
+        role !== 'external_corroboration' &&
+        role !== 'external_observation' &&
+        role !== 'local_presence'
+      )
         throw new ApiError(502, `invalid_evidence_item_${String(index)}_role`)
       return {
         destinations: (() => {

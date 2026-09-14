@@ -118,8 +118,13 @@ class AudiobookshelfFieldEffectTarget:
     def read(self, plan: FieldEffectPlan) -> TargetObservation:
         with self._client() as client:
             detail = self._item(client, plan.work_id)
-            value = self._value(client, detail, plan)
-        return TargetObservation(value, field_value_version(plan.destination, value))
+            return self._observation(client, detail, plan)
+
+    def _observation(self, client: httpx.Client, detail: dict[str, Any], plan: FieldEffectPlan) -> TargetObservation:
+        value = self._value(client, detail, plan)
+        companion = plan.subtitle_plan()
+        subtitle = None if companion is None else self._observation(client, detail, companion)
+        return TargetObservation(value, field_value_version(plan.destination, value), subtitle)
 
     def read_cover_bytes(self, plan: FieldEffectPlan) -> bytes | None:
         """Read the exact pre-write cover for private recovery composition."""
@@ -170,12 +175,13 @@ class AudiobookshelfFieldEffectTarget:
                     return TargetEffectResult("conflict")
             else:
                 media_payload = _media_payload(plan.destination, plan.desired_value)
+                if plan.subtitle_companion is not None:
+                    subtitle_payload = _media_payload("subtitle", plan.subtitle_companion.desired_value)
+                    media_payload["metadata"].update(subtitle_payload["metadata"])
             with self._client() as client:
                 detail = self._item(client, plan.work_id)
-                current = self._value(client, detail, plan)
-                if (current != plan.pre_value
-                        or field_value_version(plan.destination, current)
-                        != plan.target_version):
+                current = self._observation(client, detail, plan)
+                if not current.matches(plan, desired=False, check_version=True):
                     return TargetEffectResult("conflict")
                 if plan.destination == "cover":
                     assert cover_body is not None
@@ -296,6 +302,8 @@ class AudiobookshelfFieldEffectTarget:
                     "sequence": None if sequence is None else str(sequence),
                 })
             return normalized or None
+        if plan.destination == "explicit" and value is not None and type(value) is not bool:
+            raise TargetServiceUnavailable("destination")
         if plan.destination in {"narrators", "tags"} and value is None:
             # An item that has never carried a narrator cast or a tag omits
             # the key entirely on some responses and answers `null` on others.
@@ -422,6 +430,8 @@ def _capability_value_shape(detail: dict[str, Any], destination: str) -> None:
         # A narrator cast is a plain string list on both media. A service that
         # answers with any other shape disables only that destination, never
         # the library (ADR-0071).
+        if destination == "explicit" and metadata.get("explicit") is not None and type(metadata["explicit"]) is not bool:
+            raise ValueError("Audiobookshelf explicit capability invalid")
         if destination == "narrators":
             narrators = metadata.get("narrators")
             if narrators is not None and (

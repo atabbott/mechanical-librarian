@@ -11,12 +11,12 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v43` plus `proposal-set-v7` under
-  `fixed-conservative-v26`, or the separate `catalogue-v2` schema;
-- `review-case-v2`, `shadow-review-packet-v8`,
+  `metadata-report-v44` plus `proposal-set-v8` under
+  `fixed-conservative-v27`, or the separate `catalogue-v2` schema;
+- `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v13`,
-  `shadow-review-action-policy-v3`, `shadow-outcome-set-v5`,
+  `deterministic-shadow-decision-policy-v14`,
+  `shadow-review-action-policy-v4`, `shadow-outcome-set-v6`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
   these successors require a clean rebuild and do not adopt prior state;
 - `review-session-v1`, `review-library-v2`, `review-case-detail-v4`,

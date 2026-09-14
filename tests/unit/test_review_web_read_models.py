@@ -1098,6 +1098,12 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(
         occurred_at=7,
     )
     web.repository.decisions["title"] = authority.to_json()
+    web.repository.automatic_selected_values = (
+        (
+            authority.decision_id,
+            web.case.proposals[0]["result"]["alternatives"][0]["value"],
+        ),
+    )
     detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert 200 == detail.status_code
     field = next(
@@ -1311,6 +1317,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {
                 "provider": "hardcover-main",
                 "authority": "hardcover",
+                "recording_lookup_candidates": [],
                 "candidates": [
                     {
                         "identity": "candidate-1",
@@ -1327,6 +1334,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             },
             {
                 "provider": "open-library-main",
+                "recording_lookup_candidates": [],
                 "authority": "open_library",
                 "candidates": [
                     {
@@ -1374,7 +1382,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {"destination": "authors", "provenance": [provider_claim_reference]},
         ],
     }
-    report = SimpleNamespace(providers=(), to_data=lambda: data)
+    report = SimpleNamespace(audio=None, providers=(), to_data=lambda: data)
     cases = InspectCurrentReviewCase(Mock())
     with patch.object(cases, "_read", return_value=(detail, report, ())):
         first = cases.evidence("review_case_" + "c" * 64, limit=50)
@@ -2850,10 +2858,26 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
     ]
     available = {entry["identity"] for entry in entries if entry["automatic_available"]}
     assert available == audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(available) == 44
+    assert len(available) == 73
     assert {
         entry["destination"] for entry in entries if entry["automatic_available"]
-    } == {"title", "authors", "narrators", "language", "series", "genres"}
+    } == {
+        "title",
+        "authors",
+        "narrators",
+        "language",
+        "series",
+        "genres",
+        "asin",
+        "cover",
+        "publishedDate",
+        "description",
+        "explicit",
+        "isbn",
+        "publisher",
+        "subtitle",
+        "tags",
+    }
     assert all(
         entry["record_sha256"]
         == audiobook_decision_qualification.F46_QUALIFICATION_MANIFEST_SHA256
@@ -2864,4 +2888,256 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
         entry["record_sha256"] is None
         for entry in entries
         if not entry["automatic_available"]
+    )
+
+
+@pytest.mark.parametrize(
+    "shape", ("conflict", "malformed", "unassociated", "absent", "unavailable")
+)
+def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
+    tmp_path, shape
+):
+    from pathlib import Path
+
+    from argon2 import PasswordHasher
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.support.audiobook_reports import (
+        publish_audiobook_preview,
+        synthetic_audiobook_isbn_reason_report,
+    )
+
+    report = synthetic_audiobook_isbn_reason_report(shape)
+    repository = open_repository(tmp_path / "state.sqlite", cross_thread=True)
+    case_id, _ = publish_audiobook_preview(
+        repository,
+        report,
+        ("isbn_form",),
+        selected_options={"isbn_form": "preserve_exact"},
+    )
+    repository.persist_shadow_outcome(case_id, 4)
+    before = repository.get_review_case_decisions(case_id)
+    inspector = InspectCurrentReviewCase(repository)
+    detail = inspector.run(case_id)
+    for field in detail["fields"]:
+        if field["destination"] in {"isbn", "asin"}:
+            assert field["proposed_values"] == []
+            assert field["automatic_decision"] is None
+    linked = {
+        reference for field in detail["fields"] for reference in field["provenance"]
+    }
+    claims = {
+        claim.reference: (candidate, claim)
+        for provider in report.providers
+        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
+        for claim in candidate.claims
+        if claim.kind in {ClaimKind.ISBN, ClaimKind.ASIN}
+        and claim.reference not in linked
+    }
+    expected = inspector.evidence(case_id)
+    observations = [
+        item for item in expected["items"] if item["role"] == "external_observation"
+    ]
+    assert len(observations) == len(claims)
+    for reference, (candidate, claim) in claims.items():
+        matching = [
+            item
+            for item in observations
+            if f"Reference: {reference}." in item["observation"]
+        ]
+        assert len(matching) == 1
+        item = matching[0]
+        assert item["destinations"] == [claim.kind.value]
+        assert f"Source record: {candidate.identity}." in item["observation"]
+        assert (
+            f"Scope: {claim.scope.value}; state: {claim.state.value}; applicability: {claim.applicability}."
+            in item["observation"]
+        )
+        assert "not an eligible choice" in item["observation"]
+        if claim.state is FieldState.VALID:
+            assert f"{claim.kind.value.upper()}: {claim.value}." in item["observation"]
+        else:
+            assert "No valid identifier retained" in item["observation"]
+    if shape == "conflict":
+        assert {
+            claim.value for _, claim in claims.values() if claim.kind is ClaimKind.ISBN
+        } == {"9781250077004", "9780593135204"}
+        assert {fact.reference for fact in report.identifier_evidence} <= set(claims)
+    if shape == "malformed":
+        assert any("state: malformed" in item["observation"] for item in observations)
+    if shape == "unavailable":
+        assert not any(item["destinations"] == ["isbn"] for item in observations)
+    password = tmp_path / "owner.hash"
+    password.write_text(PasswordHasher().hash("correct horse"))
+    password.chmod(0o600)
+    app = create_transport_test_app(
+        repository,
+        ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(password),
+            session_lifetime_seconds=600,
+        ),
+        clock=lambda: 10,
+    )
+    with TestClient(app, base_url="https://review.test") as client:
+        assert (
+            client.post(
+                "/api/v1/session/login",
+                json={"password": "correct horse"},
+                headers={"Origin": "https://review.test"},
+            ).status_code
+            == 200
+        )
+        items = []
+        cursor = None
+        while True:
+            response = client.get(
+                f"/api/v1/review-cases/{case_id}/evidence",
+                params={"limit": 1, **({"cursor": cursor} if cursor else {})},
+            )
+            assert response.status_code == 200
+            page = response.json()
+            assert page["missing_lineage_count"] == 0
+            assert len(page["items"]) <= 1
+            items.extend(page["items"])
+            cursor = page["next_cursor"]
+            if cursor is None:
+                break
+        assert items == expected["items"]
+        if shape == "conflict":
+            response = client.get(f"/api/v1/review-cases/{case_id}")
+            assert response.status_code == 200
+            fixture = json.loads(
+                Path("frontend/tests/identifierEvidenceFixture.json").read_text()
+            )
+            assert fixture == {"detail": response.json(), "evidence": expected}
+        retained = [item for item in items if item["role"] == "external_observation"]
+        assert retained == observations
+        assert len({json.dumps(item, sort_keys=True) for item in retained}) == len(
+            claims
+        )
+        assert repository.get_review_case_decisions(case_id) == before
+        assert inspector.run(case_id) == detail
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+    repository.close()
+
+
+def test_linked_audiobook_identifier_evidence_is_not_duplicated(tmp_path):
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.support.audiobook_reports import publish_audiobook_preview
+
+    repository = open_repository(tmp_path / "state.sqlite")
+    try:
+        case_id, _ = publish_audiobook_preview(
+            repository, admitted_audiobook_report(), ("isbn_form",)
+        )
+        inspector = InspectCurrentReviewCase(repository)
+        field = next(
+            item
+            for item in inspector.run(case_id)["fields"]
+            if item["destination"] == "asin"
+        )
+        assert field["proposed_values"] == [{"kind": "text", "value": "B08G9PRS1K"}]
+        assert len(field["provenance"]) == 1
+        items = [
+            item
+            for item in inspector.evidence(case_id)["items"]
+            if "asin" in item["destinations"]
+        ]
+        assert len(items) == 1
+        assert items[0]["role"] == "external_corroboration"
+        assert items[0]["observation"] == "Metadata: B08G9PRS1K"
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "statements", (("abridged", "unabridged"), ("abridged", "full cast"))
+)
+def test_conflicting_recording_statements_remain_nonselectable_evidence(statements):
+    from dataclasses import replace
+
+    from mechanical_librarian.application.review_web import (
+        _review_unselectable_evidence,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        ClaimScope,
+        MetadataReport,
+        ProviderEvidence,
+        ProviderEvidenceKind,
+        TargetDestination,
+        recording_variant_conflict,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.audiobook_reports import admitted_audiobook_report
+
+    base = admitted_audiobook_report()
+    provider = base.providers[0]
+    candidate = provider.candidates[0]
+    candidate = replace(
+        candidate,
+        evidence=tuple(
+            sorted(
+                (
+                    *candidate.evidence,
+                    *(
+                        ProviderEvidence(
+                            ProviderEvidenceKind.EDITION_STATEMENT,
+                            value,
+                            ClaimScope.EDITION,
+                        )
+                        for value in statements
+                    ),
+                ),
+                key=lambda evidence: (
+                    evidence.scope.value,
+                    evidence.kind.value,
+                    evidence.value,
+                ),
+            )
+        ),
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(replace(provider, candidates=(candidate,)),),
+        audio=base.audio,
+    )
+    reopened = MetadataReport.from_json(report.to_json())
+    assert reopened == report
+    assert (
+        recording_variant_conflict(
+            candidate, reopened.local_claims, reopened.target.current_title or ""
+        )
+        == "recording_variant_conflict"
+    )
+    narrator = next(
+        result
+        for result in evaluate_report(reopened).results
+        if result.destination is TargetDestination.NARRATORS
+    )
+    assert narrator.alternatives == ()
+    claim = next(claim for claim in candidate.claims if claim.role == "narrator")
+    evidence = _review_unselectable_evidence(reopened, set())[claim.reference]
+    assert evidence["role"] == "external_observation"
+    assert evidence["destinations"] == ["narrators"]
+    assert evidence["observation"] == (
+        "Narrator: Ray Porter. Retained for review only; not an eligible choice. "
+        "Recording variant conflicts with this item. "
+        f"Scope: {claim.scope.value}; state: {claim.state.value}; "
+        f"applicability: {claim.applicability}. Source record: {candidate.identity}. "
+        f"Reference: {claim.reference}."
+    )
+    assert claim.reference not in _review_unselectable_evidence(
+        reopened, {claim.reference}
     )

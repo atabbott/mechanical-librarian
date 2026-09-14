@@ -14,13 +14,17 @@ import sqlite3
 from typing import cast
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.audiobook_cover_replacement import (
+    material_audiobook_cover_reference,
+)
 from mechanical_librarian.domain.audiobook_decision_qualification import (
-    F46_COVER_FILL_IDENTITY,
     audiobook_identity,
     identity_for_effect,
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
+    audiobook_title_preservation_bundle,
+    audiobook_title_subtitle_bundle,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
@@ -57,10 +61,16 @@ from mechanical_librarian.domain.proposal_set import (
     ProposalAssessment,
     ProposalSet,
     canonical_target_fields,
+    narrator_candidate_set_agrees,
+    provider_candidate_represents_target_recording,
+    provider_candidate_supports_complete_narrators,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.reviewer_decision_summary import creator_role_evidence
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
+    audiobook_description_candidate,
+    audiobook_tag_union_candidate,
     project_audiobook_automatic_decision_value,
     project_f20_automatic_decision_value,
     select_isbn_representation,
@@ -138,6 +148,68 @@ def _validate_automatic_decision_authority(
         )
     ):
         raise FieldEffectError("authority_binding")
+    split_members = tuple(
+        field
+        for field in source_outcome.outcomes
+        if field.destination in {"title", "subtitle"}
+    )
+    split_requested = any(
+        field.policy_category == "subtitle"
+        and (field.policy_option or "").startswith("corroborated_split:")
+        for field in split_members
+    )
+    if split_requested and decision.destination in {"title", "subtitle"}:
+        expected_bundle = audiobook_title_subtitle_bundle(split_members)
+        if expected_bundle is None or decision.bundle_id != expected_bundle:
+            raise FieldEffectError("authority_binding")
+        combination = next(
+            (
+                item
+                for item in proposal_set.bibliographic_combinations
+                if item.combination_id == source.combination_ids[0]
+            ),
+            None,
+        )
+        if combination is None:
+            raise FieldEffectError("authority_binding")
+        for member in split_members:
+            candidate = next(
+                (
+                    alternative
+                    for result in proposal_set.results
+                    if result.destination.value == member.destination
+                    for alternative in result.alternatives
+                    if alternative.alternative_id == member.candidate_id
+                ),
+                None,
+            )
+            if (
+                candidate is None
+                or tuple(sorted(candidate.evidence_references)) != member.citation_ids
+                or not any(
+                    selection.destination.value == member.destination
+                    and selection.kind is BibliographicSelectionKind.CANDIDATE
+                    and selection.alternative_id == member.candidate_id
+                    for selection in combination.selections
+                )
+            ):
+                raise FieldEffectError("authority_binding")
+    elif decision.policy_category == "title_layout":
+        expected_bundle = (
+            "automatic_bundle_"
+            + hashlib.sha256(
+                canonical_effect_json(
+                    {
+                        "category": "title_layout",
+                        "evidence_ids": list(source.combination_ids),
+                    }
+                ).encode("utf-8")
+            ).hexdigest()
+            if source.combination_ids
+            else audiobook_title_preservation_bundle(source)
+        )
+        if expected_bundle is None or decision.bundle_id != expected_bundle:
+            raise FieldEffectError("authority_binding")
     return source
 
 
@@ -238,7 +310,12 @@ def _automatic_decision_value(
                 )
             )
             alternative_citations = {
-                alternative.alternative_id: alternative.evidence_references
+                alternative.alternative_id: (
+                    set(alternative.evidence_references)
+                    | creator_role_evidence(
+                        report, result.destination.value, alternative.to_data()
+                    )[1]
+                )
                 for result in proposal_set.results
                 for alternative in result.alternatives
             }
@@ -255,7 +332,7 @@ def _automatic_decision_value(
             try:
                 candidate = next(iter(proposal_result.alternatives))
                 exact_value = select_isbn_representation(
-                    report, candidate, decision.policy_option
+                    report, candidate, decision.policy_option.split(":", 1)[0]
                 )
                 identifier_preservation = exact_value is not None and values_match(
                     TargetDestination(decision.destination), pre_value, exact_value
@@ -283,6 +360,11 @@ def _automatic_decision_value(
                     == tuple(
                         sorted(
                             set(typed_preservation[0].evidence_references)
+                            | creator_role_evidence(
+                                report,
+                                decision.destination,
+                                typed_preservation[0].to_data(),
+                            )[1]
                             | combination_citations
                         )
                     )
@@ -299,18 +381,41 @@ def _automatic_decision_value(
             and not source.combination_ids
             and canonical_target.state is TargetFieldState.VALUE
         )
+        # Explicit is positive-only: preserving an absent flag grants no
+        # false/clearing value and must still consume its exact no-op outcome.
+        explicit_preservation = (
+            report.audio is not None
+            and decision.destination == "explicit"
+            and decision.policy_category == "explicit"
+            and decision.policy_option == "adult_product:audiobook_explicit_preserve"
+            and decision.bundle_id is None
+            and not source.citation_ids
+            and not source.combination_ids
+            and (
+                canonical_target.state
+                in {
+                    TargetFieldState.MISSING,
+                    TargetFieldState.NULL,
+                    TargetFieldState.EMPTY,
+                }
+                or canonical_target.state is TargetFieldState.VALUE
+                and type(canonical_target.value) is bool
+            )
+        )
         if (
             decision.candidate_id is not None
             or (
                 not typed_preservation_matches
                 and not identifier_preservation
                 and not rich_preservation
+                and not explicit_preservation
             )
             or any(
                 (
                     source.reason_code != "unique_supported_preservation",
                     not typed_preservation_matches
                     and not rich_preservation
+                    and not explicit_preservation
                     and not (
                         decision.policy_category == "isbn_form"
                         and not source.citation_ids
@@ -329,8 +434,55 @@ def _automatic_decision_value(
         ),
         None,
     )
+    if selected is None and decision.destination == "tags" and report.audio is not None:
+        option = decision.policy_option.rsplit(":", 1)[0]
+        result = next(
+            item
+            for item in proposal_set.results
+            if item.destination is TargetDestination.TAGS
+        )
+        union = audiobook_tag_union_candidate(report, result, option)
+        if (
+            decision.policy_category == "tags"
+            and union is not None
+            and union.alternative_id == decision.candidate_id
+            and source.citation_ids == union.evidence_references
+            and not source.combination_ids
+        ):
+            selected = union.to_data()
     if selected is None:
         raise FieldEffectError("authority_binding")
+    if decision.destination == "description" and report.audio is not None:
+        result = next(
+            item
+            for item in proposal_set.results
+            if item.destination is TargetDestination.DESCRIPTION
+        )
+        synopsis = audiobook_description_candidate(report, result)
+        if (
+            synopsis is None
+            or synopsis[0].alternative_id != decision.candidate_id
+            or synopsis[1] != source.citation_ids
+            or source.combination_ids
+        ):
+            raise FieldEffectError("authority_binding")
+    if decision.destination == "narrators" and report.audio is not None:
+        references = tuple(cast("list[str]", selected["evidence_references"]))
+        _, role_references = creator_role_evidence(report, "narrators", selected)
+        recording_supported = any(
+            provider_candidate_represents_target_recording(report, provider, candidate)
+            and provider_candidate_supports_complete_narrators(candidate, references)
+            for provider in report.providers
+            for candidate in provider.candidates
+        )
+        if (
+            source.citation_ids != tuple(sorted(set(references) | role_references))
+            or source.combination_ids
+            or not (
+                recording_supported or narrator_candidate_set_agrees(report, references)
+            )
+        ):
+            raise FieldEffectError("authority_binding")
     value = selected["value"]
     if decision.policy_category == "isbn_form":
         try:
@@ -345,13 +497,50 @@ def _automatic_decision_value(
                 if item.alternative_id == decision.candidate_id
             )
             exact_value = select_isbn_representation(
-                report, candidate, decision.policy_option
+                report, candidate, decision.policy_option.split(":", 1)[0]
             )
         except (StopIteration, RichMetadataPreviewError) as error:
             raise FieldEffectError("authority_binding") from error
         if exact_value is None:
             raise FieldEffectError("authority_binding")
         value = {"kind": "text", "value": exact_value}
+    if (
+        decision.policy_category == "subtitle"
+        and decision.policy_option == "corroborated_split:audiobook_subtitle_fill"
+    ):
+        # The paired source validator above closes both scalar candidates and
+        # their shared combination. Re-run the original split premise too.
+        from mechanical_librarian.domain.rich_metadata_preview import _subtitle_bundle
+
+        result = next(
+            item
+            for item in proposal_set.results
+            if item.destination is TargetDestination.SUBTITLE
+        )
+        preview = _subtitle_bundle(
+            "subtitle",
+            "corroborated_split",
+            canonical_target,
+            result,
+            proposal_set,
+            report,
+        )
+        if (
+            decision.bundle_id is None
+            or preview.outcome != "projected"
+            or preview.source_candidate_id != decision.candidate_id
+            or preview.source_combination_ids != source.combination_ids
+            or identity_for_effect(
+                "subtitle",
+                "subtitle",
+                "corroborated_split",
+                pre_value,
+                project_decision_value("subtitle", value),
+            )
+            != audiobook_identity(decision.policy_category, decision.policy_option)
+        ):
+            raise FieldEffectError("authority_binding")
+        return value
     if decision.policy_category in {
         "series",
         "genres",
@@ -359,6 +548,7 @@ def _automatic_decision_value(
         "description_fill",
         "isbn_form",
         "subtitle",
+        "explicit",
     }:
         try:
             if audiobook_identity(decision.policy_category, decision.policy_option):
@@ -411,16 +601,28 @@ def _cover_automatic_decision_value(
     consideration_document: str,
 ) -> object:
     """Bind qualified cover authority to its exact current consideration."""
+    material_replacement = (
+        report.audio is not None
+        and decision.policy_option.split(":", 1)[0] == "replace_if_strictly_better"
+    )
     if report.audio is not None:
         target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
+        option = decision.policy_option.split(":", 1)[0]
+        expected = identity_for_effect(
+            "cover", "cover_order", option, target.value, decision.artifact_id
+        )
         if (
-            decision.qualification_identity != F46_COVER_FILL_IDENTITY
-            or target.state
-            not in {
-                TargetFieldState.MISSING,
-                TargetFieldState.NULL,
-                TargetFieldState.EMPTY,
-            }
+            decision.qualification_identity != expected
+            or expected is None
+            or (
+                option == "fixed_source_order"
+                and target.state
+                not in {
+                    TargetFieldState.MISSING,
+                    TargetFieldState.NULL,
+                    TargetFieldState.EMPTY,
+                }
+            )
         ):
             raise FieldEffectError("authority_binding")
     elif decision.qualification_identity is not None:
@@ -444,6 +646,16 @@ def _cover_automatic_decision_value(
         )
     except (KeyError, StopIteration, TypeError, json.JSONDecodeError) as error:
         raise FieldEffectError("authority_binding") from error
+    policy_report = json.loads(consideration["policy_report_document"])
+    if material_replacement and (
+        policy_report.get("actual_target_state") != "confirmed"
+        or policy_report.get("owner_ready") is not True
+        or material_audiobook_cover_reference(
+            consideration.get("candidates"), target.value
+        )
+        != decision.candidate_reference
+    ):
+        raise FieldEffectError("authority_binding")
     if (
         decision.review_case_id != case.review_case_id
         or decision.report_id != case.report_id
@@ -457,12 +669,11 @@ def _cover_automatic_decision_value(
         or consideration.get("replay_digest") != decision.replay_digest
         or consideration.get("policy_reference") != decision.policy_reference
         or consideration.get("provider_fetching") is not False
-        or json.loads(consideration["policy_report_document"]).get("status")
-        != "recommended"
+        or (not material_replacement and policy_report.get("status") != "recommended")
         or candidate.get("artifact_id") != decision.artifact_id
         or candidate.get("selectable") is not True
         or candidate.get("incumbent") is not False
-        or candidate.get("deterministic_rank") != 1
+        or (not material_replacement and candidate.get("deterministic_rank") != 1)
         or tuple(candidate.get("deterministic_rank_key", ())) != decision.rank_key
         or tuple(sorted(set(candidate.get("deterministic_citations", ()))))
         != decision.citation_ids
@@ -649,8 +860,21 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 if type(selected) is not dict:
                     raise FieldEffectError("persistence")
                 desired = project_decision_value(record.destination, value)
-            if not values_match(
-                TargetDestination(record.destination), pre_value, desired
+            explicit_absence_preservation = (
+                type(decision) is AutomaticDecision
+                and decision.destination == "explicit"
+                and decision.policy_category == "explicit"
+                and decision.policy_option
+                == "adult_product:audiobook_explicit_preserve"
+                and decision.outcome == "keep_current"
+                and pre_value is None
+                and desired is None
+            )
+            if (
+                not explicit_absence_preservation
+                and not values_match(
+                    TargetDestination(record.destination), pre_value, desired
+                )
             ) or record.target_version != field_value_version(
                 record.destination, pre_value
             ):
@@ -837,6 +1061,76 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 or consents[plan.consent.consent_id][0] != plan.consent
             ):
                 raise FieldEffectError("invalid_operation")
+            companion = plan.subtitle_plan()
+            if companion is not None and (
+                companion.authority.decision_id not in authorities
+                or companion.consent.consent_id not in consents
+                or authorities[companion.authority.decision_id][0]
+                != companion.authority
+                or consents[companion.consent.consent_id][0] != companion.consent
+            ):
+                raise FieldEffectError("invalid_operation")
+            if companion is not None and plan.subtitle_companion is not None:
+                for member in (plan, companion):
+                    decision_row = connection.execute(
+                        "SELECT document FROM automatic_decisions WHERE decision_id=?",
+                        (member.authority.decision_id,),
+                    ).fetchone()
+                    if decision_row is None:
+                        raise FieldEffectError("invalid_operation")
+                    decision = AutomaticDecision.from_json(decision_row[0])
+                    case_row = connection.execute(
+                        "SELECT document FROM review_cases WHERE review_case_id=?",
+                        (decision.review_case_id,),
+                    ).fetchone()
+                    report_row = connection.execute(
+                        "SELECT document FROM metadata_reports WHERE report_id=?",
+                        (decision.report_id,),
+                    ).fetchone()
+                    proposal_row = connection.execute(
+                        "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                        (decision.proposal_set_id,),
+                    ).fetchone()
+                    outcome_row = connection.execute(
+                        "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? AND report_id=? AND proposal_set_id=? AND resolved_policy_id=?",
+                        (
+                            decision.review_case_id,
+                            decision.report_id,
+                            decision.proposal_set_id,
+                            decision.resolved_policy_id,
+                        ),
+                    ).fetchone()
+                    if any(
+                        row is None
+                        for row in (case_row, report_row, proposal_row, outcome_row)
+                    ):
+                        raise FieldEffectError("invalid_operation")
+                    report = MetadataReport.from_json(report_row[0])
+                    value = _automatic_decision_value(
+                        decision,
+                        ReviewCase.from_json(case_row[0]),
+                        report,
+                        ProposalSet.from_json(proposal_row[0]),
+                        ShadowOutcomeSet.from_json(outcome_row[0]),
+                    )
+                    target_field = canonical_target_fields(report.target.fields)[
+                        TargetDestination(member.destination)
+                    ]
+                    previous = (
+                        target_field.value
+                        if target_field.state is TargetFieldState.VALUE
+                        else None
+                    )
+                    if (
+                        decision.bundle_id != plan.subtitle_companion.bundle_id
+                        or member.pre_value != previous
+                        or member.desired_value
+                        != project_decision_value(member.destination, value)
+                        or member.target_version
+                        != field_value_version(member.destination, previous)
+                        or member.dependency_digests != (report.target.fingerprint,)
+                    ):
+                        raise FieldEffectError("invalid_operation")
             operations[plan.plan_id] = operation
 
         event = closed_document(
@@ -872,7 +1166,30 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             expected_sequence = next_sequence.get(plan_id, 1)
             if (
                 operation is None
-                or not event(raw)
+                or not event(
+                    {
+                        **{
+                            key: value
+                            for key, value in raw.items()
+                            if key != "subtitle_companion"
+                        },
+                        "schema_version": "field-effect-event-v1",
+                    }
+                )
+                or raw.get("schema_version")
+                != (
+                    "field-effect-title-subtitle-event-v1"
+                    if operation.plan.subtitle_companion is not None
+                    else "field-effect-event-v1"
+                )
+                or ("subtitle_companion" in raw)
+                != (operation.plan.subtitle_companion is not None)
+                or raw.get("subtitle_companion")
+                != (
+                    operation.plan.subtitle_companion.to_data()
+                    if operation.plan.subtitle_companion is not None
+                    else None
+                )
                 or (
                     raw["event_id"],
                     raw["plan_id"],
@@ -903,9 +1220,17 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
         if (
             set(next_sequence) != set(operations)
             or set(authorities)
-            != {value.plan.authority.decision_id for value in operations.values()}
+            != {
+                member.authority.decision_id
+                for value in operations.values()
+                for member in (value.plan, value.plan.subtitle_plan())
+                if member is not None
+            }
             or not {
-                value.plan.consent.consent_id for value in operations.values()
+                member.consent.consent_id
+                for value in operations.values()
+                for member in (value.plan, value.plan.subtitle_plan())
+                if member is not None
             }.issubset(consents)
         ):
             raise FieldEffectError("invalid_event")

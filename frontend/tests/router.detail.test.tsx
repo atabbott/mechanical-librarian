@@ -2,8 +2,9 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiError, mapCaseDetail } from '../src/api/http'
+import { ApiError, mapCaseDetail, mapEvidence } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
+import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import { normalizeDetailSearch } from '../src/router'
 import type { AttentionView, CaseDetailView, ReviewHttp } from '../src/api/http'
 import { createHttp, detail, renderRoute } from './fixtures'
@@ -87,6 +88,11 @@ describe('Library review ownership', () => {
 
     const section = await screen.findByRole('region', { name: 'Media health' })
     expect(within(section).getByText('Runtime short of provider')).toBeVisible()
+    expect(
+      within(section).getByText(
+        'Expected rule: The local running time is within 90 seconds of the running time the matched edition states.',
+      ),
+    ).toBeVisible()
     expect(
       within(section).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
     ).toBeVisible()
@@ -182,6 +188,30 @@ describe('Library review ownership', () => {
     expect(await screen.findByText('Title: <script>Second observation</script>')).toBeVisible()
     expect(document.querySelector('script')).toBeNull()
     expect(getEvidence).toHaveBeenLastCalledWith('case-1', 'next-page', expect.any(AbortSignal))
+  })
+
+  it('shows retained conflicting identifiers as observations without offering choices', async () => {
+    const evidence = mapEvidence(identifierEvidenceFixture.evidence)
+    const current = mapCaseDetail(identifierEvidenceFixture.detail)
+    const changed = structuredClone(identifierEvidenceFixture.detail)
+    const choiceEvidence = changed.fields
+      .flatMap((field) => field.choice_contexts)
+      .flatMap((context) => context.evidence)[0]
+    if (!choiceEvidence) throw new Error('actual linked choice evidence required')
+    choiceEvidence.role = 'external_observation'
+    expect(() => mapCaseDetail(changed)).toThrow(ApiError)
+    renderRoute(`/review/${current.id}?field=isbn&subview=evidence`, {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => current),
+      getEvidence: vi.fn(async () => evidence),
+    })
+    expect(await screen.findByText(/ISBN: 9781250077004/u)).toBeVisible()
+    expect(screen.getByText(/ISBN: 9780593135204/u)).toBeVisible()
+    const observations = evidence.items.filter((item) => item.role === 'external_observation')
+    for (const item of observations) expect(screen.getByText(item.observation)).toBeVisible()
+    expect(screen.getAllByText(/External observation/u)).toHaveLength(observations.length)
+    expect(screen.queryByRole('button', { name: /Choose|Accept|Apply/u })).toBeNull()
+    expect(current.fields.find((field) => field.destination === 'isbn')?.proposedValues).toEqual([])
   })
 
   it('renders history values only when the read model carries them', async () => {

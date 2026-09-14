@@ -27,6 +27,7 @@ the preparation aggregate owns the staged work rows, not this projection.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -37,6 +38,9 @@ from mechanical_librarian.adapters.persistence.decisions import (
     _automatic_decision_documents,
 )
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
+from mechanical_librarian.adapters.persistence.field_effect_validation import (
+    _automatic_decision_value,
+)
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
@@ -53,12 +57,15 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
+from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+from mechanical_librarian.domain.field_effect import FieldEffectError
 from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
 )
+from mechanical_librarian.domain.proposal_set import ProposalSet
 from mechanical_librarian.domain.review_browse import (
     browse_case_with_id,
     browse_report,
@@ -68,6 +75,7 @@ from mechanical_librarian.domain.review_case import (
     ReviewCaseValueError,
 )
 from mechanical_librarian.domain.review_field_classification import ReviewFieldCause
+from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
 
 class SQLiteReviewProjectionRepository(ConnectionScoped):
@@ -221,6 +229,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             report_document = self.get_review_case_report(review_case_id)
             report = MetadataReport.from_json(report_document)
             policy = self.current_resolved_metadata_policy(report.target.library)
+            decision_documents = self.get_review_case_decisions(review_case_id)
+            source_documents = self._automatic_source_outcome_documents(review_case_id)
             snapshot = CurrentReviewCaseSnapshot(
                 description_advice=self.description_advice(review_case_id),
                 case_document=case_document,
@@ -228,9 +238,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 resolved_policy_document=None
                 if policy is None
                 else policy.canonical_json,
-                decision_documents=self.get_review_case_decisions(review_case_id),
-                automatic_source_outcome_documents=(
-                    self._automatic_source_outcome_documents(review_case_id)
+                decision_documents=decision_documents,
+                automatic_source_outcome_documents=source_documents,
+                automatic_selected_values=self._automatic_selected_values(
+                    case_document, report, decision_documents, source_documents
                 ),
                 history=(
                     ()
@@ -271,6 +282,53 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ),
             )
         return snapshot
+
+    def _automatic_selected_values(
+        self,
+        case_document: str,
+        report: MetadataReport,
+        decision_documents: tuple[str, ...],
+        source_documents: tuple[str, ...],
+    ) -> tuple[tuple[str, dict[str, object]], ...]:
+        """Read the same exact value as effect authority within this snapshot."""
+        decisions = tuple(
+            AutomaticDecision.from_json(document)
+            for document in decision_documents
+            if json.loads(document).get("schema_version") == "automatic-decision-v1"
+            and json.loads(document).get("outcome") == "candidate"
+        )
+        if not decisions:
+            return ()
+        case = ReviewCase.create_from_data(json.loads(case_document)["case"])
+        row = self._connection.execute(
+            "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+            (case.proposal_set_id,),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("review case snapshot is unavailable")
+        proposal = ProposalSet.from_json(row[0])
+        sources = {
+            field.outcome_id: source
+            for document in source_documents
+            for source in (ShadowOutcomeSet.from_json(document),)
+            for field in source.outcomes
+        }
+        values: list[tuple[str, dict[str, object]]] = []
+        try:
+            for decision in decisions:
+                value = _automatic_decision_value(
+                    decision,
+                    case,
+                    report,
+                    proposal,
+                    sources[decision.source_outcome_id],
+                )
+                if type(value) is not dict:
+                    raise FieldEffectError("authority_binding")
+                values.append((decision.decision_id, value))
+            return tuple(values)
+        except (KeyError, FieldEffectError) as error:
+            raise MetadataReportError("review case snapshot is unavailable") from error
 
     def _current_cover_automatic_decision_id(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
@@ -534,7 +592,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
             "UNION ALL "
             "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
-            ") recorded JOIN field_effects effect ON effect.decision_id=recorded.decision_id "
+            ") recorded JOIN field_effects effect ON (effect.decision_id=recorded.decision_id "
+            "OR json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')=recorded.decision_id) "
             "WHERE effect.state IN ('claimed','applying','reconciling') OR "
             "(effect.state='verified' AND recorded.destination='cover') "
             "ORDER BY recorded.destination",

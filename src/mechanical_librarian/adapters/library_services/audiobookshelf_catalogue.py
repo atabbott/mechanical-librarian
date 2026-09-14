@@ -10,6 +10,9 @@ from urllib.parse import quote
 
 import httpx
 
+from mechanical_librarian.adapters.library_services.audiobookshelf_cover_path import (
+    observed_cover_path,
+)
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
     EbookLocation,
     normalize_ebook_location,
@@ -363,7 +366,7 @@ def _entry(
             "explicit",
         )
     }
-    cover_reference = next(
+    cover_revision_reference = next(
         (
             value
             for value in (
@@ -375,10 +378,10 @@ def _entry(
         ),
         None,
     )
-    cover_field = {
-        "present": "coverPath" in detail,
-        "value": detail.get("coverPath"),
-    }
+    _, cover_reference, cover_field = observed_cover_path(detail)
+    if "media" not in cover_field and "metadata" not in cover_field:
+        # Preserve the existing root-only fingerprint, including invalid evidence.
+        cover_reference = cover_revision_reference
     revisions = tuple(_file_revision(record) for record in audio_revisions)
     # A one-file item keeps the exact revision shape it had before multi-file
     # items were admitted, so every existing single-file fingerprint is
@@ -405,7 +408,7 @@ def _entry(
     # path does not make its fingerprint depend on a timestamp playback moves.
     item_revision_fallback = (
         detail["updatedAt"]
-        if not all(revisions) or (cover_reference is not None and has_ebook)
+        if not all(revisions) or (cover_revision_reference is not None and has_ebook)
         else None
     )
     source_fingerprint = hashlib.sha256(

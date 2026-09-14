@@ -61,6 +61,8 @@ class _PendingManualReturn:
 
 
 class ContinuousFieldEffectRepository(Protocol):
+    def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]: ...
+
     """Complete application-owned persistence contract for guarded work."""
 
     def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]: ...
@@ -719,6 +721,49 @@ class ContinuousGuardedApplication:
             self._failed_decision = None
             self._set_last_failure(None)
 
+    def _schedule_capability_ready(
+        self,
+        category: str,
+        connection: str,
+        destination: str,
+        observed_at: int,
+        affected_review_case_ids: set[str],
+    ) -> bool:
+        """Apply the same recoverable suspension rule to each planned member."""
+        if category != "allowed":
+            scope = (
+                "connection" if category == "connection_unavailable" else "destination"
+            )
+            affected_review_case_ids.update(
+                self._repository.suspend_field_effect_capability(
+                    scope=scope,
+                    connection=connection,
+                    destination=destination,
+                    reason=category,
+                    changed_at=observed_at,
+                )
+            )
+            return False
+        for reason in ("insufficient_permission", "field_unavailable"):
+            self._repository.clear_field_effect_capability_suspension(
+                scope="destination",
+                connection=connection,
+                destination=destination,
+                reason=reason,
+                observed_at=observed_at,
+            )
+        self._repository.clear_field_effect_capability_suspension(
+            scope="connection",
+            connection=connection,
+            destination="",
+            reason="connection_unavailable",
+            observed_at=observed_at,
+        )
+        return (
+            self._repository.field_effect_capability_suspension(connection, destination)
+            is None
+        )
+
     def _schedule(self, limit: int, affected_review_case_ids: set[str]) -> int:
         self._release_completed_manual_returns()
         with self._schedule_lock:
@@ -821,65 +866,97 @@ class ContinuousGuardedApplication:
             observed = capability.observe(
                 _CapabilityProbe(snapshot.work_id, snapshot.destination)  # type: ignore[arg-type]  # reason: observers read only work_id and destination, which the probe supplies; a full FieldEffectPlan does not exist before planning.
             )
-            if observed.category != "allowed":
-                scope = (
-                    "connection"
-                    if observed.category == "connection_unavailable"
-                    else "destination"
-                )
-                affected_review_case_ids.update(
-                    self._repository.suspend_field_effect_capability(
-                        scope=scope,
-                        connection=snapshot.connection,
-                        destination=snapshot.destination,
-                        reason=observed.category,
-                        changed_at=observed_at,
-                    )
-                )
-                self._advance_schedule_cursor(decision, generation)
-                continue
-            for reason in ("insufficient_permission", "field_unavailable"):
-                self._repository.clear_field_effect_capability_suspension(
-                    scope="destination",
-                    connection=snapshot.connection,
-                    destination=snapshot.destination,
-                    reason=reason,
-                    observed_at=observed_at,
-                )
-            self._repository.clear_field_effect_capability_suspension(
-                scope="connection",
-                connection=snapshot.connection,
-                destination="",
-                reason="connection_unavailable",
-                observed_at=observed_at,
-            )
-            if (
-                self._repository.field_effect_capability_suspension(
-                    snapshot.connection, snapshot.destination
-                )
-                is not None
+            if not self._schedule_capability_ready(
+                observed.category,
+                snapshot.connection,
+                snapshot.destination,
+                observed_at,
+                affected_review_case_ids,
             ):
                 self._advance_schedule_cursor(decision, generation)
                 continue
-            operation = application.plan(
-                decision,
-                connection=snapshot.connection,
-                library=snapshot.library,
-                work_id=snapshot.work_id,
-                destination=snapshot.destination,
-                pre_value=snapshot.pre_value,
-                desired_value=snapshot.decision_value,
-                target_fingerprint=snapshot.target_fingerprint,
-                target_version=snapshot.target_version,
-                dependency_digests=(
-                    snapshot.dependency_digests or (snapshot.target_fingerprint,)
-                ),
-                capability_digest=observed.digest,
-                allow_corrective_keep_current=(
-                    type(decision) is HumanDecision
-                    and decision.outcome == "keep_current"
-                ),
-            )
+            operation: FieldEffectOperation | None
+            if snapshot.paired_bundle_id is not None:
+                if (
+                    decision.destination != "title"
+                    or type(decision) is not AutomaticDecision
+                ):
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
+                siblings = tuple(
+                    self._decision(raw)
+                    for raw in self._repository.get_review_case_decisions(
+                        decision.review_case_id
+                    )
+                )
+                sibling = next(
+                    (
+                        item
+                        for item in siblings
+                        if item.decision_id == snapshot.paired_decision_id
+                    ),
+                    None,
+                )
+                if (
+                    type(sibling) is not AutomaticDecision
+                    or sibling.destination != "subtitle"
+                ):
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
+                sibling_snapshot = self._authority.resolve(sibling)
+                if (
+                    sibling_snapshot.paired_bundle_id != snapshot.paired_bundle_id
+                    or sibling_snapshot.paired_decision_id != decision.decision_id
+                ):
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
+                try:
+                    self._repository.current_field_effect_consent(
+                        snapshot.connection, snapshot.library, "subtitle"
+                    )
+                except FieldEffectError as error:
+                    if error.code != "consent":
+                        raise
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
+                companion_capability = capability.observe(
+                    _CapabilityProbe(snapshot.work_id, "subtitle")  # type: ignore[arg-type]  # reason: observers read work_id and destination; the paired plan does not exist until both capabilities pass.
+                )
+                if not self._schedule_capability_ready(
+                    companion_capability.category,
+                    snapshot.connection,
+                    "subtitle",
+                    observed_at,
+                    affected_review_case_ids,
+                ):
+                    self._advance_schedule_cursor(decision, generation)
+                    continue
+                operation = application.plan_title_subtitle(
+                    decision,
+                    sibling,
+                    title_capability_digest=observed.digest,
+                    subtitle_capability_digest=companion_capability.digest,
+                )
+            else:
+                operation = application.plan(
+                    decision,
+                    connection=snapshot.connection,
+                    library=snapshot.library,
+                    work_id=snapshot.work_id,
+                    destination=snapshot.destination,
+                    pre_value=snapshot.pre_value,
+                    desired_value=snapshot.decision_value,
+                    target_fingerprint=snapshot.target_fingerprint,
+                    target_version=snapshot.target_version,
+                    dependency_digests=(
+                        snapshot.dependency_digests or (snapshot.target_fingerprint,)
+                    ),
+                    capability_digest=observed.digest,
+                    allow_corrective_keep_current=(
+                        type(decision) is HumanDecision
+                        and decision.outcome == "keep_current"
+                    ),
+                )
             if operation is not None:
                 planned += 1
             self._advance_schedule_cursor(decision, generation)

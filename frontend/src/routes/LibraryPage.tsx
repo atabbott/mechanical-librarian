@@ -1094,12 +1094,34 @@ function AsinAutomaticStatement({ field }: { field: ReviewField }) {
   )
 }
 
+const audioFileFormat = (format: string) => ['m4b', 'm4a', 'mp3'].includes(format)
+
+const combinedAutomaticTags = (field: ReviewField, mediaKind: string) =>
+  audioFileFormat(mediaKind) &&
+  field.humanDecision === null &&
+  field.destination === 'tags' &&
+  field.automaticDecision?.outcome === 'candidate' &&
+  !field.proposedValues.some((value) =>
+    sameSelectedValue(value, field.automaticDecision?.selected_value),
+  )
+
+const selectedAutomaticSynopsis = (field: ReviewField, mediaKind: string) =>
+  audioFileFormat(mediaKind) &&
+  field.destination === 'description' &&
+  field.humanDecision === null &&
+  field.automaticDecision?.outcome === 'candidate' &&
+  field.proposedValues.some((value) =>
+    sameSelectedValue(value, field.automaticDecision?.selected_value),
+  )
+
 function RecordedOutcome({
   field,
+  mediaKind,
   expanded,
   toggle,
 }: {
   field: ReviewField
+  mediaKind: string
   expanded: boolean
   toggle: () => void
 }) {
@@ -1117,6 +1139,7 @@ function RecordedOutcome({
           ?.alternativeId ?? null,
       )
     : choiceContext(field, null)
+  const combinedTags = combinedAutomaticTags(field, mediaKind)
   const evidenceId = `recorded-evidence-${field.destination}`
   const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
   return (
@@ -1144,6 +1167,9 @@ function RecordedOutcome({
           </div>
         )}
       </dl>
+      {combinedTags ? (
+        <p>Compatible source tags were combined, retaining any existing tags.</p>
+      ) : null}
       <ProviderConsensusAutomaticStatement field={field} />
       <DescriptionAutomaticStatement field={field} />
       <SeriesAutomaticStatement field={field} />
@@ -1160,11 +1186,30 @@ function RecordedOutcome({
         {expanded ? 'Hide evidence' : 'Evidence'}
       </button>
       {expanded ? (
-        <ChoiceEvidencePanel
-          context={context}
-          evidenceId={evidenceId}
-          label={`${fieldLabel(field.destination)} recorded outcome`}
-        />
+        combinedTags ? (
+          <div id={evidenceId}>
+            {field.choiceContexts
+              .filter((item) => item.evidence.length > 0)
+              .map((item, index) => (
+                <ChoiceEvidencePanel
+                  key={item.alternativeId ?? 'current'}
+                  context={item}
+                  evidenceId={`${evidenceId}-${String(index)}`}
+                  label={
+                    item.selection === 'current'
+                      ? 'Retained tags'
+                      : `Source tags ${String(index + 1)}`
+                  }
+                />
+              ))}
+          </div>
+        ) : (
+          <ChoiceEvidencePanel
+            context={context}
+            evidenceId={evidenceId}
+            label={`${fieldLabel(field.destination)} recorded outcome`}
+          />
+        )
       ) : null}
     </section>
   )
@@ -1229,12 +1274,11 @@ function CoverObservationEvidence({
         <small>No complete reviewer evidence was recorded for this cover.</small>
       </section>
     )
-  const expectedBranding =
-    mediaKind === 'audiobook'
-      ? 'audiobook'
-      : mediaKind === 'epub' || mediaKind === 'ebook'
-        ? 'text_edition'
-        : null
+  const expectedBranding = audioFileFormat(mediaKind)
+    ? 'audiobook'
+    : mediaKind === 'epub' || mediaKind === 'ebook'
+      ? 'text_edition'
+      : null
   const wrongFormatBranding =
     expectedBranding !== null &&
     observation.formatBranding !== 'absent' &&
@@ -3413,6 +3457,16 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       >
                         {selectedRevisitable ? (
                           <>
+                            {combinedAutomaticTags(selected, detail.data.target.mediaKind) ? (
+                              <RecordedOutcome
+                                field={selected}
+                                mediaKind={detail.data.target.mediaKind}
+                                expanded={expandedChoices.has(`${selected.destination}:recorded`)}
+                                toggle={() =>
+                                  toggleChoiceEvidence(`${selected.destination}:recorded`)
+                                }
+                              />
+                            ) : null}
                             <ProviderConsensusAutomaticStatement field={selected} />
                             <DescriptionAutomaticStatement field={selected} />
                             <SeriesAutomaticStatement field={selected} />
@@ -3624,6 +3678,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ) : selectedRecorded ? (
                     <RecordedOutcome
                       field={selected}
+                      mediaKind={detail.data.target.mediaKind}
                       expanded={expandedChoices.has(`${selected.destination}:recorded`)}
                       toggle={() => toggleChoiceEvidence(`${selected.destination}:recorded`)}
                     />
@@ -3717,7 +3772,15 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   {comparisonNotices(selected).length ? (
                     <aside className="comparison-notice" aria-label="Comparison condition">
                       {comparisonNotices(selected).map((notice) => (
-                        <p key={notice}>{fieldLabel(notice)}</p>
+                        <p key={notice}>
+                          {notice === 'competing_evidence' &&
+                          combinedAutomaticTags(selected, detail.data.target.mediaKind)
+                            ? 'Different source tag lists'
+                            : notice === 'competing_evidence' &&
+                                selectedAutomaticSynopsis(selected, detail.data.target.mediaKind)
+                              ? 'Different source descriptions'
+                              : fieldLabel(notice)}
+                        </p>
                       ))}
                     </aside>
                   ) : null}

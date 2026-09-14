@@ -47,7 +47,7 @@ from mechanical_librarian.domain.shadow_decision import (
 )
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v5"
+SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v6"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
@@ -119,7 +119,16 @@ _DISPOSITIONS = frozenset(
 _CONFLICT_REASONS = frozenset(
     {"ambiguous_eligible_actions", "bibliographic_combination_unresolved"}
 )
-_REASON_CODES = frozenset(
+_ISBN_ELECTION_REASONS = frozenset(
+    {
+        "source_value_malformed_or_incomplete",
+        "source_values_conflict",
+        "source_value_insufficient_association",
+        "source_unavailable",
+        "source_value_absent",
+    }
+)
+_REASON_CODES = _ISBN_ELECTION_REASONS | frozenset(
     {
         "ambiguous_eligible_actions",
         "bibliographic_combination_unresolved",
@@ -262,6 +271,14 @@ class ShadowFieldOutcome:
                 for value in self.combination_ids
             )
             or self.reason_code not in _REASON_CODES
+            or (
+                self.reason_code in _ISBN_ELECTION_REASONS
+                and (
+                    self.destination != "isbn"
+                    or self.policy_destination != "automatic"
+                    or self.disposition != "abstention"
+                )
+            )
             or self.outcome_id != "shadow_outcome_" + _digest(self._identity_data())
         ):
             raise ShadowOutcomeError("shadow field outcome is invalid")
@@ -336,6 +353,13 @@ def _rich_field_outcome(
         if disposition == "unsupported"
         else "no_eligible_action"
     )
+    if (
+        destination == "isbn"
+        and policy_destination == "automatic"
+        and disposition == "abstention"
+        and preview.reason in _ISBN_ELECTION_REASONS
+    ):
+        reason_code = preview.reason
     action_id = "action_" + _digest(
         {
             "candidate_id": candidate_id,
@@ -510,7 +534,7 @@ class ShadowOutcomeSet:
         # that does not support the destination (#967).
         rich_destinations = {"series", "genres", "tags", "description", "isbn"}
         if media_kind == "audiobook":
-            rich_destinations = rich_destinations | {"asin"}
+            rich_destinations = rich_destinations | {"asin", "explicit"}
         for decision in decisions.decisions:
             if decision.destination in rich_destinations:
                 continue
@@ -661,7 +685,11 @@ class ShadowOutcomeSet:
             ("tags", "tags"),
             ("description_fill", "description"),
             ("isbn_form", "isbn"),
-            *((("asin", "asin"),) if media_kind == "audiobook" else ()),
+            *(
+                (("asin", "asin"), ("explicit", "explicit"))
+                if media_kind == "audiobook"
+                else ()
+            ),
         ):
             rich_destination = destinations[category]
             rich_option: str | None = None
@@ -691,9 +719,14 @@ class ShadowOutcomeSet:
         # the destination: the bundled identity authority already covers it.
         # Otherwise, when the owner routed the subtitle category to Automatic,
         # the independently qualified subtitle fill owns the destination.
-        if destinations["subtitle"] == "automatic" and (
-            title_layout_subtitle is None
-            or title_layout_subtitle.disposition != "candidate"
+        if (
+            media_kind == "audiobook" and options["subtitle"] == "corroborated_split"
+        ) or (
+            destinations["subtitle"] == "automatic"
+            and (
+                title_layout_subtitle is None
+                or title_layout_subtitle.disposition != "candidate"
+            )
         ):
             fields.append(
                 _rich_field_outcome(
@@ -706,7 +739,12 @@ class ShadowOutcomeSet:
                             "subtitle",
                             options["subtitle"],
                             current_values["subtitle"],
-                            rich["subtitle"].desired_value,
+                            (
+                                rich["subtitle"].desired_value.get("subtitle")
+                                if options["subtitle"] == "corroborated_split"
+                                and type(rich["subtitle"].desired_value) is dict
+                                else rich["subtitle"].desired_value
+                            ),
                         ),
                         destinations["subtitle"],
                     )
@@ -723,7 +761,12 @@ class ShadowOutcomeSet:
                                 "subtitle",
                                 options["subtitle"],
                                 current_values["subtitle"],
-                                rich["subtitle"].desired_value,
+                                (
+                                    rich["subtitle"].desired_value.get("subtitle")
+                                    if options["subtitle"] == "corroborated_split"
+                                    and type(rich["subtitle"].desired_value) is dict
+                                    else rich["subtitle"].desired_value
+                                ),
                             )
                         )
                         is not None

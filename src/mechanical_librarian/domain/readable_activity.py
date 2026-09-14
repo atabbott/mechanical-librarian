@@ -26,6 +26,7 @@ __all__ = [
     "CHANGE_LIMIT",
     "EVIDENCE_LIMIT",
     "ReadableChange",
+    "ISBN_REFUSAL_REASONS",
     "chooser_label",
     "destination_label",
     "failure_reason",
@@ -54,6 +55,14 @@ _ARROW = "→"
 _COVER_TOKEN = re.compile(r"^cover_[0-9a-f]{64}$")
 _CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
 _WHITESPACE = re.compile(r"\s+")
+
+ISBN_REFUSAL_REASONS = {
+    "source_value_absent": "The source supplied no ISBN",
+    "source_unavailable": "The ISBN source could not be reached",
+    "source_value_malformed_or_incomplete": "The source ISBN was malformed or incomplete",
+    "source_values_conflict": "The sources supplied conflicting ISBNs",
+    "source_value_insufficient_association": "The supplied ISBN was not sufficiently associated with this recording",
+}
 
 _DESTINATION_LABELS = {
     "asin": "ASIN",

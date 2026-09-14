@@ -98,6 +98,14 @@ provider. Audiobook evidence remains read-side only.
    unchanged by this record. The audiobook adapters enter the closed set
    through the #749 provider-slice schema revision under ADR-0013 — clean
    rebuild, no migration.
+9. **Existing work evidence.** F46a (#1047) admits the existing Open Library
+   linked edition/work/author witnesses and Hardcover bounded work projection
+   for audiobook work facts only. Complete source associations and contributor
+   bindings are required; contradictory or orphaned links remain refusals.
+   Neither adapter enters the recording-authority registry. Audiobook original
+   publication means a linked work's first publication, retaining year, month
+   or day precision; recording and edition release dates do not vote. This
+   adds no provider, credential mode or network destination.
 
 ## Consequences
 

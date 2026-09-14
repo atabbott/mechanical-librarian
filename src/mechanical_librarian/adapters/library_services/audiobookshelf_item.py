@@ -18,6 +18,9 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue imp
     included_audio_records,
     target_connection_code,
 )
+from mechanical_librarian.adapters.library_services.audiobookshelf_cover_path import (
+    observed_cover_path,
+)
 from mechanical_librarian.adapters.library_services.audiobookshelf_ebook_location import (
     normalize_ebook_location,
 )
@@ -54,6 +57,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
     TargetSeries,
     isbn_family,
+    normalize_date_value,
     validate_observed_title,
 )
 
@@ -286,22 +290,15 @@ def _snapshot(
     identities = tuple(value.identity for value in files)
     if len(set(identities)) != len(identities):
         raise MetadataReportError("target file identities are duplicated")
-    cover_path = root.get("coverPath")
+    cover_state, cover_path, _ = observed_cover_path(root)
     cover = None
-    if cover_path is not None:
-        if (
-            type(cover_path) is str
-            and cover_path.startswith("/")
-            and len(cover_path) <= 1024
-        ):
-            # The service's metadata-provided route is evidence of presence only.
-            # Acquisition is pinned to its one documented raw endpoint so a hostile
-            # detail response cannot redirect this credential-free request.
-            cover = TargetCover(
-                hashlib.sha256(cover_path.encode()).hexdigest(),
-                f"/api/items/{quote(item, safe='')}/cover?raw=1",
-                item,
-            )
+    if cover_state is TargetFieldState.VALUE and cover_path is not None:
+        # Metadata declares presence, never the acquisition URL.
+        cover = TargetCover(
+            hashlib.sha256(cover_path.encode()).hexdigest(),
+            f"/api/items/{quote(item, safe='')}/cover?raw=1",
+            item,
+        )
     fields = _target_fields(root, media, cover)
     title_field = fields[0]
     title = (
@@ -482,7 +479,12 @@ def _target_field(
             value, oversized = _target_projection_text(
                 raw, "target publication date", MAX_SCALAR_CHARACTERS
             )
-            date.fromisoformat(value)
+            if len(value) in {4, 7}:
+                normalized, _ = normalize_date_value(value)
+                if normalized != value:
+                    raise ValueError("target publication date is malformed")
+            else:
+                date.fromisoformat(value)
             if oversized:
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(destination, TargetFieldState.VALUE, value)
@@ -510,17 +512,14 @@ def _target_projection_text(
 
 
 def _cover_field(root: dict[str, Any], cover: TargetCover | None) -> TargetField:
-    destination = TargetDestination.COVER
-    if "coverPath" not in root:
-        return TargetField(destination, TargetFieldState.MISSING)
-    raw = root["coverPath"]
-    if raw is None:
-        return TargetField(destination, TargetFieldState.NULL)
-    if raw == "":
-        return TargetField(destination, TargetFieldState.EMPTY)
-    if cover is None:
-        return TargetField(destination, TargetFieldState.MALFORMED)
-    return TargetField(destination, TargetFieldState.VALUE, cover.identity)
+    state, _, _ = observed_cover_path(root)
+    if state is TargetFieldState.VALUE:
+        return (
+            TargetField(TargetDestination.COVER, state, cover.identity)
+            if cover is not None
+            else TargetField(TargetDestination.COVER, TargetFieldState.MALFORMED)
+        )
+    return TargetField(TargetDestination.COVER, state)
 
 
 def _file(

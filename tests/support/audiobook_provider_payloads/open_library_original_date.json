@@ -1,0 +1,131 @@
+{
+  "/search.json": {
+    "docs": [
+      {
+        "key": "/works/OL5W",
+        "editions": {
+          "docs": [
+            {
+              "key": "/books/OL1M",
+              "isbn": [
+                "0306406152",
+                "9780306406157"
+              ]
+            }
+          ]
+        },
+        "title": "Synthetic Journey",
+        "author_key": [
+          "OL7A"
+        ],
+        "author_name": [
+          "Example Author"
+        ]
+      }
+    ]
+  },
+  "/books/OL1M.json": {
+    "key": "/books/OL1M",
+    "works": [
+      {
+        "key": "/works/OL5W"
+      }
+    ],
+    "isbn_10": [
+      "0306406152"
+    ],
+    "isbn_13": [
+      "9780306406157"
+    ],
+    "title": "Synthetic Journey",
+    "subtitle": "Edition subtitle",
+    "publish_date": "2026-01-02",
+    "publishers": [
+      "Example Press"
+    ],
+    "languages": [
+      {
+        "key": "/languages/eng"
+      }
+    ],
+    "authors": [
+      {
+        "key": "/authors/OL7A"
+      }
+    ],
+    "revision": 3,
+    "last_modified": {
+      "type": "/type/datetime",
+      "value": "2026-01-02T03:04:05.000000"
+    },
+    "oclc_numbers": [
+      "12345"
+    ],
+    "lccn": [
+      "2026123456"
+    ],
+    "dewey_decimal_class": [
+      "813.6"
+    ],
+    "lc_classifications": [
+      "PS3605.X36"
+    ],
+    "publish_places": [
+      "London"
+    ],
+    "identifiers": {
+      "wikidata": [
+        "Q123"
+      ]
+    },
+    "physical_format": "Paperback",
+    "number_of_pages": 321,
+    "pagination": "321 pages",
+    "copyright_date": "2026"
+  },
+  "/works/OL5W.json": {
+    "key": "/works/OL5W",
+    "title": "Synthetic Journey",
+    "description": {
+      "type": "/type/text",
+      "value": "Description"
+    },
+    "authors": [
+      {
+        "author": {
+          "key": "/authors/OL7A"
+        },
+        "type": {
+          "key": "/type/author_role"
+        }
+      }
+    ],
+    "revision": 4,
+    "last_modified": {
+      "type": "/type/datetime",
+      "value": "2026-01-03T03:04:05.000000"
+    },
+    "subjects": [
+      "Speculative fiction"
+    ],
+    "subject_people": [
+      "Example Person"
+    ],
+    "subject_places": [
+      "Example Place"
+    ],
+    "subject_times": [
+      "Near future"
+    ],
+    "identifiers": {
+      "wikidata": [
+        "Q456"
+      ]
+    },
+    "first_publish_date": "2025-02"
+  },
+  "/authors/OL7A.json": {
+    "key": "/authors/OL7A",
+    "name": "Example Author"
+  }
+}

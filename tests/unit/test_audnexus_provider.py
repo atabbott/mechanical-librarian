@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from typing import Any, Callable
 
 import httpx
@@ -13,6 +14,16 @@ from mechanical_librarian.adapters.providers.audnexus_metadata import (
     AUDNEXUS_ORIGIN,
     AudnexusMetadataProvider,
     AudnexusPacer,
+    _candidate,
+)
+from mechanical_librarian.adapters.providers.visible_text import visible_description
+from mechanical_librarian.application import metadata_report as m
+from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain import metadata_report as d
+from mechanical_librarian.domain import proposal_set as p
+from mechanical_librarian.domain.metadata_policy import (
+    MetadataPolicyProfile,
+    resolve_policy,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_PROVIDER_CHAPTER_DURATIONS,
@@ -26,15 +37,28 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
+from mechanical_librarian.domain.rich_metadata_preview import (
+    audiobook_tag_union_candidate,
+    compile_rich_metadata_preview,
+)
 from tests.support.audiobook_providers import (
     asin_plan,
+    asserted_target,
+    audio_claim,
+    audio_target,
     local_claims,
     payload,
+    target_asin_claim,
+    target_title_claim,
     work_plan,
 )
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
+    asserted_asin_report,
     manual_audiobook_observation,
+)
+from tests.support.audiobook_reports import (
+    synthetic_audiobook_isbn_reason_report as _isbn_source_report,
 )
 
 _ASIN = "B08G9PRS1K"
@@ -125,7 +149,7 @@ def test_a_book_lookup_maps_the_captured_record_onto_report_claims() -> None:
         claim.value for claim in _claims(candidate, ClaimKind.LANGUAGE)
     )
     assert (
-        payload("audnexus_book")["description"]
+        visible_description(payload("audnexus_book")["summary"])
         == _claims(candidate, ClaimKind.DESCRIPTION)[0].value
     )
     assert ("us",) == tuple(
@@ -203,7 +227,9 @@ def test_invalid_taxonomy_type_keeps_the_book_and_valid_siblings(
         "Example Author"
     ]
     assert [claim.value for claim in _claims(candidate, ClaimKind.GENRE)] == ["Fantasy"]
-    assert [claim.value for claim in _claims(candidate, ClaimKind.TAG)] == ["Adventure"]
+    assert [
+        (claim.value, claim.state) for claim in _claims(candidate, ClaimKind.TAG)
+    ] == [(None, FieldState.MALFORMED), ("Adventure", FieldState.VALID)]
     assert [
         (item.value, item.taxonomy_type)
         for item in _evidence(candidate, ProviderEvidenceKind.TAXONOMY)
@@ -215,6 +241,8 @@ def test_invalid_taxonomy_type_keeps_the_book_and_valid_siblings(
 def test_partial_cast_and_malformed_release_remain_explicit_invalid_claims() -> None:
     book = {
         "asin": _ASIN,
+        "title": "Project Hail Mary",
+        "authors": [{"name": "Andy Weir"}],
         "narrators": [{"name": "Example Reader"}, {"name": 42}],
         "releaseDate": "2025-99-99",
     }
@@ -224,9 +252,20 @@ def test_partial_cast_and_malformed_release_remain_explicit_invalid_claims() -> 
         FieldState.VALID,
         FieldState.MALFORMED,
     ]
-    assert (
-        _claims(candidate, ClaimKind.PUBLICATION_DATE)[0].state is FieldState.MALFORMED
+    # The raw parser records invalid recording data; WORK shaping grants no date vote.
+    raw_candidate = _candidate(
+        "audnexus",
+        book,
+        local_claims(),
+        marketplace="us",
+        chapters=None,
+        schema_rejections=lambda _: None,
     )
+    assert (
+        _claims(raw_candidate, ClaimKind.PUBLICATION_DATE)[0].state
+        is FieldState.MALFORMED
+    )
+    assert not _claims(candidate, ClaimKind.PUBLICATION_DATE)
 
 
 def test_the_chapter_document_becomes_one_bounded_whole_second_vector() -> None:
@@ -470,3 +509,357 @@ def test_an_html_summary_is_read_only_when_no_plain_description_is_stated() -> N
     assert [(description.reference,)] == [
         value.evidence_references for value in result.alternatives
     ]
+
+
+@pytest.mark.parametrize(
+    ("summary", "description", "expected"),
+    [
+        (
+            "A complete short synopsis.",
+            "A different complete shorter description.",
+            "A complete short synopsis.",
+        ),
+        ("<p>A complete safe synopsis.</p>", "Teaser...", "A complete safe synopsis."),
+        ("", "Fallback text.", "Fallback text."),
+        ("   ", "Fallback text.", "Fallback text."),
+        (None, "Fallback text.", "Fallback text."),
+    ],
+)
+def test_actual_adapter_summary_priority(
+    summary: str | None, description: str, expected: str
+) -> None:
+    raw = {
+        "asin": _ASIN,
+        "title": "Synthetic Voyage",
+        "authors": [{"name": "Example Writer"}],
+        "summary": summary,
+        "description": description,
+    }
+    _, handler = _recorder(book=_json(raw))
+    provider = _provider(handler)
+    try:
+        c = provider.observe(asin_plan()).observation.candidates[0]
+    finally:
+        provider._client.close()
+    claim = _claims(c, ClaimKind.DESCRIPTION)[0]
+    assert claim.state is FieldState.VALID and claim.value == expected
+
+
+@pytest.mark.parametrize(
+    "summary", [{}, ["bad"], "<script>bad()</script>", "x" * 30000]
+)
+def test_invalid_primary_summary_does_not_fallback(summary: object) -> None:
+    raw = {
+        "asin": _ASIN,
+        "title": "Synthetic Voyage",
+        "authors": [{"name": "Example Writer"}],
+        "summary": summary,
+        "description": "Safe fallback must not hide failure.",
+    }
+    _, handler = _recorder(book=_json(raw))
+    provider = _provider(handler)
+    try:
+        o = provider.observe(asin_plan()).observation
+    finally:
+        provider._client.close()
+    assert not o.candidates or all(
+        x.state is not FieldState.VALID
+        for c in o.candidates
+        for x in _claims(c, ClaimKind.DESCRIPTION)
+    )
+
+
+def _tag_source_report(shape: str = "complete") -> d.MetadataReport:
+    base = asserted_asin_report(provider_duration="58200.000")
+    target = audio_target("Synthetic Journey", ("Example Author",))
+    claims = (
+        target_title_claim("Synthetic Journey"),
+        audio_claim(d.ClaimKind.ASIN, "B000000001", 1),
+        audio_claim(d.ClaimKind.ASIN, "B000000002", 2),
+    )
+    plan = m.audiobook_discovery_plan(target, claims, audio=base.audio)
+    raw: dict[str, dict[str, Any]] = {
+        asin: {
+            "asin": asin,
+            "title": "Synthetic Journey",
+            "authors": [{"name": "Example Author"}],
+            "genres": [{"type": "tag", "name": tag} for tag in tags],
+        }
+        for asin, tags in (
+            ("B000000001", ("First", "Shared")),
+            ("B000000002", ("Shared", "Second")),
+        )
+    }
+    if shape == "malformed_sibling":
+        raw["B000000002"]["genres"].append({"type": "tag", "name": None})
+    elif shape == "genre_only":
+        for product in raw.values():
+            for genre in product["genres"]:
+                genre["type"] = "genre"
+    elif shape == "oversized_union":
+        for i, product in enumerate(raw.values()):
+            product["genres"] = [
+                {"type": "tag", "name": f"Category {i}-{j}"}
+                for j in range(d.MAX_TAGS // 2 + 1)
+            ]
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chapters"):
+            return _json({}, 404)
+        return _json(raw[request.url.path.split("/")[2]])
+
+    provider = _provider(handle)
+    try:
+        observation = provider.observe(plan).observation
+    finally:
+        provider._client.close()
+    report = d.MetadataReport.create(
+        target=d.TargetFacts("primary", "audio", "tags", target.fields),
+        file=base.file,
+        local_claims=claims,
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=base.audio,
+    )
+    return d.MetadataReport.from_json(report.to_json())
+
+
+def test_non_nested_tag_union_retains_every_source_member_and_reference() -> None:
+    report = _tag_source_report()
+    result = next(
+        x
+        for x in p.evaluate_report(report).results
+        if x.destination is d.TargetDestination.TAGS
+    )
+    union = audiobook_tag_union_candidate(report, result, "fill_empty")
+    assert union is not None
+    assert union.value.value == ("First", "Shared", "Second")
+    candidates = tuple(c for o in report.providers for c in o.candidates)
+    assert len(candidates) == 2
+    source_references = {
+        claim.reference
+        for candidate in candidates
+        for claim in candidate.claims
+        if claim.kind is d.ClaimKind.TAG and claim.state is d.FieldState.VALID
+    }
+    assert set(union.evidence_references) == source_references
+    assert audiobook_tag_union_candidate(report, result, "replace") is None
+    reopened = d.MetadataReport.from_json(report.to_json())
+    assert audiobook_tag_union_candidate(reopened, result, "fill_empty") == union
+
+
+@pytest.mark.parametrize(
+    "shape", ("malformed_sibling", "genre_only", "oversized_union")
+)
+def test_tag_union_refuses_incomplete_or_non_tag_source_lists(shape: str) -> None:
+    report = _tag_source_report(shape)
+    result = next(
+        x
+        for x in p.evaluate_report(report).results
+        if x.destination is d.TargetDestination.TAGS
+    )
+    assert audiobook_tag_union_candidate(report, result, "fill_empty") is None
+
+
+def _series_work_lookup_report(
+    *,
+    current_sequence: str | None = None,
+    source_title: str = "Synthetic Journey",
+    source_author: str = "Example Author",
+) -> d.MetadataReport:
+    """A target hint locates one product; its complete work facts earn admission."""
+    target = asserted_target("B000000001", "Synthetic Journey", ("Example Author",))
+    if current_sequence is not None:
+        target = replace(
+            target,
+            fields=tuple(
+                d.TargetField(
+                    field.destination,
+                    d.TargetFieldState.VALUE,
+                    (d.TargetSeries("Synthetic Cycle", current_sequence),),
+                )
+                if field.destination is d.TargetDestination.SERIES
+                else field
+                for field in target.fields
+            ),
+        )
+    claims = (target_title_claim("Synthetic Journey"), target_asin_claim("B000000001"))
+    base = asserted_asin_report(provider_duration="58200.000")
+    discovery = m.audiobook_discovery_plan(target, claims, audio=base.audio)
+    feed = m.audiobook_asin_feed_plan(target, discovery, ())
+    assert feed is not None
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/chapters"):
+            return _json({}, 404)
+        return _json(
+            {
+                "asin": "B000000001",
+                "title": source_title,
+                "authors": [{"name": source_author}],
+                "seriesPrimary": {"name": "Synthetic Cycle", "position": "2"},
+            }
+        )
+
+    provider = _provider(handle)
+    try:
+        observation = provider.observe(feed).observation
+    finally:
+        provider._client.close()
+    report = d.MetadataReport.create(
+        target=d.TargetFacts("primary", "audio", "series", target.fields),
+        file=base.file,
+        local_claims=claims,
+        local_reasons=("target_metadata_title",),
+        providers=(observation,),
+        audio=base.audio,
+    )
+    return d.MetadataReport.from_json(report.to_json())
+
+
+@pytest.mark.parametrize(
+    ("sequence", "title", "author", "reason"),
+    [
+        (None, "Synthetic Journey", "Example Author", None),
+        ("1", "Synthetic Journey", "Example Author", "series_conflicting_membership"),
+        (
+            None,
+            "Different Journey",
+            "Example Author",
+            "target_work_applicability_unproved",
+        ),
+        (None, "Synthetic Journey", "Example", "target_work_applicability_unproved"),
+    ],
+)
+def test_one_complete_asin_work_lookup_supports_series_without_recording_authority(
+    sequence: str | None,
+    title: str,
+    author: str,
+    reason: str | None,
+) -> None:
+    report = _series_work_lookup_report(
+        current_sequence=sequence,
+        source_title=title,
+        source_author=author,
+    )
+    observation = report.providers[0]
+    assert len(observation.candidates) == 1
+    candidate = observation.candidates[0]
+    assert all(claim.basis == "target_metadata" for claim in report.local_claims)
+    assert not p.provider_candidate_represents_target_recording(
+        report, observation, candidate
+    )
+    assert p.provider_candidate_represents_target_work(
+        report, observation, candidate
+    ) == (title == "Synthetic Journey" and author == "Example Author")
+    options = dict(MetadataPolicyProfile.builtin().options)
+    options["series"] = "replace_qualified"
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["series"] = "automatic"
+    policy = resolve_policy(
+        MetadataPolicyProfile.create("Automatic series", options, destinations),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    field = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "series"
+    )
+    assert field.reason == reason
+    if reason is None:
+        assert field.outcome == "projected"
+        assert field.desired_value == ({"name": "Synthetic Cycle", "sequence": "2"},)
+        result = next(
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.SERIES
+        )
+        references = {
+            claim.reference
+            for claim in candidate.claims
+            if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+        }
+        assert set(result.alternatives[0].evidence_references) == references
+    else:
+        assert field.outcome == "abstain" and field.desired_value is None
+        assert next(
+            value
+            for value in proposal.results
+            if value.destination is TargetDestination.SERIES
+        ).alternatives
+
+
+@pytest.mark.parametrize(
+    ("changes", "message"),
+    [
+        (
+            {"identity": "lane_" + "0" * 64},
+            "provider lane candidate reference is inconsistent",
+        ),
+        ({"input_references": ()}, "provider lane inputs are invalid"),
+        ({"candidates": ()}, "provider lane candidates are invalid"),
+    ],
+)
+def test_actual_asin_work_lane_refuses_corrupt_identity_inputs_and_membership(
+    changes: dict[str, Any],
+    message: str,
+) -> None:
+    report = _series_work_lookup_report()
+    observation = report.providers[0]
+    assert p.provider_candidate_represents_target_work(
+        report, observation, observation.candidates[0]
+    )
+    with pytest.raises(d.ReportValueError, match=message):
+        replace(observation, lanes=(replace(observation.lanes[0], **changes),))
+
+
+@pytest.mark.parametrize("mode", ("automatic", "ignore"))
+@pytest.mark.parametrize(
+    ("shape", "reason"),
+    [
+        ("absent", "source_value_absent"),
+        ("unassociated", "source_value_insufficient_association"),
+        ("conflict", "source_values_conflict"),
+        ("malformed", "source_value_malformed_or_incomplete"),
+        ("unavailable", "source_unavailable"),
+    ],
+)
+def test_actual_isbn_source_reasons_preserve_earlier_policy_precedence(
+    monkeypatch,
+    shape,
+    reason,
+    mode,
+):
+    report = _isbn_source_report(shape)
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+        | {"isbn_form:preserve_exact:audiobook_isbn_fill"},
+    )
+    options = dict(MetadataPolicyProfile.builtin().options)
+    options["isbn_form"] = "preserve_exact"
+    destinations = dict(MetadataPolicyProfile.builtin().destinations)
+    destinations["isbn_form"] = mode
+    policy = resolve_policy(
+        MetadataPolicyProfile.create("ISBN source reasons", options, destinations),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    field = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "isbn_form"
+    )
+    assert (field.outcome, field.reason, field.desired_value) == (
+        "abstain",
+        "policy_ignored" if mode == "ignore" else reason,
+        None,
+    )
+    assert not any(
+        p.provider_candidate_represents_target_recording(report, provider, candidate)
+        for provider in report.providers
+        for candidate in provider.candidates
+    )
+    assert d.MetadataReport.from_json(report.to_json()).to_json() == report.to_json()

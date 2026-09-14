@@ -1665,9 +1665,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     exact=True,
                 ).wait_for()
                 unsupported_description = policy_chapters.get_by_role(
-                    "button", name="Unsupported"
+                    "button", name="Additional fields"
                 ).get_by_text(
-                    "Fields Mechanical Librarian can detect but cannot change yet.",
+                    "Fields with limited support that start off until you enable them.",
                     exact=True,
                 )
                 assert unsupported_description.count() == 1

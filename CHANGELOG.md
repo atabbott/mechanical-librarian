@@ -8,6 +8,13 @@
 
 ## Unreleased
 
+- Qualified audiobook metadata now uses supported work and recording evidence
+  for useful field decisions, with complete casts, tags and original dates.
+  Title/subtitle pairs apply together; explicit flags only set true, and covers
+  replace only known undersized incumbents with materially larger alternatives.
+  No-change and source refusals remain visible; application stays default-off.
+  Existing installs require a clean rebuild. (#1047)
+
 - Qualified audiobook Automatic choices cover title, authors, narrators,
   language, series and genres, with complete credits and explicit list operations.
   Recording-bound subtitles remain available for owner review;

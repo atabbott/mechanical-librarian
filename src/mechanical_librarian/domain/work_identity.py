@@ -17,6 +17,7 @@ class WorkDispatchRung(StrEnum):
 
 
 class WorkTitleTransformationFamily(StrEnum):
+    LOCAL_AUDIOBOOK_UNABRIDGED = "local_audiobook_unabridged"
     PROVIDER_ASSOCIATED_SERIES_SUFFIX = "provider_associated_series_suffix"
     FILENAME_UNDERSCORES = "filename_underscores"
     FILENAME_AUTHOR_TITLE_PREFIX = "filename_author_title_prefix"
@@ -139,6 +140,12 @@ class WorkTitleCompoundProduction:
 
 
 WORK_TITLE_TRANSFORMATION_RULES = (
+    WorkTitleTransformationRule(
+        WorkTitleTransformationFamily.LOCAL_AUDIOBOOK_UNABRIDGED,
+        False,
+        False,
+        WorkDispatchRung.NORMALIZED,
+    ),
     WorkTitleTransformationRule(
         WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,
         False,
@@ -352,6 +359,11 @@ _RULE_ORDINAL = {
 
 WORK_TITLE_COMPOUND_PRODUCTIONS = (
     WorkTitleCompoundProduction(
+        "local_audiobook_unabridged",
+        (WorkTitleTransformationFamily.LOCAL_AUDIOBOOK_UNABRIDGED,),
+        True,
+    ),
+    WorkTitleCompoundProduction(
         "provider_associated_series_suffix",
         (WorkTitleTransformationFamily.PROVIDER_ASSOCIATED_SERIES_SUFFIX,),
         True,
@@ -394,6 +406,15 @@ def _application_ordinal(
 def _lineage_production(
     applications: tuple[WorkTitleTransformationApplication, ...],
 ) -> str | None:
+    if (
+        len(applications) == 1
+        and applications[0].family
+        is WorkTitleTransformationFamily.LOCAL_AUDIOBOOK_UNABRIDGED
+        and applications[0].side is WorkTitleTransformationSide.LOCAL
+        and applications[0].field is WorkTitleTransformationField.TITLE
+        and applications[0].ordinal is None
+    ):
+        return "local_audiobook_unabridged"
     if (
         len(applications) == 1
         and applications[0].family
@@ -573,6 +594,8 @@ def _dispatch_transformations_are_canonical(
     transformations: tuple[WorkTitleTransformationFamily, ...],
 ) -> bool:
     """Reject persisted lineage combinations the bounded ladder cannot emit."""
+    if WorkTitleTransformationFamily.LOCAL_AUDIOBOOK_UNABRIDGED in transformations:
+        return False
     if tuple(sorted(transformations, key=_RULE_ORDINAL.__getitem__)) != transformations:
         return False
     if rung is WorkDispatchRung.NORMALIZED:
@@ -635,6 +658,7 @@ def admit_provider_work_identity(
     provider_work_identity: str,
     variant_excluded: bool = False,
     allow_reordered_authors: bool = False,
+    audiobook: bool = False,
 ) -> WorkIdentityAdmission:
     """Apply the one closed work-title/author identity decision."""
     if (
@@ -648,6 +672,7 @@ def admit_provider_work_identity(
         or type(provider_work_identity) is not str
         or not provider_work_identity
         or type(variant_excluded) is not bool
+        or type(audiobook) is not bool
         or type(allow_reordered_authors) is not bool
         or variant_excluded
         or work_title_has_variant_marker(local_title)
@@ -676,6 +701,34 @@ def admit_provider_work_identity(
         and _closed_author_multiset_equal(local_authors, provider_authors)
     ):
         return WorkIdentityAdmission(True)
+    suffix = " (Unabridged)"
+    if (
+        audiobook
+        and local_title.endswith(suffix)
+        and local_title.count(suffix) == 1
+        and _comparison_text(local_title[: -len(suffix)])
+        and _closed_equal(local_title[: -len(suffix)], provider_title)
+        and _closed_author_multiset_equal(local_authors, provider_authors)
+        and all(
+            not _closed_equal(author, other)
+            for authors in (local_authors, provider_authors)
+            for index, author in enumerate(authors)
+            for other in authors[index + 1 :]
+        )
+    ):
+        return WorkIdentityAdmission(
+            True,
+            WorkTitleTransformationLineage(
+                (
+                    WorkTitleTransformationApplication(
+                        WorkTitleTransformationFamily.LOCAL_AUDIOBOOK_UNABRIDGED,
+                        WorkTitleTransformationSide.LOCAL,
+                        WorkTitleTransformationField.TITLE,
+                        None,
+                    ),
+                )
+            ),
+        )
     latin = _latin_admission_lineage(
         local_title, local_authors, provider_title, provider_authors
     )
@@ -729,6 +782,7 @@ def replay_provider_work_identity_admission(
     dispatch_lineage: WorkDispatchLineage | None,
     variant_excluded: bool = False,
     provider_series: tuple[tuple[str, str], ...] = (),
+    audiobook: bool = False,
 ) -> WorkIdentityAdmission:
     """Recompute admission only for a dispatch the exact local ladder can emit."""
     admission = admit_provider_work_identity(
@@ -739,6 +793,7 @@ def replay_provider_work_identity_admission(
         provider_work_identity=provider_work_identity,
         variant_excluded=variant_excluded,
         allow_reordered_authors=True,
+        audiobook=audiobook,
     )
     if not admission.admitted and len(provider_series) == 1:
         series, sequence = provider_series[0]
