@@ -1,9 +1,9 @@
 {
   "audiobook_activation": {
     "clean_rebuild_required": true,
-    "frozen_candidate_sha": "3ec3200c1b481fc1fe25ff86d78e88bf0fbcc4d1",
+    "frozen_candidate_sha": "1e70a5bcef2d3bfaffc3693935e701314706cf90",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v8.json",
-    "manifest_sha256": "74ae85d2dd56f305c42ffcb35f3152aaee16cf81ee23001a0c242f968f4b821e",
+    "manifest_sha256": "6167d31f4ee055c5c473c01a9619d22322ef3cb0cb971f768213c41fede88472",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -98,7 +98,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the existing named binding assignments in these three modules may differ from the final current source snapshot. This cycle-breaking comparison is not whole-source equivalence with the earlier authority measurement; measurement_source_continuity separately binds that source and the read/UI semantic delta.",
-    "source_sha": "3ec3200c1b481fc1fe25ff86d78e88bf0fbcc4d1"
+    "source_sha": "1e70a5bcef2d3bfaffc3693935e701314706cf90"
   },
   "classification": "Measured work and recording applicability, field election, durable no-change and guarded-effect semantic successor; historical quality is retained and is not rescored.",
   "clean_rebuild_required": true,
@@ -110,7 +110,7 @@
     "retained_controls": 2,
     "source_reconstructions": 2
   },
-  "frozen_candidate_sha": "3ec3200c1b481fc1fe25ff86d78e88bf0fbcc4d1",
+  "frozen_candidate_sha": "1e70a5bcef2d3bfaffc3693935e701314706cf90",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f19a-qualification-manifest-v24.json",
@@ -131,13 +131,13 @@
       "scope": "Retained private byte inventory; aggregate binding only."
     },
     "current_read_and_ui_consumer_proof": {
-      "files": 31,
-      "inventory_sha256": "dda06694c5b67da0716ae050eb88575bc1ddc39bc7c5d24b33f6e3db5f131bae",
+      "files": 39,
+      "inventory_sha256": "d2a77ceecbf120f46d57c97781a4cb7df7af06b6993b042cd596d00c97dbac8d",
       "scope": "Retained private byte inventory; aggregate binding only."
     },
     "evaluators": {
-      "files": 15042,
-      "inventory_sha256": "97183d0e48d27fc7e9e39e4dd79c2cba44c05906e48974f5969c2a5f575b8c22",
+      "files": 18038,
+      "inventory_sha256": "36b4fec12d6026dbf12f85ee66cc56c4b35ed6b5092dd0d306faa08029869d54",
       "scope": "Retained private byte inventory; aggregate binding only."
     },
     "failed_and_corrected_replay_receipts": {
@@ -188,7 +188,7 @@
         "measured_sha256": "f08d32a0651de79f6bc22071f33a90dc36f079cd403745cbb9a645b93b18e0d4"
       },
       "frontend/src/routes/ActivityPage.tsx": {
-        "current_sha256": "2602a569096b2ee8f115f7abd5e24095f05141e9350f60b766d69535b610b701",
+        "current_sha256": "fc59a35a4572398407fcf4af0133db201ace7fd1b5a530aedcf36236fd8235b8",
         "measured_sha256": "36c493b2fefe8c604d2164f3b99c02eaee29f52f1cedc5c8d936ceb13a1449e9"
       },
       "frontend/src/routes/DetailPage.tsx": {
@@ -196,15 +196,19 @@
         "measured_sha256": "c0fbbac4714a187ebf6a5df5d7e07b7a9d79152b498d25b67ea07b1fe02f9eb4"
       },
       "frontend/src/routes/LibraryPage.tsx": {
-        "current_sha256": "2bbfb92015918d88c0c9f7cc775db95911a7c3eff205fef9c778ab31e9387e23",
+        "current_sha256": "5a45308fd5a2a12eefc8d034ab2c141d8d8727fe485be608803cfd6c5ca9a02d",
         "measured_sha256": "8131f03ee35a88e7ea6720d6075e35522db6e9041419e09e8af74d766eea9f72"
       },
       "frontend/src/routes/PolicyPage.tsx": {
-        "current_sha256": "fc358f0bf328be7c1ec83a3c904a7cf5200743bb41423c1931632f8c8e623ad8",
+        "current_sha256": "b091b9012d5496045ef2cce2060ddd7a4fbb834ee957459893ca3a1927e8158c",
         "measured_sha256": "0cf3f0986db6003337f98d0fefc34fbfa60299ca84e73d3875dd6f981487d4ba"
       },
+      "src/mechanical_librarian/adapters/persistence/decisions.py": {
+        "current_sha256": "3297e60e6361c98a834ac393378787b4d278c129a96609de28a4a5b91d9a6d54",
+        "measured_sha256": "7e7a213cfe220ab2b8b59a42e36d80c424f06815f5ae79102a9752437cb3fac3"
+      },
       "src/mechanical_librarian/adapters/persistence/review_projections.py": {
-        "current_sha256": "c6add081b772693d9d3cf28055deb0ac0603a9030f66a1796e9fe8f2042cc865",
+        "current_sha256": "79211b2232bfe9ac77f5c897c78299bda50ba461fbd577ed2b722a316e2553f2",
         "measured_sha256": "2ef1a06397309216f3e5ebb8899116f495f86735cc2b36508d7b16074482bda4"
       },
       "src/mechanical_librarian/application/review_web.py": {
@@ -220,9 +224,9 @@
         "measured_sha256": "7ba2625d71ab1b11cdb7390a2736e595d9623fcdacc8b5f3a14cbe0bb2e42f89"
       }
     },
-    "current_source_sha": "3ec3200c1b481fc1fe25ff86d78e88bf0fbcc4d1",
-    "meaning": "Authority/effect measurements remain immutable at their measured source. All other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. No authority scenario is counted as re-executed.",
-    "unchanged_source_inventory_sha256": "4b1947f56be0878dbf12bfddaaaffb16c56c675006a1e4a287a04089dc4dc0c4",
+    "current_source_sha": "1e70a5bcef2d3bfaffc3693935e701314706cf90",
+    "meaning": "Authority/effect measurements remain immutable at their measured source. All other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. The first review remediation also includes companion-aware in-flight override visibility and verified subtitle predecessor History, neutral selected audiobook synopsis alternatives, labelled paired title/subtitle preview and separated lifecycle timestamps. Guarded authority and corrective no-clear SQL remain unchanged. No authority scenario is counted as re-executed.",
+    "unchanged_source_inventory_sha256": "26b84def77b93ec30b112b9f31822e31769a69186f1e6e4b7344fb1c95d6da3d",
     "unchanged_source_paths": [
       "src/mechanical_librarian/__init__.py",
       "src/mechanical_librarian/__main__.py",
@@ -254,7 +258,6 @@
       "src/mechanical_librarian/adapters/persistence/catalogue.py",
       "src/mechanical_librarian/adapters/persistence/cover_artifacts.py",
       "src/mechanical_librarian/adapters/persistence/cover_considerations.py",
-      "src/mechanical_librarian/adapters/persistence/decisions.py",
       "src/mechanical_librarian/adapters/persistence/description_advice.py",
       "src/mechanical_librarian/adapters/persistence/documents.py",
       "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
@@ -451,17 +454,17 @@
     "frontend/src/api/http.ts": "cca49f69c5be028fdcfabd6150472863bf897e1904f2816286aeb4b315819ff8",
     "frontend/src/components/RecordingIdentityBasis.tsx": "a719096272238aa4abccd3a5b0339ed17efdd26be60dd9ab3f2f8a17c732b0d9",
     "frontend/src/router.tsx": "dc80fa42b403d451d96e80b8b673010cbe232421039490d08935fcea185cb7af",
-    "frontend/src/routes/ActivityPage.tsx": "2602a569096b2ee8f115f7abd5e24095f05141e9350f60b766d69535b610b701",
+    "frontend/src/routes/ActivityPage.tsx": "fc59a35a4572398407fcf4af0133db201ace7fd1b5a530aedcf36236fd8235b8",
     "frontend/src/routes/DetailPage.tsx": "48c84fe57ba67f1a86fcbec7d17777383dda5849db03998eb1b9b2da96b1e935",
-    "frontend/src/routes/LibraryPage.tsx": "2bbfb92015918d88c0c9f7cc775db95911a7c3eff205fef9c778ab31e9387e23",
-    "frontend/src/routes/PolicyPage.tsx": "fc358f0bf328be7c1ec83a3c904a7cf5200743bb41423c1931632f8c8e623ad8",
+    "frontend/src/routes/LibraryPage.tsx": "5a45308fd5a2a12eefc8d034ab2c141d8d8727fe485be608803cfd6c5ca9a02d",
+    "frontend/src/routes/PolicyPage.tsx": "b091b9012d5496045ef2cce2060ddd7a4fbb834ee957459893ca3a1927e8158c",
     "frontend/src/styles.css": "b4182ddb9912875186db40978e4c5517683415561d592305759ea662b9d3c1ad",
     "frontend/tests/http.test.ts": "dd40a69dcbabfd46e2b8d38ea689bda0ae6f1fdab45b81e852334303e5572f43",
     "frontend/tests/identifierEvidenceFixture.json": "80e5a728a37c0c9e2a99cafb287b81655cfab10db243cab4f1bf9495681f1e92",
-    "frontend/tests/policyImpact.test.ts": "549361a459b09fb648522de4e0835c28214925f9721c49ea9d3a8fbf9bf99225",
-    "frontend/tests/router.activity.test.tsx": "57488d69f2940f6eaec2da7211e17c59e7876925d83d917d541a00df72dfe349",
+    "frontend/tests/policyImpact.test.ts": "44dc17d36e5292075b042ed7c1ba12a259ec93759decb8d2375b43ea1c625cc3",
+    "frontend/tests/router.activity.test.tsx": "d42168da365fc80c72ccc4b484e7b826d98e4fc063eb31d8fd91def857b0db07",
     "frontend/tests/router.detail.test.tsx": "f97961a9dff71e7e6408004ce61307ecf3e3b8ca04a7351de40c0a9edd352eb8",
-    "frontend/tests/router.library.test.tsx": "157866d3cdca14e8f2f996cc0b68391dcf40efc678567809b67241fc7be0da37",
+    "frontend/tests/router.library.test.tsx": "2ef2f813710a3adfa2b1d10935ceb631cb451e810e6c8bd102ee73fcbbd263c2",
     "frontend/tests/router.policy.test.tsx": "20de1e9e29969db530134f598e99c9ed9933c6d4ca5378908d7519b9be6e75fc",
     "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
     "scripts/qualify_provider_evidence_replay.py": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129",
@@ -495,7 +498,7 @@
     "src/mechanical_librarian/adapters/persistence/catalogue.py": "a2988aaa93db7a4e9840d7d3a647e1073f74a40f9d16bb76dab3119248086b7a",
     "src/mechanical_librarian/adapters/persistence/cover_artifacts.py": "7f40070158022869ba34569c8a644bcb6fcf571dba7a2cb77554a40be0a160a9",
     "src/mechanical_librarian/adapters/persistence/cover_considerations.py": "42b009fc3c5e9480d40361cf3b7aef309267294160fa48536fad8a83dce5ed48",
-    "src/mechanical_librarian/adapters/persistence/decisions.py": "7e7a213cfe220ab2b8b59a42e36d80c424f06815f5ae79102a9752437cb3fac3",
+    "src/mechanical_librarian/adapters/persistence/decisions.py": "3297e60e6361c98a834ac393378787b4d278c129a96609de28a4a5b91d9a6d54",
     "src/mechanical_librarian/adapters/persistence/description_advice.py": "78060d78ca204ad35b2f3e421ee82fb5a128013423c97c72ef0c1ab6a964553b",
     "src/mechanical_librarian/adapters/persistence/documents.py": "eeb855cafe56a39b6adc318eff41c42225553bf5d544d91b8ab9405486410baa",
     "src/mechanical_librarian/adapters/persistence/field_effect_activity.py": "50723a227e3f5428963f072d3cf1ef3b3f06594516adcad790305eda5cfa0781",
@@ -512,7 +515,7 @@
     "src/mechanical_librarian/adapters/persistence/reports.py": "7d33b33fdb80de5fbd4aa6c83077ab04f74838d397278a23c2cacf1eb1d2946e",
     "src/mechanical_librarian/adapters/persistence/review_cases.py": "7b4a1a19dfd3e7cfc861351d3143d2de5fc631d3dc17ac88b336b59520bdbb79",
     "src/mechanical_librarian/adapters/persistence/review_preparation.py": "6ebcba9e4c69d459b7a8d3350af57a4d49395f8c3bd4c6e998c1016ed329f50c",
-    "src/mechanical_librarian/adapters/persistence/review_projections.py": "c6add081b772693d9d3cf28055deb0ac0603a9030f66a1796e9fe8f2042cc865",
+    "src/mechanical_librarian/adapters/persistence/review_projections.py": "79211b2232bfe9ac77f5c897c78299bda50ba461fbd577ed2b722a316e2553f2",
     "src/mechanical_librarian/adapters/persistence/review_scans.py": "47980be15c599a909a2cee964e86c99a3359ef267c8dd7f47931580cef3c6b0e",
     "src/mechanical_librarian/adapters/persistence/review_sessions.py": "c84138fe5eba89a38abc717165272226d75d928dcea5bb8e97d34e3cb841b08e",
     "src/mechanical_librarian/adapters/persistence/review_sql.py": "239a1a71befe44e9eb5a71b5514ec1ef27cee5b938b5a89705803320c015f937",
@@ -598,8 +601,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "6003f95354ee213c58f8111b510868e826b9ddc63e8a41940bd6d87b0173d0fd",
-    "src/mechanical_librarian/domain/automatic_decision.py": "493ba05927d0ac6c4bf4313986389c6dee3643222b598787a36f3e7f03f4e0c7",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "05b2c0d0295830533a24bbd205e3a92a013ee167c3a830da2eb5a4eafba61f49",
+    "src/mechanical_librarian/domain/automatic_decision.py": "f6940016b8706eced9c17c11eea74e394831e9202156f8b1c0b2045f44f3f141",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -630,7 +633,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "be08d74a3cd3d8558e91e01528784a51d42a1d6896aca968584a7a2a273aebab",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "6b8a30b82af1224488b4ad0a5f81ed6ca5eead6c04f42e7c305fe0fc35ec1b66",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "8d6fcff5b4af8a71d76a46efb3e6131caeb7cd7d06a03a027f95447f0850502f",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
@@ -685,7 +688,7 @@
     "tests/unit/test_continuous_field_effects.py": "dfbeac43a06812b153a021543b4b8385ae909bf72bc146ecfe6b074a2c6a887c",
     "tests/unit/test_cover_artifacts.py": "7187a2e9698755558b89f86d829feed6d8c2ce82372e33de1cb015ed7fad6e00",
     "tests/unit/test_cover_qualification.py": "d73d7e3f5c1819eb14f1fe0ce3e3c180865af6df2b9c3df918a307b519b9dc8d",
-    "tests/unit/test_field_effects.py": "af6a6a3103264e3e04ed15cb24ab6ee087bb64e2d2e646c888261337d056dc38",
+    "tests/unit/test_field_effects.py": "b52c1015f73074279ec100a21c779905861db56d739809dbf3e5894d2186f4b6",
     "tests/unit/test_inventaire_metadata.py": "e049bebde92110216363d31190eaf56a99aa5de816ad9d4a218b0ec420ab50cf",
     "tests/unit/test_metadata_policy_activation.py": "dc7a1966eee6db2adfac6ad0bfab3abca079b55002fabdb09f68a448c8342f8b",
     "tests/unit/test_metadata_report_discovery.py": "a8286b313902d0ad1c0f539bc7528469796844ca0bf8d24748a8c60e858fbf0c",
@@ -698,7 +701,7 @@
     "tests/unit/test_review_web_read_models.py": "2ef668478276c97fc8070dffdf99340a6e5b895e4442a510fd09e22ba8cfd1df",
     "tests/unit/test_review_web_transport.py": "aa556f017fec401c8e05f0d5f7ab0811e92e20e554dfcbfeb96fdabc67da724d",
     "tests/unit/test_rich_metadata_preview.py": "1450abb8d097d10e4600f696715828a5dc0b66e003c86965ac057b14f46ed1f5",
-    "tests/unit/test_rich_metadata_qualification_manifest.py": "16b8bfb6654fd34509a95fd1204fbf570049aa72d6350ea7daab2551de78b30e",
+    "tests/unit/test_rich_metadata_qualification_manifest.py": "2381478afacd4eb3d83a9e17fda320b2e107b825f2dea5aa40dd8d6b30d9daf4",
     "tests/unit/test_shadow_decision.py": "eb07eddd3878840aea7c21a4d27d9948ff0dca215c2ec824b6c08710fd7ff614",
     "tests/unit/test_shadow_outcome_persistence.py": "148c8c790eafd7e91dab6f176d2d4127462d4667039a80e747043869805f9d30",
     "tests/unit/test_shadow_review_packets.py": "cc6a9b23ffc04c150bdb0522bf5cad6930fd8d6a34543909290e7db7efadfb56"
