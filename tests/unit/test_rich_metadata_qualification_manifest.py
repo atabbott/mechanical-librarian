@@ -2843,6 +2843,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         )
         assert continuity["current_source_sha"] == document["frozen_candidate_sha"]
         assert set(continuity["changed_read_sources"]) == {
+            "src/mechanical_librarian/adapters/persistence/decisions.py",
             "src/mechanical_librarian/adapters/persistence/review_projections.py",
             "src/mechanical_librarian/application/review_web.py",
             "frontend/src/routes/LibraryPage.tsx",
