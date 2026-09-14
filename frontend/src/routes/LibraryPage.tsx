@@ -1094,8 +1094,10 @@ function AsinAutomaticStatement({ field }: { field: ReviewField }) {
   )
 }
 
+const audioFileFormat = (format: string) => ['m4b', 'm4a', 'mp3'].includes(format)
+
 const combinedAutomaticTags = (field: ReviewField, mediaKind: string) =>
-  mediaKind === 'audiobook' &&
+  audioFileFormat(mediaKind) &&
   field.humanDecision === null &&
   field.destination === 'tags' &&
   field.automaticDecision?.outcome === 'candidate' &&
@@ -1263,12 +1265,11 @@ function CoverObservationEvidence({
         <small>No complete reviewer evidence was recorded for this cover.</small>
       </section>
     )
-  const expectedBranding =
-    mediaKind === 'audiobook'
-      ? 'audiobook'
-      : mediaKind === 'epub' || mediaKind === 'ebook'
-        ? 'text_edition'
-        : null
+  const expectedBranding = audioFileFormat(mediaKind)
+    ? 'audiobook'
+    : mediaKind === 'epub' || mediaKind === 'ebook'
+      ? 'text_edition'
+      : null
   const wrongFormatBranding =
     expectedBranding !== null &&
     observation.formatBranding !== 'absent' &&

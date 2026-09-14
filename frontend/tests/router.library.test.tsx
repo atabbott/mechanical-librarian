@@ -2267,9 +2267,14 @@ describe('Library route', () => {
   )
 
   it.each([
-    { ownerTags: [], mediaKind: 'audiobook' },
-    { ownerTags: ['Owner tag'], mediaKind: 'audiobook' },
+    { ownerTags: [], mediaKind: 'm4b' },
+    { ownerTags: ['Owner tag'], mediaKind: 'm4b' },
+    { ownerTags: ['Owner tag'], mediaKind: 'm4a' },
+    { ownerTags: ['Owner tag'], mediaKind: 'mp3' },
     { ownerTags: ['Owner tag'], mediaKind: 'ebook' },
+    { ownerTags: ['Owner tag'], mediaKind: 'epub' },
+    { ownerTags: ['Owner tag'], mediaKind: 'unknown' },
+    { ownerTags: ['Owner tag'], mediaKind: 'audiobook' },
   ])(
     'shows combined tags only for $mediaKind with $ownerTags',
     async ({ ownerTags, mediaKind }) => {
@@ -2333,7 +2338,7 @@ describe('Library route', () => {
       expect(
         screen.getByRole('button', { name: 'Choose proposed value: Shared · Second' }),
       ).toBeVisible()
-      if (mediaKind === 'ebook') {
+      if (['ebook', 'epub', 'unknown', 'audiobook'].includes(mediaKind)) {
         expect(screen.queryByRole('region', { name: 'Tags recorded outcome' })).toBeNull()
         expect(
           screen.queryByText('Compatible source tags were combined, retaining any existing tags.'),
@@ -2630,7 +2635,7 @@ describe('Library route', () => {
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
   })
 
-  it('keeps the current cover pinned beside a complete eligible gallery and retains advisory reasons', async () => {
+  it.each(['epub', 'm4b'])('retains %s cover checks', async (mediaKind) => {
     const user = userEvent.setup()
     const base = detail.fields[0]
     if (!base) throw new Error('cover fixture requires a field')
@@ -2810,7 +2815,7 @@ describe('Library route', () => {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => ({
         ...detail,
-        target: { ...detail.target, mediaKind: 'epub' },
+        target: { ...detail.target, mediaKind },
         fields: [coverField],
       })),
     }
@@ -2837,17 +2842,32 @@ describe('Library route', () => {
     const singleFlagChecks = within(comparison).getByLabelText('Alternative 4 cover visual checks')
     const singleFlagSummary = singleFlagChecks.querySelector<HTMLElement>('.cover-defect-summary')
     if (!singleFlagSummary) throw new Error('single-flag cover summary is missing')
-    expect(within(singleFlagSummary).getByText('1 visual issue flagged')).toBeVisible()
-    expect(within(singleFlagSummary).getByText('Audiobook branding')).toBeVisible()
+    if (mediaKind === 'epub') {
+      expect(within(singleFlagSummary).getByText('1 visual issue flagged')).toBeVisible()
+      expect(within(singleFlagSummary).getByText('Audiobook branding')).toBeVisible()
+    } else {
+      expect(within(singleFlagSummary).getByText('No visual defects flagged')).toBeVisible()
+      expect(within(singleFlagSummary).queryByText('Audiobook branding')).toBeNull()
+    }
     const flaggedChecks = within(comparison).getByLabelText('Alternative 5 cover visual checks')
     const flaggedSummary = flaggedChecks.querySelector<HTMLElement>('.cover-defect-summary')
     if (!flaggedSummary) throw new Error('flagged cover summary is missing')
-    expect(within(flaggedSummary).getByText('2 visual issues flagged')).toBeVisible()
+    expect(
+      within(flaggedSummary).getByText(
+        mediaKind === 'epub' ? '2 visual issues flagged' : '3 visual issues flagged',
+      ),
+    ).toBeVisible()
     expect(within(flaggedSummary).getByText('Overlay or marking')).toBeVisible()
     expect(within(flaggedSummary).getByText('Degraded reproduction')).toBeVisible()
-    expect(within(flaggedSummary).queryByText('Text-edition branding')).not.toBeInTheDocument()
+    if (mediaKind === 'epub') {
+      expect(within(flaggedSummary).queryByText('Text-edition branding')).not.toBeInTheDocument()
+    } else {
+      expect(within(flaggedSummary).getByText('Text-edition branding')).toBeVisible()
+    }
     await user.click(within(flaggedChecks).getByText('Visual observation details'))
-    expect(within(flaggedChecks).getByText('Text-edition branding')).toBeVisible()
+    const observationDetails = flaggedChecks.querySelector('details')
+    if (!observationDetails) throw new Error('cover observation details are missing')
+    expect(within(observationDetails).getByText('Text-edition branding')).toBeVisible()
     await user.click(within(comparison).getByText('Reasons retained'))
     expect(within(comparison).getByText('Preview unavailable')).toBeVisible()
     expect(
@@ -2865,7 +2885,7 @@ describe('Library route', () => {
       recordDecision,
       getCaseDetail: vi.fn(async () => ({
         ...detail,
-        target: { ...detail.target, mediaKind: 'epub' },
+        target: { ...detail.target, mediaKind },
         fields: [
           {
             ...coverField,
@@ -2946,7 +2966,7 @@ describe('Library route', () => {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => ({
         ...detail,
-        target: { ...detail.target, mediaKind: 'epub' },
+        target: { ...detail.target, mediaKind },
         fields: [{ ...coverField, coverConsideration: recommended }],
       })),
     })
@@ -2982,7 +3002,7 @@ describe('Library route', () => {
         ...createHttp(),
         getCaseDetail: vi.fn(async () => ({
           ...detail,
-          target: { ...detail.target, mediaKind: 'epub' },
+          target: { ...detail.target, mediaKind },
           fields: [{ ...coverField, coverConsideration: ownerReady }],
         })),
       })
