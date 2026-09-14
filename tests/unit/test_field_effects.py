@@ -5935,15 +5935,13 @@ def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negat
                 assert target_case.cover_bytes == state.originals[1]
             else:
                 assert result.state in ("stale", "superseded", "verified")
-            with closing(
-                open_repository(tmp_path / "cover" / "state.sqlite")
-            ) as reopened:
-                assert (
-                    reopened.get_field_effect(operation.plan.plan_id).to_data()
-                    == result.to_data()
-                )
         finally:
             target_case.close()
+    with closing(open_repository(tmp_path / "cover" / "state.sqlite")) as reopened:
+        assert (
+            reopened.get_field_effect(operation.plan.plan_id).to_data()
+            == result.to_data()
+        )
 
 
 @pytest.mark.parametrize(
