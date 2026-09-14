@@ -5107,6 +5107,111 @@ def audiobook_pair(tmp_path, effects):
         case.close()
 
 
+@pytest.mark.parametrize(
+    "reason", ("field_unavailable", "insufficient_permission", "connection_unavailable")
+)
+def test_audiobook_pair_recovers_companion_after_schedule_cursor(
+    audiobook_pair, reason
+):
+    pair = audiobook_pair
+    lane = ContinuousGuardedApplication(
+        pair.repo,
+        {("primary", "audio"): pair.service},
+        {("primary", "audio"): pair.env.capabilities},
+        pair.authority,
+        (("primary", "audio"),),
+        pair.env.clock,
+        lambda *_: None,
+    )
+    pending = pair.repo.pending_field_effect_decision_documents(100)
+    assert [AutomaticDecision.from_json(raw).destination for raw in pending] == [
+        "subtitle",
+        "title",
+    ]
+    pair.env.capabilities.category = reason
+    assert lane.schedule(limit=1) == 0
+    assert pair.repo.field_effect_capability_suspension("primary", "subtitle") == reason
+    pair.env.capabilities.category = "allowed"
+    assert lane.schedule(limit=1) == 1
+    assert pair.repo.field_effect_capability_suspension("primary", "subtitle") is None
+    assert lane.schedule() == 0
+    row = pair.repo._connection.execute("SELECT plan_id FROM field_effects").fetchone()
+    assert row is not None
+    result = pair.service.apply(row[0])
+    assert result.state == "verified"
+    assert pair.service.apply(row[0]).state == "verified"
+    assert len(pair.patches()) == 1
+    assert pair.patches()[0]["metadata"] == {
+        "title": "Synthetic Journey",
+        "subtitle": "A Tale of Courage",
+    }
+    pair.reopen()
+    assert pair.repo.get_field_effect(row[0]).to_data() == result.to_data()
+    events = [json.loads(raw) for raw in pair.repo.field_effect_event_documents(row[0])]
+    assert len(events) == 4
+    assert events[-1]["desired_value"] == "Synthetic Journey"
+    assert events[-1]["subtitle_companion"]["desired_value"] == "A Tale of Courage"
+    assert pair.repo.pending_field_effect_decision_documents(100) == ()
+
+
+@pytest.mark.parametrize(
+    "boundary", ("unexpected_effect_behavior", "denied", "paused", "owner", "consent")
+)
+def test_audiobook_pair_recovery_preserves_remaining_guards(audiobook_pair, boundary):
+    pair = audiobook_pair
+    lane = ContinuousGuardedApplication(
+        pair.repo,
+        {("primary", "audio"): pair.service},
+        {("primary", "audio"): pair.env.capabilities},
+        pair.authority,
+        (("primary", "audio"),),
+        pair.env.clock,
+        lambda *_: None,
+    )
+    pair.env.capabilities.category = "field_unavailable"
+    assert lane.schedule(limit=1) == 0
+    pair.env.capabilities.category = "allowed"
+    if boundary == "unexpected_effect_behavior":
+        pair.repo.suspend_field_effect_capability(
+            scope="destination",
+            connection="primary",
+            destination="subtitle",
+            reason=boundary,
+            changed_at=pair.env.clock(),
+        )
+    elif boundary == "denied":
+        pair.env.capabilities.category = "field_unavailable"
+    elif boundary == "paused":
+        pair.repo.set_field_effect_paused(True, pair.env.clock())
+    elif boundary == "owner":
+        _paired_owner_keep(pair, "subtitle")
+    else:
+        consent = pair.repo.current_field_effect_consent("primary", "audio", "subtitle")
+        pair.repo.revoke_field_effect_consent(consent.consent_id, pair.env.clock())
+    if boundary == "owner":
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            lane.schedule()
+    elif boundary == "paused":
+        assert lane.schedule() == 1
+        row = pair.repo._connection.execute(
+            "SELECT plan_id FROM field_effects"
+        ).fetchone()
+        assert row is not None
+        with pytest.raises(GuardedApplicationError, match="paused"):
+            pair.service.apply(row[0])
+    else:
+        assert lane.schedule() == 0
+    if boundary == "unexpected_effect_behavior":
+        assert (
+            pair.repo.field_effect_capability_suspension("primary", "subtitle")
+            == boundary
+        )
+    assert pair.patches() == []
+    assert pair.repo._connection.execute(
+        "SELECT count(*) FROM field_effects WHERE state='verified'"
+    ).fetchone() == (0,)
+
+
 def test_audiobook_pair_happy_pair_scheduler_reopen_and_activity(audiobook_pair):
     lane = ContinuousGuardedApplication(
         audiobook_pair.repo,

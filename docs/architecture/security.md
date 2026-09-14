@@ -1273,8 +1273,9 @@ members. Activity carries the companion value and its actual observed result.
 Audiobook tag unions and plausible narrator agreement reconstruct all selected
 source references from the event-bound current report. Missing, changed or
 resealed references cannot substitute a different candidate or incomplete cast.
-A positively invalid or conflicting recording runtime also excludes that
-source's narrator credits from owner choices and complete-cast agreement.
+A positively invalid or conflicting recording runtime, or an explicit conflict
+under the existing recording language/variant rules, excludes that source's
+narrator credits from owner choices and complete-cast agreement.
 Those credits remain source-bound, nonselectable review evidence; unresolved
 recording identity alone does not exclude an otherwise plausible cast.
 

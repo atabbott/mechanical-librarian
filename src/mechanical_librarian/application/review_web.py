@@ -53,6 +53,7 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
     TargetDestination,
     TargetFacts,
+    recording_variant_conflict,
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.proposal_set import (
@@ -1916,8 +1917,16 @@ def _review_unselectable_evidence(
                 narrator = (
                     claim.kind is ClaimKind.CONTRIBUTOR
                     and claim.role == "narrator"
-                    and candidate_recording_runtime_veto(
-                        candidate, report.local_claims, report.audio
+                    and (
+                        recording_variant_conflict(
+                            candidate,
+                            report.local_claims,
+                            report.target.current_title or "",
+                        )
+                        is not None
+                        or candidate_recording_runtime_veto(
+                            candidate, report.local_claims, report.audio
+                        )
                     )
                 )
                 if (
@@ -1928,8 +1937,21 @@ def _review_unselectable_evidence(
                     continue
                 label = "Narrator" if narrator else claim.kind.value.upper()
                 destination = "narrators" if narrator else claim.kind.value
+                conflict = (
+                    recording_variant_conflict(
+                        candidate,
+                        report.local_claims,
+                        report.target.current_title or "",
+                    )
+                    if narrator
+                    else None
+                )
                 reason = (
-                    "Recording timing is invalid or conflicts with this item. "
+                    "Recording language conflicts with this item. "
+                    if conflict == "recording_language_conflict"
+                    else "Recording variant conflicts with this item. "
+                    if conflict is not None
+                    else "Recording timing is invalid or conflicts with this item. "
                     if narrator
                     else ""
                 )

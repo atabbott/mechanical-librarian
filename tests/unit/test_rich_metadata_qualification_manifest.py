@@ -2858,6 +2858,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         }
         assert set(continuity["changed_admission_sources"]) == {
             "src/mechanical_librarian/domain/proposal_set.py",
+            "src/mechanical_librarian/application/continuous_field_effects.py",
         }
         for name, delta in continuity["changed_admission_sources"].items():
             assert delta["current_sha256"] == document["source_closure"][name]

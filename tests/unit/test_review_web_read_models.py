@@ -3057,3 +3057,87 @@ def test_linked_audiobook_identifier_evidence_is_not_duplicated(tmp_path):
         assert items[0]["observation"] == "Metadata: B08G9PRS1K"
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize(
+    "statements", (("abridged", "unabridged"), ("abridged", "full cast"))
+)
+def test_conflicting_recording_statements_remain_nonselectable_evidence(statements):
+    from dataclasses import replace
+
+    from mechanical_librarian.application.review_web import (
+        _review_unselectable_evidence,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        ClaimScope,
+        MetadataReport,
+        ProviderEvidence,
+        ProviderEvidenceKind,
+        TargetDestination,
+        recording_variant_conflict,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.audiobook_reports import admitted_audiobook_report
+
+    base = admitted_audiobook_report()
+    provider = base.providers[0]
+    candidate = provider.candidates[0]
+    candidate = replace(
+        candidate,
+        evidence=tuple(
+            sorted(
+                (
+                    *candidate.evidence,
+                    *(
+                        ProviderEvidence(
+                            ProviderEvidenceKind.EDITION_STATEMENT,
+                            value,
+                            ClaimScope.EDITION,
+                        )
+                        for value in statements
+                    ),
+                ),
+                key=lambda evidence: (
+                    evidence.scope.value,
+                    evidence.kind.value,
+                    evidence.value,
+                ),
+            )
+        ),
+    )
+    report = MetadataReport.create(
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(replace(provider, candidates=(candidate,)),),
+        audio=base.audio,
+    )
+    reopened = MetadataReport.from_json(report.to_json())
+    assert reopened == report
+    assert (
+        recording_variant_conflict(
+            candidate, reopened.local_claims, reopened.target.current_title or ""
+        )
+        == "recording_variant_conflict"
+    )
+    narrator = next(
+        result
+        for result in evaluate_report(reopened).results
+        if result.destination is TargetDestination.NARRATORS
+    )
+    assert narrator.alternatives == ()
+    claim = next(claim for claim in candidate.claims if claim.role == "narrator")
+    evidence = _review_unselectable_evidence(reopened, set())[claim.reference]
+    assert evidence["role"] == "external_observation"
+    assert evidence["destinations"] == ["narrators"]
+    assert evidence["observation"] == (
+        "Narrator: Ray Porter. Retained for review only; not an eligible choice. "
+        "Recording variant conflicts with this item. "
+        f"Scope: {claim.scope.value}; state: {claim.state.value}; "
+        f"applicability: {claim.applicability}. Source record: {candidate.identity}. "
+        f"Reference: {claim.reference}."
+    )
+    assert claim.reference not in _review_unselectable_evidence(
+        reopened, {claim.reference}
+    )

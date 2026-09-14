@@ -2721,8 +2721,16 @@ def _list_observations(
             if (
                 destination is TargetDestination.NARRATORS
                 and report.audio is not None
-                and candidate_recording_runtime_veto(
-                    candidate, report.local_claims, report.audio
+                and (
+                    recording_variant_conflict(
+                        candidate,
+                        report.local_claims,
+                        report.target.current_title or "",
+                    )
+                    is not None
+                    or candidate_recording_runtime_veto(
+                        candidate, report.local_claims, report.audio
+                    )
                 )
             ):
                 continue

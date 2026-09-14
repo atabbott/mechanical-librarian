@@ -1094,7 +1094,13 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
         (origin, known, collision)
         for origin in ("target", "work")
         for known in (False, True)
-        for collision in ("cross_asin", "runtime_band", "runtime_tolerance")
+        for collision in (
+            "cross_asin",
+            "runtime_band",
+            "runtime_tolerance",
+            "language",
+            "language_unknown",
+        )
     ]
     + [("local", False, "cross_asin")],
 )
@@ -1146,6 +1152,8 @@ def test_recording_collision_cannot_add_owner_choices(
     )
     if known_runtime:
         probe["format"]["duration"] = "2476.000"
+    if collision in {"language", "language_unknown"}:
+        probe["format"].setdefault("tags", {})["language"] = "eng"
     for chapter, (start, end) in zip(probe["chapters"], spans, strict=True):
         chapter["start_time"] = f"{start / 1000:.3f}"
         chapter["end_time"] = f"{end / 1000:.3f}"
@@ -1208,6 +1216,10 @@ def test_recording_collision_cannot_add_owner_choices(
                     if bad and collision in {"runtime_band", "runtime_tolerance"}
                     else 41
                 )
+                if collision in {"language", "language_unknown"}:
+                    response["language"] = (
+                        ("spa" if collision == "language" else "und") if bad else "eng"
+                    )
                 response["narrators"] = [
                     {
                         "name": "Different Recording Narrator"
@@ -1313,7 +1325,7 @@ def test_recording_collision_cannot_add_owner_choices(
             {p["destination"]: p["result"]["alternatives"] for p in case.proposals}
         )
         assert "Matching Recording Narrator" in alternatives
-        permitted = collision == "runtime_tolerance"
+        permitted = collision in {"runtime_tolerance", "language_unknown"}
         assert ("Different Recording Narrator" in alternatives) is permitted
         assert (
             (returned_bad if collision == "cross_asin" else requested_bad)
@@ -1333,12 +1345,20 @@ def test_recording_collision_cannot_add_owner_choices(
                     for c in c.claims
                 )
             )
-            assert (
-                candidate_recording_runtime_veto(
-                    other, replay.local_claims, replay.audio
+            assert candidate_recording_runtime_veto(
+                other, replay.local_claims, replay.audio
+            ) is (collision == "runtime_band")
+            if collision == "language":
+                from mechanical_librarian.domain.metadata_report import (
+                    recording_variant_conflict,
                 )
-                is not permitted
-            )
+
+                assert (
+                    recording_variant_conflict(
+                        other, replay.local_claims, replay.target.current_title or ""
+                    )
+                    == "recording_language_conflict"
+                )
             assert any(
                 claim.value == "Different Recording Narrator" for claim in other.claims
             )
@@ -1456,10 +1476,14 @@ def test_recording_collision_cannot_add_owner_choices(
                     assert retained[0]["role"] == "external_observation"
                     assert retained[0]["destinations"] == ["narrators"]
                     assert "not an eligible choice" in retained[0]["observation"]
-                    assert (
-                        "Recording timing is invalid or conflicts"
-                        in retained[0]["observation"]
+                    explanation = (
+                        "Recording language conflicts with this item."
+                        if collision == "language"
+                        else "Recording timing is invalid or conflicts"
                     )
+                    assert explanation in retained[0]["observation"]
+                    if collision == "language":
+                        assert "Recording timing" not in retained[0]["observation"]
                     assert claim.reference in retained[0]["observation"]
                     assert other.identity in retained[0]["observation"]
                     assert (
