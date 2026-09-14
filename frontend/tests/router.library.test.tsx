@@ -1304,7 +1304,11 @@ describe('Library route', () => {
       expect(
         within(health).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
       ).toBeVisible()
-      expect(within(health).getByText(/within 90 seconds/u)).toBeVisible()
+      expect(
+        within(health).getByText(
+          'Expected rule: The local running time is within 90 seconds of the running time the matched edition states.',
+        ),
+      ).toBeVisible()
       expect(
         within(health).getByText('Read from local evidence, audible-product-B08G9PRS1K'),
       ).toBeVisible()

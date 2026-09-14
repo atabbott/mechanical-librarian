@@ -89,6 +89,11 @@ describe('Library review ownership', () => {
     const section = await screen.findByRole('region', { name: 'Media health' })
     expect(within(section).getByText('Runtime short of provider')).toBeVisible()
     expect(
+      within(section).getByText(
+        'Expected rule: The local running time is within 90 seconds of the running time the matched edition states.',
+      ),
+    ).toBeVisible()
+    expect(
       within(section).getByText(/43200 seconds of local audio · expected 72000 seconds/u),
     ).toBeVisible()
     // The opaque local reference stands for what it points at rather than
