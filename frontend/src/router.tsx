@@ -834,7 +834,7 @@ const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
     <h1>Loading {title.toLowerCase()}…</h1>
   </section>
 )
-const RouteFailure = ({ error, reset }: { error: Error; reset: () => void }) => {
+const RouteFailure = ({ error, reset }: { error: unknown; reset: () => void }) => {
   const router = useRouter()
   return error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">
@@ -847,7 +847,7 @@ const RouteFailure = ({ error, reset }: { error: Error; reset: () => void }) => 
     <section className="route-state">
       <p className="eyebrow">Review unavailable</p>
       <h1>This workspace could not be loaded.</h1>
-      <p role="alert">{error.message}</p>
+      <p role="alert">{error instanceof Error ? error.message : String(error)}</p>
       <button onClick={() => void router.invalidate().then(reset)}>Try again</button>
     </section>
   )
