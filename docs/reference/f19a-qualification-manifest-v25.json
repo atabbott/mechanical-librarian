@@ -3,7 +3,7 @@
     "clean_rebuild_required": true,
     "frozen_candidate_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v8.json",
-    "manifest_sha256": "6dbedf9d8e953928300425aef493508aa74798b6c0ef6a5d6fec756a3bd7a366",
+    "manifest_sha256": "92bbeed3174a2e3c75357d160f35f41bf0a06629af381bcfac9ffc604f20db3d",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -237,6 +237,10 @@
         "current_sha256": "b091b9012d5496045ef2cce2060ddd7a4fbb834ee957459893ca3a1927e8158c",
         "measured_sha256": "0cf3f0986db6003337f98d0fefc34fbfa60299ca84e73d3875dd6f981487d4ba"
       },
+      "src/mechanical_librarian/adapters/library_services/audiobookshelf_setup.py": {
+        "current_sha256": "9e21c2c6d6241c269b3e20d01392d79298b511a011020e5e5669de0b0c72a2b9",
+        "measured_sha256": "b932a1a57f0deb6521b1df8d7eddd430e7f8529d01b21e2819c9635766c3ded7"
+      },
       "src/mechanical_librarian/adapters/persistence/decisions.py": {
         "current_sha256": "3297e60e6361c98a834ac393378787b4d278c129a96609de28a4a5b91d9a6d54",
         "measured_sha256": "7e7a213cfe220ab2b8b59a42e36d80c424f06815f5ae79102a9752437cb3fac3"
@@ -256,11 +260,19 @@
       "src/mechanical_librarian/interfaces/web/app.py": {
         "current_sha256": "ad91913178162d43f9b814727b1b3860b5c5d87a407d02b0bbe4fe8d120aef56",
         "measured_sha256": "7ba2625d71ab1b11cdb7390a2736e595d9623fcdacc8b5f3a14cbe0bb2e42f89"
+      },
+      "src/mechanical_librarian/interfaces/web/setup.py": {
+        "current_sha256": "4a27179bdde88833fcc095f81cb499ce588acd72171a63b3a977acf376f4e98d",
+        "measured_sha256": "242d61493e96080272c7884c1d5df0634b3718afe4227b434611f00ff3be6840"
+      },
+      "src/mechanical_librarian/interfaces/web/setup_frontend.py": {
+        "current_sha256": "13bca6844bc370987c7674f4a20e883db784dd5b80a74726bffc2da39faf4d7d",
+        "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
     "current_source_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f",
-    "meaning": "Authority/effect measurements remain immutable at their measured source. Other than the separately declared narrator admission source, all other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. The first review remediation also includes companion-aware in-flight override visibility and verified subtitle predecessor History, neutral selected audiobook synopsis alternatives, labelled paired title/subtitle preview and separated lifecycle timestamps. Guarded effect validation and corrective no-clear SQL remain unchanged. The CI correction excludes positively invalid/conflicting runtime narrator sources from ordinary and lookup choice admission and complete-set agreement, while retaining unresolved candidates and the unchanged chapter-tolerance boundary. The existing read-only observation projection retains excluded narrator facts with source references and a nonselectable timing explanation. Current actual owner refusal, automatic matching selection, lookup references, authenticated Evidence and Linux fixture lifecycle diagnostics are separately measured; historical aggregate results are not rescored or claimed as executions of the new narrator admission. The terminal strict-typing correction changes test annotations, local variable names and explicit expected fixture narrowing only; provider payloads and product semantics are unchanged. Full src/tests/scripts typing and affected actual consumer tests provide current proof. No authority scenario is counted as re-executed.",
-    "unchanged_source_inventory_sha256": "3566961a3610427958a5717e930bb1ef5d31ae64fc7a9a2d7332af014244c55e",
+    "meaning": "Authority/effect measurements remain immutable at their measured source. Other than the separately declared narrator admission source, all other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. The first review remediation also includes companion-aware in-flight override visibility and verified subtitle predecessor History, neutral selected audiobook synopsis alternatives, labelled paired title/subtitle preview and separated lifecycle timestamps. Guarded effect validation and corrective no-clear SQL remain unchanged. The CI correction excludes positively invalid/conflicting runtime narrator sources from ordinary and lookup choice admission and complete-set agreement, while retaining unresolved candidates and the unchanged chapter-tolerance boundary. The existing read-only observation projection retains excluded narrator facts with source references and a nonselectable timing explanation. Current actual owner refusal, automatic matching selection, lookup references, authenticated Evidence and Linux fixture lifecycle diagnostics are separately measured; historical aggregate results are not rescored or claimed as executions of the new narrator admission. The terminal strict-typing correction changes test annotations, local variable names and explicit expected fixture narrowing only; provider payloads and product semantics are unchanged. Full src/tests/scripts typing and affected actual consumer tests provide current proof. No authority scenario is counted as re-executed. The first-run setup sources re-pinned in place for #1008 -- the Audiobookshelf setup probe adapter, the setup web application and its frontend assets -- are read/UI sources of the guided first run alone, with no admission, scoring, option, holdout or authority role, so no measurement is re-executed or claimed.",
+    "unchanged_source_inventory_sha256": "39eb2e4d420870d3386c5b7374c2b6a57ebb671bfedc2598dc26636009d2af8b",
     "unchanged_source_paths": [
       "src/mechanical_librarian/__init__.py",
       "src/mechanical_librarian/__main__.py",
@@ -284,7 +296,6 @@
       "src/mechanical_librarian/adapters/library_services/audiobookshelf_ebook_location.py",
       "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py",
       "src/mechanical_librarian/adapters/library_services/audiobookshelf_item.py",
-      "src/mechanical_librarian/adapters/library_services/audiobookshelf_setup.py",
       "src/mechanical_librarian/adapters/operational_evidence.py",
       "src/mechanical_librarian/adapters/persistence/__init__.py",
       "src/mechanical_librarian/adapters/persistence/batch_manifest.py",
@@ -441,9 +452,7 @@
       "src/mechanical_librarian/interfaces/web/live_stream.py",
       "src/mechanical_librarian/interfaces/web/react_assets.py",
       "src/mechanical_librarian/interfaces/web/review_frontend.py",
-      "src/mechanical_librarian/interfaces/web/runtime_dispatch.py",
-      "src/mechanical_librarian/interfaces/web/setup.py",
-      "src/mechanical_librarian/interfaces/web/setup_frontend.py"
+      "src/mechanical_librarian/interfaces/web/runtime_dispatch.py"
     ]
   },
   "model_requests": 0,
@@ -469,14 +478,14 @@
   "schema": "f19a-qualification-manifest-v25",
   "scope": "Existing ebook title authority preserved; measured audiobook authority is separately media-scoped.",
   "source_closure": {
-    "CHANGELOG.md": "6104a5745012c840cc76c94d6592ef2e5faf58a1b44f3ac40d16368a4709c16c",
+    "CHANGELOG.md": "76b518eee9900de786c53f26f1a887109f0dcbb625f5e5ac14ee4bddd03e7e12",
     "docs/architecture/decisions/0059-deterministic-cover-election.md": "b5f1e4c1b37d6029bbdda0caca202a97c210f18db2bc0f4423e37b128df6756e",
     "docs/architecture/decisions/0061-audiobook-provider-posture.md": "230acf3e386985d053fe428ce61f1301e857c70237f97d5bea5484ab132b7acd",
     "docs/architecture/decisions/0071-book-media-guarded-application.md": "325c5c20e4b7f41a4fe4149c0d225e0d025837571b2265cacc35faecbb448b14",
     "docs/architecture/decisions/0073-audiobook-decision-qualification.md": "2cbefb416664ae9ebe701b178d0ba7daa936494e59005557605f6cb25064c2d0",
     "docs/architecture/security.md": "d355f353b3f1de8ae2fdac88cd7aef120dfae720b51e275d712d01f350767d37",
     "docs/product/automation-policy.md": "5e6e4420c755ee948734f62b20554471c1970636cfabc39c32352e709d2dc51c",
-    "docs/product/delivery-slices.md": "49abc9cd69b028946d3618d5526fc06ad3384ab7d8446081f5155aecde1939ac",
+    "docs/product/delivery-slices.md": "c0ce85411a54059eda4861619db13170039339f11bf8da6ec01c207512952366",
     "docs/product/rich-metadata-qualification.md": "0fe4ce3161b905da78d66ffdc74cbefe7eb620000bb0b5889022c1bbe76dec6e",
     "docs/reference/compatibility.md": "4c4264c1ac921fa2f6c8f5ae885fb25264c0939de3f4aeea8946c15dda485da4",
     "docs/reference/configuration.md": "d03f13d1a1bb95ff7c39ab5f9094d8f3199c74fd668daa8d2118423484cbb1a0",
@@ -523,7 +532,7 @@
     "src/mechanical_librarian/adapters/library_services/audiobookshelf_ebook_location.py": "c5c9724f0dc0896204da475f60c87e188bb2edc514e234dc8809d5447c7a0f87",
     "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py": "ada9097cd284408b0544a7542bdd472de605bc82f536642c95fa05cc10c75500",
     "src/mechanical_librarian/adapters/library_services/audiobookshelf_item.py": "f7fff84f60e96945afce25b98944c68097613d6093f80d07fba808b6ee9a2817",
-    "src/mechanical_librarian/adapters/library_services/audiobookshelf_setup.py": "b932a1a57f0deb6521b1df8d7eddd430e7f8529d01b21e2819c9635766c3ded7",
+    "src/mechanical_librarian/adapters/library_services/audiobookshelf_setup.py": "9e21c2c6d6241c269b3e20d01392d79298b511a011020e5e5669de0b0c72a2b9",
     "src/mechanical_librarian/adapters/operational_evidence.py": "929577557393049cf41d029286f763d16b9f69c7abe5b7b3d9e2355bd49f318d",
     "src/mechanical_librarian/adapters/persistence/__init__.py": "ffd5e9c5f70bad42e64f0677b1b0d6b2476f738c95559f8e1b158e6ea44dfb74",
     "src/mechanical_librarian/adapters/persistence/batch_manifest.py": "96641f2137a884629a6c8a3b0f442501bcc1d1e20d9e9dd81ccd8b604e84c092",
@@ -691,10 +700,10 @@
     "src/mechanical_librarian/interfaces/web/react_assets.py": "e8a43e6ef18ffbf0cb35e6aedaf98ba7d752cec91bd023be4704975c179d3bac",
     "src/mechanical_librarian/interfaces/web/review_frontend.py": "2ba0d623e8e093f5c42798ed264f4b4bd3b123f5b52cfdd7b6752fa625bc30a5",
     "src/mechanical_librarian/interfaces/web/runtime_dispatch.py": "4b365bfaf268cc912c3aa655fe3311dfb38677e32784f8d28ea2c0afa60e4284",
-    "src/mechanical_librarian/interfaces/web/setup.py": "242d61493e96080272c7884c1d5df0634b3718afe4227b434611f00ff3be6840",
-    "src/mechanical_librarian/interfaces/web/setup_frontend.py": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1",
+    "src/mechanical_librarian/interfaces/web/setup.py": "4a27179bdde88833fcc095f81cb499ce588acd72171a63b3a977acf376f4e98d",
+    "src/mechanical_librarian/interfaces/web/setup_frontend.py": "13bca6844bc370987c7674f4a20e883db784dd5b80a74726bffc2da39faf4d7d",
     "tests/browser/test_react_platform_artifact.py": "16f6296753b8cd27f467354593d818f810dc237cdb0381f00887779344188d4f",
-    "tests/browser/test_review_browser.py": "ff9ceee626b826e9e10d0784f6ab47067ade809faf8cee4fb50e028b524e9a72",
+    "tests/browser/test_review_browser.py": "89220788669eb41f137ef793248055eca8e11f584c7b7b2f87ccb96a229162da",
     "tests/integration/test_audiobook_provider_activation.py": "bd0c15de0c9b385b5155882835780415fe42bb6e6ad35a9c7764a2d360b90a44",
     "tests/support/audiobook_covers.py": "c2df1ff212ef459f966da8d6be5b484a55d190c85aac2dc0c3077c01fe5e1d50",
     "tests/support/audiobook_predecessors/README.md": "bdb1ed8a2e74345bfc827a12cdb34b9df6180570c60c6a182eb7ec23c918fa28",
@@ -740,7 +749,7 @@
     "tests/unit/test_review_web_read_models.py": "d365d78da40b7bb7d222c9eed39be1dabe1f3ca70ad7772b7570d2504ce509a4",
     "tests/unit/test_review_web_transport.py": "aa556f017fec401c8e05f0d5f7ab0811e92e20e554dfcbfeb96fdabc67da724d",
     "tests/unit/test_rich_metadata_preview.py": "1450abb8d097d10e4600f696715828a5dc0b66e003c86965ac057b14f46ed1f5",
-    "tests/unit/test_rich_metadata_qualification_manifest.py": "9b8c99876483ed01f1f0726496a5b9570a6b2185ca429fa544941e1c7a0a1b99",
+    "tests/unit/test_rich_metadata_qualification_manifest.py": "2c66528a5a595ecd491d6c5fa95cf1d18f3a90a6f7d4f01eb95aeada0180ca75",
     "tests/unit/test_shadow_decision.py": "eb07eddd3878840aea7c21a4d27d9948ff0dca215c2ec824b6c08710fd7ff614",
     "tests/unit/test_shadow_outcome_persistence.py": "148c8c790eafd7e91dab6f176d2d4127462d4667039a80e747043869805f9d30",
     "tests/unit/test_shadow_review_packets.py": "cc6a9b23ffc04c150bdb0522bf5cad6930fd8d6a34543909290e7db7efadfb56",

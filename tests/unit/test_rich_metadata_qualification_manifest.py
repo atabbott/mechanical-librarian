@@ -2795,6 +2795,13 @@ def _predecessor_source_digest(name: str) -> str:
 
 
 def test_current_title_successors_bind_complete_consumer_source_inventory():
+    """The three current manifests re-pinned in place for #1008.
+
+    No option, scoring or holdout moves. Three first-run read/UI sources move
+    from the unchanged inventory into the read classification, and every live
+    pin is recomputed from the file it names, so a source that moved without
+    being classified fails here rather than at review.
+    """
 
     from mechanical_librarian.domain.audiobook_decision_qualification import (
         F46_PASSING_PAIRED_OPTIONS,
@@ -2843,6 +2850,12 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         )
         assert continuity["current_source_sha"] == document["frozen_candidate_sha"]
         assert set(continuity["changed_read_sources"]) == {
+            # The guided first run reads and renders only: no admission,
+            # scoring, option, holdout or authority role (#1008).
+            "src/mechanical_librarian/adapters/library_services/"
+            "audiobookshelf_setup.py",
+            "src/mechanical_librarian/interfaces/web/setup.py",
+            "src/mechanical_librarian/interfaces/web/setup_frontend.py",
             "frontend/src/components/MediaHealth.tsx",
             "src/mechanical_librarian/adapters/persistence/decisions.py",
             "src/mechanical_librarian/adapters/persistence/review_projections.py",
