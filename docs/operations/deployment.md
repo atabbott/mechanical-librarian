@@ -43,6 +43,10 @@ proxy, omit the TLS paths and list the exact backend peer IP in
 canonical `X-Forwarded-Host`/`X-Forwarded-Proto` pair, and must support streaming
 without buffering live updates. Restrict backend reachability to that edge;
 there is no automatic proxy discovery, certificate issuance, or trust setup.
+A browser sent to first-run setup through any other address, or through a proxy
+whose forwarding is incomplete, is refused with a readable page naming that
+cause and how to reach the published address; programmatic callers keep the
+refusal in their own shape.
 
 Owner sessions are persistent opaque cookies with a fixed absolute
 lifetime of up to 30 days (the default); choose a shorter
@@ -134,10 +138,11 @@ fails.
 
 On a truly empty data volume the entrypoint captures that empty state before
 creating an exact incomplete setup store and serves only health, setup login,
-setup assets, and the minimal authenticated setup API. The six steps are claim,
-Audiobookshelf connection, optional providers, libraries, read-only mount
-comparison, and kickoff. Kickoff prepares a dormant runtime generation,
-atomically replaces incomplete state with complete owner settings, publishes
+setup assets, and the minimal authenticated setup API. The seven steps are
+claim, Audiobookshelf connection, optional providers, libraries, read-only
+mount comparison, optional cover reviewer, and kickoff. Kickoff prepares a
+dormant runtime generation, atomically replaces incomplete state with complete
+owner settings, publishes
 the successor on the existing listener, closes setup routes, and starts
 preparation immediately. Ordinary startup accepts only exact-current, owner-only
 stores. A schema mismatch,
@@ -180,9 +185,9 @@ failure before the shared repository closes, and resumes from its durable
 checkpoint on restart. No fake target, direct database write or writable media
 path is composed.
 
-A build that adds a write destination -- narrators, with F47 -- invalidates
-every existing library consent, because the consent envelope identity digests
-the whole destination set. Nothing is planned or claimed under a lapsed
+A build that adds a write destination invalidates every existing library
+consent, because the consent envelope identity digests the whole destination
+set. Nothing is planned or claimed under a lapsed
 consent, and Activity offers re-consent before anything is scheduled.
 
 The supported Compose stop budget is 610 seconds. Uvicorn can first use the

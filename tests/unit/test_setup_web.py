@@ -32,6 +32,7 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_CSS,
     SETUP_HANDOFF_CSS,
     SETUP_JS,
+    SETUP_ORIGIN_REFUSAL_HTML,
 )
 
 
@@ -345,6 +346,10 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     shell = client.get("/")
     assert shell.status_code == 200
     assert 'id="setup-ledger"' in shell.text
+    assert 'class="prerequisites"' in shell.text
+    assert "Before you start" in shell.text
+    assert "Bare Compose without this prepared bootstrap is not supported" in shell.text
+    assert shell.text.count("<li>") == 5
     assert "https://openlibrary.org/account/create" not in shell.text
     assert '<script type="module" src="/assets/setup.js"></script>' in shell.text
     assert 'rel="preload" href="/assets/setup-handoff.css" as="style"' in shell.text
@@ -356,7 +361,10 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     handoff_css = client.get("/assets/setup-handoff.css")
     script = client.get("/assets/setup.js")
     assert css.status_code == 200
-    assert "@media(max-width:760px)" in css.text
+    # The stacking breakpoint is stated in rem, so browser text zoom moves it
+    # and the step card never collapses beside a fixed-width aside.
+    assert "@media(max-width:47.5rem)" in css.text
+    assert "max-width:760px" not in css.text
     assert "prefers-reduced-motion" in css.text
     assert handoff_css.status_code == 200
     assert handoff_css.headers["content-type"].startswith("text/css")
@@ -386,6 +394,7 @@ def test_setup_surface_exposes_only_health_shell_session_and_redacted_state() ->
     assert "const poll=async()=>" in script.text
     assert "finally{if(!stopped)timer=setTimeout(poll,pollDelay)}" in script.text
     assert ".field[hidden]{display:none}" in css.text
+    assert "input[aria-invalid=true]" in css.text
     assert "MutationObserver" not in script.text
     assert "Writes stay off until you turn them on in Activity." in script.text
     assert client.get("/api/setup/state").status_code == 401
@@ -917,12 +926,23 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "['inventaire','inventaire']" in SETUP_JS
     assert "enabled.checked=adapter==='inventaire'" in SETUP_JS
     assert "cover_enabled:row.adapter==='inventaire'" in SETUP_JS
-    assert "`${evidence?.name||humanName(item.library)}:" in SETUP_JS
     assert (
-        "field(`${evidence?.name||humanName(library.name)} service path`,path)"
+        "`${selectedLibrary?shown(selectedLibrary):humanName(item.library)}:"
         in SETUP_JS
     )
+    assert "field(`${shown(library)} service path`,path)" in SETUP_JS
+    # One name per library: the recorded display name the summary also uses.
+    assert (
+        "return library?.display_name||evidence?.name||"
+        "humanName(library?.name||'library')" in SETUP_JS
+    )
     assert "state.mounts.length?'Retest mounts':'Check mounts'" in SETUP_JS
+    # Each comparison leads with the library and one short state, and only a
+    # failing state carries its remedy.
+    assert "const mountState={matched:'Matched',missing:'No mapping'," in SETUP_JS
+    assert "const remedy=mountRemedy[item.state];line.className=remedy?" in SETUP_JS
+    assert "label.className='mount-state'" in SETUP_JS
+    assert "mountCopy" not in SETUP_JS
     assert (
         "const codexState=access.codex.state==='host_unsupported'?access.codex:"
         "(codexTerminal||access.codex)" in SETUP_JS
@@ -933,6 +953,137 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "/api/setup/reviewer/codex/recheck" in SETUP_JS
     assert "reviewer_access_stale:'Reviewer access changed" in SETUP_JS
     assert "invalid_key:'OpenRouter rejected this key." in SETUP_JS
+
+
+def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes() -> (
+    None
+):
+    """Pin the #1008 disclosure, association and recovery surface.
+
+    These are substring pins on the shipped asset because the behaviour they
+    guard is proved in `frontend/tests/setup.first-run.test.ts` against the
+    same string; what stays here is the copy a person reads and the exact
+    seams a later `.replace` layer could silently drop.
+    """
+    # UX-002: the rules and the reveal control come from the vocabulary.
+    assert "settingsVocabulary.owner_password.minimum_bytes" in SETUP_JS
+    assert "settingsVocabulary.owner_password.maximum_bytes" in SETUP_JS
+    assert "invalid_password:settingsVocabulary.errors.owner_password" in SETUP_JS
+    assert "new TextEncoder().encode(password.value).length" in SETUP_JS
+    # One sentence per refusal: empty, mismatched and over-length are distinct.
+    assert (
+        "error(form,size===0?'invalid_password_empty':'invalid_password',password)"
+        in SETUP_JS
+    )
+    assert "error(form,'invalid_password_mismatch',confirmation)" in SETUP_JS
+    assert "settingsVocabulary.errors.owner_password_mismatch" in SETUP_JS
+    assert "settingsVocabulary.errors.owner_password_empty" in SETUP_JS
+    assert "toggle.setAttribute('aria-pressed','false')" in SETUP_JS
+    assert "control.type=reveal?'text':'password'" in SETUP_JS
+    assert "secretField('Owner password',password,'the owner password')" in SETUP_JS
+    assert "toggle.setAttribute('aria-label',`Show ${subject}`)" in SETUP_JS
+    assert (
+        "secretField('Audiobookshelf API key',key,'the Audiobookshelf API key')"
+        in SETUP_JS
+    )
+
+    # UX-001: one alert node, associated with the control it refuses.
+    assert "completed_steps:[]};drawLedger()" in SETUP_JS
+    assert "node.id='setup-error'" in SETUP_JS
+    assert "control.setAttribute('aria-invalid','true')" in SETUP_JS
+    assert "control.setAttribute('aria-describedby','setup-error')" in SETUP_JS
+    assert "control.addEventListener('input',()=>{" in SETUP_JS
+    assert "{once:true})" in SETUP_JS
+
+    # ADR-0072: both browser modes are stated, and the endpoint scheme is explained.
+    assert "const insecureTransport=()=>location.protocol!=='https:'" in SETUP_JS
+    assert "travel in clear text across this network" in SETUP_JS
+    assert "https that your browser already trusts" in SETUP_JS
+    assert "never skips that check, never follows a redirect with your key" in SETUP_JS
+    assert "preserve TLS verification" not in SETUP_JS
+
+    # UX-004/005: every named state carries a safe cause and a remedy.
+    assert "failure.status=response.status" in SETUP_JS
+    assert "const code=e.status===401?'session_expired':e.message" in SETUP_JS
+    for code in (
+        "invalid_endpoint",
+        "unavailable",
+        "activation_failed",
+        "invalid_mounts",
+        "invalid_providers",
+        "session_expired",
+        "invalid_credentials",
+        "throttled",
+    ):
+        assert f"{code}:'" in SETUP_JS
+    # The origin refusal is authored once, in the shared vocabulary, because a
+    # refused navigation is answered in Python before any asset can load.
+    assert "invalid_origin:settingsVocabulary.errors.invalid_origin" in SETUP_JS
+    # An address or contact email the browser itself rejects is refused in the
+    # page's own words instead of a silent native bubble, and a stray space
+    # never reaches the probe.
+    assert "form.noValidate=true" in SETUP_JS
+    assert (
+        "const address=endpoint.value.trim();if(address!==endpoint.value)"
+        "endpoint.value=address;if(!address||!endpoint.checkValidity())"
+        "{error(form,'invalid_endpoint',endpoint);return}" in SETUP_JS
+    )
+    assert "endpoint:address,key:key.value" in SETUP_JS
+    assert (
+        "const emailInvalid=control=>!control.checkValidity()||"
+        "!settingsOpenLibraryEmailValid(control.value)" in SETUP_JS
+    )
+    # Every reopen control names its own step, and the prerequisites stop
+    # applying once preparation has started.
+    assert "change.setAttribute('aria-label',`Change ${label}`)" in SETUP_JS
+    assert (
+        "document.querySelector('.prerequisites')?.classList.add('complete')"
+        in SETUP_JS
+    )
+    assert "canonical forwarded host and protocol pair" in SETUP_JS
+    assert "Mechanical Librarian never skips verification." in SETUP_JS
+    assert "reviewer_unconfigured" not in SETUP_JS
+
+    # UX-006: per-provider relevance and disambiguated credential labels.
+    assert "settingsVocabulary.provider_contributions[adapter]" in SETUP_JS
+    assert "secretField(`${label} API key`,key,`the ${label} API key`)" in SETUP_JS
+    assert "field(`${label} contact email`,email)" in SETUP_JS
+    assert (
+        "settingsVocabulary.cover_switch_provider_adapters.includes(adapter)"
+        in SETUP_JS
+    )
+    assert "stays off until you turn it on in Settings." in SETUP_JS
+
+    # UX-008/009: the entered service paths survive a refused comparison.
+    assert "path.value=mountDraft&&library.name in mountDraft" in SETUP_JS
+    assert "mountDraft=draft;" in SETUP_JS
+    assert "if(state.next_step!=='mounts')mountDraft=null" in SETUP_JS
+    assert "the path inside that service" in SETUP_JS
+    assert "Correct the Audiobookshelf service path and compare again" in SETUP_JS
+    assert "Audiobookshelf reported no folder path to compare." in SETUP_JS
+
+    # UX-013: the kickoff summary reuses one reopen seam and hides no secret.
+    assert "change.addEventListener('click',()=>reopen(step))" in SETUP_JS
+    assert "change.addEventListener('click',()=>reopen(id))" in SETUP_JS
+    assert "'Change the Audiobookshelf address'" in SETUP_JS
+    assert "'Change the cover reviewer'" in SETUP_JS
+    assert "summary.className='summary'" in SETUP_JS
+    assert "if(submit.disabled)return;submit.disabled=true" in SETUP_JS
+    assert "if(mutating)return;mutating=true" in SETUP_JS
+    assert "already=(await api('/api/setup/claim')).claimed" in SETUP_JS
+    # One refusal listener at a time, and no draft discarded for a change the
+    # server refused.
+    assert "refusalGuard=new AbortController()" in SETUP_JS
+    # A refusal carried by a fresh render keeps the focus it asked for: the
+    # card's own frame would otherwise move it to the heading.
+    assert (
+        "control.focus();requestAnimationFrame(()=>{if(control.isConnected)"
+        "control.focus({preventScroll:true})})" in SETUP_JS
+    )
+    assert "{once:true,signal:refusalGuard.signal}" in SETUP_JS
+    assert "mutation:true});mountDraft=null;await load()" in SETUP_JS
+    assert "for(const action of actions)action.disabled=true" in SETUP_JS
+    assert "submit.disabled=false;error(form," in SETUP_JS
 
 
 def test_setup_enables_cross_document_motion_only_for_the_workspace_handoff() -> None:
@@ -1078,6 +1229,57 @@ def test_setup_transport_claim_cookie_deletion_and_security(mode: str) -> None:
         )
         assert denied.status_code == 400
         assert ("strict-transport-security" in denied.headers) is secure
+
+
+def test_refused_navigation_reads_the_origin_remedy_and_callers_keep_json() -> None:
+    """A browser sent to the wrong host reads the remedy it can act on (#1008).
+
+    The wizard's own script and stylesheet are refused on that origin too, so a
+    JSON body renders as the whole page and the recovery sentence the loaded
+    wizard would have shown is never reachable. The refusal keeps its status,
+    its headers and its JSON shape for every caller that parses one.
+    """
+    client, _state, _connection = _client()
+    wrong_host = {"host": "evil.invalid", "x-forwarded-host": "evil.invalid"}
+    # One authored sentence reaches both the refused navigation and the loaded
+    # wizard, through the same shared vocabulary.
+    remedy = "canonical forwarded host and protocol pair"
+    assert remedy in SETUP_JS
+
+    for headers in (
+        {"accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
+        {"accept": "*/*", "sec-fetch-dest": "document"},
+    ):
+        navigation = client.get("/", headers={**wrong_host, **headers})
+        assert navigation.status_code == 400
+        assert navigation.headers["content-type"].startswith("text/html")
+        assert navigation.text == SETUP_ORIGIN_REFUSAL_HTML
+        assert remedy in navigation.text
+        assert "invalid_origin" not in navigation.text
+        # Nothing this page needs can load from a refused origin, and nothing
+        # about the owner's session may appear on it.
+        assert "<script" not in navigation.text
+        assert "<style" not in navigation.text
+        assert "src=" not in navigation.text and "href=" not in navigation.text
+        # It carries no stylesheet, so it follows the reader's own theme
+        # instead of arriving stark white.
+        assert '<meta name="color-scheme" content="light dark">' in navigation.text
+        assert "csrf" not in navigation.text.lower()
+        assert "set-cookie" not in navigation.headers
+        assert navigation.headers["cache-control"] == "private, no-store"
+        assert "content-security-policy" in navigation.headers
+
+    for headers in (
+        {"accept": "application/json"},
+        {"accept": "application/json, text/html"},
+        {"accept": "*/*"},
+        {},
+    ):
+        refused = client.get("/api/setup/state", headers={**wrong_host, **headers})
+        assert refused.status_code == 400
+        assert refused.headers["content-type"].startswith("application/json")
+        assert refused.json() == {"detail": {"error": "invalid_origin"}}
+    client.close()
 
 
 @pytest.mark.parametrize("mode", ["http", "direct", "proxy"])

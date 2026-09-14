@@ -50,6 +50,7 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_HANDOFF_CSS,
     SETUP_HTML,
     SETUP_JS,
+    SETUP_ORIGIN_REFUSAL_HTML,
 )
 
 _PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
@@ -205,6 +206,34 @@ class _KickOffRequest(BaseModel):
     expected_revision: StrictInt = Field(ge=1)
 
 
+def _prefers_document(request: Request) -> bool:
+    """State whether this refused request is a browser navigation.
+
+    A navigation renders the body as the whole page, so the refusal has to
+    read as a page; every other caller keeps the JSON shape it parses.
+    """
+    if request.headers.get("sec-fetch-dest") == "document":
+        return True
+    accepted = request.headers.get("accept", "").lower()
+    document = accepted.find("text/html")
+    if document < 0:
+        return False
+    data = accepted.find("application/json")
+    return data < 0 or document < data
+
+
+def _origin_refusal(request: Request) -> Response:
+    """Refuse a non-canonical origin in the shape the caller can read.
+
+    The wizard's own assets are refused on that origin too, so a navigation
+    would render the JSON body as its entire page and the wizard's recovery
+    sentence would never be shown (#1008).
+    """
+    if _prefers_document(request):
+        return HTMLResponse(SETUP_ORIGIN_REFUSAL_HTML, status_code=400)
+    return JSONResponse({"detail": {"error": "invalid_origin"}}, status_code=400)
+
+
 def _secure_setup_response(response: Response, *, hsts: bool) -> Response:
     response.headers["cache-control"] = "private, no-store"
     response.headers["content-security-policy"] = (
@@ -270,9 +299,7 @@ def create_setup_app(
                 trusted_proxy_ips,
                 require_forwarding=require_forwarding,
             ):
-                response = JSONResponse(
-                    {"detail": {"error": "invalid_origin"}}, status_code=400
-                )
+                response = _origin_refusal(request)
             elif app.state.setup_complete and path != "/health/ready":
                 response = PlainTextResponse("not found\n", status_code=404)
             else:

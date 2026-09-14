@@ -3736,6 +3736,9 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                                 "mounts": [],
                             }
                         )
+                    elif path == "/api/setup/reviewer-access":
+                        # The kickoff summary states the recorded reviewer choice.
+                        route.fulfill(json={"revision": 7, "mapping": None})
                     elif path == "/api/setup/kick-off":
                         route.fulfill(
                             json={"message": "Preparation continues in the workspace."}
@@ -4099,6 +4102,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
             errors: list[str] = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             stage = {"value": "claim"}
+            compared = {"count": 0}
 
             def setup_api(route) -> None:
                 path = urlparse(route.request.url).path
@@ -4174,6 +4178,23 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                     )
                     return
                 if path == "/api/setup/mounts":
+                    compared["count"] += 1
+                    if compared["count"] == 1:
+                        # UX-008: the first comparison finds no mapping, so the
+                        # step stays open and must keep what the owner typed.
+                        route.fulfill(
+                            json={
+                                "completed_steps": [
+                                    "claim",
+                                    "connect",
+                                    "providers",
+                                    "libraries",
+                                ],
+                                "next_step": "mounts",
+                                "revision": 5,
+                            }
+                        )
+                        return
                     stage["value"] = "reviewer"
                     route.fulfill(
                         json={
@@ -4277,12 +4298,17 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                         "name": "books",
                                         "library_id": "books",
                                         "media_kind": "book",
+                                        "display_name": "My Reading Shelf",
                                         "provider_connections": [],
                                     },
                                     {
                                         "name": "long",
                                         "library_id": "long",
                                         "media_kind": "book",
+                                        "display_name": (
+                                            "A very long library name "
+                                            + "wrapped " * 12
+                                        ).strip(),
                                         "provider_connections": [],
                                     },
                                 ]
@@ -4295,6 +4321,11 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                                     {"library": "long", "state": "matched"},
                                 ]
                                 if value in {"reviewer", "kick_off"}
+                                else [
+                                    {"library": "books", "state": "missing"},
+                                    {"library": "long", "state": "missing"},
+                                ]
+                                if value == "mounts" and compared["count"]
                                 else []
                             ),
                         }
@@ -4369,8 +4400,71 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
-                page.get_by_label("Owner password", exact=True).fill(_PASSWORD)
-                page.get_by_label("Confirm owner password").fill(_PASSWORD)
+                expect(
+                    page.get_by_role("heading", name="Before you start")
+                ).to_be_visible()
+                expect(
+                    page.get_by_text(
+                        "Bare Compose without this prepared bootstrap is not supported",
+                        exact=False,
+                    )
+                ).to_be_visible()
+                expect(
+                    page.get_by_text("Between 1 and 1,024 bytes", exact=False)
+                ).to_be_visible()
+                # This listener terminates TLS itself, so the claim step states
+                # the browser-trusted mode rather than the clear-text one.
+                expect(
+                    page.get_by_text(
+                        "https that your browser already trusts", exact=False
+                    )
+                ).to_be_visible()
+                password = page.get_by_label("Owner password", exact=True)
+                reveal = page.get_by_role("button", name="Show the owner password")
+                expect(reveal).to_have_attribute("aria-pressed", "false")
+                password.fill(_PASSWORD)
+                assert password.get_attribute("type") == "password"
+                password.focus()
+                page.keyboard.press("Tab")
+                expect(reveal).to_be_focused()
+                reveal.click()
+                assert password.get_attribute("type") == "text"
+                hide = page.get_by_role("button", name="Hide the owner password")
+                expect(hide).to_have_attribute("aria-pressed", "true")
+                hide.click()
+                assert password.get_attribute("type") == "password"
+                # UX-001: the refusal names the field it belongs to and clears.
+                page.get_by_role("button", name="Create owner access").click()
+                alert = page.get_by_role("alert")
+                expect(alert).to_be_visible()
+                confirmation = page.get_by_label("Confirm owner password", exact=True)
+                expect(confirmation).to_have_attribute("aria-invalid", "true")
+                expect(confirmation).to_have_attribute(
+                    "aria-describedby", "setup-error"
+                )
+                expect(confirmation).to_be_focused()
+                assert alert.get_attribute("id") == "setup-error"
+                for width, height in ((1440, 900), (320, 800)):
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                # A refusal that moves to another field releases the first one:
+                # typing there must not blank a live alert that now belongs to
+                # the password.
+                password.fill("")
+                page.get_by_role("button", name="Create owner access").click()
+                expect(password).to_have_attribute("aria-invalid", "true")
+                assert confirmation.get_attribute("aria-invalid") is None
+                confirmation.fill("a different password")
+                expect(alert).not_to_be_empty()
+                expect(password).to_have_attribute("aria-invalid", "true")
+                expect(password).to_have_attribute("aria-describedby", "setup-error")
+                assert confirmation.get_attribute("aria-describedby") is None
+                password.fill(_PASSWORD)
+                expect(alert).to_be_empty()
+                assert password.get_attribute("aria-invalid") is None
+                confirmation.fill(_PASSWORD)
                 page.get_by_role("button", name="Create owner access").click()
                 expect(
                     page.get_by_role("heading", name="Choose metadata providers")
@@ -4423,6 +4517,27 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         assert page.evaluate(
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
+                expect(
+                    page.get_by_text(
+                        "Book editions, ISBNs, publication dates and cover images.",
+                        exact=False,
+                    )
+                ).to_be_visible()
+                page.get_by_role("checkbox", name="Hardcover").check()
+                expect(
+                    page.get_by_label("Hardcover API key", exact=True)
+                ).to_be_visible()
+                expect(
+                    page.get_by_role("button", name="Show the Hardcover API key")
+                ).to_be_visible()
+                expect(
+                    page.get_by_text(
+                        "Cover evidence from Audible stays off until you turn it on "
+                        "in Settings.",
+                        exact=False,
+                    )
+                ).to_be_visible()
+                assert page.get_by_label("API key", exact=True).count() == 0
                 page.get_by_role("button", name="Skip providers").click()
                 expect(
                     page.get_by_text("1 unsupported podcast library excluded.")
@@ -4464,7 +4579,12 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 assert selected_by_id["books"]["display_name"] == "My Reading Shelf"
                 assert selected_by_id["books-collision"]["name"] == "books-2"
                 assert selected_by_id["books-collision"]["display_name"] == "Books!"
-                expect(page.get_by_label("Books service path")).to_be_visible()
+                # The mounts step and the kickoff summary must name a renamed
+                # library the same way: its recorded local display name.
+                expect(
+                    page.get_by_label("My Reading Shelf service path")
+                ).to_be_visible()
+                assert page.get_by_label("Books service path").count() == 0
                 expect(
                     page.get_by_label(
                         re.compile(r"^A very long library name.* service path$")
@@ -4489,18 +4609,121 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 assert page.evaluate(
                     "document.documentElement.scrollWidth <= window.innerWidth"
                 )
+                # The stacking breakpoint is stated in rem, so 200% browser
+                # text moves it and the step card keeps a usable width at
+                # every protected viewport instead of collapsing beside the
+                # aside.
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                for width, height in protected_viewports:
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                    card = page.evaluate(
+                        "document.querySelector('.step-card')"
+                        ".getBoundingClientRect().width"
+                    )
+                    assert card >= width * 0.55, (width, card)
+                page.set_viewport_size({"width": 1440, "height": 900})
                 page.evaluate("document.documentElement.style.fontSize = ''")
                 for field in page.get_by_label("service path", exact=False).all():
                     expect(field).not_to_have_value("")
+                expect(
+                    page.get_by_text("the path inside that service", exact=False)
+                ).to_be_visible()
+                books_path = page.get_by_label("My Reading Shelf service path")
+                books_path.fill("/owner/typed/books")
                 page.get_by_role("button", name="Check mounts").click()
+                retest = page.get_by_role("button", name="Retest mounts")
+                expect(retest).to_be_visible()
+                expect(
+                    page.get_by_label("My Reading Shelf service path")
+                ).to_have_value("/owner/typed/books")
+                results = page.get_by_role("status").first
+                expect(results).to_contain_text("My Reading Shelf: No mapping")
+                expect(results).to_contain_text(
+                    "Correct the Audiobookshelf service path and compare again"
+                )
+                assert "missing" not in results.inner_text()
+                assert (
+                    results.locator("p.mount-line-attention").count()
+                    == results.locator("p").count()
+                )
+                for width, height in ((1440, 900), (320, 800)):
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                retest.click()
                 page.get_by_role("button", name="Continue without a reviewer").click()
                 expect(
                     page.get_by_role("heading", name="Kick off preparation")
                 ).to_be_visible()
+                summary = page.locator(".summary")
+                expect(summary).to_be_visible()
+                expect(summary).to_contain_text("https://library.invalid")
+                expect(summary).to_contain_text(
+                    "My Reading Shelf \u2014 read-only mount matched"
+                )
+                expect(summary).to_contain_text("No reviewer")
+                summary_text = summary.inner_text()
+                assert "None" in summary_text
+                assert "/owner/typed/books" not in summary_text
+                assert "/library/books" not in summary_text
+                # Every reopen control names the step it reopens.
+                assert (
+                    page.get_by_role("button", name="Change", exact=True).count() == 0
+                )
+                for action in (
+                    "Change Connect Audiobookshelf",
+                    "Change Choose metadata providers",
+                    "Change Choose libraries",
+                    "Change Check read-only mounts",
+                    "Change Choose reviewer",
+                ):
+                    expect(page.get_by_role("button", name=action)).to_be_visible()
+                # The summary value keeps a floor at 200% text, and the Change
+                # control moves onto its own row instead of starving it.
+                page.evaluate("document.documentElement.style.fontSize = '200%'")
+                for width, height in protected_viewports:
+                    page.set_viewport_size({"width": width, "height": height})
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= window.innerWidth"
+                    )
+                    widths = page.evaluate(
+                        "[...document.querySelectorAll('.summary-row dd')]"
+                        ".map(node => node.getBoundingClientRect().width)"
+                    )
+                    assert widths and all(value > 0 for value in widths), (
+                        width,
+                        widths,
+                    )
+                page.set_viewport_size({"width": 1440, "height": 900})
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                for action in (
+                    "Change the Audiobookshelf address",
+                    "Change the metadata providers",
+                    "Change the selected libraries",
+                    "Change the cover reviewer",
+                ):
+                    expect(page.get_by_role("button", name=action)).to_be_visible()
+                for color in color_schemes:
+                    page.emulate_media(color_scheme=color)
+                    for width, height in protected_viewports:
+                        page.set_viewport_size({"width": width, "height": height})
+                        assert page.evaluate(
+                            "document.documentElement.scrollWidth <= window.innerWidth"
+                        )
+                page.set_viewport_size({"width": 1440, "height": 900})
                 page.get_by_role("button", name="Kick off preparation").click()
+                expect(page.locator(".summary")).to_have_count(0)
                 expect(
                     page.get_by_role("heading", name="Now preparing")
                 ).to_be_visible()
+                # Nothing to prepare for once preparation has started.
+                expect(
+                    page.get_by_role("heading", name="Before you start")
+                ).not_to_be_visible()
                 expect(page.get_by_text("Private setup book 0")).to_be_visible()
                 expect(
                     page.get_by_text("2 more active books follow in this run.")

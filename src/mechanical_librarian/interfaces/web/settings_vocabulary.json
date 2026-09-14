@@ -5,6 +5,7 @@
     "printable_ascii": "^[\\u0021-\\u007e]+$",
     "forbidden_prefix": "bearer"
   },
+  "owner_password": { "minimum_bytes": 1, "maximum_bytes": 1024 },
   "endpoint": { "minimum": 1, "maximum": 2048 },
   "open_library_email": {
     "minimum": 3,
@@ -29,9 +30,23 @@
     "itunes_search": "iTunes",
     "open_library": "Open Library"
   },
+  "provider_contributions": {
+    "audible_catalog": "Audiobook catalogue records: narrator, series, runtime and publication detail.",
+    "audiosilo": "Audiobook runtime and chapter structure that can corroborate a recording.",
+    "audnexus": "Audiobook chapter listings and narrator credits.",
+    "google_books": "Publisher descriptions, categories and page counts for books.",
+    "hardcover": "Community book records with series, edition and contributor detail.",
+    "inventaire": "Work identity, editions and cover images for books.",
+    "itunes_search": "Audiobook runtime, narrator and publication detail from the iTunes catalogue.",
+    "open_library": "Book editions, ISBNs, publication dates and cover images."
+  },
   "audible_marketplace_order": ["us", "uk", "de", "fr", "au", "in", "ca", "jp", "it", "es"],
   "errors": {
     "secret": "Secrets must be 1–2,048 printable ASCII characters with no whitespace or Bearer prefix.",
+    "owner_password": "Use an owner password between 1 and 1,024 bytes.",
+    "owner_password_empty": "Enter an owner password. Any characters are allowed, including spaces.",
+    "owner_password_mismatch": "The two passwords do not match. Retype the confirmation.",
+    "invalid_origin": "This page was not reached through the address this deployment publishes. Open the published address; if a reverse proxy sits in front, have it send exactly one canonical forwarded host and protocol pair.",
     "open_library_email": "Open Library needs a valid contact email while enabled.",
     "provider_key": "This provider requires an API key while enabled.",
     "libraries": "Select at least one supported book library.",

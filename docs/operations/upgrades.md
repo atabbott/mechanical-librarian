@@ -155,6 +155,12 @@ recovery may remove unreferenced digest-named artifacts. The independently
 owned session database accepts only absent or exact-current state; deleting it
 is its clean rebuild and signs the owner out.
 
+A build that adds a write destination lapses every existing library consent,
+because the consent envelope identity digests the whole destination set. An
+upgrading owner therefore issues a fresh library-scoped Activity grant before
+anything is planned, claimed or scheduled; nothing carries over from the
+previous grant. A fresh install has no consent to lapse and needs no such step.
+
 Post-release migration and restore policy remains deferred to #57. Nothing in
 this pre-release rebuild contract grants generic migration, retention, pruning,
 purge, or repair authority.
