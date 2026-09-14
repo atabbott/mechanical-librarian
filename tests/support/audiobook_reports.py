@@ -793,7 +793,7 @@ def publish_audiobook_preview(
 
 
 def synthetic_audiobook_isbn_reason_report(shape: str) -> MetadataReport:
-    values = {
+    values: tuple[object, object] = {
         "absent": (None, None),
         "unassociated": ("9781250077004", None),
         "conflict": ("9781250077004", "9780593135204"),

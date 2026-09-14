@@ -5007,20 +5007,17 @@ def audiobook_pair(tmp_path, effects):
     case = FieldEffectTargetCase()
     env = effects
     state = SimpleNamespace(repo=None, case=case, env=env)
+    authors = next(
+        f.value for f in report.target.fields if f.destination.value == "authors"
+    )
+    assert type(authors) is tuple and all(type(name) is str for name in authors)
     try:
         case.detail.update(isInvalid=False, isMissing=False)
         case.detail["media"].update(
             audioFiles=[synthetic_audio_file("synthetic.m4b")],
             metadata={
                 "title": "Synthetic Journey: A Tale of Courage",
-                "authors": [
-                    {"name": x}
-                    for x in next(
-                        f.value
-                        for f in report.target.fields
-                        if f.destination.value == "authors"
-                    )
-                ],
+                "authors": [{"name": name} for name in authors],
             },
         )
         reader = AudiobookshelfItemReader(
@@ -5786,15 +5783,17 @@ def test_pair_admission_boundaries(tmp_path, field, mode):
             repo.publish(report, lambda: True)
             repo.publish_proposal(proposal)
             case_id = json.loads(repo.admit_review_case(proposal))["review_case_id"]
-            expected = ()
+            expected: tuple[str, ...] = ()
             if mode == "owner":
                 case = ReviewCase.create_from_data(
                     json.loads(repo.get_review_case(case_id))["case"]
                 )
-                proposal = next(x for x in case.proposals if x["destination"] == field)
+                field_proposal = next(
+                    x for x in case.proposals if x["destination"] == field
+                )
                 owner = HumanDecision.create(
                     case,
-                    proposal_id=proposal["proposal_id"],
+                    proposal_id=field_proposal["proposal_id"],
                     target_fingerprint=case.target_fingerprint,
                     destination=field,
                     actor="owner",
@@ -6530,7 +6529,9 @@ def test_isbn_refusal_history_pagination_filter_and_reader_cache(tmp_path):
         first = service.activity(event_type="metadata", page=1, page_size=25)
         second = service.activity(event_type="metadata", page=2, page_size=25)
         assert first["ledger"]["total"] == second["ledger"]["total"] == 30
-        assert [row["event_id"] for row in first["events"] + second["events"]] == list(
+        first_events, second_events = first["events"], second["events"]
+        assert type(first_events) is list and type(second_events) is list
+        assert [row["event_id"] for row in first_events + second_events] == list(
             reversed(expected_ids)
         )
         assert len(first["events"]) == 25 and len(second["events"]) == 5

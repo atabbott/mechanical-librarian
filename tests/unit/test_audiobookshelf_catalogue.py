@@ -1131,7 +1131,7 @@ def test_an_ebook_with_a_cover_reference_still_follows_the_item_timestamp() -> N
 
 
 def test_nested_cover_declarations_are_bound_into_catalogue_fingerprint():
-    declarations = (
+    declarations: tuple[tuple[tuple[str, object], ...], ...] = (
         (),
         (("media", None),),
         (("media", ""),),

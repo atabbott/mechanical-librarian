@@ -5,7 +5,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Iterator
+from typing import Any, Iterator, Never
 
 from mechanical_librarian.adapters import cover_artifacts as decoder
 from mechanical_librarian.adapters.field_effect_authority import (
@@ -117,7 +117,7 @@ def audiobook_cover_environment(
         )
         proposal = next(row for row in case.proposals if row["destination"] == "cover")
 
-        def no_observer(*args: object, **kwargs: object) -> None:
+        def no_observer(*args: object, **kwargs: object) -> Never:
             raise AssertionError("image observer prohibited")
 
         service = CoverConsiderationService(
@@ -126,7 +126,8 @@ def audiobook_cover_environment(
                 next(
                     source.artifact
                     for source in report.cover_sources
-                    if source.artifact.artifact_id == identity
+                    if source.artifact is not None
+                    and source.artifact.artifact_id == identity
                 )
             ),
             read_preview_digest=artifacts.read_preview_digest,
@@ -137,9 +138,11 @@ def audiobook_cover_environment(
         assert request.packet_payload is None and request.image_payloads == ()
         service.ensure(case_id, report.to_json(), proposal)
         documents = repository.get_review_case_decisions(case_id)
-        consideration = json.loads(
-            repository.current_cover_consideration_document(case_id)
+        consideration_document = repository.current_cover_consideration_document(
+            case_id
         )
+        assert consideration_document is not None
+        consideration = json.loads(consideration_document)
         repository.close()
         repository = open_repository(out / "state.sqlite")
         assert repository.get_review_case_decisions(case_id) == documents

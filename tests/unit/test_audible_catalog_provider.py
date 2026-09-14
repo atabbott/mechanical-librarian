@@ -877,7 +877,7 @@ def _cast_report(
 ) -> MetadataReport:
     base = asserted_asin_report(provider_duration="58200.000")
     target = audio_target("The Synthetic Journey", ("Example Author",))
-    local = (target_title_claim("The Synthetic Journey"),)
+    local: tuple[d.LocalClaim, ...] = (target_title_claim("The Synthetic Journey"),)
     if third_language is not None:
         local += (audio_claim(d.ClaimKind.LANGUAGE, "en", 2),)
     plan = m.audiobook_discovery_plan(target, local, audio=base.audio)
@@ -982,6 +982,7 @@ def test_explicit_incompatible_language_keeps_review_candidate_but_not_cast_vote
         for c in o.recording_lookup_candidates
         if any(x.kind is d.ClaimKind.LANGUAGE and x.value == "de" for x in c.claims)
     )
+    assert r.target.current_title is not None
     assert (
         d.recording_variant_conflict(excluded, r.local_claims, r.target.current_title)
         == "recording_language_conflict"
