@@ -202,7 +202,7 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
           <time>
             {dateParts(transition.occurred_at).day} · {dateParts(transition.occurred_at).time}
           </time>
-          <span>{stateLabel(transition.state)}</span>
+          <span> · {stateLabel(transition.state)}</span>
         </li>
       ))}
       {moreAvailable ? (

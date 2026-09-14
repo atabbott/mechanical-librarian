@@ -592,7 +592,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
             "UNION ALL "
             "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
-            ") recorded JOIN field_effects effect ON effect.decision_id=recorded.decision_id "
+            ") recorded JOIN field_effects effect ON (effect.decision_id=recorded.decision_id "
+            "OR json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')=recorded.decision_id) "
             "WHERE effect.state IN ('claimed','applying','reconciling') OR "
             "(effect.state='verified' AND recorded.destination='cover') "
             "ORDER BY recorded.destination",

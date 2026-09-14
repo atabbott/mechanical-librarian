@@ -6615,3 +6615,94 @@ def test_actual_audiobook_author_activity_names_the_policy_without_operation_ide
         assert repository.get_review_case_decisions(case_id) == documents
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize("state", ("claimed", "applying", "reconciling", "verified"))
+def test_audiobook_pair_current_override_and_owner_history(
+    audiobook_pair, tmp_path, state
+):
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    pair = audiobook_pair
+    operation = pair.plan()
+    if state == "verified":
+        assert pair.service.apply(operation.plan.plan_id).state == "verified"
+        _paired_owner_keep(pair, "subtitle")
+    else:
+        pair.repo.claim_field_effect(
+            operation.plan.plan_id, "planned", "1" * 64, pair.env.clock()
+        )
+        if state in {"applying", "reconciling"}:
+            pair.repo.transition_field_effect(
+                operation.plan.plan_id, "claimed", "applying", pair.env.clock()
+            )
+        if state == "reconciling":
+            pair.repo.schedule_field_effect_reconciliation(
+                operation.plan.plan_id, "applying", pair.env.clock()
+            )
+    pair.reopen()
+    assert pair.repo.get_field_effect(operation.plan.plan_id).state == state
+    inspector = InspectCurrentReviewCase(pair.repo)
+    if state == "verified":
+        event = next(
+            item
+            for item in inspector.history(pair.case_id)["items"]
+            if item.get("destination") == "subtitle" and item.get("actor") == "owner"
+        )
+        assert event["previous_value"] == {"kind": "text", "value": "A Tale of Courage"}
+    else:
+        fields = {
+            item["destination"]: item for item in inspector.run(pair.case_id)["fields"]
+        }
+        assert (
+            fields["title"]["decision_actions"]
+            == fields["subtitle"]["decision_actions"]
+            == ["keep_current", "accept"]
+        )
+        assert not fields["title"]["editable"] and not fields["subtitle"]["editable"]
+    assert len(pair.patches()) == (1 if state == "verified" else 0)
+
+    pair.repo.close()
+    pair.repo = open_repository(tmp_path / "state.sqlite", cross_thread=True)
+    password = tmp_path / "owner.hash"
+    password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+    os.chmod(password, 0o600)
+    app = create_transport_test_app(
+        pair.repo,
+        ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(password),
+        ),
+        clock=pair.env.clock,
+    )
+    with TestClient(app, base_url="https://review.test") as client:
+        assert (
+            client.post(
+                "/api/v1/session/login",
+                json={"password": "correct horse"},
+                headers={"Origin": "https://review.test"},
+            ).status_code
+            == 200
+        )
+        if state == "verified":
+            response = client.get(f"/api/v1/review-cases/{pair.case_id}/history")
+            assert response.status_code == 200
+            api_event = next(
+                item
+                for item in response.json()["items"]
+                if item.get("destination") == "subtitle"
+                and item.get("actor") == "owner"
+            )
+            assert api_event["previous_value"] == event["previous_value"]
+        else:
+            response = client.get(f"/api/v1/review-cases/{pair.case_id}")
+            assert response.status_code == 200
+            api_fields = {
+                item["destination"]: item for item in response.json()["fields"]
+            }
+            assert (
+                not api_fields["title"]["editable"]
+                and not api_fields["subtitle"]["editable"]
+            )

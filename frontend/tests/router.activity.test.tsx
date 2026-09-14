@@ -1071,6 +1071,7 @@ describe('Activity route', () => {
     await user.click(screen.getByRole('button', { name: 'Try again' }))
     const lifecycle = await screen.findByRole('list', { name: 'Recorded lifecycle transitions' })
     expect(lifecycle.querySelectorAll('li')).toHaveLength(21)
+    expect(lifecycle.querySelector('li')?.textContent).toMatch(/ · Planned$/u)
     await user.click(screen.getByRole('button', { name: 'Load more transitions' }))
     await waitFor(() => expect(lifecycle.querySelectorAll('li')).toHaveLength(25))
     expect(http.getActivityTransitions).toHaveBeenLastCalledWith(

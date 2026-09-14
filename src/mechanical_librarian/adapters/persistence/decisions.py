@@ -948,7 +948,8 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
                     "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
                     "WHERE earlier.review_case_id=? AND earlier.destination=?"
-                    ") recorded ON recorded.decision_id=effect.decision_id "
+                    ") recorded ON (recorded.decision_id=effect.decision_id "
+                    "OR recorded.decision_id=json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')) "
                     "WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
                     (
                         review_case_id,
@@ -959,9 +960,13 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     ),
                 ).fetchone()
                 if prior is not None:
-                    previous = FieldEffectOperation.from_json(
-                        prior[0]
-                    ).plan.desired_value
+                    plan = FieldEffectOperation.from_json(prior[0]).plan
+                    previous = (
+                        plan.subtitle_companion.desired_value
+                        if decision.destination == "subtitle"
+                        and plan.subtitle_companion is not None
+                        else plan.desired_value
+                    )
                 kind = decision_value_kind(decision.destination)
                 value["previous_value"] = (
                     {"kind": kind, "value": previous} if previous is not None else None

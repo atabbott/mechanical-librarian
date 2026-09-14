@@ -513,6 +513,15 @@ const readableCategory = (key: string) =>
 const previewValue = (value: unknown) => {
   if (value === null || value === undefined || value === '') return 'empty'
   if (typeof value === 'string') return value
+  if (
+    typeof value === 'object' &&
+    Object.keys(value).length === 2 &&
+    'title' in value &&
+    'subtitle' in value &&
+    typeof value.title === 'string' &&
+    typeof value.subtitle === 'string'
+  )
+    return `Title: ${value.title}; Subtitle: ${value.subtitle}`
   return JSON.stringify(value)
 }
 

@@ -1105,6 +1105,15 @@ const combinedAutomaticTags = (field: ReviewField, mediaKind: string) =>
     sameSelectedValue(value, field.automaticDecision?.selected_value),
   )
 
+const selectedAutomaticSynopsis = (field: ReviewField, mediaKind: string) =>
+  audioFileFormat(mediaKind) &&
+  field.destination === 'description' &&
+  field.humanDecision === null &&
+  field.automaticDecision?.outcome === 'candidate' &&
+  field.proposedValues.some((value) =>
+    sameSelectedValue(value, field.automaticDecision?.selected_value),
+  )
+
 function RecordedOutcome({
   field,
   mediaKind,
@@ -3767,7 +3776,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                           {notice === 'competing_evidence' &&
                           combinedAutomaticTags(selected, detail.data.target.mediaKind)
                             ? 'Different source tag lists'
-                            : fieldLabel(notice)}
+                            : notice === 'competing_evidence' &&
+                                selectedAutomaticSynopsis(selected, detail.data.target.mediaKind)
+                              ? 'Different source descriptions'
+                              : fieldLabel(notice)}
                         </p>
                       ))}
                     </aside>

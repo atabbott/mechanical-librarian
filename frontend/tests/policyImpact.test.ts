@@ -7,6 +7,19 @@ import {
 } from '../src/routes/PolicyPage'
 
 describe('policy impact projections', () => {
+  it('labels both associated values in a paired subtitle preview', () => {
+    expect(
+      policyImpactDisplay({
+        current_value: null,
+        desired_value: { title: 'Synthetic Journey', subtitle: 'A Tale of Courage' },
+        field: 'subtitle',
+        outcome: 'projected',
+        reason: null,
+        target_state: 'missing',
+      }).detail,
+    ).toBe('fills the empty field with Title: Synthetic Journey; Subtitle: A Tale of Courage')
+  })
+
   it('projects bounded policy impact language without promoting transport enums', () => {
     expect(
       policyImpactDisplay({

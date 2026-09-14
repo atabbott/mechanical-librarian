@@ -1952,6 +1952,62 @@ describe('Library route', () => {
     },
   )
 
+  it.each([
+    ['m4b', true],
+    ['m4a', true],
+    ['mp3', true],
+    ['epub', true],
+    ['unknown', true],
+    ['m4b', false],
+  ] as const)(
+    'uses neutral description alternatives only for a validated audiobook selection (%s, %s)',
+    async (mediaKind, selected) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('workspace fixture requires a field')
+      const candidate = { kind: 'text' as const, value: 'A safe regional synopsis.' }
+      const field = {
+        ...base,
+        destination: 'description' as const,
+        humanDecision: null,
+        notices: ['competing_evidence'],
+        currentRaw: null,
+        currentValue: '',
+        automaticDecision: selected
+          ? {
+              candidate_id: 'description-1',
+              decision_id: 'automatic-description',
+              destination: 'description' as const,
+              occurred_at: 1,
+              outcome: 'candidate' as const,
+              proposal_id: base.proposalId,
+              review_case_id: 'case-1',
+              selected_value: candidate,
+              target_fingerprint: base.targetFingerprint,
+            }
+          : null,
+        proposedValues: [
+          candidate,
+          { kind: 'text' as const, value: 'Another regional description.' },
+        ],
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=description', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({
+          ...detail,
+          target: { ...detail.target, mediaKind },
+          fields: [field],
+        })),
+      })
+      const neutral = selected && ['m4b', 'm4a', 'mp3'].includes(mediaKind)
+      expect(
+        await screen.findByText(neutral ? 'Different source descriptions' : 'Competing evidence'),
+      ).toBeVisible()
+      expect(
+        screen.queryByText(neutral ? 'Competing evidence' : 'Different source descriptions'),
+      ).toBeNull()
+    },
+  )
+
   it('does not infer a quality check when only one of two descriptions is applicable', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
