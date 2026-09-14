@@ -1831,6 +1831,7 @@ describe('Library route', () => {
     expect(screen.getByText('External corroboration')).toBeVisible()
     expect(screen.queryByText('Preserved catalogue record')).not.toBeInTheDocument()
     expect(screen.getAllByText('Competing evidence').length).toBeGreaterThan(0)
+    expect(screen.queryByText('Different source tag lists')).toBeNull()
     const fieldRail = screen.getByRole('navigation', { name: 'Review fields' })
     expect(
       within(fieldRail).getByRole('button', { name: /Series.*Resolved automatically/u }),
@@ -2287,6 +2288,7 @@ describe('Library route', () => {
       const field = {
         ...base,
         destination: 'tags' as const,
+        notices: ['competing_evidence'],
         currentValue: ownerTags.join(', ') || 'Not set',
         currentRaw: ownerTags,
         automaticDecision: {
@@ -2340,6 +2342,8 @@ describe('Library route', () => {
       ).toBeVisible()
       if (['ebook', 'epub', 'unknown', 'audiobook'].includes(mediaKind)) {
         expect(screen.queryByRole('region', { name: 'Tags recorded outcome' })).toBeNull()
+        expect(screen.getByText('Competing evidence')).toBeVisible()
+        expect(screen.queryByText('Different source tag lists')).toBeNull()
         expect(
           screen.queryByText('Compatible source tags were combined, retaining any existing tags.'),
         ).toBeNull()
@@ -2349,6 +2353,8 @@ describe('Library route', () => {
       expect(recorded).toHaveTextContent('First · Shared · Second')
       if (ownerTags.length) expect(recorded).toHaveTextContent('Owner tag')
       expect(recorded).toHaveTextContent('Compatible source tags were combined')
+      expect(screen.getByText('Different source tag lists')).toBeVisible()
+      expect(screen.queryByText('Competing evidence')).toBeNull()
       await userEvent.click(within(recorded).getByRole('button', { name: 'Evidence' }))
       expect(recorded).toHaveTextContent('Source record 1')
       expect(recorded).toHaveTextContent('Source record 2')

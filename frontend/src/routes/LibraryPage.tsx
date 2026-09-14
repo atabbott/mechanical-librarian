@@ -3763,7 +3763,12 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   {comparisonNotices(selected).length ? (
                     <aside className="comparison-notice" aria-label="Comparison condition">
                       {comparisonNotices(selected).map((notice) => (
-                        <p key={notice}>{fieldLabel(notice)}</p>
+                        <p key={notice}>
+                          {notice === 'competing_evidence' &&
+                          combinedAutomaticTags(selected, detail.data.target.mediaKind)
+                            ? 'Different source tag lists'
+                            : fieldLabel(notice)}
+                        </p>
                       ))}
                     </aside>
                   ) : null}
