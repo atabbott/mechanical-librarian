@@ -421,6 +421,9 @@ describe('Policy route', () => {
     )
     await user.click(screen.getByRole('button', { name: /Curation/ }))
     const tags = screen.getByRole('region', { name: 'Tags' })
+    expect(tags).toHaveTextContent(
+      'Tags are off by default. When enabled, use compatible source tags or review them yourself.',
+    )
     expect(within(tags).getByText('Automatic mode not supported')).toBeVisible()
     expect(within(tags).getByRole('button', { name: 'Ask me' })).toBeEnabled()
     expect(within(tags).getByRole('button', { name: 'Ignore' })).toBeEnabled()
@@ -1083,10 +1086,7 @@ it('keeps explicit off until the owner chooses its representation and review mod
 
 it.each([
   ['identity', ['Title and subtitle', 'Authors and narrators', 'Language', 'Subtitle']],
-  [
-    'publication',
-    ['Publication date and year', 'Publisher', 'ISBN', 'Series memberships'],
-  ],
+  ['publication', ['Publication date and year', 'Publisher', 'ISBN', 'Series memberships']],
   ['curation', ['Genres', 'Tags', 'Description', 'Cover', 'ASIN']],
 ] as const)(
   'keeps existing empty-profile destinations on Ask me in %s',

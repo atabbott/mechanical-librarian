@@ -43,6 +43,8 @@ from mechanical_librarian.domain.human_decision import (
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
+    ClaimKind,
+    FieldState,
     MetadataReport,
     ProviderLaneObservation,
     ReportValueError,
@@ -787,9 +789,16 @@ class InspectCurrentReviewCase:
                 destinations = destinations_by_reference.setdefault(reference, [])
                 if destination not in destinations:
                     destinations.append(destination)
+        observations = _review_identifier_evidence(
+            report, set(destinations_by_reference)
+        )
+        for reference, observation in observations.items():
+            destinations_by_reference[reference] = cast(
+                list[str], observation["destinations"]
+            )
         wanted = set(destinations_by_reference)
         evidence = _evidence_by_reference(report)
-        missing_lineage_count = len(wanted.difference(evidence))
+        missing_lineage_count = len(wanted.difference(evidence, observations))
         reference_set_digest = hashlib.sha256(
             json.dumps(
                 sorted(
@@ -800,7 +809,11 @@ class InspectCurrentReviewCase:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        ordered = [reference for reference in sorted(wanted) if reference in evidence]
+        ordered = [
+            reference
+            for reference in sorted(wanted)
+            if reference in evidence or reference in observations
+        ]
         bounded_limit = min(max(limit, 1), 50)
         offset = _decode_cursor(
             cursor,
@@ -811,7 +824,9 @@ class InspectCurrentReviewCase:
         bounded = ordered[offset : offset + bounded_limit]
         return {
             "items": [
-                _choice_evidence(
+                observations[reference]
+                if reference in observations
+                else _choice_evidence(
                     evidence[reference], destinations_by_reference[reference]
                 )
                 for reference in bounded
@@ -1883,6 +1898,45 @@ def _choice_text(value: str | int | float) -> str:
 
 def _bounded_token(value: object) -> bool:
     return type(value) is str and 32 <= len(value) <= 128 and value.strip() == value
+
+
+def _review_identifier_evidence(
+    report: MetadataReport, linked: set[str]
+) -> dict[str, dict[str, object]]:
+    """Keep non-voting audiobook identifiers visible without making them choices."""
+    if report.audio is None:
+        return {}
+    observations: dict[str, dict[str, object]] = {}
+    for provider in report.providers:
+        for candidate in (*provider.candidates, *provider.recording_lookup_candidates):
+            for claim in candidate.claims:
+                if (
+                    claim.kind not in {ClaimKind.ISBN, ClaimKind.ASIN}
+                    or claim.reference in linked
+                ):
+                    continue
+                value = (
+                    _choice_text(claim.value)
+                    if claim.state is FieldState.VALID and type(claim.value) is str
+                    else "No valid identifier retained"
+                )
+                observations.setdefault(
+                    claim.reference,
+                    {
+                        "destinations": [claim.kind.value],
+                        "role": "external_observation",
+                        "source": _provider_label(provider.authority),
+                        "observation": (
+                            f"{claim.kind.value.upper()}: {value}. Retained for review only; "
+                            "not an eligible choice. "
+                            f"Scope: {claim.scope.value}; state: {claim.state.value}; "
+                            f"applicability: {claim.applicability}. "
+                            f"Source record: {_choice_text(candidate.identity)}. "
+                            f"Reference: {claim.reference}."
+                        ),
+                    },
+                )
+    return observations
 
 
 def _evidence_by_reference(

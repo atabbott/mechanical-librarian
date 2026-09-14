@@ -2846,6 +2846,12 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "src/mechanical_librarian/adapters/persistence/review_projections.py",
             "src/mechanical_librarian/application/review_web.py",
             "frontend/src/routes/LibraryPage.tsx",
+            "src/mechanical_librarian/domain/activity_records.py",
+            "src/mechanical_librarian/interfaces/web/app.py",
+            "frontend/src/routes/ActivityPage.tsx",
+            "frontend/src/routes/PolicyPage.tsx",
+            "frontend/src/routes/DetailPage.tsx",
+            "frontend/src/api/http.ts",
         }
         unchanged = {
             name: document["source_closure"][name]

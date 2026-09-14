@@ -168,7 +168,8 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'tags',
     label: 'Tags',
-    meaning: 'Tags are off by default and remain manual review choices.',
+    meaning:
+      'Tags are off by default. When enabled, use compatible source tags or review them yourself.',
     options: ['off', 'fill_empty', 'add', 'replace'],
     optionLabels: {
       off: 'Off',

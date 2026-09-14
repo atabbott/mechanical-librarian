@@ -262,7 +262,9 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                                 {item.source} ·{' '}
                                 {item.role === 'local_presence'
                                   ? 'Local record'
-                                  : 'External corroboration'}
+                                  : item.role === 'external_observation'
+                                    ? 'External observation'
+                                    : 'External corroboration'}
                               </small>
                             </li>
                           ))}

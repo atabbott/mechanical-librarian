@@ -170,7 +170,9 @@ canonical values. A well-matched audiobook ISBN need not have a separate format
 label, but is not publisher-verified. Competing products, other-format claims,
 and insufficient association remain inspectable. Activity distinguishes absent,
 unavailable, malformed/incomplete, conflicting and insufficiently associated
-source values without overriding earlier owner, policy or currentness refusals.
+source values without overriding earlier owner, policy or currentness refusals. Evidence also shows non-voting audiobook identifier observations with their source record,
+reference, scope, state and applicability. These are labelled external observations,
+not corroboration or eligible choices; malformed or absent values are stated explicitly.
 
 Cover replacement requires a known incumbent with a shorter edge below 300 pixels
 and an eligible portrait/square candidate of at least 500 pixels and twice that

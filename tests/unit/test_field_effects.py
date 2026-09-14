@@ -6158,6 +6158,22 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             )
             assert api_field["automatic_decision"] == projected["automatic_decision"]
             assert api_field["proposed_values"] == projected["proposed_values"]
+            sample = client.get("/api/v1/metadata-policy/shadow/outcomes?limit=20")
+            assert sample.status_code == 200
+            assert sample.json() == app.state.review_application.policy.shadow_sample(
+                20
+            )
+            assert next(
+                item
+                for item in sample.json()["items"]
+                if item["outcome_set_id"] == outcome.outcome_set_id
+            ) == {
+                **json.loads(outcome.to_json()),
+                "evaluated_at": dict(repository.list_shadow_outcomes(20))[
+                    outcome.to_json()
+                ],
+            }
+            assert sample.json()["authority"] == "none"
         original = json.loads(outcome.to_json())
         selected = next(
             member
@@ -6542,3 +6558,60 @@ def test_isbn_refusal_history_pagination_filter_and_reader_cache(tmp_path):
         assert [row["event_id"] for row in page["events"]] == list(
             reversed(expected_ids)
         )
+
+
+@pytest.mark.parametrize("preserve", (False, True))
+def test_actual_audiobook_author_activity_names_the_policy_without_operation_identity(
+    tmp_path, preserve
+):
+    names = ("Example Author", "Second Author")
+    report = synthetic_audiobook_bibliographic_report(
+        source_authors=names, target_authors=names if preserve else names[:1]
+    )
+    path = tmp_path / "state.sqlite"
+    repository = open_repository(path)
+    case_id, _ = publish_audiobook_preview(
+        repository,
+        report,
+        ("contributor_names",),
+        selected_options={"contributor_names": "canonical"},
+    )
+    repository.persist_shadow_outcome(case_id, 4)
+    documents = repository.get_review_case_decisions(case_id)
+    assert len(documents) == 1
+    decision = AutomaticDecision.from_json(documents[0])
+    assert decision.outcome == ("keep_current" if preserve else "candidate")
+    assert decision.policy_option == (
+        "canonical:audiobook_authors_preserve"
+        if preserve
+        else "canonical:audiobook_authors_add"
+    )
+    repository.close()
+    repository = open_repository(path)
+    try:
+        lane = ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "audio"),),
+            lambda: 6,
+            lambda *_: None,
+            activity_only=True,
+        )
+        event = next(
+            item
+            for item in lane.activity()["events"]
+            if item["event_id"] == decision.decision_id
+        )
+        assert event["change_detail"] == (
+            "Kept Authors as Example Author, Second Author"
+            if preserve
+            else "Chose a Authors value automatically"
+        )
+        facts = {item["label"]: item["value"] for item in event["evidence"]}
+        assert facts["Policy setting"] == "Contributor names: Canonical form"
+        assert facts["New value"] == "Example Author, Second Author"
+        assert repository.get_review_case_decisions(case_id) == documents
+    finally:
+        repository.close()

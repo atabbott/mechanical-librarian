@@ -34,23 +34,29 @@ const capabilityLabel = (state: string) =>
     field_unavailable: 'A field is unavailable',
     not_ready: 'Not ready yet',
   })[state] ?? 'Not ready yet'
-const stateLabel = (state: string, descriptionAdvice = false) =>
-  (descriptionAdvice
+const stateLabel = (state: string, advice?: 'description' | 'cover') =>
+  (advice === 'description'
     ? {
         completed: 'Description advice completed',
         succeeded: 'Description advice completed',
         failed: 'Description advice failed safely',
       }[state]
-    : undefined) ??
+    : advice === 'cover'
+      ? {
+          completed: 'Cover advice completed',
+          unavailable: 'Cover advice unavailable',
+          failed: 'Cover advice failed safely',
+          selected: 'Owner cover choice recorded',
+          retry: 'Manual cover retry',
+        }[state]
+      : undefined) ??
   {
     accept: 'Accepted',
     keep_current: 'Kept current',
     reject: 'Rejected',
-    completed: 'Cover advice completed',
-    unavailable: 'Cover advice unavailable',
-    failed: 'Cover advice failed safely',
-    selected: 'Owner cover choice recorded',
-    retry: 'Manual cover retry',
+    completed: 'Completed',
+    unavailable: 'Unavailable',
+    failed: 'Failed safely',
     no_change_required: 'No change required',
     applying: 'Applying',
     claimed: 'Preparing',
@@ -693,7 +699,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     <b>
                       {stateLabel(
                         event.state,
-                        event.destination === 'description' && event.origin === 'adviser',
+                        event.destination === 'description' && event.origin === 'adviser'
+                          ? 'description'
+                          : event.destination === 'cover'
+                            ? 'cover'
+                            : undefined,
                       )}
                     </b>
                     <button

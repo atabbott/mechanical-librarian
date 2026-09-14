@@ -13,3 +13,8 @@ source texts (99,684 uncompressed bytes; 21,838 compressed bytes), needed to ret
 the historical correction tests' exact reverse-patch assertions. These are inert
 historical fixture data, not executable compatibility implementations. Current
 successor tests separately bind the changed implementation and operation inventory.
+
+`outcome.json` was produced by that same exact baseline wheel from a copy of
+the retained synthetic predecessor database using `persist_shadow_outcome`.
+It preserves genuine outcome v5 bytes for current nested sample-response refusal;
+the evaluated timestamp belongs to the sample projection, not the outcome identity.

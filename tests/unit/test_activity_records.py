@@ -340,8 +340,11 @@ def test_an_automatic_keep_shows_the_unchanged_value_on_both_sides() -> None:
     )
 
     facts = _facts(event)
+    assert event["change_detail"] == "Kept Title as The Farthest Shore"
+    assert event["change"] == "Kept The Farthest Shore"
     assert facts["Previous value"] == "The Farthest Shore"
     assert facts["New value"] == "The Farthest Shore"
+    assert facts["Policy setting"] == "Title layout: Leave as it is"
 
 
 def test_unavailable_automatic_authority_has_one_value_free_diagnostic() -> None:

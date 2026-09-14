@@ -21,7 +21,8 @@ describe('Activity route', () => {
     if (!failedRow || !completedRow) throw new Error('Expected preparation rows')
     expect(within(failedRow).getByText('Description advice failed safely')).toBeVisible()
     expect(within(completedRow).getByText('Description advice completed')).toBeVisible()
-    expect(screen.getAllByText('Cover advice completed')).toHaveLength(2)
+    expect(screen.getAllByText('Completed')).toHaveLength(2)
+    expect(screen.queryByText('Cover advice completed')).toBeNull()
     expect(screen.queryByText('Cover advice failed safely')).toBeNull()
   })
 
@@ -522,17 +523,44 @@ describe('Activity route', () => {
     ],
     [
       'completed automatic cover advice',
-      { events: [{ work_label: 'Cover work', state: 'completed', origin: 'automatic_pipeline' }] },
+      {
+        events: [
+          {
+            work_label: 'Cover work',
+            destination: 'cover',
+            state: 'completed',
+            origin: 'automatic_pipeline',
+          },
+        ],
+      },
       'Cover advice completed',
     ],
     [
       'unavailable owner cover retry',
-      { events: [{ work_label: 'Cover work', state: 'unavailable', origin: 'owner_retry' }] },
+      {
+        events: [
+          {
+            work_label: 'Cover work',
+            destination: 'cover',
+            state: 'unavailable',
+            origin: 'owner_retry',
+          },
+        ],
+      },
       'Cover advice unavailable',
     ],
     [
       'failed owner cover retry',
-      { events: [{ work_label: 'Cover work', state: 'failed', origin: 'owner_retry' }] },
+      {
+        events: [
+          {
+            work_label: 'Cover work',
+            destination: 'cover',
+            state: 'failed',
+            origin: 'owner_retry',
+          },
+        ],
+      },
       'Cover advice failed safely',
     ],
   ])('keeps the protected ledger row truthful for %s work', async (_name, current, rowStatus) => {

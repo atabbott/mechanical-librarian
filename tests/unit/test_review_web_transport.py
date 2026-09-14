@@ -2519,3 +2519,30 @@ def test_current_audiobook_qualification_inventory_crosses_closed_api_contract()
     ):
         with pytest.raises(ValidationError):
             _AudiobookQualification.model_validate({**records[0], "identity": identity})
+
+
+def test_shadow_sample_response_refuses_genuine_predecessor_outcome():
+    from pydantic import ValidationError
+
+    from mechanical_librarian.interfaces.web.app import _ShadowSampleResponse
+
+    document = Path("tests/support/audiobook_predecessors/outcome.json").read_bytes()
+    outcome = json.loads(document)
+    assert outcome["schema_version"] == "shadow-outcome-set-v5"
+    sample = {
+        "authority": "none",
+        "items": [{**outcome, "evaluated_at": 2000}],
+        "next_cursor": None,
+        "schema_version": "shadow-outcome-sample-v1",
+    }
+    with pytest.raises(ValidationError) as failure:
+        _ShadowSampleResponse.model_validate(sample)
+    assert any(
+        error["loc"] == ("items", 0, "schema_version")
+        and error["type"] == "literal_error"
+        for error in failure.value.errors()
+    )
+    assert (
+        Path("tests/support/audiobook_predecessors/outcome.json").read_bytes()
+        == document
+    )

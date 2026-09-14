@@ -283,7 +283,7 @@ def _automatic_facts(
     )
     field = destination_label(destination)
     category = cast(str, record.get("policy_category", ""))
-    option = cast(str, record.get("policy_option", ""))
+    option = cast(str, record.get("policy_option", "")).partition(":")[0]
     generation = record.get("policy_generation")
     facts = [
         {"label": "Previous value", "value": value_text(destination, current)},
@@ -299,7 +299,9 @@ def _automatic_facts(
     if type(generation) is int:
         facts.append({"label": "Policy generation", "value": str(generation)})
     return (
-        ReadableChange(
+        keep_change(destination, current)
+        if record.get("outcome") == "keep_current"
+        else ReadableChange(
             f"Chose a {field.lower()} value automatically",
             f"Chose a {field} value automatically",
         ),

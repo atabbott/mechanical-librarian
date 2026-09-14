@@ -4512,6 +4512,7 @@
           "role": {
             "enum": [
               "external_corroboration",
+              "external_observation",
               "local_presence"
             ],
             "title": "Role",
@@ -8094,7 +8095,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "shadow-outcome-set-v5",
+            "const": "shadow-outcome-set-v6",
             "title": "Schema Version",
             "type": "string"
           },
