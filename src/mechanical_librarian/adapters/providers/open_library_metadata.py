@@ -54,6 +54,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverSourceState,
     cover_source_id,
 )
+from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.evidence_bounds import (
     MAX_FIELD_VALUE_LENGTH,
     EvidenceValueError,
@@ -72,6 +73,7 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_SCALAR_CHARACTERS,
     ClaimKind,
     ClaimScope,
+    DateLinkConfidence,
     FieldState,
     LocalClaim,
     ProviderCandidate,
@@ -335,6 +337,7 @@ class OpenLibraryMetadataProvider:
                     lane.title,
                     lane.authors,
                     lane.matched_family,
+                    audio=plan.audio,
                 )
                 physical, _replayed = ledger.resolve(
                     kind=lookup.kind.value,
@@ -631,6 +634,8 @@ class OpenLibraryMetadataProvider:
                         family,
                         work_authors,
                         _search_work_document(search, work_key),
+                        audiobook_work=lookup.audio is not None
+                        and lookup.kind is ProviderQueryKind.WORK,
                     )
                     search_work = _search_work_document(search, work_key)
                     if (
@@ -1050,6 +1055,36 @@ def _edition_applicability(values: tuple[str, ...]) -> str:
     return values[0]
 
 
+def _work_first_publication(value: object) -> tuple[str, DatePrecision]:
+    """Read Open Library's closed full-month date spelling, then validate it."""
+    if type(value) is not str or not value or len(value) > 512:
+        raise ValueError("work first publication date is invalid")
+    text = value.strip()
+    try:
+        return normalize_date_value(text)
+    except ValueError:
+        match = re.fullmatch(r"\s*([A-Za-z]+)\s+(\d{1,2})\s*,\s*(\d{4})\s*", text)
+        months = (
+            "January",
+            "February",
+            "March",
+            "April",
+            "May",
+            "June",
+            "July",
+            "August",
+            "September",
+            "October",
+            "November",
+            "December",
+        )
+        if match is None or match[1] not in months:
+            raise ValueError("work first publication date is invalid") from None
+        return normalize_date_value(
+            f"{match[3]}-{months.index(match[1]) + 1:02d}-{int(match[2]):02d}"
+        )
+
+
 def _candidate(
     provider: str,
     edition_key: str,
@@ -1060,6 +1095,8 @@ def _candidate(
     requested_family: str | None,
     work_authors: tuple[tuple[str, str | None], ...] = (),
     search_work: dict[str, Any] | None = None,
+    *,
+    audiobook_work: bool = False,
 ) -> tuple[ProviderCandidate, _CoverId, _CoverId]:
     # `kind` names both a claim kind (while claims are added) and a provider
     # evidence kind (while evidence is added); `author` names both a display
@@ -1218,6 +1255,43 @@ def _candidate(
         )
     else:
         add(ClaimKind.DESCRIPTION, work_description, ClaimScope.WORK)
+    if audiobook_work:
+        supplied_edition_authors = edition.get("authors", [])
+        try:
+            if (
+                type(supplied_edition_authors) is not list
+                or len(supplied_edition_authors) > _MAX_VALUES
+            ):
+                raise ValueError("edition author list is malformed")
+            for member in supplied_edition_authors:
+                if type(member) is not dict:
+                    raise ValueError("edition author is malformed")
+                _key(member.get("key"), _AUTHOR_KEY)
+        except ValueError:
+            add(
+                ClaimKind.CREATOR,
+                None,
+                ClaimScope.EDITION,
+                role="author",
+                state=FieldState.MALFORMED,
+            )
+        supplied_authors = work.get("authors", [])
+        malformed_authors = (
+            type(supplied_authors) is not list or len(supplied_authors) > _MAX_VALUES
+        )
+        if not malformed_authors:
+            malformed_authors = any(
+                not _work_author_keys({"authors": [member]})
+                for member in supplied_authors
+            )
+        if malformed_authors:
+            add(
+                ClaimKind.CREATOR,
+                None,
+                ClaimScope.WORK,
+                role="author",
+                state=FieldState.MALFORMED,
+            )
     if work_authors:
         for source_ordinal, (author, author_key) in enumerate(work_authors):
             claim = add(
@@ -1394,15 +1468,45 @@ def _candidate(
             )
     if "first_publish_date" in work and work["first_publish_date"] is not None:
         try:
+            date, precision = _work_first_publication(work["first_publish_date"])
             evidence.append(
                 ProviderEvidence(
                     ProviderEvidenceKind.FIRST_PUBLICATION_DATE,
-                    _text(work["first_publish_date"]),
+                    date,
                     ClaimScope.WORK,
                 )
             )
+            claims.append(
+                ProviderClaim.create(
+                    provider=provider,
+                    candidate=identity,
+                    kind=ClaimKind.PUBLICATION_DATE,
+                    value=date,
+                    state=FieldState.VALID,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    raw_order=len(claims),
+                    date_event=DateEvent.WORK_FIRST_PUBLICATION,
+                    date_precision=precision,
+                    date_lexical=date,
+                    date_confidence=DateLinkConfidence.EXPLICIT,
+                )
+            )
         except (ValueError, EvidenceValueError):
-            pass
+            claims.append(
+                ProviderClaim.create(
+                    provider=provider,
+                    candidate=identity,
+                    kind=ClaimKind.PUBLICATION_DATE,
+                    value=None,
+                    state=FieldState.MALFORMED,
+                    scope=ClaimScope.WORK,
+                    applicability="not_applicable",
+                    raw_order=len(claims),
+                    date_event=DateEvent.WORK_FIRST_PUBLICATION,
+                    date_confidence=DateLinkConfidence.EXPLICIT,
+                )
+            )
     edition_cover = _cover_id(edition)
     work_cover = _cover_id(work)
     if edition_cover.value is not None:
@@ -2024,12 +2128,13 @@ def _open_library_cover_context(
     else:
         raise ValueError("cover context schema is invalid")
     if source.get(date_field) is not None:
-        values.add(
-            CoverContext(
-                CoverContextField.PUBLICATION_DATE,
-                _text(source[date_field]),
-            )
-        )
+        try:
+            date_context = _text(source[date_field])
+        except (ValueError, EvidenceValueError):
+            if schema != "work_detail":
+                raise
+        else:
+            values.add(CoverContext(CoverContextField.PUBLICATION_DATE, date_context))
     return tuple(sorted(values, key=lambda value: (value.field.value, value.value)))
 
 

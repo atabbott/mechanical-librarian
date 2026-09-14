@@ -5,29 +5,38 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Expanded audiobook candidate (#967)
+## Useful audiobook metadata (#1047)
 
-The F46 registry names actual preserve/fill/normalize/add/replace operations,
-including explicit series add/replace and description replace choices. Each
-operation binds its current target value before an effect is reconstructed.
-Existing F20 options and historical v31 bytes retain their ebook meaning.
-The presentation successor reserves space for Evidence below expanded descriptions;
-The review successor also retains valid book fields beside malformed taxonomy
-members and makes all returned sampled Policy outcomes expandable before activation.
-Policy guidance also wraps within its field at enlarged text sizes.
-All twelve retained parser responses are unchanged; frozen quality and completed
-correspondence remain bound to their original sources.
-The [F46 v7 record](../reference/f46-audiobook-qualification-candidate-v7.json)
-registers 44 accepted operations in six fields, bound by
-[F19a v24](../reference/f19a-qualification-manifest-v24.json) and
-[F20 v38](../reference/f20-rich-metadata-qualification-candidate-v38.json).
-Retained Automatic/effect correspondence passed at the recorded source; Ask previews
-expose candidate evidence without granting effect authority.
+[F46 v8](../reference/f46-audiobook-qualification-candidate-v8.json) registers
+73 measured individual operations and one separately guarded title/subtitle pair.
+It preserves the previous 44 operations and adds reached work and recording
+operations, including durable title/author no-change, complete author normalization
+and Add, descriptive subtitles, original publication dates, publisher, synopsis,
+explicit tag unions, associated identifiers, material cover replacement and
+positive-only adult-product flags. The exact operation inventory is in the record;
+an available candidate does not imply that every representation or operation is
+qualified. [F19a v25](../reference/f19a-qualification-manifest-v25.json) and
+[F20 v39](../reference/f20-rich-metadata-qualification-candidate-v39.json) bind the
+current consumers while preserving the existing ebook authority.
 
-Report v43 preserves candidate-associated series-title decoration honestly;
-packet v8 and decision policy v13 consume recomputable recording support.
-Shadow outcome v5, metadata policy profile v3 and cover automatic decision v2
-require a clean rebuild. No predecessor bytes are relabelled or adopted.
+Work facts require an applicable work relationship. Recording facts retain their
+field-specific association requirements. Safe regional synopses use the preferred
+applicable authority; equally preferred sources use stable provider/record identity
+order, with alternatives retained. This is deterministic selection among equally
+acceptable texts, not a claim that one market or longer text is superior.
+
+Current retained execution and controlled synthetic effects are recorded separately
+from immutable historical source quality. The exposed development examples are not
+a new holdout or a population accuracy estimate. Material cover replacement remains
+a controlled positive. Five reached ISBN refusals retain their actual reason and
+appear as unchanged Activity history, without manufacturing a decision or write.
+
+Report v44, proposal v8/policy v27, packet v9, decision policy v14, action policy v4
+and shadow outcome v6 require a clean rebuild. Historical records retain their
+original bytes; old authority cannot authorize current effects. Category defaults,
+Tags off and separate default-off application consent remain unchanged. Adding
+Explicit to the sixteen supported effect destinations invalidates prior consent
+envelopes; an owner must grant new permission before an explicit flag can be set.
 
 ## Historical title-consumer qualification (#1007)
 
@@ -426,11 +435,13 @@ all historical measurements remain byte-frozen; no rescoring or fresh holdout is
 claimed. V20 decisions remain readable history but are stale for new effects;
 only the current qualification can authorize newly prepared automatic effects.
 
-## Audiobook operation qualification (#967)
+## Historical audiobook operation qualification (#967)
+
+This section records the earlier six-field qualification, before #1047.
 
 F20 retains its ebook authority; F46 separately qualifies audiobook operations
 ([ADR-0073](../architecture/decisions/0073-audiobook-decision-qualification.md)).
-The current 44 identities cover supported title, author, narrator, language,
+That registration’s 44 identities covered supported title, author, narrator, language,
 series and genre operations. Complete recording credits and admitted work
 associations reach current proposal, decision and guarded-effect consumers.
 ASIN and other unqualified operations remain manual.
@@ -515,7 +526,9 @@ remain readable history only, and no option, score, measurement or authority
 rule moves.
 
 
-## Current expanded audiobook source bindings (#967)
+## Historical expanded audiobook source bindings (#967)
+
+The following limits describe the earlier record; the current successor is above.
 
 The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v7.json)
 names 44 accepted field/operation identities across title, authors, narrators,

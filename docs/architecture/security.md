@@ -709,7 +709,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v43`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v44`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -1217,11 +1217,12 @@ current-state recovery, and private-cache headers.
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,
 library-scoped consent for the exact eligible destination subset disclosed in
-Activity. That set is the fifteen book-media destinations, identical on ebooks
-and audiobooks (ADR-0071); because the consent envelope identity digests the
-whole set, a build that adds one -- narrators, with F47 -- lapses every
+Activity. That set is the sixteen book-media destinations, including the exact boolean
+explicit field (#1056). Because the consent envelope identity digests the
+whole set, adding explicit lapses every
 existing library consent, and Activity re-offers it before anything is
-scheduled. The submitted destination matrix must still equal a fresh capability
+scheduled. Explicit receives no consent until the owner grants the newly
+disclosed eligible subset; automatic application remains disabled by default. The submitted destination matrix must still equal a fresh capability
 probe before its atomic consent replacement is accepted; a changed subset fails
 closed and must be reviewed again. A partially consented library remains
 available when a newly eligible destination needs incremental consent. Only exact
@@ -1259,6 +1260,39 @@ Read-only keys are insufficient for every destination; update-only keys permit
 metadata/tags but are insufficient for cover, which also requires upload.
 Qualification reads the actual canonical, gap-free append-only event documents
 from SQLite and publishes only their aggregate count and digest.
+
+F46a's paired title/subtitle application requires both exact current automatic
+decisions and destination consents, with owner holds, source bindings and target
+values checked through the final claim and pre-read. One destination-minimal
+PATCH contains the two supported values; neither member is also scheduled as a
+standalone effect. Both readbacks must verify. A partial or ambiguous result
+retains the existing reconciliation state and cannot trigger a blind retry or
+automatic rollback. The same optimistic-concurrency limitation applies to both
+members. Activity carries the companion value and its actual observed result.
+
+Audiobook tag unions and plausible narrator agreement reconstruct all selected
+source references from the event-bound current report. Missing, changed or
+resealed references cannot substitute a different candidate or incomplete cast.
+Work applicability does not grant recording identifier authority. Original
+publication dates require the work-first-publication event and audio media kind;
+recording release claims remain evidence without becoming date votes. Exact
+boolean adult-product positives may set true; absence or false preserves the
+current explicit state and never claims that content is suitable for children.
+Malformed source values remain failures. ISBN explanations distinguish absence,
+unavailability, malformed/incomplete values, material conflicts and insufficient
+association only after the earlier policy and authority gates have been reached.
+Regional audiobook synopsis selection keeps the existing applicable-source
+authority order and uses stable provider/record identity for an equal-authority
+tie. It retains other text alternatives and exact selected references; it does
+not infer preference from text length or change recording identifier elections.
+Unsafe relevant text and multiple competing texts inside one record refuse.
+
+Useful title/author preservation records one durable no-change outcome before
+target guards. That terminal state grants no write authority. Audiobook cover
+replacement separately reconstructs the bound incumbent dimensions and source:
+below 300 pixels on its shorter edge, with an eligible portrait/square
+alternative at least 500 pixels and twice that edge. Unknown or stale incumbent
+facts refuse replacement; upload still uses the digest-verified original.
 ## Guarded-operation diagnostics
 
 Operational status and support routes share the authenticated owner boundary;
@@ -1414,9 +1448,12 @@ cannot authorize it. The existing title-layout pause/suspension, owner-final,
 consent, backup, currentness, read-back and audit boundaries remain unchanged.
 No new external call, parser, provider or write capability is introduced.
 
-The #1004 chapter fallback grants owner review only. Failed-set audiobook WORK
+The #1004 chapter fallback originally granted owner review only. Failed-set audiobook WORK
 lookup candidates retain original bounded evidence separately from admitted
-metadata, with exact work and local-reference validation. Only bounded ASIN
-acquisition and matched-runtime vetoes consume them; they grant no proposal,
-identifier, cover, promotion, automatic or effect authority. Existing provider
+metadata, with exact work and local-reference validation. F46a additionally
+consumes the complete plausible set for narrator agreement, with every member
+and contributor reference reconstructed; that agreement cannot elect an ASIN
+or ISBN. Bounded ASIN acquisition and matched-runtime vetoes retain their
+separate roles. A lookup hint or runtime alone grants no work or recording
+authority. Existing provider
 limits, isolated probe limits, read-only media and explicit retry stay unchanged.

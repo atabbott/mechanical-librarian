@@ -105,34 +105,84 @@ Once a record exists, Automatic is withdrawn from every destination on that
 recording the record does not name, so an unqualified identity is always the
 owner's answer to give and never an authority failure.
 
-The [F46 qualification record](../reference/f46-audiobook-qualification-candidate-v7.json)
-names 44 accepted operations across title, authors, narrators, language, series
-and genres. Other operation identities remain manual. Date, publisher,
-description, ASIN and cover did not meet the selected-positive confirmation
-floor; subtitle and typed tags lacked the independent source floor. This bounded
-corpus supports no population-accuracy claim.
+The [F46 qualification record](../reference/f46-audiobook-qualification-candidate-v8.json)
+names each measured field/operation that may become Automatic. It preserves the
+previous 44 operations and adds the accepted audiobook metadata remainder
+(#1047). Useful candidates remain available independently of their automatic
+eligibility. These bounded development examples support no population-accuracy
+or library-wide coverage claim.
 
-Title and author preserve operations remain withheld after retained software
-correspondence failures; their source quality was not rejected. Other registered
-operations retain their independent qualification.
+One applicable independent source can suffice. A complete title/author match in
+a successful canonical ASIN lookup, or a bound independent local ASIN, can
+support work facts even when recording identity remains unresolved. Runtime alone
+and a target lookup hint cannot establish work identity. Complete author and
+series associations survive; malformed credits never authorize partial lists.
+One exact terminal ` (Unabridged)` may be ignored in local audiobook matching
+when the remaining full title and complete authors agree. This is not a title
+rewrite, provider-title stripping, or inferred abridgement authority.
 
-F46 qualifies each actual field operation separately. One applicable independent
-source can suffice for a supported work or recording field; material conflicts,
-incomplete credits and unexplained title suffixes still require review. Existing
-fill-only choices preserve populated values. Explicit series addition retains
-current associations, including equivalent existing spelling, while replacement
-requires the separately chosen and qualified replacement operation. Unknown audio ISBNs, explicit-content semantics,
-subtitle and typed-tag operations without scorable evidence, and cover replacement
-remain withheld. Cover fill uses the existing deterministic image path without
-model calls. Candidate availability does not itself grant Automatic authority.
+Recording facts retain field-specific relationships and runtime/variant vetoes.
+Explicit language, abridgement, full-cast and part conflicts matter; unknown
+language does not invent a conflict. Bounded complete chapter correspondence may
+support a recording without treating media-health diagnostics as identity votes.
+Narrator agreement can also qualify when every plausible source member supplies
+the same complete cast. A missing or malformed cast cannot be omitted from that
+agreement, and narrator agreement grants no identifier authority.
 
-Audiobook Automatic dates require the Full date option and a valid full calendar
-day accepted by the existing target reader. Year options and year/month-only
-source dates remain manual; no date precision is invented or reduced.
-Audiobook language comparison recognizes equivalent ISO codes and the observed
-English display name without discarding region or script. Both language options
-retain the admitted source string; neither renders a new display name. Genre and
-opt-in tag addition retain equivalent incumbent spelling and add only new members.
+Title and author preservation records one durable no-change, removes the
+decision from pending application work, and calls no target or effect guards. Supported normalization
+and Add remain separate operations. Existing fill-only choices preserve
+populated values. Series Add retains current associations; complete-set
+replacement requires its separate choice and refuses conflicting sequence facts.
+Language comparison recognizes equivalent ISO codes and the observed English
+display name without discarding region or script. Both language options retain
+the admitted source string; neither renders a new display name.
+
+Audiobook subtitles may fill an empty value or replace a recognized whole-field
+award, bestseller or adaptation announcement with supported descriptive text.
+Descriptive collisions and materially different subtitles remain visible. A
+corroborated title/subtitle split requires both options Automatic and both
+current decisions and consents. One PATCH applies the pair, both read-backs are
+required, and uncertain or partial results use the existing reconciliation path.
+
+Synopsis prefers a safe nonempty summary over a short description. Only an absent
+or empty summary permits fallback; malformed, unsafe, oversized or cutoff text
+does not. Differing regional synopses of a well-matched audiobook work do not
+require routine review. The existing preferred source authority supplies the
+text; equally preferred source records use stable provider/record identity order,
+without claiming one is more authoritative. Other descriptions remain available.
+Text length, wording, opaque alternative hashes and provider vote counts do not
+rank them. Unsafe relevant sources and competing text within one source record
+still refuse automatic selection; ebook description rules are unchanged.
+Compatible complete explicit tag lists may form a source-bound union
+for fill/Add, preserving owner members and all contributing references. Tags
+remain off by default. Tag replacement retains its separate election and never
+uses genres as tags.
+
+Audiobook publication means original work publication. Year, month and day
+precision survive both date options, PATCH and subsequent reads. Recording
+release, copyright and edition dates do not vote; ebook manifestation meaning
+is unchanged. Publisher/imprint comparisons respect their roles and retain real
+conflicts.
+
+ASIN and ISBN operations require the appropriate recording association and valid
+canonical values. A well-matched audiobook ISBN need not have a separate format
+label, but is not publisher-verified. Competing products, other-format claims,
+and insufficient association remain inspectable. Activity distinguishes absent,
+unavailable, malformed/incomplete, conflicting and insufficiently associated
+source values without overriding earlier owner, policy or currentness refusals.
+
+Cover replacement requires a known incumbent with a shorter edge below 300 pixels
+and an eligible portrait/square candidate of at least 500 pixels and twice that
+incumbent edge. Adequate, unknown or stale incumbents are preserved. Source rank,
+aspect ratio or a tiny size increase alone is insufficient. The controlled
+positive proves the effect path, not natural replacement coverage.
+
+The optional adult-product rule may set `explicit` to true from supported positive
+source evidence. False or absent evidence preserves the current true, false or
+empty value; it never clears or certifies clean content. Application remains
+separately default-off. Adding explicit write support lapses earlier consent
+envelopes; owners must grant a new exact subset before any application.
 
 F35 (#884) adds a closed, provider-consensus title election to the v14
 ProposalSet policy: one exact local noisy title, one exact reversible pattern,

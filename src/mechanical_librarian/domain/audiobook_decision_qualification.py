@@ -16,6 +16,7 @@ from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     canonical_asin,
+    isbn_family,
     normalize_date_value,
 )
 
@@ -25,7 +26,10 @@ F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
 
 _FIELD_OPTIONS: Final = {
     "title": ("title_layout", ("preserve", "title_and_subtitle")),
-    "subtitle": ("subtitle", ("fill_empty", "corroborated_split")),
+    "subtitle": (
+        "subtitle",
+        ("fill_empty", "corroborated_split", "replace_descriptive"),
+    ),
     "authors": ("contributor_names", ("preserve", "canonical")),
     "narrators": ("contributor_names", ("canonical",)),
     "series": (
@@ -45,18 +49,25 @@ _FIELD_OPTIONS: Final = {
     "publisher": ("publisher_preference", ("publisher", "imprint")),
     "language": ("language_rendering", ("preserve", "display_name")),
     "asin": ("asin", ("preserve_exact",)),
-    "cover": ("cover_order", ("fixed_source_order",)),
+    "isbn": ("isbn_form", ("preserve_exact", "prefer_isbn13")),
+    "explicit": ("explicit", ("adult_product",)),
+    "cover": ("cover_order", ("fixed_source_order", "replace_if_strictly_better")),
 }
 
 
 def _operations(destination: str, option: str) -> tuple[str, ...]:
-    if destination in {"subtitle", "cover"} or option in {
-        "fill_empty",
-        "primary_narrative",
-        "source_order",
-        "all_qualified",
-        "safe_plain_text",
-    }:
+    if (
+        (destination == "cover" and option == "fixed_source_order")
+        or (destination == "subtitle" and option != "replace_descriptive")
+        or option
+        in {
+            "fill_empty",
+            "primary_narrative",
+            "source_order",
+            "all_qualified",
+            "safe_plain_text",
+        }
+    ):
         return ("fill", "preserve")
     if option in {"add", "add_qualified"}:
         return ("fill", "preserve", "normalize", "add")
@@ -108,14 +119,23 @@ def identity_for_effect(
     destination: str, category: str, option: str, current: object, desired: object
 ) -> str | None:
     """Bind qualification to the actual effect on the retained pre-value."""
+    if (
+        destination == "explicit"
+        and not (current is None and desired is None)
+        and (
+            type(desired) is not bool
+            or (current is not None and type(current) is not bool)
+        )
+    ):
+        return None
     if destination == "publishedDate":
-        if option != "full_date" or type(desired) is not str:
+        if option not in {"year", "full_date"} or type(desired) is not str:
             return None
         try:
-            normalized, precision = normalize_date_value(desired)
+            normalized, _ = normalize_date_value(desired)
         except ValueError:
             return None
-        if precision.value != "day" or normalized != desired:
+        if normalized != desired:
             return None
     if current == desired or (
         type(current) in {list, tuple}
@@ -126,6 +146,14 @@ def identity_for_effect(
         operation = "preserve"
     elif current in (None, "", [], ()):
         operation = "fill"
+    elif (
+        destination == "isbn"
+        and type(current) is str
+        and type(desired) is str
+        and isbn_family(current) is not None
+        and isbn_family(current) == isbn_family(desired)
+    ):
+        operation = "normalize"
     elif (
         _language_effect_equivalent(current, desired)
         if destination == "language"
@@ -167,15 +195,29 @@ def _language_effect_equivalent(current: object, desired: object) -> bool:
 
 F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
     {
+        "asin:preserve_exact:audiobook_asin_fill",
+        "contributor_names:canonical:audiobook_authors_add",
         "contributor_names:canonical:audiobook_authors_fill",
+        "contributor_names:canonical:audiobook_authors_normalize",
+        "contributor_names:canonical:audiobook_authors_preserve",
         "contributor_names:canonical:audiobook_authors_replace",
         "contributor_names:canonical:audiobook_narrators_add",
         "contributor_names:canonical:audiobook_narrators_fill",
         "contributor_names:canonical:audiobook_narrators_normalize",
         "contributor_names:canonical:audiobook_narrators_preserve",
         "contributor_names:canonical:audiobook_narrators_replace",
+        "contributor_names:preserve:audiobook_authors_add",
         "contributor_names:preserve:audiobook_authors_fill",
+        "contributor_names:preserve:audiobook_authors_normalize",
+        "contributor_names:preserve:audiobook_authors_preserve",
         "contributor_names:preserve:audiobook_authors_replace",
+        "cover_order:replace_if_strictly_better:audiobook_cover_replace",
+        "date_precision:full_date:audiobook_publisheddate_fill",
+        "description_fill:replace_safe_plain_text:audiobook_description_replace",
+        "description_fill:safe_plain_text:audiobook_description_fill",
+        "explicit:adult_product:audiobook_explicit_fill",
+        "explicit:adult_product:audiobook_explicit_preserve",
+        "explicit:adult_product:audiobook_explicit_replace",
         "genres:add:audiobook_genres_add",
         "genres:add:audiobook_genres_fill",
         "genres:add:audiobook_genres_preserve",
@@ -186,6 +228,11 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "genres:replace:audiobook_genres_normalize",
         "genres:replace:audiobook_genres_preserve",
         "genres:replace:audiobook_genres_replace",
+        "isbn_form:prefer_isbn13:audiobook_isbn_fill",
+        "isbn_form:prefer_isbn13:audiobook_isbn_normalize",
+        "isbn_form:prefer_isbn13:audiobook_isbn_replace",
+        "isbn_form:preserve_exact:audiobook_isbn_fill",
+        "isbn_form:preserve_exact:audiobook_isbn_preserve",
         "language_rendering:display_name:audiobook_language_fill",
         "language_rendering:display_name:audiobook_language_normalize",
         "language_rendering:display_name:audiobook_language_preserve",
@@ -194,6 +241,8 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "language_rendering:preserve:audiobook_language_normalize",
         "language_rendering:preserve:audiobook_language_preserve",
         "language_rendering:preserve:audiobook_language_replace",
+        "publisher_preference:publisher:audiobook_publisher_fill",
+        "publisher_preference:publisher:audiobook_publisher_preserve",
         "series:add_qualified:audiobook_series_add",
         "series:add_qualified:audiobook_series_fill",
         "series:add_qualified:audiobook_series_preserve",
@@ -207,9 +256,17 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "series:replace_qualified:audiobook_series_replace",
         "series:source_order:audiobook_series_fill",
         "series:source_order:audiobook_series_preserve",
+        "subtitle:corroborated_split:audiobook_subtitle_fill",
+        "subtitle:fill_empty:audiobook_subtitle_fill",
+        "subtitle:replace_descriptive:audiobook_subtitle_preserve",
+        "subtitle:replace_descriptive:audiobook_subtitle_replace",
+        "tags:add:audiobook_tags_add",
+        "tags:fill_empty:audiobook_tags_fill",
         "title_layout:preserve:audiobook_title_fill",
+        "title_layout:preserve:audiobook_title_preserve",
         "title_layout:preserve:audiobook_title_replace",
         "title_layout:title_and_subtitle:audiobook_title_fill",
+        "title_layout:title_and_subtitle:audiobook_title_preserve",
         "title_layout:title_and_subtitle:audiobook_title_replace",
     }
 )
@@ -295,3 +352,11 @@ __all__ = [
     "qualification_manifest_sha256",
     "qualified_policy_bases",
 ]
+
+
+F46_TITLE_SUBTITLE_PAIR_IDENTITY = (
+    "title_layout:title_and_subtitle:audiobook_title_subtitle_pair"
+)
+F46_PASSING_PAIRED_OPTIONS: frozenset[str] = frozenset(
+    {F46_TITLE_SUBTITLE_PAIR_IDENTITY}
+)

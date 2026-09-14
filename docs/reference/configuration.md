@@ -169,36 +169,44 @@ or removed fields fail configuration loading rather than silently becoming Ask
 me or Ignore. The application never rewrites this configuration. `automatic`
 is accepted only for the closed qualified category/option matrix and produces
 decision-only authority after the owner explicitly confirms an exact Preview;
-all other automatic intent is rejected. `explicit` is always `unsupported`.
-The v2 rich-field choices are exact:
+all other automatic intent is rejected. `explicit` defaults to `unsupported`.
+The rich-field choices are exact:
 
-- `subtitle`: `fill_empty` (default) or `corroborated_split`;
-- `series`: `primary_narrative` (default), `source_order`, or `all_qualified`;
+- `subtitle`: `fill_empty` (default), `corroborated_split`, or `replace_descriptive`;
+- `series`: `primary_narrative` (default), `source_order`, `all_qualified`,
+  `add_qualified`, or `replace_qualified`;
 - `genres`: `fill_empty` (default), `add`, or `replace`;
 - `tags`: `off` (default), `fill_empty`, `add`, or `replace`;
-- `description_fill`: `safe_plain_text` (default) or
-  `google_visible_text`;
+- `description_fill`: `safe_plain_text` (default), `google_visible_text`, or
+  `replace_safe_plain_text`;
 - `isbn_form`: `preserve_exact` (default) or `prefer_isbn13`;
 - `asin`: `preserve_exact` (default) or `ebook_manifestation`;
-- `explicit`: `unsupported` only.
+- `explicit`: `unsupported` (default) or `adult_product`.
 
-List Add retains current target order and appends absent values from one exact
-qualified source list; Replace uses one exact list and never combines
-providers. Description normalization requires the retained Google Books
-visible-text transformation evidence. Valid ISBN-10 and ISBN-13 forms of one
-canonical ISBN family are compared as one proposal while retaining every exact
-source representation and evidence reference; that comparison never treats the
-forms as manifestation identity or converts an identifier. Identifier
-preferences select only an already admitted exact manifestation value.
-Series retains every qualified membership in the product result while the
-Audiobookshelf projection selects at most its first membership. The qualified
-automatic options are all three series modes, genre `fill_empty`, `add`, and
-`replace`, tag `fill_empty`, `add`, and `replace`, description
-`safe_plain_text`, and both ISBN modes. They may create decision-only automatic
-authority when the destination is `automatic`; they never create write
-authority. Genre `fill_empty` is now Automatic in the built-in policy, while
-tags remain `off`/Ask. Every other rich-field option remains
-manual-preview-only.
+List Add retains current target order and appends supported absent values.
+Audiobook tag fill/Add may combine compatible complete explicit tag lists,
+retaining every contributing source reference; it never converts genres into
+tags. Replacement retains its separate complete-list election. Series retains
+complete memberships and their sequence associations through the supported
+Audiobookshelf projection.
+
+Description normalization requires the retained Google Books visible-text
+transformation evidence. Audiobook synopsis uses a safely projected supplied
+summary, falling back to description only when summary is absent or empty.
+Malformed or unsafe supplied summary cannot trigger fallback.
+
+Valid ISBN-10 and ISBN-13 forms of one canonical family compare together while
+retaining each source representation and reference. Ebook manifestation and
+audiobook recording applicability remain separate. An option qualified for one
+media kind grants no authority to the other; the current qualification records
+name the actual allowed operations.
+
+Genre `fill_empty` remains Automatic in the built-in policy. Tags remain
+`off`/Ask, and automatic application remains separately disabled by default.
+Selecting audiobook `explicit:adult_product` permits a supported true-positive
+adult-product flag only; it never clears a value or certifies clean content.
+The added write destination lapses prior consent envelopes, requiring a new
+owner grant for the exact chosen subset before any field application.
 
 Automatic series election treats provider-wide unsupported series output with no
 named membership as no evidence. A named incomplete or unpositioned membership,
@@ -210,7 +218,15 @@ variants elect together, without fuzzy matching or a title-specific catalogue.
 Corroborated subtitle splitting is atomic and accepts only an already admitted
 title/subtitle pair when the current title is their exact concatenation with
 one of `: `, ` — `, ` – `, or ` - `. It never performs a general punctuation
-or free-text split.
+or free-text split. For automatic audiobook application, both
+`title_layout:title_and_subtitle` and `subtitle:corroborated_split` must be Automatic with
+current decisions and owner consents. The pair uses one PATCH and verifies both
+values. Partial or uncertain results follow the existing reconciliation path;
+there is no blind retry or automatic rollback.
+
+Audiobook publication means the original work's first publication. Both date
+options preserve the source's year, month, or full-day precision; no day is
+invented. Recording releases and ebook manifestation dates remain distinct.
 
 `mechanical-librarian policy-preview --config CONFIG --database DATABASE
 --profile PROFILE` reads an existing exact-current database and prints the same

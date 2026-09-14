@@ -26,6 +26,8 @@ class _AuthorityFields(TypedDict):
     source: Literal["persisted_review_case", "fake_service"]
     pre_value: object
     dependency_digests: tuple[str, ...]
+    paired_bundle_id: str | None
+    paired_decision_id: str | None
 
 
 class _AuthorityRepository(Protocol):

@@ -12,9 +12,11 @@ from collections.abc import Callable
 from contextlib import closing
 from dataclasses import dataclass, replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import patch
 
+import httpx
 import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
@@ -37,6 +39,9 @@ from mechanical_librarian.adapters.field_effect_runtime import (
     DurableBackupReadiness,
     PersistedEffectConsent,
 )
+from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+    AudiobookshelfItemReader,
+)
 from mechanical_librarian.adapters.persistence import field_effect_activity
 from mechanical_librarian.adapters.persistence.field_effect_activity import (
     _ACTIVITY_PAGE_CACHE_MAX_BYTES,
@@ -47,6 +52,9 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     open_repository,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.continuous_field_effects import (
+    ContinuousGuardedApplication,
+)
 from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
@@ -54,6 +62,7 @@ from mechanical_librarian.application.field_effects import (
 )
 from mechanical_librarian.application.operations import StageTimer, aggregate_incidents
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
     F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
@@ -88,13 +97,27 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderClaim,
     ProviderObservation,
     ProviderStatus,
+    TargetDestination,
     TargetFacts,
+    TargetField,
+    TargetFieldState,
     comparison_links,
     default_target_fields,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support import audiobookshelf_targets
+from tests.support.audiobook_covers import audiobook_cover_environment
+from tests.support.audiobook_reports import (
+    publish_audiobook_preview,
+    synthetic_audiobook_bibliographic_report,
+)
+from tests.support.audiobookshelf_targets import (
+    FieldEffectTargetCase,
+    synthetic_audio_file,
+)
 from tests.support.automatic_decisions import _automatic_decisions
+from tests.support.cover_images import synthetic_image
 from tests.support.proposal_evidence import (
     _target_work_candidate,
     _target_work_report,
@@ -2475,12 +2498,12 @@ def test_every_supported_shape_plans_and_no_ops_do_not_mutate(
         "asin": "A",
         "language": "en",
         "narrators": ["N"],
+        "explicit": True,
         "tags": ["T"],
         "cover": "cover_" + "a" * 64,
     }
     assert SUPPORTED_DESTINATIONS == set(values)
-    # A narrator cast is the fifteenth write-capable destination and plans on
-    # both media exactly as the other fourteen do (ADR-0071, #968).
+    # Every supported shape reaches the ordinary guarded plan constructor.
     assert "narrators" in SUPPORTED_DESTINATIONS
     for index, (destination, desired) in enumerate(values.items()):
         suffix = format(index + 1, "x")[-1]
@@ -3426,25 +3449,23 @@ def test_cover_cleanup_separates_a_vanished_row_from_a_storage_fault(
     assert effects.recovery.exists(storage.plan.plan_id)
 
 
+@pytest.mark.parametrize("added", ("narrators", "explicit"))
 def test_a_new_write_destination_lapses_every_existing_library_consent(
     effects: _EffectEnvironment,
+    added: str,
 ) -> None:
-    """ADR-0039's rule, as ADR-0071 applies it: narrators re-keys the envelope.
-
-    The consent envelope digests the whole destination set, so the build that
-    adds the fifteenth destination invalidates every consent granted before it.
-    Nothing is planned, nothing claims, and Activity stops calling any
-    destination consented until the owner grants again (#968).
-    """
-    pre_f47 = frozenset(SUPPORTED_DESTINATIONS - {"narrators"})
-    assert "narrators" in SUPPORTED_DESTINATIONS
-    with patch.object(field_effect_activity, "SUPPORTED_DESTINATIONS", pre_f47):
+    """A newly supported field lapses prior grants; no field inherits consent."""
+    prior_destinations = frozenset(SUPPORTED_DESTINATIONS - {added})
+    assert added in SUPPORTED_DESTINATIONS
+    with patch.object(
+        field_effect_activity, "SUPPORTED_DESTINATIONS", prior_destinations
+    ):
         granted = effects.repository.grant_field_effect_consents(
             "primary", ("books",), ("title", "authors"), 1_000
         )
 
     assert 2 == len(granted)
-    # Planning: the pre-F47 consent is no longer the library's envelope.
+    # Planning: the predecessor consent is no longer the library's envelope.
     for consent in granted:
         assert not effects.repository.field_effect_consent_is_current(consent)
     with pytest.raises(FieldEffectError) as raised:
@@ -3456,15 +3477,17 @@ def test_a_new_write_destination_lapses_every_existing_library_consent(
     assert [] == activity["consented_destinations"]
     assert [] == activity["consented_libraries"]
 
+    with pytest.raises(FieldEffectError, match="consent"):
+        effects.repository.current_field_effect_consent("primary", "books", added)
     regranted = effects.repository.grant_field_effect_consents(
-        "primary", ("books",), ("narrators", "title"), 1_001
+        "primary", ("books",), (added, "title"), 1_001
     )
 
     assert all(
         effects.repository.field_effect_consent_is_current(consent)
         for consent in regranted
     )
-    assert {"narrators", "title"} == {
+    assert {added, "title"} == {
         str(row["destination"])
         for row in cast(
             "list[dict[str, object]]",
@@ -4760,6 +4783,91 @@ def test_activity_projection_never_retries_a_nonbusy_error(
     assert attempts == [1]
 
 
+@pytest.mark.parametrize(
+    "field,category,option",
+    (
+        ("title", "title_layout", "preserve"),
+        ("title", "title_layout", "title_and_subtitle"),
+        ("authors", "contributor_names", "preserve"),
+        ("authors", "contributor_names", "canonical"),
+    ),
+)
+def test_audiobook_title_author_preservation_is_one_durable_no_change(
+    effects: _EffectEnvironment, field: str, category: str, option: str
+) -> None:
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetField,
+        TargetFieldState,
+    )
+
+    report = synthetic_audiobook_bibliographic_report()
+    fields = tuple(
+        TargetField(item.destination, TargetFieldState.VALUE, "Synthetic Journey")
+        if item.destination is TargetDestination.TITLE
+        else item
+        for item in report.target.fields
+    )
+    report = MetadataReport.create(
+        target=replace(report.target, fields=fields),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        audio=report.audio,
+    )
+    identity = f"{category}:{option}:audiobook_{field}_preserve"
+    with patch.object(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS | {identity},
+    ):
+        case_id, _ = publish_audiobook_preview(
+            effects.repository, report, (category,), selected_options={category: option}
+        )
+        effects.repository.persist_shadow_outcome(case_id, 4)
+        documents = effects.repository.get_review_case_decisions(case_id)
+        assert len(documents) == 1
+        decision = AutomaticDecision.from_json(documents[0])
+        assert decision.destination == field and decision.outcome == "keep_current"
+        assert decision.policy_option == f"{option}:audiobook_{field}_preserve"
+        authority = PersistedFieldEffectAuthority(effects.repository)
+        lane = ContinuousGuardedApplication(
+            effects.repository,
+            {("primary", "audio"): effects.service},
+            {("primary", "audio"): effects.capabilities},
+            authority,
+            (("primary", "audio"),),
+            effects.clock,
+            lambda *_: None,
+        )
+        with patch.object(
+            authority,
+            "resolve",
+            side_effect=AssertionError("no-change reached effect guards"),
+        ):
+            assert lane.schedule() == lane.schedule() == 0
+        assert effects.target._values == {}
+        assert effects.repository.pending_field_effect_decision_documents(100) == ()
+        assert effects.repository.pending_field_effect_decision_counts() == ()
+        assert effects.repository._connection.execute(
+            "SELECT COUNT(*) FROM field_effects"
+        ).fetchone() == (0,)
+        events = effects.repository._connection.execute(
+            "SELECT decision_id,destination,event_id FROM field_effect_no_changes"
+        ).fetchall()
+        assert len(events) == 1 and events[0][:2] == (decision.decision_id, field)
+        effects.repository.close()
+        effects.repository = open_repository(effects.database_path)
+        assert effects.repository.get_review_case_decisions(case_id) == documents
+        assert (
+            effects.repository._connection.execute(
+                "SELECT decision_id,destination,event_id FROM field_effect_no_changes"
+            ).fetchall()
+            == events
+        )
+
+
 def test_no_change_identity_is_canonical_and_closed() -> None:
     values = dict(
         decision_id="automatic_decision_" + "a" * 64,
@@ -4890,3 +4998,1302 @@ def test_series_is_one_atomic_destination_and_state_machine_rejects_skips() -> N
     raw["plan"]["consent"]["granted_at"] = True
     with pytest.raises(FieldEffectError):
         FieldEffectOperation.from_json(json.dumps(raw))
+
+
+@pytest.fixture
+def audiobook_pair(tmp_path, effects):
+    out = tmp_path
+    report = synthetic_audiobook_bibliographic_report()
+    case = FieldEffectTargetCase()
+    env = effects
+    state = SimpleNamespace(repo=None, case=case, env=env)
+    try:
+        case.detail.update(isInvalid=False, isMissing=False)
+        case.detail["media"].update(
+            audioFiles=[synthetic_audio_file("synthetic.m4b")],
+            metadata={
+                "title": "Synthetic Journey: A Tale of Courage",
+                "authors": [
+                    {"name": x}
+                    for x in next(
+                        f.value
+                        for f in report.target.fields
+                        if f.destination.value == "authors"
+                    )
+                ],
+            },
+        )
+        reader = AudiobookshelfItemReader(
+            client_factory=lambda: httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(
+                        200,
+                        headers={"content-type": "application/json"},
+                        json=case.detail,
+                    )
+                )
+            ),
+            endpoint="https://abs.example.invalid",
+            library_id="library-1",
+            service_path="/library",
+            maximum_bytes=65536,
+        )
+        before = reader.read("item-1")
+        report = MetadataReport.create(
+            target=replace(
+                report.target, connection="primary", item="item-1", fields=before.fields
+            ),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+            audio=report.audio,
+        )
+        state.report = report
+        state.reader = reader
+        state.repo = open_repository(out / "state.sqlite")
+        state.case_id, _ = publish_audiobook_preview(
+            state.repo,
+            report,
+            ("title_layout", "subtitle"),
+            selected_options={
+                "title_layout": "title_and_subtitle",
+                "subtitle": "corroborated_split",
+            },
+        )
+        state.repo.persist_shadow_outcome(state.case_id, 4)
+        state.decisions = {
+            d.destination: d
+            for raw in state.repo.get_review_case_decisions(state.case_id)
+            if (d := AutomaticDecision.from_json(raw)).destination
+            in ("title", "subtitle")
+        }
+        state.repo.grant_field_effect_consents(
+            "primary", ("audio",), ("title", "subtitle"), 5
+        )
+
+        def reopen():
+            state.repo.close()
+            state.repo = open_repository(out / "state.sqlite")
+            state.authority = PersistedFieldEffectAuthority(state.repo)
+            state.service = GuardedFieldApplication(
+                state.repo,
+                case.target,
+                env.backup,
+                env.capabilities,
+                state.authority,
+                env.dependencies,
+                PersistedEffectConsent(state.repo),
+                env.recovery,
+                env.reevaluation,
+                env.clock,
+                env.preclaim,
+                env.claim_hook,
+                env.recovery_hook,
+            )
+
+        state.reopen = reopen
+        reopen()
+        state.plan = lambda: state.service.plan_title_subtitle(
+            state.decisions["title"],
+            state.decisions["subtitle"],
+            title_capability_digest=CAPABILITY,
+            subtitle_capability_digest=CAPABILITY,
+        )
+        state.patches = lambda: [
+            json.loads(r.content) for r in case.requests if r.method == "PATCH"
+        ]
+        yield state
+    finally:
+        if state.repo:
+            state.repo.close()
+        case.close()
+
+
+def test_audiobook_pair_happy_pair_scheduler_reopen_and_activity(audiobook_pair):
+    lane = ContinuousGuardedApplication(
+        audiobook_pair.repo,
+        {("primary", "audio"): audiobook_pair.service},
+        {("primary", "audio"): audiobook_pair.env.capabilities},
+        audiobook_pair.authority,
+        (("primary", "audio"),),
+        audiobook_pair.env.clock,
+        lambda *_: None,
+    )
+    assert len(audiobook_pair.repo.pending_field_effect_decision_documents(100)) == 2
+    assert lane.schedule() == 1
+    assert lane.schedule() == 0
+    assert audiobook_pair.repo.pending_field_effect_decision_documents(100) == ()
+    assert audiobook_pair.repo.pending_field_effect_decision_counts() == ()
+    row = audiobook_pair.repo._connection.execute(
+        "SELECT plan_id FROM field_effects"
+    ).fetchone()
+    assert row
+    first = audiobook_pair.service.apply(row[0])
+    assert first.state == "verified"
+    assert audiobook_pair.service.apply(row[0]).state == "verified"
+    assert len(audiobook_pair.patches()) == 1
+    audiobook_pair.reopen()
+    assert audiobook_pair.repo.get_field_effect(row[0]).state == "verified"
+    events = audiobook_pair.repo.field_effect_event_documents(row[0])
+    assert len(events) == 4
+    for raw in events:
+        assert (
+            json.loads(raw)["subtitle_companion"]["desired_value"]
+            == "A Tale of Courage"
+        )
+    activity = audiobook_pair.repo.field_effect_activity_data(50)
+    assert activity
+    page = audiobook_pair.repo.field_effect_activity_page(
+        search=None, event_type="all", occurred_after=0, page=1, page_size=50
+    )
+    verified = next(event for event in page["events"] if event["state"] == "verified")
+    assert verified["record"]["desired_value"] == "Synthetic Journey"
+    assert (
+        verified["record"]["subtitle_companion"]["desired_value"] == "A Tale of Courage"
+    )
+
+    # Actual owner-readable composer uses the two-member durable event.
+    event = {
+        "destination": "title",
+        "origin": "automatic_policy",
+        "state": "verified",
+        "event_type": "field_effect",
+        "record": {
+            "source_kind": "field_effect",
+            **{
+                k: v
+                for k, v in json.loads(events[-1]).items()
+                if k in ("pre_value", "desired_value", "subtitle_companion")
+            },
+        },
+    }
+    readable_activity_event(event, audiobook_pair.report)
+    assert event["field_label"] == "Title and subtitle"
+    assert event["change"] == "Split title and subtitle"
+    assert any(
+        x["value"] == "Both title and subtitle confirmed" for x in event["evidence"]
+    )
+
+
+@pytest.mark.parametrize("field", ["title", "subtitle"])
+def test_audiobook_pair_scalar_path_refuses_pair(audiobook_pair, field):
+    d = audiobook_pair.decisions[field]
+    s = audiobook_pair.authority.resolve(d)
+    with pytest.raises(GuardedApplicationError, match="paired_authority_required"):
+        audiobook_pair.service.plan(
+            d,
+            connection=s.connection,
+            library=s.library,
+            work_id=s.work_id,
+            destination=field,
+            pre_value=s.pre_value,
+            desired_value=s.decision_value,
+            target_fingerprint=s.target_fingerprint,
+            target_version=s.target_version,
+            dependency_digests=s.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+    assert audiobook_pair.repo._connection.execute(
+        "SELECT COUNT(*) FROM field_effects"
+    ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("field", ["title", "subtitle"])
+@pytest.mark.parametrize("boundary", ["before", "claim"])
+def test_audiobook_pair_either_consent_revocation_zero_patch(
+    audiobook_pair, field, boundary
+):
+    op = audiobook_pair.plan()
+    consent = (
+        op.plan.consent if field == "title" else op.plan.subtitle_companion.consent
+    )
+
+    def revoke(_=None):
+        audiobook_pair.repo.revoke_field_effect_consent(
+            consent.consent_id, audiobook_pair.env.clock()
+        )
+
+    if boundary == "before":
+        revoke()
+    else:
+        audiobook_pair.env.claim_hook.callback = revoke
+    try:
+        audiobook_pair.service.apply(op.plan.plan_id)
+    except GuardedApplicationError as e:
+        assert e.code in ("claim_conflict", "consent")
+    assert not audiobook_pair.patches()
+    assert audiobook_pair.repo.get_field_effect(op.plan.plan_id).state in (
+        "superseded",
+        "stale",
+    )
+
+
+def _paired_owner_keep(audiobook_pair, field):
+    case = ReviewCase.create_from_data(
+        json.loads(audiobook_pair.repo.get_review_case(audiobook_pair.case_id))["case"]
+    )
+    proposal = next(x for x in case.proposals if x["destination"] == field)
+    decision = HumanDecision.create(
+        case,
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination=field,
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="paired-owner-keep-" + field,
+        occurred_at=audiobook_pair.env.clock(),
+    )
+    audiobook_pair.repo.record_human_decision(decision)
+
+
+@pytest.mark.parametrize("field", ["title", "subtitle"])
+@pytest.mark.parametrize("boundary", ["before", "claim"])
+def test_audiobook_pair_either_owner_final_zero_patch(audiobook_pair, field, boundary):
+    op = audiobook_pair.plan()
+    if boundary == "before":
+        _paired_owner_keep(audiobook_pair, field)
+    else:
+        audiobook_pair.env.claim_hook.callback = lambda _: _paired_owner_keep(
+            audiobook_pair, field
+        )
+    try:
+        audiobook_pair.service.apply(op.plan.plan_id)
+    except GuardedApplicationError as e:
+        assert e.code in ("claim_conflict", "authority")
+    assert not audiobook_pair.patches()
+    assert audiobook_pair.repo.get_field_effect(op.plan.plan_id).state in (
+        "superseded",
+        "stale",
+    )
+
+
+@pytest.mark.parametrize("field", ["title", "subtitle"])
+def test_audiobook_pair_either_target_drift_zero_patch(audiobook_pair, field):
+    op = audiobook_pair.plan()
+    audiobook_pair.case.detail["media"]["metadata"][field] = "External edit"
+    result = audiobook_pair.service.apply(op.plan.plan_id)
+    assert result.state == "stale" and result.failure == "target_changed"
+    assert not audiobook_pair.patches()
+
+
+@pytest.mark.parametrize("field", ["title", "subtitle"])
+def test_audiobook_pair_either_capability_zero_patch(audiobook_pair, field):
+    op = audiobook_pair.plan()
+    audiobook_pair.repo.suspend_field_effect_capability(
+        scope="destination",
+        connection="primary",
+        destination=field,
+        reason="field_unavailable",
+        changed_at=audiobook_pair.env.clock(),
+    )
+    result = audiobook_pair.service.apply(op.plan.plan_id)
+    assert result.state == "stale" and result.failure == "capability"
+    assert not audiobook_pair.patches()
+
+
+@pytest.mark.parametrize(
+    "mode,expected",
+    [
+        ("partial", "stale"),
+        ("partial_timeout", "stale"),
+        ("timeout", "verified"),
+        ("read_failure", "verified"),
+        ("crash", "verified"),
+    ],
+)
+def test_audiobook_pair_partial_timeout_read_failure_and_restart(
+    audiobook_pair, mode, expected
+):
+    op = audiobook_pair.plan()
+    audiobook_pair.case.paired_mode = mode
+    if mode == "crash":
+        with pytest.raises(KeyboardInterrupt):
+            audiobook_pair.service.apply(op.plan.plan_id)
+        assert audiobook_pair.repo.get_field_effect(op.plan.plan_id).state == "applying"
+    else:
+        audiobook_pair.service.apply(op.plan.plan_id)
+    audiobook_pair.reopen()
+    result = audiobook_pair.service.apply(op.plan.plan_id)
+    assert result.state == expected
+    if expected == "stale":
+        assert result.failure == "third_value"
+    assert len(audiobook_pair.patches()) == 1
+    assert audiobook_pair.service.apply(op.plan.plan_id).state == expected
+    assert len(audiobook_pair.patches()) == 1
+    values = {
+        x.destination.value: x.value
+        for x in audiobook_pair.reader.read("item-1").fields
+    }
+    assert values["title"] == "Synthetic Journey"
+    assert (values["subtitle"] is None) == (expected == "stale")
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("desired_value", "Different subtitle"),
+        ("pre_value", "Injected"),
+        ("target_version", "wrong-version"),
+        ("capability_digest", "a" * 64),
+        ("dependency_digests", ["a" * 64]),
+        ("bundle_id", "automatic_bundle_" + "a" * 64),
+    ],
+)
+def test_audiobook_pair_companion_serialized_tamper_refuses(audiobook_pair, key, value):
+    op = audiobook_pair.plan()
+    raw = op.plan.to_data()
+    raw["subtitle_companion"][key] = value
+    with pytest.raises(FieldEffectError):
+        FieldEffectPlan.from_data(raw)
+    assert not audiobook_pair.patches()
+
+
+def test_audiobook_pair_competing_claim_only_one_wins(audiobook_pair):
+    op = audiobook_pair.plan()
+    one = audiobook_pair.repo.claim_field_effect(
+        op.plan.plan_id, "planned", "a" * 64, audiobook_pair.env.clock()
+    )
+    assert one.state == "claimed"
+    with pytest.raises(FieldEffectError, match="claim_conflict"):
+        audiobook_pair.repo.claim_field_effect(
+            op.plan.plan_id, "planned", "b" * 64, audiobook_pair.env.clock()
+        )
+    assert audiobook_pair.service.apply(op.plan.plan_id).state == "verified"
+    assert len(audiobook_pair.patches()) == 1
+
+
+@pytest.mark.parametrize(
+    "state,failure,confirmed",
+    [
+        ("verified", "", True),
+        ("planned", "", False),
+        ("reconciling", "readback", False),
+        ("stale", "third_value", False),
+        ("retryable", "target_failure", False),
+    ],
+)
+def test_audiobook_pair_paired_activity_words(
+    audiobook_pair, state, failure, confirmed
+):
+    op = audiobook_pair.plan()
+    record = {
+        "source_kind": "field_effect",
+        "pre_value": op.plan.pre_value,
+        "desired_value": op.plan.desired_value,
+        "subtitle_companion": op.plan.subtitle_companion.to_data(),
+        "failure": failure,
+    }
+    event = {
+        "destination": "title",
+        "origin": "automatic_policy",
+        "state": state,
+        "event_type": "field_effect",
+        "record": record,
+    }
+    readable_activity_event(event, audiobook_pair.report)
+    assert event["field_label"] == "Title and subtitle"
+    assert (event["change"] == "Split title and subtitle") == confirmed
+    assert ("Both title and subtitle confirmed" in str(event["evidence"])) == confirmed
+    assert "No write was applied" not in str(event["evidence"])
+
+
+@pytest.mark.parametrize("field", ["title", "subtitle"])
+@pytest.mark.parametrize("state", ["claimed", "applying"])
+def test_audiobook_pair_owner_command_after_claim_refuses_equally(
+    audiobook_pair, field, state
+):
+    from mechanical_librarian.domain.human_decision import HumanDecisionError
+
+    op = audiobook_pair.plan()
+    audiobook_pair.repo.claim_field_effect(
+        op.plan.plan_id, "planned", "c" * 64, audiobook_pair.env.clock()
+    )
+    if state == "applying":
+        audiobook_pair.repo.transition_field_effect(
+            op.plan.plan_id, "claimed", "applying", audiobook_pair.env.clock()
+        )
+    before = audiobook_pair.repo.get_field_effect(op.plan.plan_id).to_data()
+    with pytest.raises(HumanDecisionError, match="already_decided"):
+        _paired_owner_keep(audiobook_pair, field)
+    assert audiobook_pair.repo.get_field_effect(op.plan.plan_id).to_data() == before
+    assert not audiobook_pair.patches()
+    assert (
+        len(audiobook_pair.repo.get_review_case_decisions(audiobook_pair.case_id)) == 2
+    )
+
+
+def test_audiobook_pair_joint_qualification_withdrawal_after_claim_stops_pair(
+    audiobook_pair,
+):
+    op = audiobook_pair.plan()
+    audiobook_pair.repo.claim_field_effect(
+        op.plan.plan_id, "planned", "c" * 64, audiobook_pair.env.clock()
+    )
+    with patch.object(
+        audiobook_decision_qualification, "F46_PASSING_PAIRED_OPTIONS", frozenset()
+    ):
+        result = audiobook_pair.service.apply(op.plan.plan_id)
+    assert result.state == "stale" and result.failure == "authority"
+    assert not audiobook_pair.patches()
+
+
+@pytest.mark.parametrize("field", ["title", "subtitle"])
+def test_audiobook_pair_owner_final_before_plan_refuses(audiobook_pair, field):
+    _paired_owner_keep(audiobook_pair, field)
+    with pytest.raises((FieldEffectError, GuardedApplicationError)):
+        audiobook_pair.plan()
+    assert audiobook_pair.repo._connection.execute(
+        "SELECT COUNT(*) FROM field_effects"
+    ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    "member_key",
+    ["desired_value", "pre_value", "target_version", "dependency_digests", "bundle_id"],
+)
+def test_audiobook_pair_recomputed_plan_tamper_still_refuses_persist(
+    audiobook_pair, member_key
+):
+    op = audiobook_pair.plan()
+    comp = op.plan.subtitle_companion
+    changed = replace(
+        comp,
+        **{
+            member_key: {
+                "desired_value": "Wrong subtitle",
+                "pre_value": "Invented original",
+                "target_version": "wrong-version",
+                "dependency_digests": ("a" * 64,),
+                "bundle_id": "automatic_bundle_" + "a" * 64,
+            }[member_key]
+        },
+    )
+    values = {
+        k: getattr(op.plan, k)
+        for k in (
+            "connection",
+            "library",
+            "work_id",
+            "destination",
+            "pre_value",
+            "desired_value",
+            "target_fingerprint",
+            "target_version",
+            "dependency_digests",
+            "authority",
+            "consent",
+            "capability_digest",
+            "created_at",
+        )
+    }
+    altered = FieldEffectPlan.create(**values, subtitle_companion=changed)
+    from mechanical_librarian.domain.field_effect import FieldEffectOperation
+
+    with pytest.raises(FieldEffectError, match="authority_binding"):
+        audiobook_pair.repo.record_field_effect(
+            FieldEffectOperation(altered, updated_at=altered.created_at)
+        )
+    assert audiobook_pair.repo._connection.execute(
+        "SELECT COUNT(*) FROM field_effects"
+    ).fetchone() == (1,)
+    assert not audiobook_pair.patches()
+
+
+@pytest.mark.parametrize("supplied", (True, False, None))
+@pytest.mark.parametrize("current", (True, False, None))
+def test_audiobook_adult_product_only_sets_true_and_otherwise_finishes_without_write(
+    effects: _EffectEnvironment, supplied: bool | None, current: bool | None
+) -> None:
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetField,
+        TargetFieldState,
+    )
+
+    report = synthetic_audiobook_bibliographic_report(adult_product=supplied)
+    fields = tuple(
+        TargetField(
+            field.destination,
+            TargetFieldState.MISSING if current is None else TargetFieldState.VALUE,
+            current,
+        )
+        if field.destination is TargetDestination.EXPLICIT
+        else field
+        for field in report.target.fields
+    )
+    report = MetadataReport.create(
+        target=replace(report.target, fields=fields),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        audio=report.audio,
+    )
+    identities = frozenset(
+        audiobook_decision_qualification.F46_IDENTITIES_BY_DESTINATION["explicit"]
+    )
+    with patch.object(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS | identities,
+    ):
+        case_id, _ = publish_audiobook_preview(
+            effects.repository,
+            report,
+            ("explicit",),
+            selected_options={"explicit": "adult_product"},
+        )
+        effects.repository.persist_shadow_outcome(case_id, 4)
+        decisions = effects.repository.get_review_case_decisions(case_id)
+        assert len(decisions) == 1
+        decision = AutomaticDecision.from_json(decisions[0])
+        changes = supplied is True and current is not True
+        assert decision.destination == "explicit"
+        assert decision.outcome == ("candidate" if changes else "keep_current")
+        authority = PersistedFieldEffectAuthority(effects.repository)
+        service = GuardedFieldApplication(
+            effects.repository,
+            effects.target,
+            effects.backup,
+            effects.capabilities,
+            authority,
+            effects.dependencies,
+            PersistedEffectConsent(effects.repository),
+            effects.recovery,
+            effects.reevaluation,
+            effects.clock,
+            effects.preclaim,
+            effects.claim_hook,
+            effects.recovery_hook,
+        )
+        if changes:
+            snapshot = authority.resolve(decision)
+            assert snapshot.pre_value is current
+            assert snapshot.decision_value == {"kind": "boolean", "value": True}
+            effects.repository.grant_field_effect_consents(
+                "primary", ("audio",), ("explicit",), 5
+            )
+            operation = service.plan(
+                decision,
+                connection=snapshot.connection,
+                library=snapshot.library,
+                work_id=snapshot.work_id,
+                destination="explicit",
+                pre_value=current,
+                desired_value=snapshot.decision_value,
+                target_fingerprint=snapshot.target_fingerprint,
+                target_version=snapshot.target_version,
+                dependency_digests=snapshot.dependency_digests,
+                capability_digest=CAPABILITY,
+            )
+            assert operation is not None
+            effects.target.seed(operation.plan)
+            assert service.apply(operation.plan.plan_id).state == "verified"
+            assert service.apply(operation.plan.plan_id).state == "verified"
+            assert (
+                effects.target._values[("primary", "audio", "item-1", "explicit")]
+                is True
+            )
+        else:
+            lane = ContinuousGuardedApplication(
+                effects.repository,
+                {("primary", "audio"): service},
+                {("primary", "audio"): effects.capabilities},
+                authority,
+                (("primary", "audio"),),
+                effects.clock,
+                lambda *_: None,
+            )
+            with patch.object(
+                authority,
+                "resolve",
+                side_effect=AssertionError("no-change must precede guards"),
+            ):
+                assert lane.schedule() == lane.schedule() == 0
+            assert effects.target._values == {}
+            assert effects.repository.pending_field_effect_decision_documents(100) == ()
+        counts = tuple(
+            effects.repository._connection.execute(
+                f"SELECT COUNT(*) FROM {table}"
+            ).fetchone()[0]
+            for table in ("field_effects", "field_effect_no_changes")
+        )
+        assert counts == ((1, 0) if changes else (0, 1))
+        effects.repository.close()
+        effects.repository = open_repository(effects.database_path)
+        assert effects.repository.get_review_case_decisions(case_id) == decisions
+        assert (
+            tuple(
+                effects.repository._connection.execute(
+                    f"SELECT COUNT(*) FROM {table}"
+                ).fetchone()[0]
+                for table in ("field_effects", "field_effect_no_changes")
+            )
+            == counts
+        )
+
+
+@pytest.mark.parametrize("ready", [True, False])
+def test_pair_checks_one_shared_backup_before_member_guards(audiobook_pair, ready):
+    op = audiobook_pair.plan()
+    audiobook_pair.env.backup.ready_value = ready
+    with (
+        patch.object(
+            audiobook_pair.service, "_preclaim", wraps=audiobook_pair.service._preclaim
+        ) as preclaims,
+        patch.object(
+            audiobook_pair.env.backup, "ready", wraps=audiobook_pair.env.backup.ready
+        ) as backup,
+    ):
+        result = audiobook_pair.service.apply(op.plan.plan_id)
+        assert backup.call_count == preclaims.call_count == (2 if ready else 1)
+        # Existing lifecycle checks once before recovery capture and once after it.
+        # Each preclaim checks the shared backup once, not once per member.
+        assert backup.call_args.args == (op.plan,)
+    assert result.state == ("verified" if ready else "stale")
+    assert len(audiobook_pair.patches()) == int(ready)
+    assert audiobook_pair.service._clock is audiobook_pair.env.clock
+
+
+@pytest.mark.parametrize(
+    "changed", ["candidate", "citation", "combination", "report", "missing_companion"]
+)
+def test_actual_pair_reconstruction_refuses_changed_sources(audiobook_pair, changed):
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _automatic_decision_value,
+    )
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+
+    case = ReviewCase.create_from_data(
+        json.loads(audiobook_pair.repo.get_review_case(audiobook_pair.case_id))["case"]
+    )
+    proposal = ProposalSet.from_json(case.proposal_document)
+    raw = audiobook_pair.repo._connection.execute(
+        "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=?",
+        (audiobook_pair.case_id,),
+    ).fetchone()[0]
+    outcome = ShadowOutcomeSet.from_json(raw)
+    for decision in audiobook_pair.decisions.values():
+        assert _automatic_decision_value(
+            decision, case, audiobook_pair.report, proposal, outcome
+        )
+    with pytest.raises(ValueError):
+        report = audiobook_pair.report
+        members = list(outcome.outcomes)
+        index = next(i for i, x in enumerate(members) if x.destination == "subtitle")
+        member = members[index]
+        if changed == "candidate":
+            members[index] = replace(
+                member, candidate_id=audiobook_pair.decisions["title"].candidate_id
+            )
+        elif changed == "citation":
+            members[index] = replace(member, citation_ids=("wrong-source-citation",))
+        elif changed == "combination":
+            members[index] = replace(member, combination_ids=("wrong-combination",))
+        elif changed == "missing_companion":
+            members.pop(index)
+        else:
+            report = MetadataReport.create(
+                target=replace(
+                    report.target,
+                    fields=tuple(
+                        replace(field, value="Changed source report")
+                        if field.destination.value == "title"
+                        else field
+                        for field in report.target.fields
+                    ),
+                ),
+                file=report.file,
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=report.providers,
+                audio=report.audio,
+            )
+        altered = replace(outcome, outcomes=tuple(members))
+        _automatic_decision_value(
+            audiobook_pair.decisions["title"], case, report, proposal, altered
+        )
+    assert not audiobook_pair.patches()
+
+
+@pytest.mark.parametrize(
+    "field,mode",
+    [
+        ("title_layout", "ask"),
+        ("title_layout", "ignore"),
+        ("subtitle", "ask"),
+        ("subtitle", "ignore"),
+        ("title", "owner"),
+        ("subtitle", "owner"),
+    ],
+)
+def test_pair_admission_boundaries(tmp_path, field, mode):
+    from mechanical_librarian.domain.metadata_policy import DEFAULT_OPTIONS
+
+    report = synthetic_audiobook_bibliographic_report()
+    options = dict(DEFAULT_OPTIONS)
+    options.update(title_layout="title_and_subtitle", subtitle="corroborated_split")
+    modes = {k: "unsupported" if k == "explicit" else "ask" for k in OPTION_CATALOGUE}
+    modes.update(title_layout="automatic", subtitle="automatic")
+    if mode != "owner":
+        modes[field] = mode
+    profile = MetadataPolicyProfile.create("Paired policy negative", options, modes)
+    resolved = resolve_policy(profile, report.target.library)
+    identities = {
+        x
+        for x in audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES
+        if x.startswith(
+            ("title_layout:title_and_subtitle:", "subtitle:corroborated_split:")
+        )
+    }
+    with (
+        patch.object(
+            audiobook_decision_qualification,
+            "F46_PASSING_AUTOMATIC_OPTIONS",
+            audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS | identities,
+        ),
+        patch.object(
+            audiobook_decision_qualification,
+            "F46_PASSING_PAIRED_OPTIONS",
+            frozenset(
+                {audiobook_decision_qualification.F46_TITLE_SUBTITLE_PAIR_IDENTITY}
+            ),
+        ),
+    ):
+        repo = open_repository(tmp_path / "state.sqlite")
+        try:
+            repo.enter_shadow_preview(1)
+            repo.create_metadata_policy_draft(profile.canonical_json)
+            repo.activate_metadata_policy(
+                profile.policy_id,
+                MetadataPolicyProfile.builtin().policy_id,
+                (
+                    (
+                        report.target.library,
+                        resolved.resolved_id,
+                        resolved.canonical_json,
+                    ),
+                ),
+                2,
+            )
+            repo.activate_qualified_automatic(3)
+            proposal = evaluate_report(
+                report, resolved.resolved_id, human_review_destinations(resolved)
+            )
+            repo.publish(report, lambda: True)
+            repo.publish_proposal(proposal)
+            case_id = json.loads(repo.admit_review_case(proposal))["review_case_id"]
+            expected = ()
+            if mode == "owner":
+                case = ReviewCase.create_from_data(
+                    json.loads(repo.get_review_case(case_id))["case"]
+                )
+                proposal = next(x for x in case.proposals if x["destination"] == field)
+                owner = HumanDecision.create(
+                    case,
+                    proposal_id=proposal["proposal_id"],
+                    target_fingerprint=case.target_fingerprint,
+                    destination=field,
+                    actor="owner",
+                    outcome="keep_current",
+                    selected_value=None,
+                    idempotency_key="paired-before-outcome-" + field,
+                    occurred_at=4,
+                )
+                repo.record_human_decision(owner)
+                expected = (owner.to_json(),)
+            repo.persist_shadow_outcome(case_id, 5)
+            assert repo.get_review_case_decisions(case_id) == expected
+        finally:
+            repo.close()
+
+
+@pytest.mark.parametrize(
+    "negative",
+    (
+        "none",
+        "changed_dimensions",
+        "changed_digest",
+        "stale_report",
+        "owner_final",
+        "consent",
+    ),
+)
+def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negative):
+    with audiobook_cover_environment(
+        tmp_path / "cover", [(80, 120), (640, 960)]
+    ) as state:
+        assert len(state.decisions) == 1
+        target_case = audiobookshelf_targets.FieldEffectTargetCase()
+        target_case.cover_bytes = state.originals[0]
+        try:
+            for original, decoded in zip(state.originals, state.decoded, strict=True):
+                target_case.artifacts.stage(decoded.artifact, original, decoded.preview)
+            state.repo.grant_field_effect_consents("primary", ("audio",), ("cover",), 5)
+            authority = PersistedFieldEffectAuthority(state.repo)
+            snapshot = authority.resolve(state.decisions[0])
+            guarded = GuardedFieldApplication(
+                state.repo,
+                target_case.target,
+                effects.backup,
+                effects.capabilities,
+                authority,
+                effects.dependencies,
+                PersistedEffectConsent(state.repo),
+                effects.recovery,
+                effects.reevaluation,
+                effects.clock,
+                effects.preclaim,
+                effects.claim_hook,
+                effects.recovery_hook,
+            )
+            operation = guarded.plan(
+                state.decisions[0],
+                connection=snapshot.connection,
+                library=snapshot.library,
+                work_id=snapshot.work_id,
+                destination="cover",
+                pre_value=snapshot.pre_value,
+                desired_value=snapshot.decision_value,
+                target_fingerprint=snapshot.target_fingerprint,
+                target_version=snapshot.target_version,
+                dependency_digests=snapshot.dependency_digests,
+                capability_digest=CAPABILITY,
+            )
+            assert operation is not None
+            if negative == "changed_dimensions":
+                target_case.cover_bytes = synthetic_image("PNG", (300, 450))
+            elif negative == "changed_digest":
+                target_case.cover_bytes = state.originals[1]
+            elif negative == "stale_report":
+                report = state.report
+                fields = tuple(
+                    TargetField(
+                        field.destination,
+                        TargetFieldState.VALUE,
+                        "Changed source generation",
+                    )
+                    if field.destination is TargetDestination.TITLE
+                    else field
+                    for field in report.target.fields
+                )
+                changed = MetadataReport.create(
+                    target=replace(report.target, fields=fields),
+                    file=report.file,
+                    local_claims=report.local_claims,
+                    local_reasons=report.local_reasons,
+                    providers=report.providers,
+                    audio=report.audio,
+                    cover_sources=report.cover_sources,
+                )
+                state.repo.publish(
+                    changed, lambda: True, expected_current=report.report_id
+                )
+            elif negative == "owner_final":
+                proposal = next(
+                    value
+                    for value in state.case.proposals
+                    if value["destination"] == "cover"
+                )
+                decision = HumanDecision.create(
+                    state.case,
+                    proposal_id=proposal["proposal_id"],
+                    target_fingerprint=state.case.target_fingerprint,
+                    destination="cover",
+                    actor="owner",
+                    outcome="keep_current",
+                    selected_value=None,
+                    idempotency_key="cover-owner-keep",
+                    occurred_at=effects.clock(),
+                )
+                state.repo.record_human_decision(
+                    decision,
+                    cover_consideration_id=state.consideration["consideration_id"],
+                )
+            elif negative == "consent":
+                state.repo.revoke_field_effect_consent(
+                    operation.plan.consent.consent_id, effects.clock()
+                )
+            with patch.object(
+                audiobookshelf_targets, "SYNTHETIC_COVER_PNG", state.originals[1]
+            ):
+                try:
+                    result = guarded.apply(operation.plan.plan_id)
+                except GuardedApplicationError:
+                    assert negative != "none"
+                    result = state.repo.get_field_effect(operation.plan.plan_id)
+                if negative == "none":
+                    assert result.state == "verified"
+                    assert guarded.apply(operation.plan.plan_id).state == "verified"
+            posts = [
+                request for request in target_case.requests if request.method == "POST"
+            ]
+            assert len(posts) == int(negative == "none")
+            if negative == "none":
+                assert target_case.cover_bytes == state.originals[1]
+            else:
+                assert result.state in ("stale", "superseded", "verified")
+            with closing(
+                open_repository(tmp_path / "cover" / "state.sqlite")
+            ) as reopened:
+                assert (
+                    reopened.get_field_effect(operation.plan.plan_id).to_data()
+                    == result.to_data()
+                )
+        finally:
+            target_case.close()
+
+
+@pytest.mark.parametrize(
+    "field,category,option,identity,current,expected",
+    (
+        (
+            "tags",
+            "tags",
+            "fill_empty",
+            "audiobook_tags_fill",
+            None,
+            ["First", "Shared", "Second"],
+        ),
+        (
+            "tags",
+            "tags",
+            "add",
+            "audiobook_tags_add",
+            ("Owner tag",),
+            ["Owner tag", "First", "Shared", "Second"],
+        ),
+        (
+            "narrators",
+            "contributor_names",
+            "canonical",
+            "audiobook_narrators_fill",
+            None,
+            ["Example Narrator"],
+        ),
+        (
+            "description",
+            "description_fill",
+            "safe_plain_text",
+            "audiobook_description_fill",
+            None,
+            "A voyage reveals a hidden city.",
+        ),
+    ),
+)
+@pytest.mark.parametrize(
+    "mutation", ("missing_reference", "changed_reference", "changed_candidate")
+)
+def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority(
+    tmp_path,
+    monkeypatch,
+    field,
+    category,
+    option,
+    identity,
+    current,
+    expected,
+    mutation,
+):
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _automatic_decision_value,
+    )
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_product_lookup_report,
+    )
+
+    products = tuple(
+        {
+            "asin": f"B00000000{index}",
+            "title": "Synthetic Journey",
+            "authors": [{"name": "Example Author"}],
+            "narrators": [{"name": "Example Narrator"}],
+            "summary": summary,
+            "genres": [{"type": "tag", "name": tag} for tag in tags],
+        }
+        for index, summary, tags in (
+            (1, "A voyage reveals a hidden city.", ["First", "Shared"]),
+            (
+                2,
+                "An explorer crosses the sea and discovers an ancient city.",
+                ["Shared", "Second"],
+            ),
+        )
+    )
+    report = synthetic_audiobook_product_lookup_report(products)
+    if current is not None:
+        report = MetadataReport.create(
+            target=replace(
+                report.target,
+                fields=tuple(
+                    TargetField(member.destination, TargetFieldState.VALUE, current)
+                    if member.destination.value == field
+                    else member
+                    for member in report.target.fields
+                ),
+            ),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+            audio=report.audio,
+        )
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+        | {f"{category}:{option}:{identity}"},
+    )
+    database = tmp_path / "selected-sources.sqlite"
+    with closing(open_repository(database)) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository, report, (category,), selected_options={category: option}
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        decision_document = next(
+            document
+            for document in repository.get_review_case_decisions(case_id)
+            if json.loads(document)["destination"] == field
+        )
+    with closing(open_repository(database)) as repository:
+        decision = AutomaticDecision.from_json(decision_document)
+        raw_decision = json.loads(decision_document)
+        connection = repository._connection
+        proposal = ProposalSet.from_json(
+            connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (decision.proposal_set_id,),
+            ).fetchone()[0]
+        )
+        case = ReviewCase.from_json(
+            connection.execute(
+                "SELECT document FROM review_cases WHERE review_case_id=?",
+                (case_id,),
+            ).fetchone()[0]
+        )
+        outcome = ShadowOutcomeSet.from_json(
+            connection.execute(
+                "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+                "ORDER BY evaluated_at DESC LIMIT 1",
+                (case_id,),
+            ).fetchone()[0]
+        )
+        assert (
+            _automatic_decision_value(decision, case, report, proposal, outcome)[
+                "value"
+            ]
+            == expected
+        )
+        original = json.loads(outcome.to_json())
+        selected = next(
+            member
+            for member in original["outcomes"]
+            if member["outcome_id"] == decision.source_outcome_id
+        )
+        candidates = tuple(
+            candidate
+            for provider in report.providers
+            for candidate in (
+                *provider.candidates,
+                *provider.recording_lookup_candidates,
+            )
+        )
+        kind = {
+            "tags": ClaimKind.TAG,
+            "narrators": ClaimKind.CONTRIBUTOR,
+            "description": ClaimKind.DESCRIPTION,
+        }[field]
+        expected_refs = {
+            claim.reference
+            for candidate in candidates
+            for claim in candidate.claims
+            if claim.kind is kind
+            and claim.state is FieldState.VALID
+            and (field != "narrators" or claim.role == "narrator")
+            and (field != "description" or claim.value == expected)
+        }
+        assert set(selected["citation_ids"]) == expected_refs
+        if field == "narrators":
+            assert all(
+                any(claim.reference in expected_refs for claim in candidate.claims)
+                for candidate in candidates
+            )
+        if mutation == "missing_reference":
+            selected["citation_ids"] = selected["citation_ids"][:-1]
+        elif mutation == "changed_reference":
+            selected["citation_ids"] = sorted(
+                [
+                    *selected["citation_ids"][:-1],
+                    "provider_" + "f" * 64,
+                ]
+            )
+        else:
+            selected["candidate_id"] = "alternative_" + "f" * 64
+
+        def digest(value):
+            return hashlib.sha256(
+                json.dumps(
+                    value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+            ).hexdigest()
+
+        selected["qualification_candidate_id"] = "qualification_candidate_" + digest(
+            {
+                **{
+                    key: selected[key]
+                    for key in (
+                        "action_id",
+                        "candidate_id",
+                        "citation_ids",
+                        "combination_ids",
+                        "rule_id",
+                    )
+                },
+                "catalogue_sha256": original["catalogue_sha256"],
+            }
+        )
+        selected["outcome_id"] = "shadow_outcome_" + digest(
+            {key: value for key, value in selected.items() if key != "outcome_id"}
+        )
+        original["outcome_set_id"] = "shadow_outcome_set_" + digest(
+            {key: value for key, value in original.items() if key != "outcome_set_id"}
+        )
+        forged_outcome = ShadowOutcomeSet.from_json(
+            json.dumps(
+                original, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            )
+        )
+        arguments = {
+            key: value
+            for key, value in raw_decision.items()
+            if key
+            not in {"decision_id", "idempotency_digest", "origin", "schema_version"}
+        }
+        arguments.update(
+            candidate_id=selected["candidate_id"],
+            source_outcome_id=selected["outcome_id"],
+        )
+        forged = AutomaticDecision.create(**arguments)
+        forged = AutomaticDecision.from_json(forged.to_json())
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            _automatic_decision_value(forged, case, report, proposal, forged_outcome)
+        with pytest.raises(
+            sqlite3.IntegrityError, match="shadow decision outcomes are append-only"
+        ):
+            connection.execute(
+                "UPDATE shadow_decision_outcomes SET document=? WHERE outcome_set_id=?",
+                (forged_outcome.to_json(), outcome.outcome_set_id),
+            )
+        connection.rollback()
+        assert (
+            connection.execute("SELECT COUNT(*) FROM field_effects").fetchone()[0] == 0
+        )
+    with closing(open_repository(database)) as reopened:
+        assert raw_decision in [
+            json.loads(document)
+            for document in reopened.get_review_case_decisions(case_id)
+        ]
+
+
+@pytest.mark.parametrize("option", ("canonical", "preserve"))
+def test_complete_source_authors_add_keeps_every_credit_through_guarded_effect(
+    effects, monkeypatch, option
+):
+    report = synthetic_audiobook_bibliographic_report(
+        source_authors=("Example Author", "Second Author")
+    )
+    identity = f"contributor_names:{option}:audiobook_authors_add"
+    monkeypatch.setattr(
+        audiobook_decision_qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS | {identity},
+    )
+    case_id, _ = publish_audiobook_preview(
+        effects.repository,
+        report,
+        ("contributor_names",),
+        selected_options={"contributor_names": option},
+    )
+    outcome = json.loads(effects.repository.persist_shadow_outcome(case_id, 4))
+    selected = next(
+        member for member in outcome["outcomes"] if member["destination"] == "authors"
+    )
+    assert set(selected["citation_ids"]) == {
+        claim.reference
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
+        and claim.state is FieldState.VALID
+    }
+    documents = effects.repository.get_review_case_decisions(case_id)
+    decision = next(
+        AutomaticDecision.from_json(document)
+        for document in documents
+        if json.loads(document)["destination"] == "authors"
+    )
+    assert decision.policy_option == f"{option}:audiobook_authors_add"
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    snapshot = authority.resolve(decision)
+    assert snapshot.pre_value == ["Example Author"]
+    assert snapshot.decision_value == {
+        "kind": "list",
+        "value": ["Example Author", "Second Author"],
+    }
+    effects.repository.grant_field_effect_consents(
+        "primary", ("audio",), ("authors",), 5
+    )
+    service = GuardedFieldApplication(
+        effects.repository,
+        effects.target,
+        effects.backup,
+        effects.capabilities,
+        authority,
+        effects.dependencies,
+        PersistedEffectConsent(effects.repository),
+        effects.recovery,
+        effects.reevaluation,
+        effects.clock,
+        effects.preclaim,
+        effects.claim_hook,
+        effects.recovery_hook,
+    )
+    operation = service.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination="authors",
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    effects.target.seed(operation.plan)
+    result = service.apply(operation.plan.plan_id)
+    assert result.state == service.apply(operation.plan.plan_id).state == "verified"
+    assert effects.target._values[("primary", "audio", "item-1", "authors")] == [
+        "Example Author",
+        "Second Author",
+    ]
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path)
+    assert effects.repository.get_review_case_decisions(case_id) == documents
+    assert (
+        effects.repository.get_field_effect(operation.plan.plan_id).to_data()
+        == result.to_data()
+    )
+    assert (
+        effects.repository._connection.execute(
+            "SELECT COUNT(*) FROM field_effects"
+        ).fetchone()[0]
+        == 1
+    )

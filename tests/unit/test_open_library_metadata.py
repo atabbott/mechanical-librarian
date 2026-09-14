@@ -1638,6 +1638,14 @@ def test_nested_work_author_evidence_persists_with_exact_source_semantics() -> N
         (21, ClaimKind.GENRE, ClaimScope.WORK, None, FieldState.UNSUPPORTED, None),
         (22, ClaimKind.SERIES, ClaimScope.WORK, None, FieldState.VALID, "Cycle"),
         (23, ClaimKind.SERIES_SEQUENCE, ClaimScope.WORK, None, FieldState.VALID, "2"),
+        (
+            24,
+            ClaimKind.PUBLICATION_DATE,
+            ClaimScope.WORK,
+            None,
+            FieldState.VALID,
+            "2025-12-31",
+        ),
     )
     assert expected_claims == tuple(
         (
@@ -2127,7 +2135,9 @@ def test_work_lookup_uses_complete_title_and_authors_then_retains_only_neutral_w
     )
     assert () == retained.links
     assert all(
-        value.scope is ClaimScope.WORK or value is retained
+        value.scope is ClaimScope.WORK
+        or value is retained
+        or value.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
         for value in candidate.evidence
     )
     search_evidence = {
@@ -4279,3 +4289,39 @@ def test_later_lane_failure_retains_only_the_old_boundary_descriptors(
         assert expected and expected != seen[0]
     assert caught.value.__cause__ is cause
     assert caught.value.snapshot.evidence.accessed_at == "2023-11-14T22:13:20.000000Z"
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("December 15, 1993", "1993-12-15"),
+        (" January  2 , 2001 ", "2001-01-02"),
+        ("February 29, 2000", "2000-02-29"),
+        ("2015", "2015"),
+        ("2015-09", "2015-09"),
+        ("2015-09-22", "2015-09-22"),
+    ],
+)
+def test_original_date_source_parser(raw: str, expected: str) -> None:
+    assert open_library_metadata._work_first_publication(raw)[0] == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "February 29, 2001",
+        "April 31, 2020",
+        "Dec 15, 1993",
+        "Floruary 2, 2000",
+        "December, 1993",
+        "December 15, 1993 extra",
+        "12/15/1993",
+        "1993/12/15",
+        1993,
+        {},
+        "x" * 20000,
+    ],
+)
+def test_original_date_source_parser_refuses_guessing(raw: object) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        open_library_metadata._work_first_publication(raw)

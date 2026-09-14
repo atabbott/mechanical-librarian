@@ -19,9 +19,12 @@ from collections.abc import Callable
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.audiobook_cover_replacement import (
+    material_audiobook_cover_reference,
+)
 from mechanical_librarian.domain.audiobook_decision_qualification import (
-    F46_COVER_FILL_IDENTITY,
     AudiobookQualificationError,
+    identity_for_effect,
     qualification_manifest_sha256,
 )
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
@@ -67,28 +70,9 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             return
         if (
             policy_report.get("schema_version") != "cover-policy-report-v2"
-            or policy_report.get("status") != "recommended"
             or policy_report.get("owner_ready") is not True
             or policy_report.get("actual_target_state")
             not in {"known_empty", "confirmed"}
-        ):
-            return
-        reference = policy_report.get("recommended_candidate_reference")
-        candidate = next(
-            (
-                row
-                for row in value.get("candidates", ())
-                if type(row) is dict and row.get("reference") == reference
-            ),
-            None,
-        )
-        if (
-            candidate is None
-            or candidate.get("incumbent") is not False
-            or candidate.get("selectable") is not True
-            or candidate.get("deterministic_rank") != 1
-            or not candidate.get("deterministic_citations")
-            or type(candidate.get("deterministic_rank_key")) is not list
         ):
             return
         case_row = self._connection.execute(
@@ -109,14 +93,6 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ):
             return
         qualification_identity = None
-        if report.audio is not None:
-            if policy_report.get("actual_target_state") != "known_empty":
-                return
-            try:
-                qualification_manifest_sha256(F46_COVER_FILL_IDENTITY)
-            except AudiobookQualificationError:
-                return
-            qualification_identity = F46_COVER_FILL_IDENTITY
         target = case.target
         connection_name, library_name, item_id = (
             target.get("connection"),
@@ -155,11 +131,75 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if state is None or state[1] != "automatic":
             return
         resolved = ResolvedMetadataPolicy.from_data(json.loads(state[2]))
-        if (
-            dict(resolved.destinations).get("cover_order") != "automatic"
-            or dict(resolved.options).get("cover_order") != "fixed_source_order"
+        if dict(resolved.destinations).get("cover_order") != "automatic" or dict(
+            resolved.options
+        ).get("cover_order") not in (
+            {"fixed_source_order", "replace_if_strictly_better"}
+            if report.audio is not None
+            else {"fixed_source_order"}
         ):
             return
+        material_replacement = (
+            report.audio is not None
+            and dict(resolved.options)["cover_order"] == "replace_if_strictly_better"
+        )
+        current_cover = next(
+            f.value
+            for f in report.target.fields
+            if f.destination is TargetDestination.COVER
+        )
+        reference = (
+            material_audiobook_cover_reference(value.get("candidates"), current_cover)
+            if material_replacement
+            and policy_report.get("actual_target_state") == "confirmed"
+            else None
+            if material_replacement
+            else policy_report.get("recommended_candidate_reference")
+        )
+        candidate = next(
+            (
+                row
+                for row in value.get("candidates", ())
+                if type(row) is dict and row.get("reference") == reference
+            ),
+            None,
+        )
+        if (
+            candidate is None
+            or candidate.get("incumbent") is not False
+            or candidate.get("selectable") is not True
+            or (
+                not material_replacement
+                and (
+                    candidate.get("deterministic_rank") != 1
+                    or policy_report.get("status") != "recommended"
+                )
+            )
+            or not candidate.get("deterministic_citations")
+            or type(candidate.get("deterministic_rank_key")) is not list
+        ):
+            return
+        if report.audio is not None:
+            option = dict(resolved.options)["cover_order"]
+            if (
+                option == "fixed_source_order"
+                and policy_report.get("actual_target_state") != "known_empty"
+            ):
+                return
+            current = next(
+                f.value
+                for f in report.target.fields
+                if f.destination is TargetDestination.COVER
+            )
+            qualification_identity = identity_for_effect(
+                "cover", "cover_order", option, current, candidate.get("artifact_id")
+            )
+            if qualification_identity is None:
+                return
+            try:
+                qualification_manifest_sha256(qualification_identity)
+            except AudiobookQualificationError:
+                return
         safety = self._connection.execute(
             "SELECT paused,global_suspension,category_suspensions_document "
             "FROM automatic_safety_state WHERE singleton=1"
@@ -215,8 +255,11 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         prior = None if current is None else json.loads(current[0])
         if prior is not None and (
             prior["kind"] == "owner"
-            or not strictly_better_cover_rank(
-                candidate["deterministic_rank_key"], prior.get("rank_key")
+            or (
+                not material_replacement
+                and not strictly_better_cover_rank(
+                    candidate["deterministic_rank_key"], prior.get("rank_key")
+                )
             )
         ):
             return

@@ -49,7 +49,7 @@ from mechanical_librarian.domain.reviewer_decision_summary import (
     validate_proposal_decision_summary,
 )
 
-PACKET_SCHEMA = "shadow-review-packet-v8"
+PACKET_SCHEMA = "shadow-review-packet-v9"
 MAX_PACKET_BYTES = 1_048_576
 # The generated schema is ASCII-only. Embedding it as a JSON string can add at
 # most one escape byte per schema byte; the remaining allowance covers the
@@ -269,6 +269,9 @@ class ShadowReviewPacket:
                     ("manifestation_publication", "year"),
                     ("manifestation_publication", "month"),
                     ("manifestation_publication", "day"),
+                    ("work_first_publication", "year"),
+                    ("work_first_publication", "month"),
+                    ("work_first_publication", "day"),
                 }
                 if destination == TargetDestination.PUBLISHED_DATE.value
                 else {(None, None)}

@@ -13,12 +13,7 @@ from mechanical_librarian.adapters.cover_artifacts import (
     decode_cover,
 )
 from mechanical_librarian.domain.cover_evidence import CoverSourceState
-
-
-def _image(kind: str, size: tuple[int, int] = (640, 960)) -> bytes:
-    output = io.BytesIO()
-    Image.new("RGB", size, "red").save(output, kind)
-    return output.getvalue()
+from tests.support.cover_images import synthetic_image as _image
 
 
 def _huge_png_header(width: int, height: int) -> bytes:

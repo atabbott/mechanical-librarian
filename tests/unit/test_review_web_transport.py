@@ -2489,3 +2489,33 @@ def test_description_response_rejects_mixed_selected_snapshot(tmp_path, fault):
     with pytest.raises(ValidationError):
         _DescriptionAdviceResponse.model_validate(changed)
     repository.close()
+
+
+def test_current_audiobook_qualification_inventory_crosses_closed_api_contract():
+    from pydantic import ValidationError
+
+    from mechanical_librarian.domain.audiobook_decision_qualification import (
+        public_summary,
+    )
+    from mechanical_librarian.interfaces.web.app import _AudiobookQualification
+
+    records = public_summary()
+    for record in records:
+        assert _AudiobookQualification.model_validate(record).model_dump() == record
+    assert {record["destination"] for record in records} >= {"isbn", "explicit"}
+    assert {record["option"] for record in records} >= {
+        "adult_product",
+        "prefer_isbn13",
+        "replace_descriptive",
+    }
+    for field in ("destination", "field", "option", "operation"):
+        with pytest.raises(ValidationError):
+            _AudiobookQualification.model_validate({**records[0], field: "unknown"})
+
+    for identity in (
+        "bad1:preserve:audiobook_title_fill",
+        "title_layout:preserve:bad1",
+        "title_layout:bad-option:audiobook_title_fill",
+    ):
+        with pytest.raises(ValidationError):
+            _AudiobookQualification.model_validate({**records[0], "identity": identity})

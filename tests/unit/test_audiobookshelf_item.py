@@ -39,6 +39,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     TargetFieldState,
 )
+from tests.support.audiobookshelf_targets import synthetic_audio_file as _audio_file
 from tests.support.audiobookshelf_targets import target_snapshot
 
 
@@ -551,7 +552,7 @@ def test_target_text_bounds_preserve_oversized_and_malformed_states(
     assert TargetFieldState.MALFORMED is malformed_states[destination]
 
 
-def test_partial_publication_date_target_remains_unsupported() -> None:
+def test_partial_publication_date_target_preserves_exact_source_precision() -> None:
     snapshot = target_snapshot(
         {
             "title": "Current title",
@@ -564,8 +565,8 @@ def test_partial_publication_date_target_remains_unsupported() -> None:
         if field.destination is TargetDestination.PUBLISHED_DATE
     )
 
-    assert TargetFieldState.MALFORMED is published_date.state
-    assert published_date.value is None
+    assert TargetFieldState.VALUE is published_date.state
+    assert published_date.value == "2024-03"
 
 
 @pytest.mark.parametrize(
@@ -1029,20 +1030,6 @@ def _audiobook_snapshot(media: dict[str, object]) -> TargetSnapshot:
     ).read("item-1")
 
 
-def _audio_file(
-    name: str, extension: str = ".m4b", inode: str = "inode-1"
-) -> dict[str, object]:
-    return {
-        "ino": inode,
-        "metadata": {
-            "relPath": name,
-            "path": f"/library/{name}",
-            "size": 1,
-            "ext": extension,
-        },
-    }
-
-
 def test_an_item_with_only_audio_files_reads_as_an_audiobook() -> None:
     snapshot = _audiobook_snapshot({"audioFiles": [_audio_file("book.m4b")]})
 
@@ -1193,3 +1180,60 @@ def test_the_declared_index_is_read_and_an_excluded_file_is_not_in_the_order() -
         ("part-2.m4b", 3),
         ("part-3.m4b", None),
     ]
+
+
+@pytest.mark.parametrize("location", ("root", "media", "metadata"))
+@pytest.mark.parametrize(
+    "value,state",
+    (
+        (None, "null"),
+        ("", "empty"),
+        ("/cover.jpg", "value"),
+        ("relative.jpg", "malformed"),
+        (23, "malformed"),
+        (True, "malformed"),
+        ({}, "malformed"),
+        ([], "malformed"),
+        ("/" + "a" * 1024, "malformed"),
+    ),
+)
+def test_declared_cover_locations_share_exact_reader_contract(location, value, state):
+    from tests.support.audiobookshelf_targets import FieldEffectTargetCase
+
+    target = FieldEffectTargetCase()
+    try:
+        payload = target.detail
+        payload.update(isInvalid=False, isMissing=False)
+        locations = {
+            "root": payload,
+            "media": payload["media"],
+            "metadata": payload["media"]["metadata"],
+        }
+        for mapping in locations.values():
+            mapping.pop("coverPath", None)
+        locations[location]["coverPath"] = value
+        payload["media"]["audioFiles"] = [_audio_file("synthetic.m4b")]
+        reader = AudiobookshelfItemReader(
+            client_factory=lambda: httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda request: httpx.Response(200, json=payload)
+                )
+            ),
+            endpoint="https://abs.example.invalid",
+            library_id="library-1",
+            service_path="/library",
+            maximum_bytes=65_536,
+        )
+        snapshot = reader.read("item-1")
+        cover = next(
+            field
+            for field in snapshot.fields
+            if field.destination is TargetDestination.COVER
+        )
+        assert cover.state.value == state
+        assert (snapshot.cover is not None) == (state == "value")
+        if snapshot.cover is not None:
+            assert snapshot.cover.path.endswith("/cover?raw=1")
+            assert value not in snapshot.cover.path
+    finally:
+        target.close()

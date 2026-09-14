@@ -30,6 +30,7 @@ from mechanical_librarian.domain.proposal_set import canonical_target_fields
 from mechanical_librarian.domain.readable_activity import (
     ABSENT,
     AUTOMATIC_AUTHORITY_UNAVAILABLE,
+    ISBN_REFUSAL_REASONS,
     ReadableChange,
     chooser_label,
     destination_label,
@@ -161,6 +162,35 @@ def _write_facts(
     record: dict[str, object], destination: str, origin: str, state: str, failure: str
 ) -> tuple[ReadableChange, list[dict[str, str]]]:
     previous, desired = record.get("pre_value"), record.get("desired_value")
+    companion = record.get("subtitle_companion")
+    if type(companion) is dict:
+        confirmed = state == "verified" and not failure
+        summary = (
+            "Split title and subtitle"
+            if confirmed
+            else "Paired title and subtitle change pending"
+            if not failure
+            else "Paired title and subtitle change stopped"
+        )
+        return ReadableChange(summary, summary), [
+            {"label": "Previous title", "value": value_text("title", previous)},
+            {"label": "Selected title", "value": value_text("title", desired)},
+            {
+                "label": "Previous subtitle",
+                "value": value_text("subtitle", companion["pre_value"]),
+            },
+            {
+                "label": "Selected subtitle",
+                "value": value_text("subtitle", companion["desired_value"]),
+            },
+            {"label": "Chosen by", "value": chooser_label(origin)},
+            {
+                "label": "Confirmed in Audiobookshelf",
+                "value": "Both title and subtitle confirmed"
+                if confirmed
+                else "Both fields have not been confirmed",
+            },
+        ]
     change = set_change(destination, previous, desired)
     chosen = chooser_label(origin)
     if failure:
@@ -373,6 +403,18 @@ def readable_activity_event(
         ]
     elif source_kind == "automatic_decision":
         change, facts = _automatic_facts(record, destination, report)
+    elif source_kind == "isbn_refusal":
+        change = ReadableChange("Left ISBN unchanged", "Left ISBN unchanged")
+        facts = [
+            {
+                "label": "Why it stayed unchanged",
+                "value": ISBN_REFUSAL_REASONS[cast(str, record["reason_code"])],
+            },
+            {
+                "label": "Outcome",
+                "value": "No ISBN change was prepared at this evaluation",
+            },
+        ]
     elif source_kind == "field_effect_no_change":
         current = _reported_value(_pinned_report(record, report), destination)
         change = keep_change(destination, current)
@@ -441,7 +483,11 @@ def readable_activity_event(
     event["category"] = _CATEGORIES.get(
         cast(str, event.get("event_type", "unknown")), "recovery"
     )
-    event["field_label"] = destination_label(destination)
+    event["field_label"] = (
+        "Title and subtitle"
+        if type(record.get("subtitle_companion")) is dict
+        else destination_label(destination)
+    )
     event["change"] = change.compact
     event["change_detail"] = change.sentence
     event["evidence"] = facts

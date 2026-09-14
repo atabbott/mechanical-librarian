@@ -37,7 +37,9 @@ SERIES_DESTINATION = "series"
 # media. A narrator cast joined it with F47, which earned audiobook write
 # authority and extended ADR-0039's ebook envelope to book media (ADR-0071,
 # #968).
-SUPPORTED_DESTINATIONS = SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION}
+SUPPORTED_DESTINATIONS = (
+    SCALAR_DESTINATIONS | LIST_DESTINATIONS | {SERIES_DESTINATION, "explicit"}
+)
 TERMINAL_STATES = frozenset({"verified", "stale", "superseded", "abandoned"})
 FIELD_EFFECT_FAILURES = frozenset(
     {
@@ -126,6 +128,10 @@ def validate_effect_value(destination: str, value: object) -> object:
     """Validate and normalize the closed fake-service book-media value vocabulary."""
     if destination not in SUPPORTED_DESTINATIONS:
         raise FieldEffectError("unsupported_destination")
+    if destination == "explicit":
+        if type(value) is not bool:
+            raise FieldEffectError("invalid_value")
+        return value
     if destination in LIST_DESTINATIONS:
         if type(value) is not list or not 1 <= len(value) <= 128:
             raise FieldEffectError("invalid_value")
@@ -163,7 +169,9 @@ def validate_effect_value(destination: str, value: object) -> object:
 def decision_value_kind(destination: str) -> str:
     """Name the envelope shape one destination's decided value is carried in."""
     return (
-        "list"
+        "boolean"
+        if destination == "explicit"
+        else "list"
         if destination in LIST_DESTINATIONS
         else "series"
         if destination == SERIES_DESTINATION
@@ -406,6 +414,54 @@ class EffectConsent:
 
 
 @dataclass(frozen=True, slots=True)
+class SubtitleCompanion:
+    bundle_id: str
+    pre_value: object
+    desired_value: str
+    target_version: str
+    dependency_digests: tuple[str, ...]
+    authority: EffectAuthority
+    consent: EffectConsent
+    capability_digest: str
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "bundle_id": self.bundle_id,
+            "pre_value": self.pre_value,
+            "desired_value": self.desired_value,
+            "target_version": self.target_version,
+            "dependency_digests": list(self.dependency_digests),
+            "authority": authority_to_data(self.authority),
+            "consent": self.consent.to_data(),
+            "capability_digest": self.capability_digest,
+        }
+
+    @classmethod
+    def from_data(cls, raw: object) -> Self:
+        if type(raw) is not dict or set(raw) != {
+            "bundle_id",
+            "pre_value",
+            "desired_value",
+            "target_version",
+            "dependency_digests",
+            "authority",
+            "consent",
+            "capability_digest",
+        }:
+            raise FieldEffectError("invalid_plan")
+        return cls(
+            raw["bundle_id"],
+            raw["pre_value"],
+            raw["desired_value"],
+            raw["target_version"],
+            tuple(raw["dependency_digests"]),
+            EffectAuthority(**raw["authority"]),
+            EffectConsent.from_data(raw["consent"]),
+            raw["capability_digest"],
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class FieldEffectPlan:
     plan_id: str
     connection: str
@@ -422,6 +478,7 @@ class FieldEffectPlan:
     capability_digest: str
     idempotency_key: str
     created_at: int
+    subtitle_companion: SubtitleCompanion | None = None
 
     @classmethod
     def create(
@@ -440,6 +497,7 @@ class FieldEffectPlan:
         consent: EffectConsent,
         capability_digest: str,
         created_at: int,
+        subtitle_companion: SubtitleCompanion | None = None,
     ) -> Self:
         for value in (connection, library):
             if type(value) is not str or _IDENTITY.fullmatch(value) is None:
@@ -470,6 +528,39 @@ class FieldEffectPlan:
             or any(_HEX.fullmatch(v) is None for v in dependency_digests)
         ):
             raise FieldEffectError("invalid_dependency")
+        if subtitle_companion is not None:
+            companion = subtitle_companion
+            if (
+                type(companion) is not SubtitleCompanion
+                or destination != "title"
+                or authority.origin != "automatic_policy"
+                or companion.authority.origin != "automatic_policy"
+                or authority.source != "persisted_review_case"
+                or companion.authority.source != authority.source
+                or companion.authority.review_case_id != authority.review_case_id
+                or companion.authority.target_fingerprint != target_fingerprint
+                or companion.authority.decision_id == authority.decision_id
+                or type(companion.bundle_id) is not str
+                or re.fullmatch(r"automatic_bundle_[0-9a-f]{64}", companion.bundle_id)
+                is None
+            ):
+                raise FieldEffectError("invalid_binding")
+            # Validate the fixed companion through the ordinary scalar vocabulary.
+            cls.create(
+                connection=connection,
+                library=library,
+                work_id=work_id,
+                destination="subtitle",
+                pre_value=companion.pre_value,
+                desired_value=companion.desired_value,
+                target_fingerprint=target_fingerprint,
+                target_version=companion.target_version,
+                dependency_digests=companion.dependency_digests,
+                authority=companion.authority,
+                consent=companion.consent,
+                capability_digest=companion.capability_digest,
+                created_at=created_at,
+            )
         core = {
             "authority": authority_to_data(authority),
             "capability_digest": capability_digest,
@@ -484,6 +575,8 @@ class FieldEffectPlan:
             "work_id": work_id,
             "consent": consent.to_data(),
         }
+        if subtitle_companion is not None:
+            core["subtitle_companion"] = subtitle_companion.to_data()
         if len(canonical_json(core).encode()) > 120_000:
             raise FieldEffectError("plan_too_large")
         identity = _digest(core)
@@ -503,11 +596,40 @@ class FieldEffectPlan:
             capability_digest,
             "effect_" + identity,
             created_at,
+            subtitle_companion,
+        )
+
+    def subtitle_plan(self) -> FieldEffectPlan | None:
+        """Transient scalar view for existing field-local guards; never scheduled."""
+        companion = self.subtitle_companion
+        if companion is None:
+            return None
+        return FieldEffectPlan.create(
+            connection=self.connection,
+            library=self.library,
+            work_id=self.work_id,
+            destination="subtitle",
+            pre_value=companion.pre_value,
+            desired_value=companion.desired_value,
+            target_fingerprint=self.target_fingerprint,
+            target_version=companion.target_version,
+            dependency_digests=companion.dependency_digests,
+            authority=companion.authority,
+            consent=companion.consent,
+            capability_digest=companion.capability_digest,
+            created_at=self.created_at,
         )
 
     def to_data(self) -> dict[str, object]:
         return {
-            "schema_version": "field-effect-plan-v1",
+            **(
+                {"subtitle_companion": self.subtitle_companion.to_data()}
+                if self.subtitle_companion is not None
+                else {}
+            ),
+            "schema_version": "field-effect-title-subtitle-plan-v1"
+            if self.subtitle_companion is not None
+            else "field-effect-plan-v1",
             "plan_id": self.plan_id,
             "connection": self.connection,
             "library": self.library,
@@ -549,10 +671,21 @@ class FieldEffectPlan:
                 "target_version",
                 "work_id",
             }
+            paired = (
+                type(raw) is dict
+                and raw.get("schema_version") == "field-effect-title-subtitle-plan-v1"
+            )
+            if paired:
+                keys.add("subtitle_companion")
             if (
                 type(raw) is not dict
                 or set(raw) != keys
-                or raw.get("schema_version") != "field-effect-plan-v1"
+                or raw.get("schema_version")
+                != (
+                    "field-effect-title-subtitle-plan-v1"
+                    if paired
+                    else "field-effect-plan-v1"
+                )
             ):
                 raise FieldEffectError("invalid_plan")
             authority_raw = raw["authority"]
@@ -594,6 +727,11 @@ class FieldEffectPlan:
                 consent=consent,
                 capability_digest=raw["capability_digest"],
                 created_at=raw["created_at"],
+                subtitle_companion=SubtitleCompanion.from_data(
+                    raw["subtitle_companion"]
+                )
+                if paired
+                else None,
             )
             if (
                 value.plan_id != raw["plan_id"]

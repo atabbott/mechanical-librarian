@@ -306,6 +306,9 @@ class HardcoverMetadataProvider:
                     lane.title,
                     lane.authors,
                     lane.matched_family,
+                    audio=plan.audio,
+                    work_title=plan.work_title,
+                    work_authors=plan.work_authors,
                 )
                 attempts_before = len(self._attempt_records)
                 incomplete_causes_before = len(self._incomplete_causes)
@@ -396,6 +399,10 @@ class HardcoverMetadataProvider:
                     deadline=deadline,
                     _shaped=work_query,
                 )
+                if lookup.audio is not None:
+                    # The bounded book set is the complete work-only response;
+                    # neither overflow nor dissent authorizes a narrowing retry.
+                    return last
                 if last.status is ProviderStatus.CANDIDATES:
                     return last
                 if last.status is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED:
@@ -525,7 +532,14 @@ class HardcoverMetadataProvider:
             if _has_graphql_errors(payload):
                 self._mark_response_attempt("provider_declared_error")
                 return result(ProviderStatus.UNAVAILABLE)
-            overflow = _parse_edition_enrichment_overflow(payload, self._name)
+            work_only = (
+                lookup.kind is ProviderQueryKind.WORK and lookup.audio is not None
+            )
+            overflow = (
+                None
+                if work_only
+                else _parse_edition_enrichment_overflow(payload, self._name)
+            )
             if overflow is not None:
                 self._mark_response_attempt("response_oversized")
                 return result(
@@ -533,7 +547,11 @@ class HardcoverMetadataProvider:
                     edition_enrichment_overflow=overflow,
                 )
             candidates = _parse_candidates(
-                payload, self._name, local_claims, self._optional_rejections
+                payload,
+                self._name,
+                local_claims,
+                self._optional_rejections,
+                work_only=work_only,
             )
             self._reject_schema_members(_optional_projection_rejections(payload))
             if (
@@ -1088,6 +1106,8 @@ def _parse_candidates(
     provider: str,
     local_claims: tuple[LocalClaim, ...],
     rejected: _OptionalRejections | None = None,
+    *,
+    work_only: bool = False,
 ) -> tuple[ProviderCandidate, ...]:
     rejected = rejected or _OptionalRejections()
     source = json.loads(
@@ -1101,7 +1121,7 @@ def _parse_candidates(
     rows, books, tags = data["editions"], data["books"], data["tags"]
     if type(rows) is not list or type(books) is not list:
         raise ValueError("provider rows invalid")
-    if len(rows) > MAX_CANDIDATES or len(books) > MAX_CANDIDATES:
+    if len(rows) > MAX_CANDIDATES + int(work_only) or len(books) > MAX_CANDIDATES:
         raise _CandidateLimit
     work_keys = {
         "id",
@@ -1201,6 +1221,7 @@ def _parse_candidates(
     candidates: list[ProviderCandidate] = []
     used: set[int] = set()
     diagnosed_works: set[int] = set()
+    edition_ids: set[int] = set()
     for row_value in rows:
         if type(row_value) is dict and "image" not in row_value:
             row_value = {**row_value, "image": None}
@@ -1242,7 +1263,12 @@ def _parse_candidates(
         edition_id, book_id = _identifier(row["id"]), _identifier(row["book_id"])
         if book_id not in indexed:
             raise ValueError("provider unreferenced work")
+        if edition_id in edition_ids:
+            raise ValueError("provider edition identity duplicated")
+        edition_ids.add(edition_id)
         used.add(book_id)
+        if work_only:
+            continue
         _cover_url(row["image"], rejected)
         publisher = _optional_mapping(row["publisher"])
         if publisher is not None and publisher.get("parent_id") is not None:
@@ -1297,7 +1323,38 @@ def _parse_candidates(
                 provider,
             )
         )
-    if used != set(indexed) or len(
+    if work_only:
+        for book_id, book in sorted(indexed.items()):
+            identity = f"hardcover-work-{book_id:010d}"
+            bindings: list[ProviderIdentityBinding] = []
+            claims = _work_claims(
+                provider, identity, book, local_claims, 0, rejected, bindings
+            )
+            candidates.append(
+                finalize_candidate_comparisons(
+                    ProviderCandidate(
+                        identity,
+                        identity,
+                        tuple(claims),
+                        _work_evidence(book),
+                        tuple(
+                            sorted(
+                                bindings,
+                                key=lambda b: (
+                                    b.scope.value,
+                                    b.role or "",
+                                    b.source_ordinal,
+                                    b.identity,
+                                    b.claim_reference,
+                                ),
+                            )
+                        ),
+                    ),
+                    local_claims,
+                    provider,
+                )
+            )
+    if (not work_only and used != set(indexed)) or len(
         {candidate.identity for candidate in candidates}
     ) != len(candidates):
         raise ValueError("provider join invalid")

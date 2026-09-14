@@ -47,6 +47,10 @@ def values_match(
     candidate: object,
 ) -> bool:
     """Compare admitted target values with the evaluator's field semantics."""
+    if destination is TargetDestination.EXPLICIT:
+        return (
+            type(current) is bool and type(candidate) is bool and current == candidate
+        )
     if destination is TargetDestination.SERIES:
         current_series = _series_values(current)
         candidate_series = _series_values(candidate)

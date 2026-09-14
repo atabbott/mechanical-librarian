@@ -144,7 +144,9 @@ def carries_markup(value: object) -> bool:
 UNPROJECTABLE_DESCRIPTION = object()
 
 
-def projected_description(*values: object) -> tuple[object, bool]:
+def projected_description(
+    *values: object, strict_primary: bool = False
+) -> tuple[object, bool]:
     """Project the first stated description, and say whether it was rendered.
 
     The returned value is what an adapter hands its own field projection: a
@@ -154,7 +156,13 @@ def projected_description(*values: object) -> tuple[object, bool]:
     which is exactly when a candidate should record the transformation.
     """
     for value in values:
+        if strict_primary and (
+            value is None or type(value) is str and not value.strip()
+        ):
+            continue
         if type(value) is not str:
+            if strict_primary:
+                return UNPROJECTABLE_DESCRIPTION, False
             continue
         if not carries_markup(value):
             return value, False

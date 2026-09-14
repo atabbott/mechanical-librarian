@@ -36,6 +36,7 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderCandidate,
     ProviderChapterStructure,
     ProviderClaim,
+    ProviderEvidenceKind,
     duration_milliseconds,
 )
 
@@ -430,21 +431,122 @@ def complete_chapter_runtime_agreement(
     local = local_chapter_durations_seconds(audio)
     durations = provider.durations_seconds
     if (
-        len(local) != len(durations)
+        not audio.tracks
         or provider.chapter_count != len(durations)
         or len(local) < STRONG_CHAPTER_AGREEMENT_MINIMUM
         or any(value <= 0 for value in (*local, *durations))
         or len(set(local)) == 1
         or len(set(durations)) == 1
         or not 0 <= provider.runtime_seconds - sum(durations) <= len(durations)
-        or runtime_agreement(local_seconds, provider.runtime_seconds).outcome
-        is not CorroborationOutcome.CORROBORATED
     ):
         return False
-    return all(
-        abs(one - other) <= CHAPTER_DURATION_TOLERANCE_SECONDS
-        for one, other in zip(local, durations, strict=True)
-    )
+    if (
+        len(local) == len(durations)
+        and runtime_agreement(local_seconds, provider.runtime_seconds).outcome
+        is CorroborationOutcome.CORROBORATED
+        and all(
+            abs(one - other) <= CHAPTER_DURATION_TOLERANCE_SECONDS
+            for one, other in zip(local, durations, strict=True)
+        )
+    ):
+        return True
+    return _bounded_endpoint_chapter_alignment(local, durations)
+
+
+def _bounded_endpoint_chapter_alignment(
+    local: tuple[int, ...], provider: tuple[int, ...]
+) -> bool:
+    """Prove one preferred bounded correspondence without an interior edit."""
+    mappings: list[
+        tuple[tuple[int, int], tuple[tuple[tuple[int, ...], tuple[int, ...]], ...]]
+    ] = []
+    for left_start in (0, 1):
+        for left_end in (0, 1):
+            for right_start in (0, 1):
+                for right_end in (0, 1):
+                    if (
+                        sum(local[:left_start])
+                        + (sum(local[-left_end:]) if left_end else 0)
+                        > 600
+                        or sum(provider[:right_start])
+                        + (sum(provider[-right_end:]) if right_end else 0)
+                        > 600
+                    ):
+                        continue
+                    left: tuple[tuple[int, ...], ...] = tuple(
+                        (i,) for i in range(left_start, len(local) - left_end)
+                    )
+                    right: tuple[tuple[int, ...], ...] = tuple(
+                        (i,) for i in range(right_start, len(provider) - right_end)
+                    )
+                    for merge in (
+                        None,
+                        "left_start",
+                        "left_end",
+                        "right_start",
+                        "right_end",
+                    ):
+                        if merge is not None and (
+                            (merge.endswith("start") and (left_start or right_start))
+                            or (merge.endswith("end") and (left_end or right_end))
+                        ):
+                            continue
+                        one, other = left, right
+                        if merge is not None:
+                            groups = one if merge.startswith("left") else other
+                            if len(groups) < 2:
+                                continue
+                            groups = (
+                                (groups[0] + groups[1], *groups[2:])
+                                if merge.endswith("start")
+                                else (*groups[:-2], groups[-2] + groups[-1])
+                            )
+                            if merge.startswith("left"):
+                                one = groups
+                            else:
+                                other = groups
+                        if len(one) != len(other) or len(one) < 7:
+                            continue
+                        pairs = tuple(zip(one, other, strict=True))
+                        interior = pairs[1:-1]
+                        if len(interior) < 5 or any(
+                            len(a) != 1
+                            or len(b) != 1
+                            or abs(local[a[0]] - provider[b[0]]) > 2
+                            for a, b in interior
+                        ):
+                            continue
+                        if (
+                            len({local[a[0]] for a, b in interior}) == 1
+                            or len({provider[b[0]] for a, b in interior}) == 1
+                        ):
+                            continue
+                        if any(
+                            len(a) == len(b) == 1
+                            and abs(local[a[0]] - provider[b[0]]) > 2
+                            for a, b in pairs
+                        ):
+                            continue
+                        if (
+                            abs(
+                                sum(local[i] for a, b in pairs for i in a)
+                                - sum(provider[i] for a, b in pairs for i in b)
+                            )
+                            > 90
+                        ):
+                            continue
+                        edits = (
+                            left_start
+                            + left_end
+                            + right_start
+                            + right_end
+                            + int(merge is not None)
+                        )
+                        mappings.append(((-len(interior), edits), pairs))
+    if not mappings:
+        return False
+    best = min(score for score, _ in mappings)
+    return len({pairs for score, pairs in mappings if score == best}) == 1
 
 
 def cover_hash_agreement(
@@ -659,3 +761,61 @@ __all__ = [
     "runtime_corroborated_candidate",
     "runtime_short_of_stated",
 ]
+
+
+def recording_runtime_veto(candidate: ProviderCandidate, coverage: int) -> bool:
+    """Reject retained malformed/conflicting statements before source selection."""
+    durations = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+    )
+    if not durations:
+        return False
+    if len(durations) != 1:
+        return True
+    duration = durations[0]
+    if duration.state is FieldState.ABSENT:
+        return False
+    seconds = candidate_runtime_seconds(candidate)
+    return (
+        duration.state is not FieldState.VALID
+        or seconds is None
+        or seconds <= 0
+        or runtime_agreement(coverage, seconds).outcome
+        is not CorroborationOutcome.CORROBORATED
+    )
+
+
+def candidate_recording_runtime_veto(
+    candidate: ProviderCandidate,
+    local_claims: tuple[LocalClaim, ...],
+    audio: AudioFacts | None,
+) -> bool:
+    """Reject runtime contradictions unless complete endpoints account for them."""
+    durations = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+    )
+    if not durations or len(durations) == 1 and durations[0].state is FieldState.ABSENT:
+        return False
+    if (
+        len(durations) != 1
+        or durations[0].state is not FieldState.VALID
+        or candidate_runtime_seconds(candidate) is None
+    ):
+        return True
+    coverage = local_claim_runtime_seconds(local_claims)
+    if coverage is None and audio is not None and audio.chapters:
+        coverage = (audio.chapters[-1].end_milliseconds + 500) // 1000
+    if coverage is None or not recording_runtime_veto(candidate, coverage):
+        return False
+    structures = tuple(
+        e.chapters
+        for e in candidate.evidence
+        if e.kind is ProviderEvidenceKind.CHAPTER_STRUCTURE
+    )
+    return not (
+        audio is not None
+        and len(structures) == 1
+        and structures[0] is not None
+        and not recording_runtime_veto(candidate, structures[0].runtime_seconds)
+        and complete_chapter_runtime_agreement(audio, local_claims, structures[0])
+    )

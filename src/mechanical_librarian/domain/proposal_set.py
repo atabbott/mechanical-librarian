@@ -11,6 +11,9 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Mapping, Self, cast
 
+from mechanical_librarian.domain.audiobook_corroboration import (
+    candidate_recording_runtime_veto,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSourceKind,
@@ -66,11 +69,14 @@ from mechanical_librarian.domain.metadata_report import (
     manifestation_publication_compatible,
     normalize_date_value,
     normalize_title,
+    provider_candidate_exact_work_identity_admission,
     provider_candidate_series_identity_matches,
     provider_candidate_set_exact_work_identity_admission,
     provider_candidate_set_work_identity_admission,
     provider_candidate_work_identity_contradiction,
     publication_date_is_voting,
+    recording_association_references,
+    recording_variant_conflict,
     target_work_identity_context,
 )
 from mechanical_librarian.domain.work_identity import (
@@ -83,13 +89,13 @@ from mechanical_librarian.domain.work_identity import (
 if TYPE_CHECKING:
     from mechanical_librarian.domain.cover_evidence import CoverArtifact
 
-PROPOSAL_SCHEMA = "proposal-set-v7"
+PROPOSAL_SCHEMA = "proposal-set-v8"
 # What the proposals in one set were formed for. F47 owns the writes, so this
 # is what tells a decision recorded against an audiobook apart from one that
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v26"
+POLICY_VERSION = "fixed-conservative-v27"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -216,6 +222,9 @@ _DESTINATION_DATE_SEMANTICS: dict[
                 (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.YEAR),
                 (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.MONTH),
                 (DateEvent.MANIFESTATION_PUBLICATION, DatePrecision.DAY),
+                (DateEvent.WORK_FIRST_PUBLICATION, DatePrecision.YEAR),
+                (DateEvent.WORK_FIRST_PUBLICATION, DatePrecision.MONTH),
+                (DateEvent.WORK_FIRST_PUBLICATION, DatePrecision.DAY),
             }
         )
         if destination is TargetDestination.PUBLISHED_DATE
@@ -254,6 +263,7 @@ SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON = "subtitle_segment_decorated_consen
 PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON = "provider_consensus_contributor_display"
 EVIDENCE_LED_TITLE_REASON = "isbn_creator_supported_title"
 VERIFIED_MANIFESTATION_ISBN_REASON = "verified_manifestation_isbn"
+RECORDING_ASSOCIATED_ISBN_REASON = "recording_associated_isbn"
 MANIFESTATION_ISBN_VERIFICATION_REQUIRED_REASON = "manifestation_verification_required"
 
 _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
@@ -265,6 +275,7 @@ _OUTCOME_REASON_SETS: dict[ProposalOutcome, frozenset[tuple[str, ...]]] = {
             ("explicit_author_corroborates_untyped_creator",),
             ("local_attested_subtitle",),
             (VERIFIED_MANIFESTATION_ISBN_REASON,),
+            (RECORDING_ASSOCIATED_ISBN_REASON,),
             *((reason,) for reason in PROVIDER_CONSENSUS_TITLE_REASONS),
             *((reason,) for reason in DECORATION_TIDY_TITLE_REASONS),
             (PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON,),
@@ -692,6 +703,13 @@ class ProposalResult:
         for alternative in self.alternatives:
             if alternative.date_event is None:
                 continue
+            if (alternative.scope, alternative.date_event) not in {
+                (ProposalScope.WORK, DateEvent.WORK_FIRST_PUBLICATION),
+                (ProposalScope.EDITION, DateEvent.MANIFESTATION_PUBLICATION),
+            }:
+                raise ProposalValueError(
+                    "proposal alternative date scope is incompatible"
+                )
             if (
                 alternative.value.kind is not ProposalValueKind.TEXT
                 or type(alternative.value.value) is not str
@@ -730,7 +748,11 @@ class ProposalResult:
                     and not (
                         (
                             self.destination is TargetDestination.ISBN
-                            and self.reasons == (VERIFIED_MANIFESTATION_ISBN_REASON,)
+                            and self.reasons
+                            in {
+                                (VERIFIED_MANIFESTATION_ISBN_REASON,),
+                                (RECORDING_ASSOCIATED_ISBN_REASON,),
+                            }
                         )
                         or (
                             self.destination is TargetDestination.TITLE
@@ -892,6 +914,20 @@ class ProposalSet:
             != len(self.bibliographic_combinations)
         ):
             raise ProposalValueError("proposal set is invalid")
+        publication_event = (
+            DateEvent.WORK_FIRST_PUBLICATION
+            if self.media_kind == "audiobook"
+            else DateEvent.MANIFESTATION_PUBLICATION
+        )
+        if any(
+            alternative.date_event is not publication_event
+            for result in self.results
+            if result.destination is TargetDestination.PUBLISHED_DATE
+            for alternative in result.alternatives
+        ):
+            raise ProposalValueError(
+                "proposal publication event is incompatible with media kind"
+            )
         alternatives = {
             result.destination: {
                 alternative.alternative_id for alternative in result.alternatives
@@ -1180,12 +1216,15 @@ def evaluate_report(
             destination is TargetDestination.SUBTITLE
             and result.outcome is ProposalOutcome.UNRESOLVED_CHOICE
             and result.reasons == ("competing_evidence",)
-            and targets[destination].state
-            in {
-                TargetFieldState.MISSING,
-                TargetFieldState.NULL,
-                TargetFieldState.EMPTY,
-            }
+            and (
+                report.audio is not None
+                or targets[destination].state
+                in {
+                    TargetFieldState.MISSING,
+                    TargetFieldState.NULL,
+                    TargetFieldState.EMPTY,
+                }
+            )
             and (elected := _segment_corroborated_subtitle(report, result.alternatives))
             != (None, None)
         ):
@@ -1212,12 +1251,15 @@ def evaluate_report(
                 or result.outcome is ProposalOutcome.INELIGIBLE
                 and result.reasons == ("no_supported_evidence",)
             )
-            and targets[destination].state
-            in {
-                TargetFieldState.MISSING,
-                TargetFieldState.NULL,
-                TargetFieldState.EMPTY,
-            }
+            and (
+                report.audio is not None
+                or targets[destination].state
+                in {
+                    TargetFieldState.MISSING,
+                    TargetFieldState.NULL,
+                    TargetFieldState.EMPTY,
+                }
+            )
             and _has_uncorroborated_subtitle_segment(report, result.alternatives)
         ):
             result = ProposalResult(
@@ -1232,12 +1274,15 @@ def evaluate_report(
             )
         if (
             destination is TargetDestination.ISBN
-            and targets[destination].state
-            in {
-                TargetFieldState.MISSING,
-                TargetFieldState.NULL,
-                TargetFieldState.EMPTY,
-            }
+            and (
+                report.audio is not None
+                or targets[destination].state
+                in {
+                    TargetFieldState.MISSING,
+                    TargetFieldState.NULL,
+                    TargetFieldState.EMPTY,
+                }
+            )
             and result.alternatives
         ):
             result = _verified_manifestation_isbn_election(report, result)
@@ -1320,7 +1365,30 @@ def _observations(
     destination: TargetDestination,
 ) -> tuple[_Observed, ...]:
     if destination is TargetDestination.EXPLICIT:
-        return ()
+        return tuple(
+            _Observed(
+                ProposalValue(ProposalValueKind.BOOLEAN, claim.value == "true"),
+                (claim.reference,),
+                _provider_correlation(provider),
+                ProposalScope.EDITION,
+                _provider_representation(provider, candidate),
+            )
+            for provider in report.providers
+            for candidate in provider.candidates
+            if recording_association_references(
+                report.local_claims,
+                report.providers,
+                report.target,
+                report.audio,
+                provider.provider,
+                candidate,
+            )
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.ADULT_PRODUCT
+            and claim.scope is ClaimScope.EDITION
+            and claim.state is FieldState.VALID
+            and claim.value == "true"
+        )
     if destination in {
         TargetDestination.AUTHORS,
         TargetDestination.NARRATORS,
@@ -2246,8 +2314,79 @@ def provider_candidate_supports_complete_narrators(
     return bool(credits) and all(
         claim.state is FieldState.VALID
         and claim.role == "narrator"
+        and type(claim.value) is str
+        and canonical_text(TargetDestination.NARRATORS, claim.value)
+        not in {"full cast", "full-cast", "various narrators"}
         and claim.reference in evidence_references
         for claim in credits
+    )
+
+
+def _plausible_narrator_candidates(
+    report: MetadataReport, provider: ProviderObservation
+) -> tuple[ProviderCandidate, ...]:
+    """Retain each source-bound plausible recording, including lookup witnesses."""
+    context = target_work_identity_context(report.target)
+    if (
+        report.audio is None
+        or context is None
+        or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+    ):
+        return ()
+    members = {candidate.identity: candidate for candidate in provider.candidates}
+    members.update(
+        (candidate.identity, candidate)
+        for candidate in provider.recording_lookup_candidates
+    )
+    return tuple(
+        candidate
+        for candidate in members.values()
+        if recording_variant_conflict(
+            candidate, report.local_claims, report.target.current_title or ""
+        )
+        is None
+        and (
+            (
+                candidate in provider.candidates
+                and provider_candidate_represents_target_work(
+                    report, provider, candidate
+                )
+            )
+            or (
+                candidate in provider.recording_lookup_candidates
+                and provider_candidate_exact_work_identity_admission(
+                    candidate, *context, audiobook=True
+                ).admitted
+            )
+        )
+    )
+
+
+def narrator_candidate_set_agrees(
+    report: MetadataReport, evidence_references: tuple[str, ...]
+) -> bool:
+    """Recompute complete cast agreement over every plausible retained product."""
+    plausible = tuple(
+        candidate
+        for provider in report.providers
+        for candidate in _plausible_narrator_candidates(report, provider)
+    )
+    if len(plausible) < 2 or not all(
+        provider_candidate_supports_complete_narrators(candidate, evidence_references)
+        for candidate in plausible
+    ):
+        return False
+    casts = [
+        tuple(
+            claim.value
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.CONTRIBUTOR
+        )
+        for candidate in plausible
+    ]
+    return all(
+        values_match(TargetDestination.NARRATORS, casts[0], value)
+        for value in casts[1:]
     )
 
 
@@ -2268,6 +2407,10 @@ def _narrator_corroboration_guard(
         )
         for provider in report.providers
         for candidate in provider.candidates
+    ):
+        return result
+    if len(result.alternatives) == 1 and narrator_candidate_set_agrees(
+        report, result.alternatives[0].evidence_references
     ):
         return result
     if any(
@@ -2560,7 +2703,18 @@ def _list_observations(
                 )
             )
     for provider in report.providers:
-        for candidate in provider.candidates:
+        candidates = provider.candidates
+        if destination is TargetDestination.NARRATORS and report.audio is not None:
+            ordinary_ids = {candidate.identity for candidate in candidates}
+            candidates = (
+                *candidates,
+                *(
+                    candidate
+                    for candidate in _plausible_narrator_candidates(report, provider)
+                    if candidate.identity not in ordinary_ids
+                ),
+            )
+        for candidate in candidates:
             if destination is TargetDestination.AUTHORS and _mixed_author_creator_roles(
                 candidate
             ):
@@ -2875,6 +3029,7 @@ def _target_backed_lookup_contains(
                     candidate,
                     expected_title,
                     expected_authors,
+                    audiobook=report.audio is not None,
                 )
                 and lane.identity
                 == _discovery_lane_identity(
@@ -2915,6 +3070,8 @@ def _candidate_set_replays_work_qualification(
     candidate: ProviderCandidate,
     expected_title: str,
     expected_authors: tuple[str, ...],
+    *,
+    audiobook: bool = False,
 ) -> bool:
     """Replay one unambiguous WORK candidate set before granting authority."""
     candidates_by_identity = {value.identity: value for value in provider.candidates}
@@ -2931,6 +3088,7 @@ def _candidate_set_replays_work_qualification(
         expected_title,
         expected_authors,
         lane.dispatch_lineage,
+        audiobook=audiobook,
     )
     return (
         admission.admitted
@@ -2948,7 +3106,67 @@ def provider_candidate_represents_target_work(
     """Prove one retained candidate describes the target work through its lane."""
     if provider_candidate_represents_target_recording(report, provider, candidate):
         return True
+    if (
+        report.audio is not None
+        and provider in report.providers
+        and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and candidate in provider.candidates
+        and any(
+            claim.kind is ClaimKind.ASIN
+            and claim.state is FieldState.VALID
+            and claim.value is not None
+            and canonical_asin(claim.value) == claim.value
+            and any(
+                local.kind is ClaimKind.ASIN
+                and local.basis != "target_metadata"
+                and canonical_asin(local.canonical) == claim.value
+                for local in report.local_claims
+            )
+            for claim in candidate.claims
+        )
+    ):
+        return True
     context = target_work_identity_context(report.target)
+    if (
+        context is not None
+        and report.audio is not None
+        and provider in report.providers
+        and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+        and provider.status is ProviderStatus.CANDIDATES
+        and candidate in provider.candidates
+    ):
+        asins = tuple(
+            claim for claim in candidate.claims if claim.kind is ClaimKind.ASIN
+        )
+        if (
+            len(asins) == 1
+            and asins[0].state is FieldState.VALID
+            and asins[0].scope is ClaimScope.EDITION
+            and type(asins[0].value) is str
+            and canonical_asin(asins[0].value) == asins[0].value
+            and any(
+                lane.kind is ProviderQueryKind.ASIN
+                and lane.status is ProviderStatus.CANDIDATES
+                and any(
+                    member.edition_identity == candidate.identity
+                    and member.work_identity == candidate.work_identity
+                    for member in lane.candidates
+                )
+                and lane.identity
+                == _discovery_lane_identity(
+                    {
+                        "canonical_asin": asins[0].value,
+                        "input_references": list(lane.input_references),
+                        "kind": ProviderQueryKind.ASIN.value,
+                    }
+                )
+                for lane in provider.lanes
+            )
+            and provider_candidate_exact_work_identity_admission(
+                candidate, *context, audiobook=True
+            ).admitted
+        ):
+            return True
     if context is None or not _target_backed_lookup_contains(
         report, provider, candidate
     ):
@@ -2994,6 +3212,7 @@ def provider_candidate_represents_target_work(
                 lane_candidates,
                 expected_title,
                 expected_authors,
+                audiobook=report.audio is not None,
             )
             lineage_matches = True
         elif lane.kind is ProviderQueryKind.WORK:
@@ -3002,6 +3221,7 @@ def provider_candidate_represents_target_work(
                 expected_title,
                 expected_authors,
                 lane.dispatch_lineage,
+                audiobook=report.audio is not None,
             )
             lineage_matches = admission.transformation == lane.transformation_lineage
         else:
@@ -3029,6 +3249,28 @@ def provider_candidate_represents_target_recording(
     """
     return (
         report.audio is not None
+        and recording_variant_conflict(
+            candidate, report.local_claims, report.target.current_title or ""
+        )
+        is None
+        and not candidate_recording_runtime_veto(
+            candidate, report.local_claims, report.audio
+        )
+        and not any(
+            candidate_recording_runtime_veto(other, report.local_claims, report.audio)
+            and any(
+                claim.kind is ClaimKind.ASIN
+                and claim.state is FieldState.VALID
+                and any(
+                    value.kind is ClaimKind.ASIN and value.value == claim.value
+                    for value in candidate.claims
+                )
+                for claim in other.claims
+            )
+            for source in report.providers
+            if source.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+            for other in (*source.candidates, *source.recording_lookup_candidates)
+        )
         and provider in report.providers
         and provider.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
         and provider.status is ProviderStatus.CANDIDATES
@@ -3351,15 +3593,21 @@ def _series_from_claims(
 
 def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
     values: list[_Observed] = []
+    event = (
+        DateEvent.WORK_FIRST_PUBLICATION
+        if report.audio is not None
+        else DateEvent.MANIFESTATION_PUBLICATION
+    )
+    scope = ClaimScope.WORK if report.audio is not None else ClaimScope.EDITION
     work_context = target_work_identity_context(report.target)
     claim: LocalClaim | ProviderClaim
     for claim in report.local_claims:
         if (
             claim.kind is ClaimKind.PUBLICATION_DATE
-            and claim.scope is ClaimScope.EDITION
+            and claim.scope is scope
             and claim.state is FieldState.VALID
             and claim.canonical is not None
-            and claim.date_event is DateEvent.MANIFESTATION_PUBLICATION
+            and claim.date_event is event
             and type(claim.date_precision) is DatePrecision
         ):
             try:
@@ -3374,7 +3622,7 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                         ProposalValue(ProposalValueKind.TEXT, parsed),
                         (claim.reference,),
                         _local_correlation(report),
-                        ProposalScope.EDITION,
+                        _scope(scope),
                         _local_representation(claim.basis),
                         claim.date_event,
                         precision,
@@ -3383,7 +3631,8 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
     for provider in report.providers:
         for candidate in provider.candidates:
             if (
-                work_context is not None
+                report.audio is None
+                and work_context is not None
                 and not provider_candidate_represents_target_recording(
                     report, provider, candidate
                 )
@@ -3393,13 +3642,20 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                 is WorkIdentityContradiction.EXPLICIT
             ):
                 continue
+            if (
+                report.audio is not None
+                and not provider_candidate_represents_target_work(
+                    report, provider, candidate
+                )
+            ):
+                continue
             for claim in candidate.claims:
                 if (
                     claim.kind is ClaimKind.PUBLICATION_DATE
-                    and claim.scope is ClaimScope.EDITION
+                    and claim.scope is scope
                     and claim.state is FieldState.VALID
                     and claim.value is not None
-                    and claim.date_event is DateEvent.MANIFESTATION_PUBLICATION
+                    and claim.date_event is event
                     and type(claim.date_precision) is DatePrecision
                     and type(claim.date_lexical) is str
                     and publication_date_is_voting(
@@ -3411,7 +3667,7 @@ def _date_observations(report: MetadataReport) -> tuple[_Observed, ...]:
                             ProposalValue(ProposalValueKind.TEXT, claim.value),
                             (claim.reference,),
                             _provider_correlation(provider),
-                            ProposalScope.EDITION,
+                            _scope(scope),
                             _provider_representation(provider, candidate),
                             claim.date_event,
                             claim.date_precision,
@@ -3495,7 +3751,8 @@ def _publication_results(
     }
     dates = (
         publication_values
-        if any(
+        if report.audio is not None
+        or any(
             recording_date_references.intersection(value.references)
             for value in publication_values
         )
@@ -4187,7 +4444,8 @@ def _eligible_identifier_reference(
         return True
     return any(
         evidence.reference == reference
-        and evidence.relation is IdentifierRelation.ACCEPTED
+        and evidence.relation
+        in {IdentifierRelation.ACCEPTED, IdentifierRelation.RECORDING_ASSOCIATED}
         for evidence in report.identifier_evidence
     )
 
@@ -4263,6 +4521,20 @@ def _accepted_provider_manifestation_isbn_anchor(
 ) -> bool:
     """Require the elected provider ISBN claim's exact accepted evidence."""
     if (
+        report.audio is not None
+        and claim.kind is ClaimKind.ISBN
+        and claim.state is FieldState.VALID
+        and claim.applicability == "unknown"
+    ):
+        return any(
+            e.relation is IdentifierRelation.RECORDING_ASSOCIATED
+            and e.reference == claim.reference
+            and e.provider == provider.provider
+            and e.candidate_identity == candidate.identity
+            and e.work_identity == candidate.work_identity
+            for e in report.identifier_evidence
+        )
+    if (
         claim.kind is not ClaimKind.ISBN
         or claim.scope is not ClaimScope.EDITION
         or claim.state is not FieldState.VALID
@@ -4318,12 +4590,18 @@ def _verified_manifestation_isbn_election(
             qualified[family] = alternative
     if len(qualified) == 1:
         alternative = next(iter(qualified.values()))
+        if alternative.assessment is ProposalAssessment.PRESERVES_TARGET:
+            return result
         return ProposalResult(
             TargetDestination.ISBN,
             ProposalOutcome.PROPOSE_CHANGE,
             result.alternatives,
             alternative.alternative_id,
-            (VERIFIED_MANIFESTATION_ISBN_REASON,),
+            (
+                RECORDING_ASSOCIATED_ISBN_REASON
+                if report.audio is not None
+                else VERIFIED_MANIFESTATION_ISBN_REASON,
+            ),
             result.dependencies,
         )
     return ProposalResult(
@@ -4345,6 +4623,8 @@ def _eligible_description(destination: TargetDestination, value: str) -> bool:
 def ordinary_provider_description_source_is_safe(
     claim: ProviderClaim,
     candidate: ProviderCandidate,
+    *,
+    audiobook_work: bool = False,
 ) -> bool:
     """Recognize one exact ordinary provider description source."""
     return (
@@ -4361,10 +4641,13 @@ def ordinary_provider_description_source_is_safe(
             and evidence.scope is ClaimScope.WORK
             and not (
                 evidence.value == "html-visible-text-v1"
-                and any(
-                    binding.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
-                    and binding.scope is ClaimScope.EDITION
-                    for binding in candidate.evidence
+                and (
+                    audiobook_work
+                    or any(
+                        binding.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                        and binding.scope is ClaimScope.EDITION
+                        for binding in candidate.evidence
+                    )
                 )
             )
             for evidence in candidate.evidence

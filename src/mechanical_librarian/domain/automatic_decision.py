@@ -6,6 +6,10 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from mechanical_librarian.domain.shadow_outcome import ShadowFieldOutcome
 
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.contributor_display_qualification import (
@@ -17,6 +21,57 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
     F20_QUALIFICATION_CANDIDATE_SHA256,
 )
+
+
+def audiobook_title_preservation_bundle(source: ShadowFieldOutcome) -> str | None:
+    """Name only citation-backed audiobook title preservation, never a change."""
+    if (
+        source.destination != "title"
+        or source.policy_category != "title_layout"
+        or source.policy_option not in {
+            "preserve:audiobook_title_preserve",
+            "title_and_subtitle:audiobook_title_preserve",
+        }
+        or source.disposition != "keep_current"
+        or source.candidate_id is not None
+        or source.combination_ids
+        or not source.citation_ids
+        or source.reason_code != "unique_supported_preservation"
+    ):
+        return None
+    return "automatic_bundle_" + _digest({
+        "kind": "audiobook_title_preservation_v1",
+        "source_outcome_id": source.outcome_id,
+        "citation_ids": list(source.citation_ids),
+    })
+
+
+def audiobook_title_subtitle_bundle(members: tuple[ShadowFieldOutcome, ...]) -> str | None:
+    """Bind exactly two independently owned split outcomes to one joint envelope."""
+    ordered = tuple(sorted(members, key=lambda member: member.destination))
+    if len(ordered) != 2 or tuple(member.destination for member in ordered) != ("subtitle", "title"):
+        return None
+    subtitle, title = ordered
+    if (
+        audiobook_decision_qualification.F46_TITLE_SUBTITLE_PAIR_IDENTITY
+        not in audiobook_decision_qualification.F46_PASSING_PAIRED_OPTIONS
+        or subtitle.policy_category != "subtitle"
+        or subtitle.policy_option != "corroborated_split:audiobook_subtitle_fill"
+        or title.policy_category != "title_layout"
+        or title.policy_option != "title_and_subtitle:audiobook_title_replace"
+        or any(member.policy_destination != "automatic" or member.disposition != "candidate"
+               or member.candidate_id is None or not member.citation_ids for member in ordered)
+        or len(title.combination_ids) != 1
+        or title.combination_ids != subtitle.combination_ids
+    ):
+        return None
+    return "automatic_bundle_" + _digest({
+        "kind": "audiobook_title_subtitle_pair_v1",
+        "qualification": audiobook_decision_qualification.F46_TITLE_SUBTITLE_PAIR_IDENTITY,
+        "members": [{"outcome_id": member.outcome_id, "candidate_id": member.candidate_id,
+                     "citations": list(member.citation_ids), "combinations": list(member.combination_ids)}
+                    for member in ordered],
+    })
 
 
 class AutomaticDecisionError(ValueError):
@@ -55,6 +110,23 @@ QUALIFIED_POLICY_OPTIONS = (
     | F46_QUALIFIED_POLICY_OPTIONS
 )
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    (
+        'acdc9fea8299e27b919a8d09d459e2441bd80017a168f4f040b3bdc03794a6b5',
+        frozenset({
+            'contributor_names:canonical',
+            'contributor_names:preserve',
+            'date_precision:full_date',
+            'date_precision:year',
+            'language_rendering:display_name',
+            'language_rendering:preserve',
+            'publisher_preference:publisher',
+            'title:replace_target:decoration_tidy',
+            'title:replace_target:isbn_creator_supported',
+            'title:replace_target:provider_consensus_noise',
+            'title_layout:preserve',
+            'title_layout:title_and_subtitle',
+        }),
+    ),
     ("00d8aa094f1a1e18a89741a37af670636c913bff48ba8dd56eb0ed722cfb9889", F19A_QUALIFIED_POLICY_OPTIONS),
     ("32949b585f0be6460b5e82961fe73139eec36ca77b0db9a892f41c631ef0f495", F19A_QUALIFIED_POLICY_OPTIONS),
     ("df7d676444bbc74e168c30f1e7991184d61a32a2d235609554674b093bd6fd43", F19A_QUALIFIED_POLICY_OPTIONS),
@@ -109,6 +181,24 @@ _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
 })
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    (
+        '438144a3b3a91b6b253b7cd4b52a73c1ecb48ab201efe9426388233879022a2e',
+        frozenset({
+            'description_fill:safe_plain_text',
+            'genres:add',
+            'genres:fill_empty',
+            'genres:replace',
+            'isbn_form:prefer_isbn13',
+            'isbn_form:preserve_exact',
+            'series:all_qualified',
+            'series:primary_narrative',
+            'series:source_order',
+            'subtitle:fill_empty',
+            'tags:add',
+            'tags:fill_empty',
+            'tags:replace',
+        }),
+    ),
     ("c4411ecceb94ae86549e62c7d68a199af4ea42cd201cb17ce947e905a39c4e6e", F20_PASSING_AUTOMATIC_OPTIONS),
     ("1677b44ad6a8c2a8a53cba6cd821424b213e366f47e6d64e214225742338628c", F20_PASSING_AUTOMATIC_OPTIONS),
     ("bf8c9f29704e71ff96e820e7b973bca2a7ec13d5a5304e3474bfcf5e777ad676", F20_PASSING_AUTOMATIC_OPTIONS),
@@ -273,11 +363,58 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
     ),
 
 )
-# No audiobook record has been published, so no audiobook digest has ever been
-# current and none can be read back. Rotations land here exactly as the ebook
-# ones above do.
-_PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = ()
-
+# Retained published audiobook authority remains decodable, never current.
+_PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
+    (
+        'a1ddac16465b6f950fe345d1caf6a506bcafc0661a2f5b48381a1f59fdafa875',
+        frozenset({
+            'contributor_names:canonical:audiobook_authors_fill',
+            'contributor_names:canonical:audiobook_authors_replace',
+            'contributor_names:canonical:audiobook_narrators_add',
+            'contributor_names:canonical:audiobook_narrators_fill',
+            'contributor_names:canonical:audiobook_narrators_normalize',
+            'contributor_names:canonical:audiobook_narrators_preserve',
+            'contributor_names:canonical:audiobook_narrators_replace',
+            'contributor_names:preserve:audiobook_authors_fill',
+            'contributor_names:preserve:audiobook_authors_replace',
+            'genres:add:audiobook_genres_add',
+            'genres:add:audiobook_genres_fill',
+            'genres:add:audiobook_genres_preserve',
+            'genres:fill_empty:audiobook_genres_fill',
+            'genres:fill_empty:audiobook_genres_preserve',
+            'genres:replace:audiobook_genres_add',
+            'genres:replace:audiobook_genres_fill',
+            'genres:replace:audiobook_genres_normalize',
+            'genres:replace:audiobook_genres_preserve',
+            'genres:replace:audiobook_genres_replace',
+            'language_rendering:display_name:audiobook_language_fill',
+            'language_rendering:display_name:audiobook_language_normalize',
+            'language_rendering:display_name:audiobook_language_preserve',
+            'language_rendering:display_name:audiobook_language_replace',
+            'language_rendering:preserve:audiobook_language_fill',
+            'language_rendering:preserve:audiobook_language_normalize',
+            'language_rendering:preserve:audiobook_language_preserve',
+            'language_rendering:preserve:audiobook_language_replace',
+            'series:add_qualified:audiobook_series_add',
+            'series:add_qualified:audiobook_series_fill',
+            'series:add_qualified:audiobook_series_preserve',
+            'series:all_qualified:audiobook_series_fill',
+            'series:all_qualified:audiobook_series_preserve',
+            'series:primary_narrative:audiobook_series_fill',
+            'series:primary_narrative:audiobook_series_preserve',
+            'series:replace_qualified:audiobook_series_fill',
+            'series:replace_qualified:audiobook_series_normalize',
+            'series:replace_qualified:audiobook_series_preserve',
+            'series:replace_qualified:audiobook_series_replace',
+            'series:source_order:audiobook_series_fill',
+            'series:source_order:audiobook_series_preserve',
+            'title_layout:preserve:audiobook_title_fill',
+            'title_layout:preserve:audiobook_title_replace',
+            'title_layout:title_and_subtitle:audiobook_title_fill',
+            'title_layout:title_and_subtitle:audiobook_title_replace',
+        }),
+    ),
+)
 
 def automatic_safety_category(policy_category: str, policy_option: str) -> str:
     """Return the suspension lane for one immutable policy identity."""
@@ -487,7 +624,11 @@ class AutomaticDecision:
             )
             or (self.policy_category in {"title_layout", "date_precision"}
                 and (type(self.bundle_id) is not str or re.fullmatch(r"automatic_bundle_[0-9a-f]{64}", self.bundle_id) is None))
-            or (self.policy_category not in {"title_layout", "date_precision"} and self.bundle_id is not None)
+            or (self.policy_category not in {"title_layout", "date_precision"} and self.bundle_id is not None
+                and not (self.policy_category == "subtitle"
+                         and self.policy_option == "corroborated_split:audiobook_subtitle_fill"
+                         and type(self.bundle_id) is str
+                         and re.fullmatch(r"automatic_bundle_[0-9a-f]{64}", self.bundle_id) is not None))
         ):
             raise AutomaticDecisionError("invalid")
         if self.decision_id != "automatic_decision_" + _digest({**self._core(), "occurred_at": self.occurred_at}) or self.idempotency_digest != _digest(self._core()):

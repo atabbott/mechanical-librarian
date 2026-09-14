@@ -828,6 +828,16 @@ def _candidate(
         )
 
     add(ClaimKind.ASIN, asin)
+    adult = product.get("is_adult_product")
+    add(
+        ClaimKind.ADULT_PRODUCT,
+        ("true" if adult else "false")
+        if type(adult) is bool
+        else None
+        if adult is None
+        else _UNPROJECTABLE,
+    )
+
     add(ClaimKind.TITLE, product.get("title"))
     add(ClaimKind.SUBTITLE, product.get("subtitle"))
     authors = _names(product.get("authors"), schema_rejections)

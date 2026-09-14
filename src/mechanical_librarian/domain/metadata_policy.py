@@ -33,15 +33,15 @@ OPTION_CATALOGUE: Final[dict[str, tuple[str, ...]]] = {
     "language_rendering": ("preserve", "display_name"),
     "contributor_names": ("preserve", "canonical"),
     "publisher_preference": ("publisher", "imprint"),
-    "subtitle": ("fill_empty", "corroborated_split"),
+    "subtitle": ("fill_empty", "corroborated_split", "replace_descriptive"),
     "series": ("primary_narrative", "source_order", "all_qualified", "add_qualified", "replace_qualified"),
     "genres": ("fill_empty", "add", "replace"),
     "tags": ("off", "fill_empty", "add", "replace"),
     "description_fill": ("safe_plain_text", "google_visible_text", "replace_safe_plain_text"),
     "isbn_form": ("preserve_exact", "prefer_isbn13"),
-    "cover_order": ("fixed_source_order",),
+    "cover_order": ("fixed_source_order", "replace_if_strictly_better"),
     "asin": ("preserve_exact", "ebook_manifestation"),
-    "explicit": ("unsupported",),
+    "explicit": ("unsupported", "adult_product"),
 }
 
 DEFAULT_OPTIONS: Final = {
@@ -124,8 +124,6 @@ def _closed_destinations(value: object, *, sparse: bool) -> dict[str, str]:
     for field, destination in value.items():
         if type(field) is not str or type(destination) is not str or destination not in DESTINATIONS:
             raise MetadataPolicyError("policy destination is unavailable")
-        if field == "explicit" and destination != "unsupported":
-            raise MetadataPolicyError("explicit policy is unsupported")
         result[field] = destination
     return result
 
@@ -264,7 +262,7 @@ def resolve_policy(profile: MetadataPolicyProfile, library: object, override: ob
     destinations = dict(profile.destinations)
     options.update(raw_options)
     destinations.update(raw_destinations)
-    if destinations["explicit"] != "unsupported":
+    if destinations["explicit"] != "unsupported" and options["explicit"] == "unsupported":
         raise MetadataPolicyError("explicit policy is unsupported")
     return ResolvedMetadataPolicy(profile.policy_id, library, tuple(sorted(options.items())), tuple(sorted(destinations.items())))
 

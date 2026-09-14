@@ -13,6 +13,7 @@ from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
 )
 from mechanical_librarian.application.field_effects import (
+    AuthoritySnapshot,
     GuardedApplicationError,
     GuardedFieldApplication,
     TargetServiceUnavailable,
@@ -23,7 +24,10 @@ from mechanical_librarian.domain.automatic_decision import (
 )
 from mechanical_librarian.domain.field_effect import (
     SUPPORTED_DESTINATIONS,
+    EffectAuthority,
+    EffectConsent,
     FieldEffectError,
+    FieldEffectPlan,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
@@ -366,7 +370,7 @@ class _HoldRepository(_Repository):
 class _Authority:
     def resolve(self, decision):
         library = "beta" if decision.occurred_at == 101 else "alpha"
-        return SimpleNamespace(
+        return AuthoritySnapshot(
             connection="primary",
             library=library,
             work_id="work",
@@ -587,8 +591,35 @@ class _ConnectionUnavailableCapability:
 def test_guarded_suspension_commit_flushes_affected_cases_before_propagating(
     method_name, affected_review_case_ids, expected_announcements
 ) -> None:
-    plan = SimpleNamespace(
-        plan_id="plan", connection="primary", library="alpha", destination="title"
+    plan = FieldEffectPlan.create(
+        connection="primary",
+        library="alpha",
+        work_id="work",
+        destination="title",
+        pre_value="Before",
+        desired_value="After",
+        target_fingerprint="a" * 64,
+        target_version="v1",
+        dependency_digests=("a" * 64,),
+        authority=EffectAuthority(
+            decision_id="human_decision_" + "b" * 64,
+            review_case_id="review_case_" + "c" * 64,
+            target_fingerprint="a" * 64,
+            source="fake_service",
+            origin="human",
+            outcome="candidate",
+            policy_identity=None,
+            qualification_identity=None,
+        ),
+        consent=EffectConsent.create(
+            connection="primary",
+            library="alpha",
+            destination="title",
+            envelope_identity="d" * 64,
+            granted_at=0,
+        ),
+        capability_digest="e" * 64,
+        created_at=0,
     )
 
     class Repository:
@@ -1976,8 +2007,25 @@ def test_readiness_is_exactly_field_bounded_and_connection_fail_closed(
     )
     readiness = service._capability_readiness(("alpha",), force=True)[0]
     assert readiness["state"] == state
-    # The fifteenth is narrators, which joined the envelope with F47 (#968).
-    assert len(readiness["destinations"]) == 15
+    # Explicit adds exact boolean support; readiness discloses all sixteen fields.
+    assert {item["destination"] for item in readiness["destinations"]} == {
+        "title",
+        "subtitle",
+        "authors",
+        "series",
+        "genres",
+        "publishedYear",
+        "publishedDate",
+        "publisher",
+        "description",
+        "isbn",
+        "asin",
+        "language",
+        "narrators",
+        "tags",
+        "cover",
+        "explicit",
+    }
     assert "narrators" in {value["destination"] for value in readiness["destinations"]}
     assert {value["destination"] for value in readiness["destinations"]} == set(
         SUPPORTED_DESTINATIONS

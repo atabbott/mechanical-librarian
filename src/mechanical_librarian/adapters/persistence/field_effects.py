@@ -131,7 +131,17 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     decision.destination, source["decision_value"]
                 )
             )
-            if not values_match(
+            explicit_absence_preservation = (
+                type(decision) is AutomaticDecision
+                and decision.destination == "explicit"
+                and decision.policy_category == "explicit"
+                and decision.policy_option
+                == "adult_product:audiobook_explicit_preserve"
+                and decision.outcome == "keep_current"
+                and source["pre_value"] is None
+                and source["decision_value"] is None
+            )
+            if not explicit_absence_preservation and not values_match(
                 TargetDestination(decision.destination), source["pre_value"], desired
             ):
                 transaction.commit()
@@ -889,67 +899,100 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                     return operation
                 transaction.commit()
                 return persisted
-            authority_document = canonical_effect_json(
-                {
-                    "authority": operation.plan.to_data()["authority"],
-                    "current": True,
-                    "schema_version": "field-effect-authority-state-v1",
-                    "updated_at": operation.updated_at,
-                }
-            )
-            authority_existing = self._connection.execute(
-                "SELECT document FROM field_effect_authorities WHERE decision_id=?",
-                (operation.plan.authority.decision_id,),
-            ).fetchone()
-            if authority_existing is None:
-                self._connection.execute(
-                    "INSERT INTO field_effect_authorities(decision_id,current,updated_at,document) VALUES(?,1,?,?)",
-                    (
-                        operation.plan.authority.decision_id,
-                        operation.updated_at,
-                        authority_document,
-                    ),
+            for member in (operation.plan, operation.plan.subtitle_plan()):
+                if member is None:
+                    continue
+                if operation.plan.subtitle_companion is not None:
+                    row = self._connection.execute(
+                        "SELECT document FROM automatic_decisions WHERE decision_id=?",
+                        (member.authority.decision_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or self._connection.execute(
+                            "SELECT 1 FROM field_effect_manual_holds WHERE review_case_id=? AND destination IN ('title','subtitle') AND active=1",
+                            (member.authority.review_case_id,),
+                        ).fetchone()
+                        is not None
+                    ):
+                        raise FieldEffectError("authority_binding")
+                    source = self.field_effect_authority_source(
+                        AutomaticDecision.from_json(row[0])
+                    )
+                    if (
+                        source["paired_bundle_id"]
+                        != operation.plan.subtitle_companion.bundle_id
+                        or source["pre_value"] != member.pre_value
+                        or project_decision_value(
+                            member.destination, source["decision_value"]
+                        )
+                        != member.desired_value
+                        or source["target_version"] != member.target_version
+                        or cast(tuple[str, ...], source["dependency_digests"])
+                        != member.dependency_digests
+                    ):
+                        raise FieldEffectError("authority_binding")
+                authority_document = canonical_effect_json(
+                    {
+                        "authority": member.to_data()["authority"],
+                        "current": True,
+                        "schema_version": "field-effect-authority-state-v1",
+                        "updated_at": operation.updated_at,
+                    }
                 )
-            else:
-                persisted_authority = json.loads(authority_existing[0])
-                if (
-                    persisted_authority.get("authority")
-                    != operation.plan.to_data()["authority"]
-                ):
-                    raise FieldEffectError("authority_conflict")
-                if persisted_authority.get("current") is not True:
+                authority_existing = self._connection.execute(
+                    "SELECT document FROM field_effect_authorities WHERE decision_id=?",
+                    (member.authority.decision_id,),
+                ).fetchone()
+                if authority_existing is None:
                     self._connection.execute(
-                        "UPDATE field_effect_authorities SET current=1,updated_at=?,document=? "
-                        "WHERE decision_id=?",
+                        "INSERT INTO field_effect_authorities(decision_id,current,updated_at,document) VALUES(?,1,?,?)",
                         (
+                            member.authority.decision_id,
                             operation.updated_at,
                             authority_document,
-                            operation.plan.authority.decision_id,
                         ),
                     )
-            consent_document = canonical_effect_json(
-                {
-                    "consent": operation.plan.consent.to_data(),
-                    "current": True,
-                    "schema_version": "field-effect-consent-state-v1",
-                    "updated_at": operation.plan.consent.granted_at,
-                }
-            )
-            consent_existing = self._connection.execute(
-                "SELECT document FROM field_effect_consents WHERE consent_id=?",
-                (operation.plan.consent.consent_id,),
-            ).fetchone()
-            if consent_existing is None:
-                self._connection.execute(
-                    "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) VALUES(?,1,?,?)",
-                    (
-                        operation.plan.consent.consent_id,
-                        operation.plan.consent.granted_at,
-                        consent_document,
-                    ),
+                else:
+                    persisted_authority = json.loads(authority_existing[0])
+                    if (
+                        persisted_authority.get("authority")
+                        != member.to_data()["authority"]
+                    ):
+                        raise FieldEffectError("authority_conflict")
+                    if persisted_authority.get("current") is not True:
+                        self._connection.execute(
+                            "UPDATE field_effect_authorities SET current=1,updated_at=?,document=? "
+                            "WHERE decision_id=?",
+                            (
+                                operation.updated_at,
+                                authority_document,
+                                member.authority.decision_id,
+                            ),
+                        )
+                consent_document = canonical_effect_json(
+                    {
+                        "consent": member.consent.to_data(),
+                        "current": True,
+                        "schema_version": "field-effect-consent-state-v1",
+                        "updated_at": member.consent.granted_at,
+                    }
                 )
-            elif consent_existing[0] != consent_document:
-                raise FieldEffectError("consent_conflict")
+                consent_existing = self._connection.execute(
+                    "SELECT document FROM field_effect_consents WHERE consent_id=?",
+                    (member.consent.consent_id,),
+                ).fetchone()
+                if consent_existing is None:
+                    self._connection.execute(
+                        "INSERT INTO field_effect_consents(consent_id,current,updated_at,document) VALUES(?,1,?,?)",
+                        (
+                            member.consent.consent_id,
+                            member.consent.granted_at,
+                            consent_document,
+                        ),
+                    )
+                elif consent_existing[0] != consent_document:
+                    raise FieldEffectError("consent_conflict")
             self._connection.execute(
                 "INSERT INTO field_effects(plan_id,decision_id,connection_name,library_name,work_id,destination,state,attempt,updated_at,document) "
                 "VALUES(?,?,?,?,?,?,?,?,?,?)",
@@ -1014,6 +1057,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "sequence",
                 "state",
             }
+            if operation.plan.subtitle_companion is not None:
+                event_keys.add("subtitle_companion")
             for expected_sequence, (
                 event_id,
                 sequence,
@@ -1025,7 +1070,18 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 if (
                     type(raw) is not dict
                     or set(raw) != event_keys
-                    or raw["schema_version"] != "field-effect-event-v1"
+                    or raw["schema_version"]
+                    != (
+                        "field-effect-title-subtitle-event-v1"
+                        if operation.plan.subtitle_companion is not None
+                        else "field-effect-event-v1"
+                    )
+                    or raw.get("subtitle_companion")
+                    != (
+                        operation.plan.subtitle_companion.to_data()
+                        if operation.plan.subtitle_companion is not None
+                        else None
+                    )
                     or type(raw["sequence"]) is not int
                     or raw["sequence"] < 1
                     or type(raw["attempt"]) is not int
@@ -1289,8 +1345,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 (changed_at, canonical_effect_json(raw), decision_id),
             )
         rows = self._connection.execute(
-            "SELECT document,state FROM field_effects WHERE decision_id=? AND state IN ('planned','retryable')",
-            (decision_id,),
+            "SELECT document,state FROM field_effects WHERE (decision_id=? OR json_extract(document,'$.plan.subtitle_companion.authority.decision_id')=?) AND state IN ('planned','retryable')",
+            (decision_id, decision_id),
         ).fetchall()
         for document, state in rows:
             operation = FieldEffectOperation.from_json(document).transition(
@@ -1319,8 +1375,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 (changed_at, canonical_effect_json(raw), consent_id),
             )
             rows = self._connection.execute(
-                "SELECT document,state FROM field_effects WHERE json_extract(document,'$.plan.consent.consent_id')=? AND state IN ('planned','retryable')",
-                (consent_id,),
+                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN ('planned','retryable')",
+                (consent_id, consent_id),
             ).fetchall()
             for document, state in rows:
                 operation = FieldEffectOperation.from_json(document).transition(
@@ -1677,6 +1733,9 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             "kind": kind,
             "sequence": sequence,
         }
+        if operation.plan.subtitle_companion is not None:
+            content["schema_version"] = "field-effect-title-subtitle-event-v1"
+            content["subtitle_companion"] = operation.plan.subtitle_companion.to_data()
         event_id = (
             "effect_event_"
             + hashlib.sha256(canonical_effect_json(content).encode()).hexdigest()

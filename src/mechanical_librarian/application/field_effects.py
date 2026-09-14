@@ -20,6 +20,7 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectError,
     FieldEffectOperation,
     FieldEffectPlan,
+    SubtitleCompanion,
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
@@ -55,6 +56,21 @@ class TargetServiceUnavailable(RuntimeError):
 class TargetObservation:
     value: object
     version: str
+    subtitle_companion: TargetObservation | None = None
+
+    def matches(
+        self, plan: FieldEffectPlan, *, desired: bool, check_version: bool = False
+    ) -> bool:
+        if self.value != (plan.desired_value if desired else plan.pre_value):
+            return False
+        if check_version and self.version != plan.target_version:
+            return False
+        companion = plan.subtitle_plan()
+        if companion is None:
+            return self.subtitle_companion is None
+        return self.subtitle_companion is not None and self.subtitle_companion.matches(
+            companion, desired=desired, check_version=check_version
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,6 +115,8 @@ class AuthoritySnapshot:
     source: Literal["persisted_review_case", "fake_service"]
     pre_value: object = None
     dependency_digests: tuple[str, ...] = ()
+    paired_bundle_id: str | None = None
+    paired_decision_id: str | None = None
 
 
 class FieldEffectRepository(Protocol):
@@ -376,6 +394,133 @@ class GuardedFieldApplication:
         capability_digest: str,
         allow_corrective_keep_current: bool = False,
     ) -> FieldEffectOperation | None:
+        plan = self._prepare_plan(
+            decision,
+            connection=connection,
+            library=library,
+            work_id=work_id,
+            destination=destination,
+            pre_value=pre_value,
+            desired_value=desired_value,
+            target_fingerprint=target_fingerprint,
+            target_version=target_version,
+            dependency_digests=dependency_digests,
+            capability_digest=capability_digest,
+            allow_corrective_keep_current=allow_corrective_keep_current,
+        )
+        if plan is None:
+            return None
+        return self._repository.record_field_effect(
+            FieldEffectOperation(plan, updated_at=plan.created_at)
+        )
+
+    def plan_title_subtitle(
+        self,
+        title: AutomaticDecision,
+        subtitle: AutomaticDecision,
+        *,
+        title_capability_digest: str,
+        subtitle_capability_digest: str,
+    ) -> FieldEffectOperation:
+        left = self._authority.resolve(title)
+        right = self._authority.resolve(subtitle)
+        if (
+            type(title) is not AutomaticDecision
+            or type(subtitle) is not AutomaticDecision
+            or title.destination != "title"
+            or subtitle.destination != "subtitle"
+            or left.paired_bundle_id is None
+            or left.paired_bundle_id != right.paired_bundle_id
+            or left.paired_decision_id != subtitle.decision_id
+            or right.paired_decision_id != title.decision_id
+            or (
+                left.connection,
+                left.library,
+                left.work_id,
+                left.review_case_id,
+                left.target_fingerprint,
+            )
+            != (
+                right.connection,
+                right.library,
+                right.work_id,
+                right.review_case_id,
+                right.target_fingerprint,
+            )
+        ):
+            raise GuardedApplicationError("authority_binding")
+        plans = []
+        for decision, snapshot, capability in (
+            (title, left, title_capability_digest),
+            (subtitle, right, subtitle_capability_digest),
+        ):
+            plan = self._prepare_plan(
+                decision,
+                connection=snapshot.connection,
+                library=snapshot.library,
+                work_id=snapshot.work_id,
+                destination=snapshot.destination,
+                pre_value=snapshot.pre_value,
+                desired_value=snapshot.decision_value,
+                target_fingerprint=snapshot.target_fingerprint,
+                target_version=snapshot.target_version,
+                dependency_digests=snapshot.dependency_digests,
+                capability_digest=capability,
+                paired_bundle_id=left.paired_bundle_id,
+            )
+            if plan is None:
+                raise GuardedApplicationError("authority_binding")
+            plans.append(plan)
+        primary, companion = plans
+        paired = FieldEffectPlan.create(
+            connection=primary.connection,
+            library=primary.library,
+            work_id=primary.work_id,
+            destination="title",
+            pre_value=primary.pre_value,
+            desired_value=primary.desired_value,
+            target_fingerprint=primary.target_fingerprint,
+            target_version=primary.target_version,
+            dependency_digests=primary.dependency_digests,
+            authority=primary.authority,
+            consent=primary.consent,
+            capability_digest=primary.capability_digest,
+            created_at=primary.created_at,
+            subtitle_companion=SubtitleCompanion(
+                left.paired_bundle_id,
+                companion.pre_value,
+                cast(str, companion.desired_value),
+                companion.target_version,
+                companion.dependency_digests,
+                companion.authority,
+                companion.consent,
+                companion.capability_digest,
+            ),
+        )
+        return self._repository.record_field_effect(
+            FieldEffectOperation(paired, updated_at=paired.created_at)
+        )
+
+    def _prepare_plan(
+        self,
+        decision: HumanDecision
+        | AutomaticDecision
+        | CoverAutomaticDecision
+        | AuthoredDescriptionDecision,
+        *,
+        connection: str,
+        library: str,
+        work_id: str,
+        destination: str,
+        pre_value: object,
+        desired_value: object,
+        target_fingerprint: str,
+        target_version: str,
+        dependency_digests: tuple[str, ...],
+        capability_digest: str,
+        allow_corrective_keep_current: bool = False,
+        paired_bundle_id: str | None = None,
+    ) -> FieldEffectPlan | None:
         projected = authority_from_decision(
             decision, allow_corrective_keep_current=allow_corrective_keep_current
         )
@@ -393,6 +538,8 @@ class GuardedFieldApplication:
             raise GuardedApplicationError(
                 error.code if isinstance(error, FieldEffectError) else "decision_value"
             ) from error
+        if snapshot.paired_bundle_id != paired_bundle_id:
+            raise GuardedApplicationError("paired_authority_required")
         expected = (
             connection,
             library,
@@ -470,9 +617,7 @@ class GuardedFieldApplication:
         )
         if plan.pre_value == plan.desired_value:
             return None
-        return self._repository.record_field_effect(
-            FieldEffectOperation(plan, updated_at=plan.created_at)
-        )
+        return plan
 
     def apply(
         self, plan_id: str, affected_review_case_ids: set[str] | None = None
@@ -568,7 +713,11 @@ class GuardedFieldApplication:
         operation = self._repository.transition_field_effect(
             plan.plan_id, "claimed", "applying", self._clock()
         )
-        if not self._authority.current(plan.authority):
+        if any(
+            not self._authority.current(member.authority)
+            for member in (plan, plan.subtitle_plan())
+            if member is not None
+        ):
             return self._stale(operation, "authority")
         try:
             with self._timing.measure("apply", "target"):
@@ -651,16 +800,24 @@ class GuardedFieldApplication:
                 ),
                 affected,
             )
-        if observed.value == operation.plan.desired_value:
+        if observed.matches(operation.plan, desired=True):
             result = self._repository.complete_field_effect_reconciliation(
                 plan_id, "verified", None, self._clock()
             )
             self._recover_cleanup(result)
             return result
-        if observed.value == operation.plan.pre_value:
+        if observed.matches(operation.plan, desired=False):
             if (
-                self._authority.current(operation.plan.authority)
-                and self._dependencies.current(operation.plan.dependency_digests)
+                all(
+                    self._authority.current(member.authority)
+                    and (
+                        operation.plan.subtitle_companion is None
+                        or self._consent.current(member.consent)
+                    )
+                    and self._dependencies.current(member.dependency_digests)
+                    for member in (operation.plan, operation.plan.subtitle_plan())
+                    if member is not None
+                )
                 and operation.attempt < 3
             ):
                 return self._repository.complete_field_effect_reconciliation(
@@ -731,7 +888,7 @@ class GuardedFieldApplication:
                 ),
                 affected,
             )
-        if observed.value == operation.plan.desired_value:
+        if observed.matches(operation.plan, desired=True):
             return self._complete(operation, "applying")
         return self._repository.schedule_field_effect_reconciliation(
             operation.plan.plan_id, "applying", self._clock(), "readback"
@@ -766,39 +923,42 @@ class GuardedFieldApplication:
         plan = operation.plan
         if not self._backup.ready(plan):
             return self._stale(operation, "backup")
-        if (
-            self._repository.field_effect_capability_suspension(
-                plan.connection, plan.destination
-            )
-            is not None
-        ):
-            return self._stale(operation, "capability")
-        capability = self._capabilities.observe(plan)
-        if capability.category != "allowed":
-            scope = (
-                "connection"
-                if capability.category == "connection_unavailable"
-                else "destination"
-            )
-            affected = self._suspend_field_effect_capability(
-                scope=scope,
-                connection=plan.connection,
-                destination=plan.destination,
-                reason=capability.category,
-                changed_at=self._clock(),
-                affected_review_case_ids=affected_review_case_ids,
-            )
-            return self._with_affected_review_cases(
-                self._stale(operation, "capability"), affected
-            )
-        if capability.digest != plan.capability_digest:
-            return self._stale(operation, "capability")
-        if not self._authority.current(plan.authority):
-            return self._stale(operation, "authority")
-        if not self._consent.current(plan.consent):
-            return self._stale(operation, "consent")
-        if not self._dependencies.current(plan.dependency_digests):
-            return self._stale(operation, "dependency")
+        for member in (plan, plan.subtitle_plan()):
+            if member is None:
+                continue
+            if (
+                self._repository.field_effect_capability_suspension(
+                    member.connection, member.destination
+                )
+                is not None
+            ):
+                return self._stale(operation, "capability")
+            capability = self._capabilities.observe(member)
+            if capability.category != "allowed":
+                scope = (
+                    "connection"
+                    if capability.category == "connection_unavailable"
+                    else "destination"
+                )
+                affected = self._suspend_field_effect_capability(
+                    scope=scope,
+                    connection=member.connection,
+                    destination=member.destination,
+                    reason=capability.category,
+                    changed_at=self._clock(),
+                    affected_review_case_ids=affected_review_case_ids,
+                )
+                return self._with_affected_review_cases(
+                    self._stale(operation, "capability"), affected
+                )
+            if capability.digest != member.capability_digest:
+                return self._stale(operation, "capability")
+            if not self._authority.current(member.authority):
+                return self._stale(operation, "authority")
+            if not self._consent.current(member.consent):
+                return self._stale(operation, "consent")
+            if not self._dependencies.current(member.dependency_digests):
+                return self._stale(operation, "dependency")
         try:
             observed = self._target.read(plan)
         except Exception as error:
@@ -813,7 +973,7 @@ class GuardedFieldApplication:
                     self._stale(operation, "capability"), affected
                 )
             raise
-        if observed.value != plan.pre_value or observed.version != plan.target_version:
+        if not observed.matches(plan, desired=False, check_version=True):
             return self._stale(operation, "target_changed")
         if operation.attempt >= 3:
             return self._stale(operation, "circuit_open")

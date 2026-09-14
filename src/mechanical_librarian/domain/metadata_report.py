@@ -77,7 +77,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v43"
+REPORT_SCHEMA = "metadata-report-v44"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -197,6 +197,7 @@ class ClaimKind(StrEnum):
     TAG = "tag"
     DURATION = "duration"
     PERFORMANCE_TYPE = "performance_type"
+    ADULT_PRODUCT = "adult_product"
 
 
 class ProviderEvidenceKind(StrEnum):
@@ -598,6 +599,7 @@ class IdentifierRelation(StrEnum):
 
     ACCEPTED = "accepted"
     ASSOCIATED = "associated"
+    RECORDING_ASSOCIATED = "recording_associated"
     UNRELATED = "unrelated"
     INVALID = "invalid"
     UNRESOLVED = "unresolved"
@@ -606,6 +608,7 @@ class IdentifierRelation(StrEnum):
 class IdentifierEvidenceBasis(StrEnum):
     """Closed, deterministic reason for an ISBN relationship."""
 
+    RECORDING_ASSOCIATED = "recording_associated"
     EXPLICIT_EBOOK = "explicit_ebook"
     LOCAL_SOURCE_AGREEMENT = "local_source_agreement"
     PROVIDER_IDENTIFIER_AGREEMENT = "provider_identifier_agreement"
@@ -629,6 +632,9 @@ class IdentifierEvidence:
 
     def __post_init__(self) -> None:
         allowed_bases = {
+            IdentifierRelation.RECORDING_ASSOCIATED: {
+                IdentifierEvidenceBasis.RECORDING_ASSOCIATED
+            },
             IdentifierRelation.ACCEPTED: {
                 IdentifierEvidenceBasis.EXPLICIT_EBOOK,
                 IdentifierEvidenceBasis.LOCAL_SOURCE_AGREEMENT,
@@ -1495,6 +1501,13 @@ class ProviderClaim:
             and canonical_asin(self.value) != self.value
         ):
             raise ReportValueError("provider ASIN claim is invalid")
+        if self.kind is ClaimKind.ADULT_PRODUCT and (
+            self.scope is not ClaimScope.EDITION
+            or self.applicability != "not_applicable"
+            or self.state is FieldState.VALID
+            and self.value not in {"true", "false"}
+        ):
+            raise ReportValueError("provider adult product claim is invalid")
         is_date = self.kind is ClaimKind.PUBLICATION_DATE
         if is_date != (type(self.date_event) is DateEvent):
             raise ReportValueError("provider date claim typing is inconsistent")
@@ -1515,8 +1528,11 @@ class ProviderClaim:
         ):
             raise ReportValueError("provider date claim precision is inconsistent")
         if is_date and (
-            self.date_event is not DateEvent.MANIFESTATION_PUBLICATION
-            or self.scope is not ClaimScope.EDITION
+            (self.scope, self.date_event)
+            not in {
+                (ClaimScope.EDITION, DateEvent.MANIFESTATION_PUBLICATION),
+                (ClaimScope.WORK, DateEvent.WORK_FIRST_PUBLICATION),
+            }
             or self.date_confidence is not DateLinkConfidence.EXPLICIT
         ):
             raise ReportValueError("provider publication date linkage is inconsistent")
@@ -2650,17 +2666,104 @@ class ProviderObservation:
         }
 
 
+def recording_variant_conflict(
+    candidate: ProviderCandidate, local_claims: tuple[LocalClaim, ...], local_title: str
+) -> str | None:
+    """Compare explicit recording facts without filling unknown variant facts."""
+    from mechanical_librarian.domain.field_outcomes import (
+        language_identity,
+        language_outcomes_compatible,
+    )
+
+    languages = [
+        claim.value
+        for claim in candidate.claims
+        if claim.kind is ClaimKind.LANGUAGE and claim.state is FieldState.VALID
+    ]
+    local_languages = [
+        claim.canonical
+        for claim in local_claims
+        if claim.kind is ClaimKind.LANGUAGE and claim.state is FieldState.VALID
+    ]
+    if any(
+        not language_outcomes_compatible(left, right)
+        for left in local_languages
+        for right in languages
+        if left is not None
+        and right is not None
+        and (left_identity := language_identity(left)) is not None
+        and (right_identity := language_identity(right)) is not None
+        and left_identity.base != "und"
+        and right_identity.base != "und"
+    ):
+        return "recording_language_conflict"
+    formats = [
+        e.value.strip().casefold()
+        for e in candidate.evidence
+        if e.kind is ProviderEvidenceKind.EDITION_STATEMENT
+    ]
+    known_formats = {
+        value for value in formats if value in {"abridged", "unabridged", "full cast"}
+    }
+    local_variant = re.search(
+        r"\((abridged|unabridged|full cast)\)$", local_title, re.I
+    )
+    if len(known_formats) > 1 or (
+        local_variant
+        and known_formats
+        and local_variant.group(1).casefold() not in known_formats
+    ):
+        return "recording_variant_conflict"
+    return None
+
+
+def _matched_audiobook_variant(
+    candidate: ProviderCandidate,
+    local_title: str,
+    local_authors: tuple[str, ...],
+    title: str,
+    authors: tuple[str, ...],
+) -> bool:
+    return (
+        normalize_title(local_title) == normalize_title(title)
+        and re.search(r"\(abridged\)$", local_title, re.I) is not None
+        and len(local_authors) == len(authors)
+        and sorted(creator_comparison_key(value) for value in local_authors)
+        == sorted(creator_comparison_key(value) for value in authors)
+        and not any(
+            claim.kind is ClaimKind.CONTRIBUTOR
+            and claim.role in {"abridger", "adapter", "translator"}
+            for claim in candidate.claims
+        )
+        and not any(
+            e.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+            for e in candidate.evidence
+        )
+        and recording_variant_conflict(candidate, (), local_title) is None
+    )
+
+
 def provider_candidate_work_identity_admission(
     candidate: ProviderCandidate,
     local_title: str,
     local_authors: tuple[str, ...],
     dispatch_lineage: WorkDispatchLineage | None,
+    *,
+    audiobook: bool = False,
 ) -> WorkIdentityAdmission:
     """Apply the closed WORK qualification floor to one retained candidate."""
-    claims = _provider_candidate_work_identity_claims(candidate)
+    claims = (
+        _linked_edition_work_identity_claims(candidate, local_title)
+        if audiobook
+        else None
+    ) or _provider_candidate_work_identity_claims(candidate)
     if claims is None:
         return WorkIdentityAdmission(False)
     title, authors, work_identity, variant_excluded = claims
+    if audiobook and _matched_audiobook_variant(
+        candidate, local_title, local_authors, title, authors
+    ):
+        return WorkIdentityAdmission(True)
     ordered = tuple(sorted(candidate.claims, key=lambda claim: claim.raw_order))
     return replay_provider_work_identity_admission(
         local_title=local_title,
@@ -2693,6 +2796,7 @@ def provider_candidate_work_identity_admission(
                 for claim in ordered
             )
         ),
+        audiobook=audiobook,
     )
 
 
@@ -2700,12 +2804,18 @@ def provider_candidate_exact_work_identity_admission(
     candidate: ProviderCandidate,
     local_title: str,
     local_authors: tuple[str, ...],
+    *,
+    audiobook: bool = False,
 ) -> WorkIdentityAdmission:
     """Admit one candidate against the exact target work without dispatch replay."""
     claims = _provider_candidate_work_identity_claims(candidate)
     if claims is None:
         return WorkIdentityAdmission(False)
     title, authors, work_identity, variant_excluded = claims
+    if audiobook and _matched_audiobook_variant(
+        candidate, local_title, local_authors, title, authors
+    ):
+        return WorkIdentityAdmission(True)
     return admit_provider_work_identity(
         local_title=local_title,
         local_authors=local_authors,
@@ -2713,6 +2823,7 @@ def provider_candidate_exact_work_identity_admission(
         provider_authors=authors,
         provider_work_identity=work_identity,
         variant_excluded=variant_excluded,
+        audiobook=audiobook,
     )
 
 
@@ -2858,6 +2969,82 @@ def provider_candidate_series_identity_matches(
     )
 
 
+def _linked_edition_work_identity_claims(
+    candidate: ProviderCandidate, local_title: str
+) -> tuple[str, tuple[str, ...], str, bool] | None:
+    """Use a retained edition title only through its single explicit work link."""
+    work = _provider_candidate_work_identity_claims(candidate)
+    work_creators = tuple(
+        c
+        for c in candidate.claims
+        if c.scope is ClaimScope.WORK
+        and c.kind is ClaimKind.CREATOR
+        and c.role == "author"
+    )
+    bindings = complete_creator_identity_bindings(candidate, work_creators)
+    author_identities = {
+        e.value
+        for e in candidate.evidence
+        if e.scope is ClaimScope.WORK
+        and e.kind is ProviderEvidenceKind.CONTRIBUTOR_IDENTITY
+        and e.role == "author"
+    }
+    if bindings is None or {b.identity for b in bindings} != author_identities:
+        return None
+    if not {
+        e.value
+        for e in candidate.evidence
+        if e.kind is ProviderEvidenceKind.AUTHOR_IDENTITY
+    }.issubset(author_identities):
+        return None
+    relations = tuple(
+        e
+        for e in candidate.evidence
+        if e.kind is ProviderEvidenceKind.EDITION_WORK_RELATION
+    )
+    titles = tuple(
+        c
+        for c in candidate.claims
+        if c.scope is ClaimScope.EDITION and c.kind is ClaimKind.TITLE
+    )
+    creators = tuple(
+        c
+        for c in candidate.claims
+        if c.scope is ClaimScope.EDITION and c.kind is ClaimKind.CREATOR
+    )
+    if (
+        work is None
+        or work[3]
+        or candidate.work_identity == "unresolved"
+        or len(relations) != 1
+        or relations[0].value != candidate.work_identity
+        or any(
+            e.kind is ProviderEvidenceKind.EDITION_WORK_RELATION_CONTRADICTION
+            for e in candidate.evidence
+        )
+        or len(titles) != 1
+        or titles[0].state is not FieldState.VALID
+        or titles[0].value is None
+        or normalize_title(titles[0].value).casefold()
+        != normalize_title(local_title).casefold()
+        or any(
+            c.state not in {FieldState.VALID, FieldState.ABSENT, FieldState.UNSUPPORTED}
+            for c in creators
+        )
+        or any(
+            c.state is FieldState.VALID
+            and (
+                c.value is None
+                or normalize_title(c.value).casefold()
+                not in {normalize_title(a).casefold() for a in work[1]}
+            )
+            for c in creators
+        )
+    ):
+        return None
+    return titles[0].value, work[1], candidate.work_identity, False
+
+
 def _provider_candidate_work_identity_claims(
     candidate: ProviderCandidate,
 ) -> tuple[str, tuple[str, ...], str, bool] | None:
@@ -2940,13 +3127,16 @@ def provider_candidate_set_work_identity_admission(
     local_title: str,
     local_authors: tuple[str, ...],
     dispatch_lineage: WorkDispatchLineage | None,
+    *,
+    audiobook: bool = False,
 ) -> ProviderWorkIdentitySetAdmission:
     """Admit exactly one work identity and one lineage from a candidate set."""
     return _provider_candidate_set_work_identity_admission(
         candidates,
         lambda candidate: provider_candidate_work_identity_admission(
-            candidate, local_title, local_authors, dispatch_lineage
+            candidate, local_title, local_authors, dispatch_lineage, audiobook=audiobook
         ),
+        audiobook=audiobook,
     )
 
 
@@ -2954,24 +3144,45 @@ def provider_candidate_set_exact_work_identity_admission(
     candidates: tuple[ProviderCandidate, ...],
     local_title: str,
     local_authors: tuple[str, ...],
+    *,
+    audiobook: bool = False,
 ) -> ProviderWorkIdentitySetAdmission:
     """Admit one exact candidate work without requiring WORK dispatch lineage."""
     return _provider_candidate_set_work_identity_admission(
         candidates,
         lambda candidate: provider_candidate_exact_work_identity_admission(
-            candidate, local_title, local_authors
+            candidate, local_title, local_authors, audiobook=audiobook
         ),
+        audiobook=audiobook,
     )
 
 
 def _provider_candidate_set_work_identity_admission(
     candidates: tuple[ProviderCandidate, ...],
     admit_candidate: Callable[[ProviderCandidate], WorkIdentityAdmission],
+    *,
+    audiobook: bool = False,
 ) -> ProviderWorkIdentitySetAdmission:
     """Apply one semantic admission entry point to an exact candidate set."""
     if type(candidates) is not tuple or any(
         type(candidate) is not ProviderCandidate for candidate in candidates
     ):
+        return ProviderWorkIdentitySetAdmission(False)
+    if (
+        audiobook
+        and candidates
+        and all(
+            re.fullmatch(r"hardcover-work-[0-9]{10}", c.identity)
+            and c.identity == c.work_identity
+            and all(claim.scope is ClaimScope.WORK for claim in c.claims)
+            for c in candidates
+        )
+    ):
+        admissions = tuple(admit_candidate(c) for c in candidates)
+        if len(candidates) <= 5 and all(
+            a.admitted and a.transformation is None for a in admissions
+        ):
+            return ProviderWorkIdentitySetAdmission(True, candidates)
         return ProviderWorkIdentitySetAdmission(False)
     qualified: dict[
         str, list[tuple[ProviderCandidate, WorkTitleTransformationLineage | None]]
@@ -3202,7 +3413,10 @@ class MetadataReport:
                 not is_audio
                 or any(
                     not provider_candidate_exact_work_identity_admission(
-                        candidate, target_title or "", target_authors
+                        candidate,
+                        target_title or "",
+                        target_authors,
+                        audiobook=self.audio is not None,
                     ).admitted
                     for candidate in provider.recording_lookup_candidates
                 )
@@ -3235,6 +3449,7 @@ class MetadataReport:
                     ),
                     provider_work_identity=witness.work_identity,
                     dispatch_lineage=dispatch,
+                    audiobook=self.audio is not None,
                 )
                 if not admission.admitted or admission.transformation != lineage:
                     raise ReportValueError(
@@ -3257,6 +3472,7 @@ class MetadataReport:
                     target_title or "",
                     target_authors,
                     provider.dispatch_lineage,
+                    audiobook=self.audio is not None,
                 )
                 if (
                     not set_admission.admitted
@@ -3275,6 +3491,7 @@ class MetadataReport:
                     target_title or "",
                     target_authors,
                     lane.dispatch_lineage,
+                    audiobook=self.audio is not None,
                 )
                 if (
                     not set_admission.admitted
@@ -3298,7 +3515,9 @@ class MetadataReport:
                 for value in self.identifier_evidence
             )
             or self.identifier_evidence
-            != derive_identifier_evidence(self.local_claims, self.providers)
+            != derive_identifier_evidence(
+                self.local_claims, self.providers, self.target, self.audio
+            )
         ):
             raise ReportValueError("identifier evidence is inconsistent")
         try:
@@ -3453,7 +3672,7 @@ class MetadataReport:
         identifiers = (
             identifier_evidence
             if identifier_evidence is not None
-            else derive_identifier_evidence(local_claims, providers)
+            else derive_identifier_evidence(local_claims, providers, target, audio)
         )
         data = _report_data(
             "",
@@ -3617,9 +3836,92 @@ class _ProviderIdentityFields(TypedDict):
     work_identity: str
 
 
+def recording_association_references(
+    local_claims: tuple[LocalClaim, ...],
+    providers: tuple[ProviderObservation, ...],
+    target: TargetFacts | None,
+    audio: AudioFacts | None,
+    provider_name: str,
+    candidate: ProviderCandidate,
+) -> tuple[str, ...]:
+    """Bind associated ISBNs to item identity or independent exact work evidence.
+
+    This field-evidence predicate does not widen recording admission. Runtime is
+    never an independent work or item-identifier anchor.
+    """
+    provider = next(
+        (
+            p
+            for p in providers
+            if p.provider == provider_name and candidate in p.candidates
+        ),
+        None,
+    )
+    if (
+        audio is None
+        or target is None
+        or provider is None
+        or provider.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES
+        or provider.status is not ProviderStatus.CANDIDATES
+    ):
+        return ()
+    recording = tuple(
+        e
+        for e in candidate.evidence
+        if e.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+        and e.scope is ClaimScope.EDITION
+    )
+    asins = tuple(
+        c
+        for c in candidate.claims
+        if c.kind is ClaimKind.ASIN
+        and c.state is FieldState.VALID
+        and canonical_asin(c.value) is not None
+    )
+    if (
+        not recording
+        or len(asins) != 1
+        or _provider_candidate_has_work_identity_veto(candidate)
+    ):
+        return ()
+    item = tuple(
+        c.reference
+        for c in local_claims
+        if c.kind is ClaimKind.ASIN
+        and c.state is FieldState.VALID
+        and c.basis in {"embedded_tag", "filename"}
+        and canonical_asin(c.canonical) == asins[0].value
+    )
+    if item:
+        return tuple(sorted((*item, asins[0].reference)))
+    context = target_work_identity_context(target)
+    if context is None:
+        return ()
+    admission = provider_candidate_set_exact_work_identity_admission(
+        provider.candidates, *context, audiobook=audio is not None
+    )
+    if not admission.admitted or candidate not in admission.candidates:
+        return ()
+    # Exact typed claims consumed by admission; report binds target and media.
+    work = tuple(
+        c.reference
+        for c in candidate.claims
+        if c.scope is ClaimScope.WORK
+        and c.state is FieldState.VALID
+        and (
+            c.kind is ClaimKind.TITLE
+            or c.kind is ClaimKind.CREATOR
+            and c.role in {None, "author"}
+        )
+    )
+    return tuple(sorted((asins[0].reference, *work)))
+
+
 def derive_identifier_evidence(
     local_claims: tuple[LocalClaim, ...],
     providers: tuple[ProviderObservation, ...],
+    target: TargetFacts | None = None,
+    audio: AudioFacts | None = None,
 ) -> tuple[IdentifierEvidence, ...]:
     """Classify every ISBN claim without discarding its original evidence."""
     local_isbns = tuple(claim for claim in local_claims if claim.kind is ClaimKind.ISBN)
@@ -3792,6 +4094,20 @@ def derive_identifier_evidence(
                     **identity,
                 )
             )
+        elif claim.applicability == "unknown" and (
+            recording_references := recording_association_references(
+                local_claims, providers, target, audio, provider, candidate
+            )
+        ):
+            evidence.append(
+                IdentifierEvidence(
+                    claim.reference,
+                    IdentifierRelation.RECORDING_ASSOCIATED,
+                    IdentifierEvidenceBasis.RECORDING_ASSOCIATED,
+                    recording_references,
+                    **identity,
+                )
+            )
         elif family in accepted_local_families:
             if claim.applicability == "ebook":
                 evidence.append(
@@ -3948,6 +4264,7 @@ def claim_scope(
             # recorded manifestation, never of the work it renders.
             ClaimKind.DURATION,
             ClaimKind.PERFORMANCE_TYPE,
+            ClaimKind.ADULT_PRODUCT,
         }
         else ClaimScope.WORK
     )
@@ -4291,6 +4608,12 @@ def finalize_candidate_comparisons(
     )
     for claim in candidate.claims:
         if claim.kind is not ClaimKind.PUBLICATION_DATE:
+            continue
+        if (
+            claim.scope is ClaimScope.WORK
+            and claim.date_event is DateEvent.WORK_FIRST_PUBLICATION
+        ):
+            retained_claims.append(claim)
             continue
         if claim.state is not FieldState.VALID:
             retained_claims.append(claim)

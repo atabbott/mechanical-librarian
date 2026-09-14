@@ -16,7 +16,10 @@ from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     AudibleCatalogMetadataProvider,
     AudibleCatalogPacer,
 )
+from mechanical_librarian.application import metadata_report as m
 from mechanical_librarian.application.metadata_report import ProviderObservationFailure
+from mechanical_librarian.domain import metadata_report as d
+from mechanical_librarian.domain import proposal_set as p
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverSourceKind,
@@ -36,19 +39,26 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
 )
 from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
+from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchRung,
     WorkTitleTransformationFamily,
 )
 from tests.support.audiobook_providers import (
     asin_plan,
+    audio_claim,
+    audio_target,
     local_claims,
     local_runtime_claim,
     payload,
+    target_title_claim,
     work_plan,
 )
 from tests.support.audiobook_reports import (
     admitted_audiobook_report,
+    asserted_asin_report,
     manual_audiobook_observation,
 )
 
@@ -659,7 +669,11 @@ def test_a_search_lane_outside_the_band_keeps_only_its_work_shape() -> None:
     assert 1 == len(seen)
     assert _claims(candidate, ClaimKind.ASIN)
     assert _claims(candidate, ClaimKind.DURATION)
-    assert () == _claims(candidate, ClaimKind.CONTRIBUTOR)
+    assert _claims(candidate, ClaimKind.CONTRIBUTOR)
+    assert all(
+        c.scope.value == "work" and c.role == "narrator"
+        for c in _claims(candidate, ClaimKind.CONTRIBUTOR)
+    )
     assert () == _evidence(candidate, ProviderEvidenceKind.ASIN_MARKETPLACE)
 
 
@@ -853,3 +867,150 @@ def test_all_series_pairs_survive_with_explicit_partial_member_failure() -> None
         "5",
         "9",
     ]
+
+
+def _cast_report(
+    third: list[dict[str, str]],
+    reverse: bool = False,
+    third_language: str | None = None,
+    third_first: bool = False,
+) -> MetadataReport:
+    base = asserted_asin_report(provider_duration="58200.000")
+    target = audio_target("The Synthetic Journey", ("Example Author",))
+    local = (target_title_claim("The Synthetic Journey"),)
+    if third_language is not None:
+        local += (audio_claim(d.ClaimKind.LANGUAGE, "en", 2),)
+    plan = m.audiobook_discovery_plan(target, local, audio=base.audio)
+    products: list[dict[str, Any]] = [
+        {
+            "asin": f"B00000000{i}",
+            "title": "The Synthetic Journey",
+            "authors": [{"name": "Example Author"}],
+            "narrators": [{"name": "Example Narrator"}],
+            "runtime_length_min": 1000,
+        }
+        for i in (1, 2, 3)
+    ]
+    products[2]["narrators"] = third
+    if third_language is not None:
+        products[2]["language"] = third_language
+    if third_first:
+        products[2]["asin"] = "A000000001"
+    if reverse:
+        products.reverse()
+    provider = _provider(lambda req: _json({"products": products, "total_results": 3}))
+    try:
+        o = m.observe_provider("audible", "audible_catalog", provider, plan).observation
+    finally:
+        provider._client.close()
+    r = d.MetadataReport.create(
+        target=d.TargetFacts("primary", "audio", "casts", target.fields),
+        file=base.file,
+        local_claims=local,
+        local_reasons=("target_metadata_title",),
+        providers=(o,),
+        audio=base.audio,
+    )
+    return d.MetadataReport.from_json(r.to_json())
+
+
+@pytest.mark.parametrize(
+    "third",
+    [
+        [{"name": "Example Narrator"}],
+        [],
+        [{"name": "Different Reader"}],
+        [{"name": "Example Narrator"}, {}],
+        [{"name": "Full Cast"}],
+        [{"name": f"Reader {i}"} for i in range(100)],
+    ],
+)
+def test_all_plausible_products_must_supply_complete_equal_cast(
+    third: list[dict[str, str]],
+) -> None:
+    r = _cast_report(third)
+    proposal = p.evaluate_report(r)
+    result = next(
+        x for x in proposal.results if x.destination is d.TargetDestination.NARRATORS
+    )
+    refs = tuple(
+        sorted({ref for a in result.alternatives for ref in a.evidence_references})
+    )
+    expected = third == [{"name": "Example Narrator"}]
+    assert p.narrator_candidate_set_agrees(r, refs) is expected
+    assert not any(
+        p.provider_candidate_represents_target_recording(r, o, c)
+        for o in r.providers
+        for c in o.candidates
+    )
+    packet = ShadowReviewPacket.create(ReviewCase.create(proposal, r), proposal, r)
+    packet = ShadowReviewPacket.from_json(packet.to_json(), r, proposal)
+    decisions = decide_shadow_packet(packet).decisions
+    assert (
+        any(
+            x.destination == "narrators" and x.recommendation == "recommend_candidate"
+            for x in decisions
+        )
+        is expected
+    )
+    if expected:
+        assert len(refs) == 3
+        assert not p.narrator_candidate_set_agrees(r, refs[:-1])
+    assert not any(
+        x.destination in {"asin", "isbn"} and x.recommendation == "recommend_candidate"
+        for x in decisions
+    )
+
+
+def test_canonical_input_permutation_retains_cast_members() -> None:
+    a = _cast_report([{"name": "Example Narrator"}])
+    b = _cast_report([{"name": "Example Narrator"}], True)
+    assert a.to_json() == b.to_json()
+
+
+def test_explicit_incompatible_language_keeps_review_candidate_but_not_cast_vote() -> (
+    None
+):
+    r = _cast_report([{"name": "Different Reader"}], third_language="de")
+    proposal = p.evaluate_report(r)
+    result = next(
+        x for x in proposal.results if x.destination is d.TargetDestination.NARRATORS
+    )
+    excluded = next(
+        c
+        for o in r.providers
+        for c in o.recording_lookup_candidates
+        if any(x.kind is d.ClaimKind.LANGUAGE and x.value == "de" for x in c.claims)
+    )
+    assert (
+        d.recording_variant_conflict(excluded, r.local_claims, r.target.current_title)
+        == "recording_language_conflict"
+    )
+    assert len(result.alternatives) == 1
+    assert not any(
+        x.reference in result.alternatives[0].evidence_references
+        for x in excluded.claims
+    )
+    packet = ShadowReviewPacket.create(ReviewCase.create(proposal, r), proposal, r)
+    decisions = decide_shadow_packet(
+        ShadowReviewPacket.from_json(packet.to_json(), r, proposal)
+    ).decisions
+    assert any(
+        x.destination == "narrators" and x.recommendation == "recommend_candidate"
+        for x in decisions
+    )
+
+
+def test_incompatible_product_canonical_id_cannot_block_plausible_cast() -> None:
+    r = _cast_report(
+        [{"name": "Different Reader"}], third_language="de", third_first=True
+    )
+    proposal = p.evaluate_report(r)
+    packet = ShadowReviewPacket.create(ReviewCase.create(proposal, r), proposal, r)
+    decisions = decide_shadow_packet(
+        ShadowReviewPacket.from_json(packet.to_json(), r, proposal)
+    ).decisions
+    assert any(
+        x.destination == "narrators" and x.recommendation == "recommend_candidate"
+        for x in decisions
+    )

@@ -559,6 +559,16 @@ def _candidate(
         )
 
     add(ClaimKind.ASIN, asin)
+    adult = payload.get("isAdult")
+    add(
+        ClaimKind.ADULT_PRODUCT,
+        ("true" if adult else "false")
+        if type(adult) is bool
+        else None
+        if adult is None
+        else _UNPROJECTABLE,
+    )
+
     add(ClaimKind.TITLE, payload.get("title"))
     add(ClaimKind.SUBTITLE, payload.get("subtitle"))
     authors = _names(payload.get("authors"), schema_rejections)
@@ -577,12 +587,10 @@ def _candidate(
         series, sequence = _series(payload.get(key), schema_rejections)
         add(ClaimKind.SERIES, series)
         add(ClaimKind.SERIES_SEQUENCE, sequence)
-    # Audnexus publishes a plain `description` and an HTML `summary` of the
-    # same text. The plain one is preferred; the summary is read only when the
-    # provider states no plain one, and the shared renderer makes it visible
-    # text rather than a value the report cannot project.
+    # The summary is the complete synopsis; invalid stated summaries remain
+    # source failures rather than silently falling back to a teaser.
     description, description_transformed = projected_description(
-        payload.get("description"), payload.get("summary")
+        payload.get("summary"), payload.get("description"), strict_primary=True
     )
     add(ClaimKind.DESCRIPTION, description)
     add(ClaimKind.LANGUAGE, payload.get("language"))
@@ -606,6 +614,19 @@ def _candidate(
             ClaimScope.EDITION,
         ),
     ]
+    format_type = payload.get("formatType")
+    if format_type is not None:
+        if (
+            type(format_type) is not str
+            or not format_type.strip()
+            or len(format_type) > 128
+        ):
+            raise ValueError("provider recording format is malformed")
+        evidence.append(
+            ProviderEvidence(
+                ProviderEvidenceKind.EDITION_STATEMENT, format_type, ClaimScope.EDITION
+            )
+        )
     taxonomy = payload.get("genres")
     if taxonomy is not None:
         if type(taxonomy) is not list or len(taxonomy) > 32:
@@ -620,9 +641,13 @@ def _candidate(
                     or item["type"] not in {"genre", "tag"}
                 ):
                     schema_rejections(1)
+                    add(ClaimKind.TAG, _UNPROJECTABLE)
                     continue
                 kind = ClaimKind.GENRE if item["type"] == "genre" else ClaimKind.TAG
-                add(kind, item.get("name", _UNPROJECTABLE))
+                name = item.get("name")
+                add(
+                    kind, name if type(name) is str and name.strip() else _UNPROJECTABLE
+                )
                 if claims[-1].state is FieldState.VALID:
                     evidence.append(
                         ProviderEvidence(

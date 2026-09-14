@@ -41,6 +41,8 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
+    audiobook_title_preservation_bundle,
+    audiobook_title_subtitle_bundle,
     automatic_safety_category,
     qualification_manifest_sha256,
 )
@@ -176,6 +178,14 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 and len(set(evidence_ids)) == 1
                 and bool(evidence_ids[0])
             )
+            witness = (
+                audiobook_title_preservation_bundle(members[0])
+                if category == "title_layout" and len(members) == 1 and all_automatic
+                else None
+            )
+            if witness is not None:
+                bundle_ids[category] = witness
+                continue
             if not coherent:
                 # A fully automatic but incoherent protected tuple is an
                 # authority defect, unlike an ordinary abstention/conflict.
@@ -193,10 +203,42 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     ).encode("utf-8")
                 ).hexdigest()
             )
+        split_requested = any(
+            field.policy_category == "subtitle"
+            and (field.policy_option or "").startswith("corroborated_split:")
+            for field in outcome.outcomes
+        )
+        split_members = tuple(
+            field
+            for field in outcome.outcomes
+            if field.destination in {"title", "subtitle"}
+        )
+        split_bundle = (
+            audiobook_title_subtitle_bundle(split_members) if split_requested else None
+        )
+        if split_bundle is not None and not all(
+            field.policy_category is not None and safety.permits(field.policy_category)
+            for field in split_members
+        ):
+            split_bundle = None
+        if split_requested:
+            bundle_ids.pop("title_layout", None)
+            if split_bundle is not None and all(
+                field.policy_category is not None
+                and safety.permits(field.policy_category)
+                for field in split_members
+            ):
+                bundle_ids["title_layout"] = split_bundle
+                bundle_ids["subtitle"] = split_bundle
         decisions: list[AutomaticDecision] = []
         for field in outcome.outcomes:
             if (
-                field.disposition not in automatic_dispositions
+                (
+                    split_requested
+                    and field.destination in {"title", "subtitle"}
+                    and split_bundle is None
+                )
+                or field.disposition not in automatic_dispositions
                 or field.policy_category is None
                 or field.policy_option is None
                 or field.policy_destination != "automatic"
@@ -471,11 +513,11 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 automatic = cover_automatic
             if previous is not None:
                 effect = self._connection.execute(
-                    "SELECT 1 FROM field_effects WHERE decision_id=? AND "
+                    "SELECT 1 FROM field_effects WHERE (decision_id=? OR json_extract(document,'$.plan.subtitle_companion.authority.decision_id')=?) AND "
                     + _REPLACEMENT_BLOCKING_EFFECT_SQL
                     + " "
                     "LIMIT 1",
-                    (previous[0], decision.destination == "cover"),
+                    (previous[0], previous[0], decision.destination == "cover"),
                 ).fetchone()
                 if effect is not None:
                     raise HumanDecisionError("already_decided")

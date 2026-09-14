@@ -138,8 +138,8 @@ describe('policy impact projections', () => {
       }),
     ).toMatchObject({
       changed: false,
-      title: 'No supported value found',
-      detail: 'empty remains — this destination is not currently supported',
+      title: 'No change',
+      detail: 'empty remains — this policy leaves the explicit-content flag unchanged',
     })
     expect(
       policyImpactDisplay({
@@ -208,8 +208,8 @@ describe('policy impact projections', () => {
       }),
     ).toMatchObject({
       changed: false,
-      title: 'No supported value found',
-      detail: 'Current title remains — this destination is not currently supported',
+      title: 'No change',
+      detail: 'Current title remains — this policy leaves the explicit-content flag unchanged',
     })
     expect(
       policyImpactTotals([
@@ -271,6 +271,7 @@ describe('policy impact projections', () => {
       'language_rendering:display_name',
       'subtitle:fill_empty',
       'subtitle:corroborated_split',
+      'subtitle:replace_descriptive',
       'date_precision:year',
       'date_precision:full_date',
       'publisher_preference:publisher',
@@ -293,8 +294,11 @@ describe('policy impact projections', () => {
       'description_fill:replace_safe_plain_text',
       'description_fill:google_visible_text',
       'cover_order:fixed_source_order',
+      'cover_order:replace_if_strictly_better',
       'asin:preserve_exact',
       'asin:ebook_manifestation',
+      'explicit:unsupported',
+      'explicit:adult_product',
     ]
     expect(Object.keys(policyRepresentationGuidance).sort()).toEqual(expected.sort())
     for (const guidance of Object.values(policyRepresentationGuidance)) {
@@ -319,11 +323,11 @@ describe('policy impact projections', () => {
       expect(guidance.effect).toContain('only that exact selected')
       if (key === 'date_precision:year') {
         expect(guidance.fallback).toBe(
-          'unavailable for audiobook Automatic; requires a qualified decision for ebooks',
+          'requires a qualified original-work date for audiobooks; recording release dates do not qualify',
         )
       } else if (key === 'date_precision:full_date') {
         expect(guidance.fallback).toBe(
-          'audiobook Automatic requires a full calendar day and a qualified operation',
+          'audiobooks retain the supplied year, month or day precision without inventing a date; the operation must be qualified',
         )
       } else {
         expect(guidance.fallback).toContain('no decision is qualified')
@@ -339,4 +343,26 @@ describe('policy impact projections', () => {
       'no Automatic decision is qualified',
     )
   })
+})
+
+it.each([
+  ['source_value_absent', 'the source supplied no ISBN'],
+  ['source_unavailable', 'the ISBN source could not be reached'],
+  ['source_value_malformed_or_incomplete', 'source ISBN data is malformed or incomplete'],
+  ['source_values_conflict', 'sources supply competing ISBNs'],
+  [
+    'source_value_insufficient_association',
+    'the supplied ISBN is not sufficiently linked to this recording',
+  ],
+])('keeps the specific ISBN refusal visible: %s', (reason, explanation) => {
+  expect(
+    policyImpactDisplay({
+      current_value: null,
+      desired_value: null,
+      field: 'isbn_form',
+      outcome: 'abstain',
+      reason,
+      target_state: 'missing',
+    }),
+  ).toMatchObject({ changed: false, title: 'No change', detail: `remains empty — ${explanation}` })
 })

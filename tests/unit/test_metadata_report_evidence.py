@@ -949,6 +949,7 @@ def test_closed_claim_vocabulary_is_exact() -> None:
         "tag",
         "duration",
         "performance_type",
+        "adult_product",
     }
 
 
@@ -2123,7 +2124,7 @@ def test_a_malformed_asin_is_never_an_alternative_a_proposal_can_offer() -> None
     assert [value.value.value for value in asin.alternatives] == ["B0CW1KL2QD"]
 
 
-def test_recording_lookup_roundtrip_grants_no_ordinary_authority() -> None:
+def test_recording_lookup_roundtrip_retains_only_complete_narrator_agreement() -> None:
     from mechanical_librarian.application.metadata_report import (
         admitted_audiobook_identity,
     )
@@ -2147,8 +2148,33 @@ def test_recording_lookup_roundtrip_grants_no_ordinary_authority() -> None:
         audio=report.audio,
     )
     assert report.identifier_evidence == empty.identifier_evidence
-    # The real evaluator has no provider-derived alternatives to elect.
-    assert evaluate_report(report).results == evaluate_report(empty).results
+    # Complete plausible casts may agree without electing either sale product.
+    results = evaluate_report(report).results
+    assert tuple(
+        value
+        for value in results
+        if value.destination is not TargetDestination.NARRATORS
+    ) == tuple(
+        value
+        for value in evaluate_report(empty).results
+        if value.destination is not TargetDestination.NARRATORS
+    )
+    narration = next(
+        value for value in results if value.destination is TargetDestination.NARRATORS
+    )
+    assert narration.alternatives[0].value.value == ("Ray Porter",)
+    member_references = [
+        {
+            claim.reference
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.CONTRIBUTOR
+        }
+        for candidate in observation.recording_lookup_candidates
+    ]
+    assert len(member_references) == 2 and all(member_references)
+    assert set(narration.alternatives[0].evidence_references) == set().union(
+        *member_references
+    )
     assert (
         evaluate_report(report).bibliographic_combinations
         == evaluate_report(empty).bibliographic_combinations
@@ -2356,4 +2382,38 @@ def test_lookup_candidates_replay_individual_identity_and_bound_guards(
             local_reasons=report.local_reasons,
             providers=(observation,),
             audio=report.audio,
+        )
+
+
+def test_actual_audiobook_predecessors_refuse_current_document_consumers() -> None:
+    from pathlib import Path
+
+    from mechanical_librarian.domain.proposal_set import (
+        ProposalSet,
+        ProposalValueError,
+        evaluate_report,
+    )
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from mechanical_librarian.domain.shadow_review import (
+        ShadowReviewPacket,
+        ShadowReviewValueError,
+    )
+    from tests.support.audiobook_reports import admitted_audiobook_report
+
+    root = Path(__file__).parents[1] / "support" / "audiobook_predecessors"
+    report = admitted_audiobook_report()
+    proposal = evaluate_report(report)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, report), proposal, report
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
+    assert ProposalSet.from_json(proposal.to_json()) == proposal
+    assert ShadowReviewPacket.from_json(packet.to_json(), report, proposal) == packet
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json((root / "report.json").read_text())
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json((root / "proposal.json").read_text())
+    with pytest.raises(ShadowReviewValueError):
+        ShadowReviewPacket.from_json(
+            (root / "packet.json").read_text(), report, proposal
         )

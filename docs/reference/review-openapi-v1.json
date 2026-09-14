@@ -2612,7 +2612,9 @@
               "publisher",
               "language",
               "asin",
-              "cover"
+              "cover",
+              "isbn",
+              "explicit"
             ],
             "title": "Destination",
             "type": "string"
@@ -2630,14 +2632,16 @@
               "publisher_preference",
               "language_rendering",
               "asin",
-              "cover_order"
+              "cover_order",
+              "isbn_form",
+              "explicit"
             ],
             "title": "Field",
             "type": "string"
           },
           "identity": {
             "maxLength": 128,
-            "pattern": "^[a-z_]+:[a-z_]+:[a-z_]+$",
+            "pattern": "^[a-z_]+:[a-z0-9_]+:[a-z_]+$",
             "title": "Identity",
             "type": "string"
           },
@@ -2676,7 +2680,11 @@
               "imprint",
               "display_name",
               "preserve_exact",
-              "fixed_source_order"
+              "fixed_source_order",
+              "replace_descriptive",
+              "prefer_isbn13",
+              "adult_product",
+              "replace_if_strictly_better"
             ],
             "title": "Option",
             "type": "string"

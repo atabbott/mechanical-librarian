@@ -1359,6 +1359,8 @@ class _AudiobookQualification(_ClosedModel):
         "language",
         "asin",
         "cover",
+        "isbn",
+        "explicit",
     ]
     field: Literal[
         "title_layout",
@@ -1373,8 +1375,10 @@ class _AudiobookQualification(_ClosedModel):
         "language_rendering",
         "asin",
         "cover_order",
+        "isbn_form",
+        "explicit",
     ]
-    identity: StrictStr = Field(max_length=128, pattern=r"^[a-z_]+:[a-z_]+:[a-z_]+$")
+    identity: StrictStr = Field(max_length=128, pattern=r"^[a-z_]+:[a-z0-9_]+:[a-z_]+$")
     option: Literal[
         "preserve",
         "title_and_subtitle",
@@ -1397,6 +1401,10 @@ class _AudiobookQualification(_ClosedModel):
         "display_name",
         "preserve_exact",
         "fixed_source_order",
+        "replace_descriptive",
+        "prefer_isbn13",
+        "adult_product",
+        "replace_if_strictly_better",
     ]
     operation: Literal[
         "fill",

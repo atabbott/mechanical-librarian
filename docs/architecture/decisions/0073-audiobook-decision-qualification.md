@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-10
-- Issue: #967
+- Issues: #967, #1047
 
 ## Context
 
@@ -33,6 +33,31 @@ Existing fill-only description and series options retain their meaning. Explicit
 `series:replace_qualified` choices express additional owner intent; defaults are
 unchanged. The profile vocabulary is therefore an exact v3 successor.
 
+F46a (#1047, including #1046–#1056) extends the measured operations through the
+same registry. Work facts may use a complete full-title/full-author canonical
+successful ASIN lookup or an independent local ASIN anchor without inheriting
+recording authority. Recording identifiers retain their separate association
+requirements. Complete plausible narrator-set agreement may supply narrators
+without electing an ASIN or ISBN. One reliable applicable source may suffice;
+provider count is not a vote.
+
+A supported title/subtitle split is one paired effect when both policy members
+are Automatic. Both current decisions and consents are required, one request
+carries both values, and both readbacks must verify. An owner decision, changed
+source or target, revoked consent, or either member at Ask/Ignore blocks the
+pair. Partial and uncertain responses use the existing reconciliation path.
+Preserving useful title/author values instead records one durable no-change
+outcome and removes that work from pending application without invoking target
+guards. The [automation policy](../../product/automation-policy.md) owns the
+field-specific election rules and measured limits.
+
+For audiobook synopsis, the preferred applicable safe source may be selected
+while other regional descriptions remain available. Equal authority uses stable
+provider/source-record identity order, not wording, length or opaque alternative
+hashes. This is a deterministic choice among equally acceptable sources, not an
+authority ranking. Conflicting work identity, unsafe relevant text and internally
+competing texts within one record remain refusals. Ebook selection is unchanged.
+
 Authority comes from an F46 record and nowhere else. No F19a, F20, F38 or cover
 digest admits an audiobook identity, and an audiobook record admits none of
 theirs. `domain/audiobook_decision_qualification.py` holds the published record
@@ -55,23 +80,28 @@ does under that routing is still decided by the ebook envelope, which leaves
 
 - A measured audiobook class can earn automatic authority through the same
   route every other option used, without widening any ebook authority.
-- Adding or withdrawing qualification changes persisted interpretation. This
-  delivery requires a clean rebuild under report v43, shadow outcome v5,
+- Adding or withdrawing qualification changes persisted interpretation. F46a
+  requires a clean rebuild under report v44, proposal-set v8, shadow outcome v6,
   metadata policy profile v3 and cover automatic decision v2, with
-  proposal policy `fixed-conservative-v26` under unchanged proposal-set-v7. Earlier state is
+  proposal policy `fixed-conservative-v27`, review packet v9, action policy v4
+  and decision policy v14. Earlier state is
   refused without conversion or mutation, in accordance with ADR-0013.
 - The report v43 provider-associated series-suffix production is replayed from
   the same candidate's complete structured association and author identity.
-  Packet v8 carries recomputable recording support; it is never an independent
+  Packet v9 carries recomputable recording support; it is never an independent
   source of authority.
 - Packet provider linkage uses the report/proposal `canonical_asin` grammar,
   including ISBN-10-shaped identifiers. This supersedes ADR-0064's deferred
   `B0`-only linkage restriction; it does not establish recording applicability
-  or grant Automatic ASIN authority, which remains withheld. Provider identity,
+  or grant Automatic ASIN authority by itself. Provider identity,
   claim-reference provenance and field-specific guards are still validated.
 - Audio cover fill reuses the existing deterministic classifier and election,
   binds its own F46 identity, and never dispatches an image observer. A populated
-  cover cannot borrow empty-fill authority.
+  cover cannot borrow empty-fill authority. F46a's separately qualified
+  replacement requires a bound incumbent shorter edge below 300 pixels and an
+  applicable portrait/square alternative at least 500 pixels and twice that
+  edge. Existing candidate order chooses the first eligible alternative;
+  source rank alone cannot justify replacement.
 - Ebook decision semantics remain unchanged; schema- and source-derived identities use exact successors.
 
 ### Negative
@@ -82,7 +112,8 @@ does under that routing is still decided by the ebook envelope, which leaves
   evidence only. It is not surfaced on the decision or the field view, because
   carrying it there needs a `review-case-view` bump outside this unit.
 - Qualification remains field/operation-specific. The first bounded record
-  names six fields; other available candidates remain owner review.
+  named six fields; F46a's measured successor names its additional operations.
+  Other available candidates remain owner review.
 
 This supersedes ADR-0069's statement that nothing automatic is ever offered a
 recording. Everything else ADR-0069 records -- the case, the terminals, and the

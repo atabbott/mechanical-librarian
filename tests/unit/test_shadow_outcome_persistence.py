@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import cast
 from unittest.mock import patch
 
 import pytest
@@ -123,7 +123,6 @@ from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
     MetadataPolicyProfile,
-    ResolvedMetadataPolicy,
     human_review_destinations,
     resolve_policy,
 )
@@ -169,6 +168,9 @@ from tests.support.audiobook_reports import (
     chapter_runtime_report,
     corroborated_audiobook_report,
     retained_recorded_only_decision,
+)
+from tests.support.audiobook_reports import (
+    publish_audiobook_preview as _audiobook_preview,
 )
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
@@ -7829,42 +7831,6 @@ def test_an_audiobook_series_identity_cannot_authorize_an_ebook_effect(
             repository.close()
 
 
-def _audiobook_preview(
-    repository: Any,
-    report: MetadataReport,
-    automatic: tuple[str, ...],
-    *,
-    selected_options: dict[str, str] | None = None,
-) -> tuple[str, ResolvedMetadataPolicy]:
-    """Publish one recording under a policy routing `automatic` to Automatic."""
-    options = dict(DEFAULT_OPTIONS)
-    options.update(selected_options or {})
-    destinations = {
-        name: "unsupported" if name == "explicit" else "ask"
-        for name in OPTION_CATALOGUE
-    }
-    for category in automatic:
-        destinations[category] = "automatic"
-    profile = MetadataPolicyProfile.create("F46 tranche", options, destinations)
-    resolved = resolve_policy(profile, report.target.library)
-    repository.enter_shadow_preview(1)
-    repository.create_metadata_policy_draft(profile.canonical_json)
-    repository.activate_metadata_policy(
-        profile.policy_id,
-        MetadataPolicyProfile.builtin().policy_id,
-        ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-        2,
-    )
-    repository.activate_qualified_automatic(3)
-    proposal = evaluate_report(
-        report, resolved.resolved_id, human_review_destinations(resolved)
-    )
-    repository.publish(report, lambda: True)
-    repository.publish_proposal(proposal)
-    admitted = json.loads(repository.admit_review_case(proposal))
-    return cast(str, admitted["review_case_id"]), resolved
-
-
 @pytest.mark.parametrize("chapter_runtime", (False, True))
 def test_an_unqualified_audiobook_tranche_routed_automatic_stays_the_owners(
     chapter_runtime: bool,
@@ -8434,3 +8400,174 @@ def test_accepted_audio_record_reaches_only_its_registered_effects(tmp_path):
         )
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize(
+    "shape,reason",
+    (
+        ("absent", "source_value_absent"),
+        ("unassociated", "source_value_insufficient_association"),
+        ("conflict", "source_values_conflict"),
+        ("malformed", "source_value_malformed_or_incomplete"),
+    ),
+)
+def test_source_isbn_refusal_is_durable_without_authorizing_an_effect(
+    tmp_path, monkeypatch, shape, reason
+):
+    from contextlib import closing
+
+    from mechanical_librarian.domain import (
+        audiobook_decision_qualification as qualification,
+    )
+    from tests.support.audiobook_reports import (
+        publish_audiobook_preview,
+        synthetic_audiobook_isbn_reason_report,
+    )
+
+    report = synthetic_audiobook_isbn_reason_report(shape)
+    monkeypatch.setattr(
+        qualification,
+        "F46_PASSING_AUTOMATIC_OPTIONS",
+        qualification.F46_PASSING_AUTOMATIC_OPTIONS
+        | {
+            "isbn_form:preserve_exact:audiobook_isbn_fill",
+            "isbn_form:preserve_exact:audiobook_isbn_preserve",
+        },
+    )
+    database = tmp_path / "isbn-refusal.sqlite"
+    with closing(open_repository(database)) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("isbn_form",),
+            selected_options={"isbn_form": "preserve_exact"},
+        )
+        document = repository.persist_shadow_outcome(case_id, 4)
+        outcome = json.loads(document)
+        selected = next(
+            member for member in outcome["outcomes"] if member["destination"] == "isbn"
+        )
+        assert selected["reason_code"] == reason
+        assert selected["candidate_id"] is None
+        page = repository.field_effect_activity_page(
+            search=None, event_type="metadata", occurred_after=0, page=1, page_size=25
+        )
+        refusals = [
+            event
+            for event in page["events"]
+            if event["record"]["source_kind"] == "isbn_refusal"
+        ]
+        assert len(refusals) == 1
+        assert refusals[0]["record"]["reason_code"] == reason
+        assert refusals[0]["event_id"] == outcome["outcome_set_id"] + ":isbn"
+        from mechanical_librarian.domain.activity_records import readable_activity_event
+        from mechanical_librarian.domain.readable_activity import ISBN_REFUSAL_REASONS
+        from mechanical_librarian.interfaces.web.app import _ActivityEvent
+
+        rendered = dict(refusals[0])
+        rendered.pop("report_id", None)
+        rendered.pop("connection", None)
+        readable_activity_event(rendered, report)
+        assert rendered["change"] == "Left ISBN unchanged"
+        assert {
+            "label": "Why it stayed unchanged",
+            "value": ISBN_REFUSAL_REASONS[reason],
+        } in rendered["evidence"]
+        _ActivityEvent.model_validate(rendered)
+        assert repository.persist_shadow_outcome(case_id, 99) == document
+        from mechanical_librarian.adapters.field_effect_authority import (
+            PersistedFieldEffectAuthority,
+        )
+        from mechanical_librarian.application.continuous_field_effects import (
+            ContinuousGuardedApplication,
+        )
+
+        activity = ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "audio"),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        )
+        searched = activity.activity(
+            search=ISBN_REFUSAL_REASONS[reason],
+            event_type="metadata",
+            page=1,
+            page_size=25,
+        )
+        assert searched["ledger"]["total"] == 1
+        assert searched["events"][0]["event_id"] == refusals[0]["event_id"]
+        row = repository._connection.execute(
+            "SELECT outcome_set_id,review_case_id,report_id,proposal_set_id,resolved_policy_id,source_decision_set_id,evaluated_at,document FROM shadow_decision_outcomes WHERE review_case_id=?",
+            (case_id,),
+        ).fetchone()
+        assert repository._validate_shadow_outcome_row(row) == (document, 4)
+        original = ShadowOutcomeSet.from_json(document)
+        isbn_field = next(
+            field for field in original.outcomes if field.destination == "isbn"
+        )
+        alternate_reason = (
+            "source_unavailable"
+            if reason != "source_unavailable"
+            else "source_value_absent"
+        )
+        field_identity = {
+            **isbn_field._identity_data(),
+            "reason_code": alternate_reason,
+        }
+        forged_field = replace(
+            isbn_field,
+            reason_code=alternate_reason,
+            outcome_id="shadow_outcome_" + _digest(field_identity),
+        )
+        forged_fields = tuple(
+            forged_field if field.destination == "isbn" else field
+            for field in original.outcomes
+        )
+        identity = {
+            **original._identity_data(),
+            "outcomes": [field.to_data() for field in forged_fields],
+        }
+        forged = replace(
+            original,
+            outcomes=forged_fields,
+            outcome_set_id="shadow_outcome_set_" + _digest(identity),
+        )
+        assert ShadowOutcomeSet.from_json(forged.to_json()) == forged
+        forged_row = (forged.outcome_set_id, *row[1:7], forged.to_json())
+        with pytest.raises(
+            MetadataReportError, match="shadow outcome persistence is invalid"
+        ):
+            repository._validate_shadow_outcome_row(forged_row)
+        from tests.support.audiobook_reports import (
+            synthetic_audiobook_bibliographic_report,
+        )
+
+        later = synthetic_audiobook_bibliographic_report()
+        assert later.report_id != report.report_id
+        repository.publish(later, lambda: True, expected_current=report.report_id)
+        historical = activity.activity(
+            search=ISBN_REFUSAL_REASONS[reason], event_type="metadata"
+        )
+        assert historical["events"] == searched["events"]
+        assert historical["ledger"]["total"] == 1
+        assert not [
+            item
+            for item in repository.get_review_case_decisions(case_id)
+            if json.loads(item)["destination"] == "isbn"
+        ]
+    with closing(open_repository(database)) as repository:
+        retained = repository._connection.execute(
+            "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=?",
+            (case_id,),
+        ).fetchone()[0]
+        assert retained == document
+        assert (
+            repository._connection.execute(
+                "SELECT COUNT(*) FROM field_effects"
+            ).fetchone()[0]
+            == 0
+        )
