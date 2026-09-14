@@ -1,9 +1,9 @@
 {
   "audiobook_activation": {
     "clean_rebuild_required": true,
-    "frozen_candidate_sha": "3b38ee98f9173459f631c5bb541e06797cad2c0e",
+    "frozen_candidate_sha": "7b39405ce9d46901d9390df04ce9f5ac75a6c13e",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v8.json",
-    "manifest_sha256": "42086d70bed7f12b3e580265093559e2e808d496c5b4e1d46d3606fb4fb90140",
+    "manifest_sha256": "cd15b13d55e96024e97a46fa8fd5a890651068de6c75b19bac10ffaff2309077",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -98,7 +98,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the existing named binding assignments in these three modules may differ from the final current source snapshot. This cycle-breaking comparison is not whole-source equivalence with the earlier authority measurement; measurement_source_continuity separately binds that source and the read/UI semantic delta.",
-    "source_sha": "3b38ee98f9173459f631c5bb541e06797cad2c0e"
+    "source_sha": "7b39405ce9d46901d9390df04ce9f5ac75a6c13e"
   },
   "classification": "Measured work and recording applicability, field election, durable no-change and guarded-effect semantic successor; historical quality is retained and is not rescored.",
   "clean_rebuild_required": true,
@@ -110,7 +110,7 @@
     "retained_controls": 2,
     "source_reconstructions": 2
   },
-  "frozen_candidate_sha": "3b38ee98f9173459f631c5bb541e06797cad2c0e",
+  "frozen_candidate_sha": "7b39405ce9d46901d9390df04ce9f5ac75a6c13e",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f19a-qualification-manifest-v24.json",
@@ -142,12 +142,12 @@
     },
     "current_read_and_ui_consumer_proof": {
       "files": 44,
-      "inventory_sha256": "40129c6b3dd3bbf8ce9dff056566299b9c269041d07cb5700bf2fcce6d299329",
+      "inventory_sha256": "dd04160661290bfeffc8c3f4dc5fec251ddf78194af3c3b7f1348f6d44d7f3ab",
       "scope": "Retained private byte inventory; aggregate binding only."
     },
     "evaluators": {
-      "files": 24030,
-      "inventory_sha256": "25113e846043613b2b5393ae30089bacb2084d11de515179c021c9cdb8eb1c34",
+      "files": 27024,
+      "inventory_sha256": "dde9680fa8416401a9b2977217abfb52422d088798ed69bf1c902dcf543d48ee",
       "scope": "Retained private byte inventory; aggregate binding only."
     },
     "failed_and_corrected_replay_receipts": {
@@ -173,6 +173,11 @@
     "integrated_main_frontend_proof": {
       "files": 5,
       "inventory_sha256": "6a8199e419af4d7a678b91a83cf71391ca867cb3c7045b9bab46c4ad5365d8dc",
+      "scope": "Retained private byte inventory; aggregate binding only."
+    },
+    "linux_cover_lifecycle_correction": {
+      "files": 7,
+      "inventory_sha256": "e9d72c7508c0b8412919a57879413a0de57ae3e6a23fb2dfc4dcdf967a19a168",
       "scope": "Retained private byte inventory; aggregate binding only."
     },
     "new_operation_measurements": {
@@ -244,7 +249,7 @@
         "measured_sha256": "7ba2625d71ab1b11cdb7390a2736e595d9623fcdacc8b5f3a14cbe0bb2e42f89"
       }
     },
-    "current_source_sha": "3b38ee98f9173459f631c5bb541e06797cad2c0e",
+    "current_source_sha": "7b39405ce9d46901d9390df04ce9f5ac75a6c13e",
     "meaning": "Authority/effect measurements remain immutable at their measured source. Other than the separately declared narrator admission source, all other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. The first review remediation also includes companion-aware in-flight override visibility and verified subtitle predecessor History, neutral selected audiobook synopsis alternatives, labelled paired title/subtitle preview and separated lifecycle timestamps. Guarded effect validation and corrective no-clear SQL remain unchanged. The CI correction excludes positively invalid/conflicting runtime narrator sources from ordinary and lookup choice admission and complete-set agreement, while retaining unresolved candidates and the unchanged chapter-tolerance boundary. The existing read-only observation projection retains excluded narrator facts with source references and a nonselectable timing explanation. Current actual owner refusal, automatic matching selection, lookup references, authenticated Evidence and Linux fixture lifecycle diagnostics are separately measured; historical aggregate results are not rescored or claimed as executions of the new narrator admission. The terminal strict-typing correction changes test annotations, local variable names and explicit expected fixture narrowing only; provider payloads and product semantics are unchanged. Full src/tests/scripts typing and affected actual consumer tests provide current proof. No authority scenario is counted as re-executed.",
     "unchanged_source_inventory_sha256": "efd6ead1249fdae775ce052f3547e10c44478a3716ff4610a0e3339ba6ba738e",
     "unchanged_source_paths": [
@@ -621,8 +626,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "804e548cded528f70613a7996e399c3368cae9f1267bc9379a7d19fab6104f7d",
-    "src/mechanical_librarian/domain/automatic_decision.py": "6aaa246c8f8404cd3a185aa1e16c74dd20acce9b830dec03fc1d17eec1736767",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "d28b2277355315e2d830ecdb106dc80a342efe77d14a7a24542f0be1d03a2027",
+    "src/mechanical_librarian/domain/automatic_decision.py": "435a9934755cd53852b8d468c7f6f03b480a1d2fa8a3edb62e546b99aaf62814",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -653,7 +658,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "4f8066a7fc76656205ed2ba44300db1a065dd5a08a345ef33e25d174f50d3f81",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "ee783464699a9f3959f528d4b0554adb012b95284a3917c6ccd8d3284133cfb0",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "8d6fcff5b4af8a71d76a46efb3e6131caeb7cd7d06a03a027f95447f0850502f",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
@@ -711,7 +716,7 @@
     "tests/unit/test_continuous_field_effects.py": "dfbeac43a06812b153a021543b4b8385ae909bf72bc146ecfe6b074a2c6a887c",
     "tests/unit/test_cover_artifacts.py": "7187a2e9698755558b89f86d829feed6d8c2ce82372e33de1cb015ed7fad6e00",
     "tests/unit/test_cover_qualification.py": "d73d7e3f5c1819eb14f1fe0ce3e3c180865af6df2b9c3df918a307b519b9dc8d",
-    "tests/unit/test_field_effects.py": "527e6499bf309ff96d55906b53ea2ecf001a681663d93fdbe1687f02e497a23b",
+    "tests/unit/test_field_effects.py": "1e4acec78a95bba38ea71024c1c3ffda1f915f840e8e5581c499cdc67161b643",
     "tests/unit/test_google_books_metadata.py": "e48f08509e0fb6180a55d32f569711f09d4135ad06274c5a61e7526676ad6a03",
     "tests/unit/test_inventaire_metadata.py": "e049bebde92110216363d31190eaf56a99aa5de816ad9d4a218b0ec420ab50cf",
     "tests/unit/test_metadata_policy.py": "6fcfac17c6d1da7961913be169cd5cd80c9f81b2f126e70aaf1574b4ab34edc2",

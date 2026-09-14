@@ -21,7 +21,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "42086d70bed7f12b3e580265093559e2e808d496c5b4e1d46d3606fb4fb90140"
+    "cd15b13d55e96024e97a46fa8fd5a890651068de6c75b19bac10ffaff2309077"
 )
 
 _FIELD_OPTIONS: Final = {
