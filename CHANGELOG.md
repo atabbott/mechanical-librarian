@@ -15,6 +15,8 @@
   what the deployment accepted, name each library once, and stay readable at narrow
   widths and enlarged text. (#1008)
 
+- The first-run lifecycle qualifier again names the setup journey test it runs. (#1008)
+
 - Qualified audiobook metadata now uses supported work and recording evidence
   for useful field decisions, with complete casts, tags and original dates.
   Title/subtitle pairs apply together; explicit flags only set true, and covers
