@@ -2852,6 +2852,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "frontend/src/routes/PolicyPage.tsx",
             "frontend/src/routes/DetailPage.tsx",
             "frontend/src/api/http.ts",
+            "frontend/src/router.tsx",
         }
         unchanged = {
             name: document["source_closure"][name]
