@@ -8223,20 +8223,29 @@ def test_audio_cover_fill_is_persisted_reopened_and_never_lends_replacement_auth
         ("2025-02-03", "full_date", "preserve", None),
     ),
 )
+@pytest.mark.parametrize("source", ("2025", "2025-02", "2025-02-03"))
 def test_audio_date_selected_projection_survives_reopen_and_effect(
-    monkeypatch, tmp_path, current, option, operation, expected
+    monkeypatch, tmp_path, current, option, operation, expected, source
 ):
-    from tests.unit.test_audiobook_review_decisions import _recording_date_report
+    from tests.support.audiobook_reports import synthetic_audiobook_original_date_report
 
-    monkeypatch.setattr(
-        audiobook_decision_qualification,
-        "F46_PASSING_AUTOMATIC_OPTIONS",
-        frozenset(audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES),
-    )
-    monkeypatch.setattr(
-        audiobook_decision_qualification, "F46_QUALIFICATION_MANIFEST_SHA256", "7" * 64
-    )
-    report = _recording_date_report(current)
+    # Replacement/preservation remain isolated consumer reachability controls.
+    # The delivered fill uses the actual current qualification registry.
+    if operation != "fill":
+        monkeypatch.setattr(
+            audiobook_decision_qualification,
+            "F46_PASSING_AUTOMATIC_OPTIONS",
+            frozenset(audiobook_decision_qualification.F46_AUDIOBOOK_IDENTITIES),
+        )
+        monkeypatch.setattr(
+            audiobook_decision_qualification,
+            "F46_QUALIFICATION_MANIFEST_SHA256",
+            "7" * 64,
+        )
+    if operation == "preserve":
+        current = source
+    expected = None if operation == "preserve" else source
+    report = synthetic_audiobook_original_date_report(current, source)
     path = tmp_path / "date.sqlite"
     repository = open_repository(path)
     case_id, resolved = _audiobook_preview(
@@ -8287,9 +8296,7 @@ def test_audio_date_selected_projection_survives_reopen_and_effect(
             for item in proposal.results
             if item.destination is TargetDestination.PUBLISHED_DATE
         )
-        assert any(
-            item.value.value == "2025-02-03" for item in source_result.alternatives
-        )
+        assert any(item.value.value == source for item in source_result.alternatives)
 
         assert repository.automatic_safety_state() == AutomaticSafetyState(
             False, None, ()
@@ -8302,7 +8309,7 @@ def test_audio_date_selected_projection_survives_reopen_and_effect(
     "source,option",
     (("2025", "full_date"), ("2025-02", "full_date"), ("2025-02-03", "year")),
 )
-def test_audio_unsupported_date_shape_cannot_mint_automatic_authority(
+def test_audio_recording_date_remains_evidence_without_original_date_authority(
     monkeypatch, tmp_path, source, option
 ):
     from tests.unit.test_audiobook_review_decisions import _recording_date_report
@@ -8328,18 +8335,20 @@ def test_audio_unsupported_date_shape_cannot_mint_automatic_authority(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
         assert any(
-            item.value.value == source
+            claim.kind is ClaimKind.PUBLICATION_DATE and claim.value == source
+            for provider in report.providers
+            for candidate in provider.candidates
+            for claim in candidate.claims
+        )
+        assert all(
+            not result.alternatives
             for result in proposal.results
             if result.destination is TargetDestination.PUBLISHED_DATE
-            for item in result.alternatives
         )
         outcome = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
         )
-        field = next(
-            item for item in outcome.outcomes if item.destination == "publishedDate"
-        )
-        assert field.policy_destination != "automatic"
+        assert all(item.destination != "publishedDate" for item in outcome.outcomes)
         assert all(
             json.loads(value)["destination"] != "publishedDate"
             for value in repository.get_review_case_decisions(case_id)

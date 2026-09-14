@@ -447,17 +447,10 @@ def test_policy_contention_is_read_from_the_condition_not_the_message(
     repository.close()
 
 
-def test_asin_automatic_routing_waits_for_the_audiobook_record(
+def test_asin_automatic_routing_requires_the_current_audiobook_record(
     state_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Routing `asin` to Automatic is reachable only through an F46 record.
-
-    The ebook envelope leaves `asin` unqualified, so the draft, the notebook
-    and the activation all refuse it today. The audiobook record admits the
-    same `asin:preserve_exact` routing without adding a single ebook option:
-    what an ebook does under that routing is decided by the ebook envelope,
-    which still says Ask (#967).
-    """
+    """Current audiobook routing requires its measured record; ebooks stay Ask."""
     repository = open_repository(state_path)
     destinations = {
         category: "unsupported" if category == "explicit" else "ask"
@@ -469,22 +462,23 @@ def test_asin_automatic_routing_waits_for_the_audiobook_record(
     )
     notebook = PolicyNotebook(repository, ("audio",), {})
 
-    assert "asin" not in QUALIFIED_AUTOMATIC
-    with pytest.raises(MetadataReportError, match="automatic intent is unqualified"):
-        repository.create_metadata_policy_draft(profile.canonical_json)
-    with pytest.raises(MetadataPolicyApplicationError, match="automatic unqualified"):
-        notebook.validate(profile)
+    assert "asin" in QUALIFIED_AUTOMATIC
+    with monkeypatch.context() as withdrawn:
+        withdrawn.setattr(
+            audiobook_decision_qualification,
+            "F46_PASSING_AUTOMATIC_OPTIONS",
+            audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+            - {audiobook_decision_qualification.F46_ASIN_IDENTITY},
+        )
+        with pytest.raises(
+            MetadataReportError, match="automatic intent is unqualified"
+        ):
+            repository.create_metadata_policy_draft(profile.canonical_json)
+        with pytest.raises(
+            MetadataPolicyApplicationError, match="automatic unqualified"
+        ):
+            notebook.validate(profile)
 
-    monkeypatch.setattr(
-        audiobook_decision_qualification,
-        "F46_PASSING_AUTOMATIC_OPTIONS",
-        frozenset({audiobook_decision_qualification.F46_ASIN_IDENTITY}),
-    )
-    monkeypatch.setattr(
-        audiobook_decision_qualification,
-        "F46_QUALIFICATION_MANIFEST_SHA256",
-        "7" * 64,
-    )
     assert profile == notebook.validate(profile)
     assert profile.policy_id == repository.create_metadata_policy_draft(
         profile.canonical_json

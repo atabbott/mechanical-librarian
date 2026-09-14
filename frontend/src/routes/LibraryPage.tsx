@@ -1094,12 +1094,23 @@ function AsinAutomaticStatement({ field }: { field: ReviewField }) {
   )
 }
 
+const combinedAutomaticTags = (field: ReviewField, mediaKind: string) =>
+  mediaKind === 'audiobook' &&
+  field.humanDecision === null &&
+  field.destination === 'tags' &&
+  field.automaticDecision?.outcome === 'candidate' &&
+  !field.proposedValues.some((value) =>
+    sameSelectedValue(value, field.automaticDecision?.selected_value),
+  )
+
 function RecordedOutcome({
   field,
+  mediaKind,
   expanded,
   toggle,
 }: {
   field: ReviewField
+  mediaKind: string
   expanded: boolean
   toggle: () => void
 }) {
@@ -1117,6 +1128,7 @@ function RecordedOutcome({
           ?.alternativeId ?? null,
       )
     : choiceContext(field, null)
+  const combinedTags = combinedAutomaticTags(field, mediaKind)
   const evidenceId = `recorded-evidence-${field.destination}`
   const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
   return (
@@ -1144,6 +1156,9 @@ function RecordedOutcome({
           </div>
         )}
       </dl>
+      {combinedTags ? (
+        <p>Compatible source tags were combined, retaining any existing tags.</p>
+      ) : null}
       <ProviderConsensusAutomaticStatement field={field} />
       <DescriptionAutomaticStatement field={field} />
       <SeriesAutomaticStatement field={field} />
@@ -1160,11 +1175,30 @@ function RecordedOutcome({
         {expanded ? 'Hide evidence' : 'Evidence'}
       </button>
       {expanded ? (
-        <ChoiceEvidencePanel
-          context={context}
-          evidenceId={evidenceId}
-          label={`${fieldLabel(field.destination)} recorded outcome`}
-        />
+        combinedTags ? (
+          <div id={evidenceId}>
+            {field.choiceContexts
+              .filter((item) => item.evidence.length > 0)
+              .map((item, index) => (
+                <ChoiceEvidencePanel
+                  key={item.alternativeId ?? 'current'}
+                  context={item}
+                  evidenceId={`${evidenceId}-${String(index)}`}
+                  label={
+                    item.selection === 'current'
+                      ? 'Retained tags'
+                      : `Source tags ${String(index + 1)}`
+                  }
+                />
+              ))}
+          </div>
+        ) : (
+          <ChoiceEvidencePanel
+            context={context}
+            evidenceId={evidenceId}
+            label={`${fieldLabel(field.destination)} recorded outcome`}
+          />
+        )
       ) : null}
     </section>
   )
@@ -3413,6 +3447,16 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       >
                         {selectedRevisitable ? (
                           <>
+                            {combinedAutomaticTags(selected, detail.data.target.mediaKind) ? (
+                              <RecordedOutcome
+                                field={selected}
+                                mediaKind={detail.data.target.mediaKind}
+                                expanded={expandedChoices.has(`${selected.destination}:recorded`)}
+                                toggle={() =>
+                                  toggleChoiceEvidence(`${selected.destination}:recorded`)
+                                }
+                              />
+                            ) : null}
                             <ProviderConsensusAutomaticStatement field={selected} />
                             <DescriptionAutomaticStatement field={selected} />
                             <SeriesAutomaticStatement field={selected} />
@@ -3624,6 +3668,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ) : selectedRecorded ? (
                     <RecordedOutcome
                       field={selected}
+                      mediaKind={detail.data.target.mediaKind}
                       expanded={expandedChoices.has(`${selected.destination}:recorded`)}
                       toggle={() => toggleChoiceEvidence(`${selected.destination}:recorded`)}
                     />

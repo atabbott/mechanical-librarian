@@ -31,6 +31,13 @@ a new holdout or a population accuracy estimate. Material cover replacement rema
 a controlled positive. Five reached ISBN refusals retain their actual reason and
 appear as unchanged Activity history, without manufacturing a decision or write.
 
+The retained authority/effect measurements and the final read-model source are
+bound separately. Unchanged authority source is checked against the measured
+commit; the later read correction reconstructs selected scalar values through
+the existing effect validator, retains lookup-only narrator evidence, and shows
+combined audiobook tags beside the original owner choices. These read/UI changes
+have their own current consumer proof and do not rescore the retained corpus.
+
 Report v44, proposal v8/policy v27, packet v9, decision policy v14, action policy v4
 and shadow outcome v6 require a clean rebuild. Historical records retain their
 original bytes; old authority cannot authorize current effects. Category defaults,

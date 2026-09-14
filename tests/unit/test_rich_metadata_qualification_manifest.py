@@ -2837,6 +2837,32 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         assert set(predecessor["source_closure"]) <= set(document["source_closure"])
         binding = document["binding_only_source_equivalence"]
         assert binding["excluded_binding_assignments"] == exclusions
+        continuity = document["measurement_source_continuity"]
+        assert continuity["authority_source_sha"] == (
+            "ead56d7fdc9cef2860e4c15e01de0ae87e35cc73"
+        )
+        assert continuity["current_source_sha"] == document["frozen_candidate_sha"]
+        assert set(continuity["changed_read_sources"]) == {
+            "src/mechanical_librarian/adapters/persistence/review_projections.py",
+            "src/mechanical_librarian/application/review_web.py",
+            "frontend/src/routes/LibraryPage.tsx",
+        }
+        unchanged = {
+            name: document["source_closure"][name]
+            for name in continuity["unchanged_source_paths"]
+        }
+        assert (
+            hashlib.sha256(
+                json.dumps(
+                    unchanged, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+            ).hexdigest()
+            == continuity["unchanged_source_inventory_sha256"]
+        )
+        assert continuity["binding_module_ast_sha256"] == binding["ast_sha256"]
+        for name, delta in continuity["changed_read_sources"].items():
+            assert delta["current_sha256"] == document["source_closure"][name]
+            assert delta["measured_sha256"] != delta["current_sha256"]
         for name, source_digest in document["source_closure"].items():
             source = MANIFEST.parents[2] / name
             if name in binding["ast_sha256"]:

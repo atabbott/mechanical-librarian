@@ -2266,6 +2266,92 @@ describe('Library route', () => {
     },
   )
 
+  it.each([
+    { ownerTags: [], mediaKind: 'audiobook' },
+    { ownerTags: ['Owner tag'], mediaKind: 'audiobook' },
+    { ownerTags: ['Owner tag'], mediaKind: 'ebook' },
+  ])(
+    'shows combined tags only for $mediaKind with $ownerTags',
+    async ({ ownerTags, mediaKind }) => {
+      const base = detail.fields[0]
+      if (!base) throw new Error('workspace fixture requires a field')
+      const sourceLists = [
+        ['First', 'Shared'],
+        ['Shared', 'Second'],
+      ]
+      const field = {
+        ...base,
+        destination: 'tags' as const,
+        currentValue: ownerTags.join(', ') || 'Not set',
+        currentRaw: ownerTags,
+        automaticDecision: {
+          candidate_id: 'derived-tags',
+          decision_id: 'automatic-tags',
+          destination: 'tags' as const,
+          occurred_at: 1,
+          outcome: 'candidate' as const,
+          proposal_id: base.proposalId,
+          review_case_id: 'case-1',
+          selected_value: {
+            kind: 'list' as const,
+            value: [...ownerTags, 'First', 'Shared', 'Second'],
+          },
+          target_fingerprint: base.targetFingerprint,
+        },
+        humanDecision: null,
+        decisionActions: ['keep_current', 'accept'] as const,
+        editable: true,
+        needsAttention: false,
+        navigationRole: 'resolved' as const,
+        proposedValues: sourceLists.map((value) => ({ kind: 'list' as const, value })),
+        choiceContexts: sourceLists.map((value, index) => ({
+          alternativeId: `source-tags-${String(index)}`,
+          evidence: value.map((tag) => ({
+            observation: `Metadata: ${tag}`,
+            role: 'external_corroboration' as const,
+            source: `Source record ${String(index + 1)}`,
+          })),
+          limitations: [],
+          rationale: 'Complete source tag list.',
+          recommendation: 'no_recommendation' as const,
+          recommendationReason: 'Source alternative retained.',
+          selection: 'proposed' as const,
+        })),
+      }
+      renderRoute('/library?lens=all&preview=case-1&field=tags', {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({
+          ...detail,
+          target: { ...detail.target, mediaKind },
+          fields: [field],
+        })),
+      })
+      await screen.findByRole('region', { name: 'Tags recorded choices' })
+      expect(
+        screen.getByRole('button', { name: 'Choose proposed value: First · Shared' }),
+      ).toBeVisible()
+      expect(
+        screen.getByRole('button', { name: 'Choose proposed value: Shared · Second' }),
+      ).toBeVisible()
+      if (mediaKind === 'ebook') {
+        expect(screen.queryByRole('region', { name: 'Tags recorded outcome' })).toBeNull()
+        expect(
+          screen.queryByText('Compatible source tags were combined, retaining any existing tags.'),
+        ).toBeNull()
+        return
+      }
+      const recorded = await screen.findByRole('region', { name: 'Tags recorded outcome' })
+      expect(recorded).toHaveTextContent('First · Shared · Second')
+      if (ownerTags.length) expect(recorded).toHaveTextContent('Owner tag')
+      expect(recorded).toHaveTextContent('Compatible source tags were combined')
+      await userEvent.click(within(recorded).getByRole('button', { name: 'Evidence' }))
+      expect(recorded).toHaveTextContent('Source record 1')
+      expect(recorded).toHaveTextContent('Source record 2')
+      expect(recorded).toHaveTextContent('Metadata: First')
+      expect(recorded).toHaveTextContent('Metadata: Second')
+    },
+  )
+
   it('keeps the provider-consensus contributor statement visible while revisiting choices', async () => {
     const base = detail.fields[0]
     if (!base) throw new Error('workspace fixture requires a field')

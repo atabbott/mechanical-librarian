@@ -115,6 +115,7 @@ class CurrentReviewCaseSnapshot:
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
     automatic_source_outcome_documents: tuple[str, ...] = ()
+    automatic_selected_values: tuple[tuple[str, dict[str, object]], ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
     policy_attention_destinations: tuple[str, ...] = ()
     automatic_safety_suspended_destinations: tuple[str, ...] = ()
@@ -495,14 +496,20 @@ class InspectCurrentReviewCase:
                         )
                     ),
                 )
-                candidate_id = automatic_decision.get("candidate_id")
-                selected = next(
-                    (
-                        alternative["value"]
-                        for alternative in alternatives
-                        if alternative["alternative_id"] == candidate_id
-                    ),
-                    None,
+                decision_id = automatic_decision["decision_id"]
+                assert type(decision_id) is str
+                selected = (
+                    next(
+                        (
+                            alternative["value"]
+                            for alternative in alternatives
+                            if alternative["alternative_id"]
+                            == automatic_decision["candidate_id"]
+                        ),
+                        None,
+                    )
+                    if destination == "cover"
+                    else dict(snapshot.automatic_selected_values).get(decision_id)
                 )
                 if automatic_decision["outcome"] == "candidate" and selected is None:
                     raise ReviewWebError("unavailable")
@@ -881,18 +888,8 @@ class InspectCurrentReviewCase:
                     if current["state"] == "value"
                     else None
                 )
-                result = proposal["result"]
-                assert type(result) is dict
                 selected = (
-                    next(
-                        (
-                            value["value"]
-                            for value in result["alternatives"]
-                            if value["alternative_id"]
-                            == historical_decision.candidate_id
-                        ),
-                        None,
-                    )
+                    dict(snapshot.automatic_selected_values).get(decision_id)
                     if historical_decision.outcome == "candidate"
                     else previous
                     if historical_decision.outcome == "keep_current"
@@ -1645,7 +1642,7 @@ def _provider_source_labels(
     by_reference = {
         claim.reference: _provider_label(provider.authority)
         for provider in report.providers
-        for candidate in provider.candidates
+        for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
         for claim in candidate.claims
     }
     labels = {
@@ -1943,7 +1940,10 @@ def _evidence_by_reference(
         assert type(provider_name) is str
         authority = provider.get("authority")
         public_authority = public_provider(authority)
-        for candidate in provider["candidates"]:
+        for candidate in [
+            *provider["recording_lookup_candidates"],
+            *provider["candidates"],
+        ]:
             assert type(candidate) is dict
             candidate_identity = candidate["identity"]
             assert type(candidate_identity) is str

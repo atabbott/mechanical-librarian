@@ -112,6 +112,7 @@ class FakeReviewRepository:
         self.failures: list[int] = []
         self.sessions: dict[str, tuple[str, str, int, int | None]] = {}
         self.decisions: dict[str, str] = {}
+        self.automatic_selected_values: tuple[tuple[str, dict[str, object]], ...] = ()
         self.history: list[dict[str, object]] = [
             {
                 "checkpoint": 1,
@@ -444,6 +445,7 @@ class FakeReviewRepository:
             case_document=self.get_review_case(review_case_id),
             report_document=self.get_review_case_report(review_case_id),
             decision_documents=self.get_review_case_decisions(review_case_id),
+            automatic_selected_values=self.automatic_selected_values,
             history=(
                 ()
                 if history_limit is None

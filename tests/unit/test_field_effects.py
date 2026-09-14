@@ -6043,14 +6043,8 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             providers=report.providers,
             audio=report.audio,
         )
-    monkeypatch.setattr(
-        audiobook_decision_qualification,
-        "F46_PASSING_AUTOMATIC_OPTIONS",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
-        | {f"{category}:{option}:{identity}"},
-    )
     database = tmp_path / "selected-sources.sqlite"
-    with closing(open_repository(database)) as repository:
+    with closing(open_repository(database, cross_thread=True)) as repository:
         case_id, _ = publish_audiobook_preview(
             repository, report, (category,), selected_options={category: option}
         )
@@ -6060,7 +6054,7 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             for document in repository.get_review_case_decisions(case_id)
             if json.loads(document)["destination"] == field
         )
-    with closing(open_repository(database)) as repository:
+    with closing(open_repository(database, cross_thread=True)) as repository:
         decision = AutomaticDecision.from_json(decision_document)
         raw_decision = json.loads(decision_document)
         connection = repository._connection
@@ -6089,6 +6083,81 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             ]
             == expected
         )
+        from mechanical_librarian.application.review_web import (
+            BrowseReviewLibrary,
+            InspectCurrentReviewCase,
+            ReviewWebError,
+        )
+
+        inspector = InspectCurrentReviewCase(repository)
+        detail = inspector.run(case_id)
+        projected = next(
+            item for item in detail["fields"] if item["destination"] == field
+        )
+        assert projected["automatic_decision"]["selected_value"]["value"] == expected
+        assert projected["human_decision"] is None
+        assert not projected["needs_attention"]
+        assert projected["decision_actions"] == ["keep_current", "accept"]
+        raw_proposal = next(
+            item for item in case.proposals if item["destination"] == field
+        )
+        assert projected["proposed_values"] == [
+            item["value"]
+            for item in raw_proposal["result"]["alternatives"]
+            if item["assessment"] != "preserves_target"
+        ]
+        if field == "tags":
+            assert len(projected["proposed_values"]) == 2
+            assert (
+                projected["automatic_decision"]["selected_value"]
+                not in projected["proposed_values"]
+            )
+            if current is not None:
+                assert projected["current"]["value"] == list(current)
+                assert expected[: len(current)] == list(current)
+        history = inspector.history(case_id)
+        event = next(
+            item
+            for item in history["items"]
+            if item.get("decision_id") == decision.decision_id
+        )
+        assert event["selected_value"]["value"] == expected
+        library = BrowseReviewLibrary(repository).library(
+            lens="all", search=None, limit=25, cursor=None
+        )
+        assert any(item["review_case_id"] == case_id for item in library["items"])
+        password = tmp_path / "owner.hash"
+        password.write_text(PasswordHasher().hash("correct horse"), encoding="utf-8")
+        os.chmod(password, 0o600)
+        app = create_transport_test_app(
+            repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: 10,
+        )
+        with TestClient(app, base_url="https://review.test") as client:
+            assert (
+                client.post(
+                    "/api/v1/session/login",
+                    json={"password": "correct horse"},
+                    headers={"Origin": "https://review.test"},
+                ).status_code
+                == 200
+            )
+            response = client.get(f"/api/v1/review-cases/{case_id}")
+            assert response.status_code == 200
+            api_field = next(
+                item
+                for item in response.json()["fields"]
+                if item["destination"] == field
+            )
+            assert api_field["automatic_decision"] == projected["automatic_decision"]
+            assert api_field["proposed_values"] == projected["proposed_values"]
         original = json.loads(outcome.to_json())
         selected = next(
             member
@@ -6118,6 +6187,12 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             and (field != "description" or claim.value == expected)
         }
         assert set(selected["citation_ids"]) == expected_refs
+        assert expected_refs <= set(projected["provenance"])
+        evidence = inspector.evidence(case_id)
+        assert evidence["missing_lineage_count"] == 0
+        if field == "tags":
+            observations = " ".join(item["observation"] for item in evidence["items"])
+            assert all(tag in observations for tag in ("First", "Shared", "Second"))
         if field == "narrators":
             assert all(
                 any(claim.reference in expected_refs for claim in candidate.claims)
@@ -6182,6 +6257,19 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
         forged = AutomaticDecision.from_json(forged.to_json())
         with pytest.raises(FieldEffectError, match="authority_binding"):
             _automatic_decision_value(forged, case, report, proposal, forged_outcome)
+        with monkeypatch.context() as forged_snapshot:
+            forged_snapshot.setattr(
+                repository._review_projections,
+                "get_review_case_decisions",
+                lambda _: (forged.to_json(),),
+            )
+            forged_snapshot.setattr(
+                repository._review_projections,
+                "_automatic_source_outcome_documents",
+                lambda _: (forged_outcome.to_json(),),
+            )
+            with pytest.raises(ReviewWebError, match="unavailable"):
+                inspector.run(case_id)
         with pytest.raises(
             sqlite3.IntegrityError, match="shadow decision outcomes are append-only"
         ):
@@ -6297,3 +6385,160 @@ def test_complete_source_authors_add_keeps_every_credit_through_guarded_effect(
         ).fetchone()[0]
         == 1
     )
+
+
+@pytest.mark.parametrize("source", ("2025", "2025-02", "2025-02-03"))
+def test_original_work_date_precision_reaches_current_guarded_effect(effects, source):
+    from tests.support.audiobook_reports import synthetic_audiobook_original_date_report
+
+    report = synthetic_audiobook_original_date_report(source=source)
+    decisions = _automatic_decisions(
+        effects, report, "date_precision", "full_date", qualified=True
+    )
+    decision = next(
+        value for value in decisions if value.destination == "publishedDate"
+    )
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    snapshot = authority.resolve(decision)
+    assert snapshot.decision_value == {"kind": "text", "value": source}
+    effects.repository.grant_field_effect_consents(
+        "primary", ("audio",), ("publishedDate",), 5
+    )
+    service = GuardedFieldApplication(
+        effects.repository,
+        effects.target,
+        effects.backup,
+        effects.capabilities,
+        authority,
+        effects.dependencies,
+        PersistedEffectConsent(effects.repository),
+        effects.recovery,
+        effects.reevaluation,
+        effects.clock,
+        effects.preclaim,
+        effects.claim_hook,
+        effects.recovery_hook,
+    )
+    operation = service.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination="publishedDate",
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    effects.target.seed(operation.plan)
+    result = service.apply(operation.plan.plan_id)
+    assert result.state == "verified"
+    assert service.apply(operation.plan.plan_id).state == "verified"
+    assert result.plan.desired_value == source
+    with closing(open_repository(effects.database_path)) as reopened:
+        assert (
+            reopened.get_field_effect(operation.plan.plan_id).to_data()
+            == result.to_data()
+        )
+        assert PersistedFieldEffectAuthority(reopened).resolve(
+            decision
+        ).decision_value == {
+            "kind": "text",
+            "value": source,
+        }
+
+
+def test_isbn_refusal_history_pagination_filter_and_reader_cache(tmp_path):
+    from mechanical_librarian.domain.readable_activity import ISBN_REFUSAL_REASONS
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+    from tests.support.audiobook_reports import synthetic_audiobook_isbn_reason_report
+
+    path = tmp_path / "isbn-history.sqlite"
+    repository = open_repository(path)
+    reader = None
+    expected_ids = []
+    try:
+        for index in range(30):
+            shape = ("absent", "unavailable", "malformed", "conflict", "unassociated")[
+                index % 5
+            ]
+            raw = synthetic_audiobook_isbn_reason_report(shape)
+            report = MetadataReport.create(
+                target=replace(raw.target, item=f"item-{index}"),
+                file=raw.file,
+                local_claims=raw.local_claims,
+                local_reasons=raw.local_reasons,
+                providers=raw.providers,
+                audio=raw.audio,
+            )
+            if index == 0:
+                case_id, resolved = publish_audiobook_preview(
+                    repository,
+                    report,
+                    ("isbn_form",),
+                    selected_options={"isbn_form": "preserve_exact"},
+                )
+            else:
+                proposal = evaluate_report(
+                    report, resolved.resolved_id, human_review_destinations(resolved)
+                )
+                repository.publish(report, lambda: True)
+                repository.publish_proposal(proposal)
+                case_id = json.loads(repository.admit_review_case(proposal))[
+                    "review_case_id"
+                ]
+            document = repository.persist_shadow_outcome(case_id, 10 + index)
+            outcome = ShadowOutcomeSet.from_json(document)
+            expected_ids.append(outcome.outcome_set_id + ":isbn")
+            if index == 4:
+                reader = open_repository(
+                    path, create=False, authority=repository.authority
+                )
+                reader.configure_activity_page_reader()
+                service = ContinuousGuardedApplication(
+                    reader,
+                    {},
+                    {},
+                    PersistedFieldEffectAuthority(reader),
+                    (("primary", "audio"),),
+                    lambda: 2000,
+                    lambda *_: None,
+                    activity_only=True,
+                    activity_snapshot=reader.field_effect_activity_snapshot,
+                )
+                assert service.activity(event_type="metadata")["ledger"]["total"] == 5
+
+        first = service.activity(event_type="metadata", page=1, page_size=25)
+        second = service.activity(event_type="metadata", page=2, page_size=25)
+        assert first["ledger"]["total"] == second["ledger"]["total"] == 30
+        assert [row["event_id"] for row in first["events"] + second["events"]] == list(
+            reversed(expected_ids)
+        )
+        assert len(first["events"]) == 25 and len(second["events"]) == 5
+        assert service.activity(event_type="unknown")["ledger"]["total"] == 0
+        for label in ISBN_REFUSAL_REASONS.values():
+            matched = service.activity(event_type="metadata", search=label)
+            assert matched["ledger"]["total"] == len(matched["events"]) == 6
+        assert repository.persist_shadow_outcome(case_id, 99) == document
+        assert service.activity(event_type="metadata", page=1, page_size=25) == first
+        assert repository.pending_field_effect_decision_counts() == ()
+        assert (
+            repository._connection.execute(
+                "SELECT COUNT(*) FROM field_effects"
+            ).fetchone()[0]
+            == 0
+        )
+    finally:
+        if reader is not None:
+            reader.close()
+        repository.close()
+    with closing(open_repository(path)) as reopened:
+        page = reopened.field_effect_activity_page(
+            search=None, event_type="metadata", occurred_after=0, page=1, page_size=50
+        )
+        assert [row["event_id"] for row in page["events"]] == list(
+            reversed(expected_ids)
+        )

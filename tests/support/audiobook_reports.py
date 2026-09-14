@@ -813,3 +813,81 @@ def synthetic_audiobook_isbn_reason_report(shape: str) -> MetadataReport:
         ),
         unavailable=shape == "unavailable",
     )
+
+
+def synthetic_audiobook_original_date_report(
+    current: str | None = None, source: str = "2025-02-03"
+) -> MetadataReport:
+    """Replay the complete synthetic linked-work source, retaining date precision."""
+    import json
+    from dataclasses import replace
+    from pathlib import Path
+
+    import httpx
+
+    from mechanical_librarian.adapters.providers.open_library_metadata import (
+        OpenLibraryMetadataProvider,
+        OpenLibraryPacer,
+    )
+    from mechanical_librarian.application.metadata_report import (
+        audiobook_discovery_plan,
+        observe_provider,
+    )
+    from tests.support.audiobook_providers import audio_target
+
+    base = synthetic_audiobook_product_lookup_report(
+        (
+            {
+                "asin": "B000000001",
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+            },
+        )
+    )
+    fields = tuple(
+        TargetField(
+            field.destination,
+            TargetFieldState.MISSING if current is None else TargetFieldState.VALUE,
+            current,
+        )
+        if field.destination is TargetDestination.PUBLISHED_DATE
+        else field
+        for field in base.target.fields
+    )
+    plan = audiobook_discovery_plan(
+        audio_target("Synthetic Journey", ("Example Author",)),
+        base.local_claims,
+        audio=base.audio,
+    )
+    path = (
+        Path(__file__).with_name("audiobook_provider_payloads")
+        / "open_library_original_date.json"
+    )
+    responses = json.loads(path.read_text())
+    responses["/works/OL5W.json"]["first_publish_date"] = source
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        assert request.url.path in responses
+        return httpx.Response(200, json=responses[request.url.path])
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as client:
+        provider = OpenLibraryMetadataProvider(
+            "open_library",
+            client,
+            262_144,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+            clock=lambda: 0.0,
+            wall_clock=lambda: 1_700_000_000.0,
+        )
+        observation = observe_provider(
+            "open_library", "open_library", provider, plan
+        ).observation
+    report = MetadataReport.create(
+        target=replace(base.target, fields=fields),
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=(observation,),
+        audio=base.audio,
+    )
+    return MetadataReport.from_json(report.to_json())

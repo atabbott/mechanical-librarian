@@ -1098,6 +1098,12 @@ def test_automatic_detail_uses_a_closed_projection_without_human_commit(
         occurred_at=7,
     )
     web.repository.decisions["title"] = authority.to_json()
+    web.repository.automatic_selected_values = (
+        (
+            authority.decision_id,
+            web.case.proposals[0]["result"]["alternatives"][0]["value"],
+        ),
+    )
     detail = web.client.get(f"/api/v1/review-cases/{web.case.review_case_id}")
     assert 200 == detail.status_code
     field = next(
@@ -1311,6 +1317,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {
                 "provider": "hardcover-main",
                 "authority": "hardcover",
+                "recording_lookup_candidates": [],
                 "candidates": [
                     {
                         "identity": "candidate-1",
@@ -1327,6 +1334,7 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             },
             {
                 "provider": "open-library-main",
+                "recording_lookup_candidates": [],
                 "authority": "open_library",
                 "candidates": [
                     {
@@ -2850,10 +2858,26 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
     ]
     available = {entry["identity"] for entry in entries if entry["automatic_available"]}
     assert available == audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(available) == 44
+    assert len(available) == 73
     assert {
         entry["destination"] for entry in entries if entry["automatic_available"]
-    } == {"title", "authors", "narrators", "language", "series", "genres"}
+    } == {
+        "title",
+        "authors",
+        "narrators",
+        "language",
+        "series",
+        "genres",
+        "asin",
+        "cover",
+        "publishedDate",
+        "description",
+        "explicit",
+        "isbn",
+        "publisher",
+        "subtitle",
+        "tags",
+    }
     assert all(
         entry["record_sha256"]
         == audiobook_decision_qualification.F46_QUALIFICATION_MANIFEST_SHA256
