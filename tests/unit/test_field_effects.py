@@ -5123,17 +5123,25 @@ def test_audiobook_pair_recovers_companion_after_schedule_cursor(
         pair.env.clock,
         lambda *_: None,
     )
+    # The pair shares one `occurred_at`, so `ORDER BY occurred_at, decision_id`
+    # breaks the tie on a content hash that includes the F46 qualification
+    # digest: every re-pin re-rolls which member is visited first. The order is
+    # incidental, so this reads it rather than pinning it. The pair plan forms
+    # only at the title visit, so when title is visited first a transient
+    # suspends `title` and same-page recovery needs the cursor restart that
+    # `wake()` performs -- which production gets from the readiness poll.
     pending = pair.repo.pending_field_effect_decision_documents(100)
-    assert [AutomaticDecision.from_json(raw).destination for raw in pending] == [
-        "subtitle",
-        "title",
-    ]
+    visited = [AutomaticDecision.from_json(raw).destination for raw in pending]
+    assert sorted(visited) == ["subtitle", "title"]
+    first = visited[0]
     pair.env.capabilities.category = reason
     assert lane.schedule(limit=1) == 0
-    assert pair.repo.field_effect_capability_suspension("primary", "subtitle") == reason
+    assert pair.repo.field_effect_capability_suspension("primary", first) == reason
     pair.env.capabilities.category = "allowed"
+    if first == "title":
+        lane.wake()
     assert lane.schedule(limit=1) == 1
-    assert pair.repo.field_effect_capability_suspension("primary", "subtitle") is None
+    assert pair.repo.field_effect_capability_suspension("primary", first) is None
     assert lane.schedule() == 0
     row = pair.repo._connection.execute("SELECT plan_id FROM field_effects").fetchone()
     assert row is not None
@@ -5168,9 +5176,18 @@ def test_audiobook_pair_recovery_preserves_remaining_guards(audiobook_pair, boun
         pair.env.clock,
         lambda *_: None,
     )
+    # The visited member is a hash tie-break (see the schedule-cursor test), and
+    # recovering from a transient on the title visit needs the cursor restart
+    # production gets from its readiness poll.
+    visited = [
+        AutomaticDecision.from_json(raw).destination
+        for raw in pair.repo.pending_field_effect_decision_documents(100)
+    ]
     pair.env.capabilities.category = "field_unavailable"
     assert lane.schedule(limit=1) == 0
     pair.env.capabilities.category = "allowed"
+    if visited[0] == "title":
+        lane.wake()
     if boundary == "unexpected_effect_behavior":
         pair.repo.suspend_field_effect_capability(
             scope="destination",
