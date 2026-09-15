@@ -8,6 +8,13 @@
 
 ## Unreleased
 
+- Preparation now states one run's ready, failed and in-progress counts, each
+  stage's own numerator and denominator, and a finishing rate only while the run
+  is moving. Every completed book links into Works, and a book that stopped
+  before a report says what it is listed as instead. The background-work control
+  names each scan state, counts what it checked, explains what Scan now and Retry
+  do, and closes on Escape. (#1012)
+
 - First-run setup lists what the deployment must supply, states the owner-password
   rules before submission with an accessible reveal control, and shows each refusal
   on the field it belongs to in its own words. Connection, origin, mount and kickoff

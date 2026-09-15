@@ -229,7 +229,7 @@ row is focused work using `Delivery slice: Not applicable`.
 | Reviewer setup inside the wizard and Settings | #1009 | The optional cover reviewer is provisioned, tested and changed from the wizard and from Settings, with truthful unavailable states. | Triaged pending a bounded containment and authentication design. |
 | Readable, trustworthy Library choices | #1010 | Library rows, choices and source evidence state what they are based on and what a decision will do. | Ready. |
 | Clear policy impact, write permission and history | #1011 | Policy pages state their real effect, write permission is scoped, and history is truthful about what was applied. | Ready. |
-| Actionable preparation progress and recovery | #1012 | Preparation progress and each failed book state one supported owner action. | Ready. |
+| Actionable preparation progress and recovery | #1012 | Preparation progress and each failed book state one supported owner action. | Delivered. |
 | Settings overhaul with shared controls | #1034 | Settings uses the accepted section editor, one global draft and a Policy-style save tray built from genuinely shared components. | Triaged pending the full-library measurement and a live Settings inventory. |
 | Responsive layout, spacing and copy pass | #1013 | One final pass aligns layout, spacing and everyday copy across the changed surfaces, with an integrated completion walkthrough. | Blocked by #1008-#1012 and #1034. |
 
