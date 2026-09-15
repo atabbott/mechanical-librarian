@@ -459,13 +459,16 @@ rather than filled in; the description task names its own selected model and
 offers a separate contained inspection that reports the exact contained model
 and profile. The cover task carries
 its own disclosure: the configured model, the image, text and structured-output
-capabilities a cover model must have, and the maximum-size request basis of at
-most 12 previews of at most 320 by 480 pixels and 1 MiB inside an 8 MiB packet
-with an 8,192-token reply cap. The cover capability check reads capabilities
-only and never prices, so that disclosure carries no rate, no price-observation
-date and no per-request monetary figure; a cost derived from the selected
-model's published rates is an estimate, not a quote, and no model is presented
-as the cheapest.
+capabilities a cover model must have, and the maximum-size request basis. That
+basis is at most 12 previews of at most 320 by 480 pixels and 1 MiB each and
+8 MiB together, plus a text prompt of the pinned instruction of at most 4 KiB
+and the sealed packet text of at most 1 MiB, a strict output schema of at most
+64 KiB, and an 8,192-token reply cap; the 8 MiB bound covers the image payloads
+alone, so text input is priced separately. The cover capability check reads
+capabilities only and never prices, so that disclosure carries no rate, no
+price-observation date and no per-request monetary figure; a cost derived from
+the selected model's published text-input, image-input and output rates is an
+estimate, not a quote, and no model is presented as the cheapest.
 
 A description request contains only canonical deduplicated provider-backed
 alternatives and the three cleanup choices, with pinned instruction/schema.

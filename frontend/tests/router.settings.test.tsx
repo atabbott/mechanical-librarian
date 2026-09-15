@@ -673,6 +673,8 @@ describe('owner settings route', () => {
 
     const region = await screen.findByRole('region', { name: 'Optional cover reviewer' })
     const cover = within(region)
+    const facts = region.querySelector('.settings-reviewer-facts')
+    expect(facts).not.toBeNull()
     // The terms read exactly as the description list's do; only the sentences
     // are cover-specific.
     expect(cover.getAllByRole('term').map((term) => term.textContent)).toEqual([
@@ -687,15 +689,25 @@ describe('owner settings route', () => {
     expect(cover.getByText(/no price observation date exists/u)).toBeVisible()
     expect(cover.getByText(/no model is presented as the cheapest/u)).toBeVisible()
     const estimate = cover.getByText(/at most 12 cover previews/u)
-    expect(estimate).toHaveTextContent('320 by 480 pixels and 1 MiB, within an 8 MiB packet')
+    expect(estimate).toHaveTextContent('320 by 480 pixels and 1 MiB and together at most 8 MiB')
+    // The request also carries bounded text, so the basis names it rather than
+    // asking the owner to price images and output alone.
+    expect(estimate).toHaveTextContent('the pinned instruction (at most 4 KiB)')
+    expect(estimate).toHaveTextContent('the sealed packet text (at most 1 MiB)')
+    expect(estimate).toHaveTextContent('a strict output schema (at most 64 KiB)')
     expect(estimate).toHaveTextContent('8,192 output tokens')
+    expect(estimate).toHaveTextContent(
+      'Apply the published text-input, image-input and output rates',
+    )
     expect(estimate).toHaveTextContent('an estimate, not a quote')
     expect(cover.queryByText(/per input token/u)).toBeNull()
+    // The Model row tracks a controlled input, so the list must not be a live
+    // region; the status paragraph above owns the announcements.
+    expect(facts).not.toHaveAttribute('aria-live')
+    expect(region.querySelector('p[aria-live]')).not.toBeNull()
     // The primary action precedes the disclosure, so the key field reaches it
     // without scrolling past the prose at any width.
     const action = cover.getByRole('button', { name: 'Replace OpenRouter key' })
-    const facts = region.querySelector('.settings-reviewer-facts')
-    expect(facts).not.toBeNull()
     expect(
       action.compareDocumentPosition(facts as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()

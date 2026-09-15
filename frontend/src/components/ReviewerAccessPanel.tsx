@@ -536,7 +536,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             {mutation.isError && mutation.variables.kind.startsWith('openrouter') ? (
               <p role="alert">{mutationFailure}</p>
             ) : null}
-            <dl className="settings-reviewer-facts" aria-live="polite">
+            <dl className="settings-reviewer-facts">
               <div>
                 <dt>Model</dt>
                 <dd>
@@ -572,10 +572,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                 <dt>Maximum-size request estimate</dt>
                 <dd>
                   One request carries at most 12 cover previews, each at most 320 by 480 pixels and
-                  1 MiB, within an 8 MiB packet, and caps the reply at 8,192 output tokens. Apply
-                  the published image and output rates of the selected model to that packet to judge
-                  cost. Actual tokenization, output length and charges vary; any such figure is an
-                  estimate, not a quote.
+                  1 MiB and together at most 8 MiB, plus a text prompt of the pinned instruction (at
+                  most 4 KiB) and the sealed packet text (at most 1 MiB), a strict output schema (at
+                  most 64 KiB), and a reply capped at 8,192 output tokens. Apply the published
+                  text-input, image-input and output rates of the selected model to that whole
+                  request to judge cost. Actual tokenization, output length and charges vary; any
+                  such figure is an estimate, not a quote.
                 </dd>
               </div>
             </dl>
