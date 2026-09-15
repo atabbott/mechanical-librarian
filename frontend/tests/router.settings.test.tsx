@@ -614,6 +614,146 @@ describe('owner settings route', () => {
   })
 
   it.each([
+    [
+      'an OpenRouter model',
+      'openrouter',
+      'openai/gpt-4o-mini',
+      'OpenRouter — openai/gpt-4o-mini',
+      'OpenRouter — openai/gpt-4o-mini',
+    ],
+    [
+      'contained Codex, which reports no model of its own here',
+      'codex',
+      '',
+      'Contained Codex — no model selection; the installed profile fixes the model',
+      'Contained Codex',
+    ],
+    ['cleared', 'none', '', 'No reviewer', 'No reviewer'],
+  ] as const)(
+    'states the cover model beside its engine when the selection is %s',
+    async (_label, engine, model, expected, emphasised) => {
+      const http = createHttp()
+      http.getSettings = vi.fn(async () => view())
+      http.getReviewerAccess = vi.fn(async () => ({
+        ...reviewerView,
+        mapping:
+          engine === 'openrouter'
+            ? { engine: 'openrouter' as const, model }
+            : engine === 'codex'
+              ? { engine: 'codex' as const }
+              : null,
+        codex: { ...reviewerView.codex, state: 'usable' as const, reason: null },
+      }))
+      renderRoute('/settings?group=reviewer', http)
+
+      const line = await screen.findByText(/Current selection:/u)
+      expect(line).toHaveTextContent(expected)
+      // Only the engine, and a model it actually has, carry the emphasis: the
+      // explanation of an absent model stays plain text.
+      expect(line.querySelector('strong')).toHaveTextContent(emphasised)
+      expect(line.querySelector('strong')?.textContent).toBe(emphasised)
+    },
+  )
+
+  it('discloses the cover request basis without a price, a date or a cheapest claim', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: { engine: 'openrouter' as const, model: 'openai/gpt-4o-mini' },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state: 'usable' as const,
+        model: 'openai/gpt-4o-mini',
+        tier: 'paid' as const,
+      },
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    const region = await screen.findByRole('region', { name: 'Optional cover reviewer' })
+    const cover = within(region)
+    const facts = region.querySelector('.settings-reviewer-facts')
+    expect(facts).not.toBeNull()
+    // The terms read exactly as the description list's do; only the sentences
+    // are cover-specific.
+    expect(cover.getAllByRole('term').map((term) => term.textContent)).toEqual([
+      'Model',
+      'Capabilities',
+      'Price metadata observed',
+      'Prices in USD',
+      'Maximum-size request estimate',
+    ])
+    expect(cover.getByText('openai/gpt-4o-mini', { selector: 'dd' })).toBeVisible()
+    expect(cover.getByText(/Image input, text output and structured output/u)).toBeVisible()
+    expect(cover.getByText(/no price observation date exists/u)).toBeVisible()
+    expect(cover.getByText(/no model is presented as the cheapest/u)).toBeVisible()
+    const estimate = cover.getByText(/at most 12 cover previews/u)
+    expect(estimate).toHaveTextContent('320 by 480 pixels and 1 MiB and together at most 8 MiB')
+    // The request also carries bounded text, so the basis names it rather than
+    // asking the owner to price images and output alone.
+    expect(estimate).toHaveTextContent('the pinned instruction (at most 4 KiB)')
+    expect(estimate).toHaveTextContent('the sealed packet text (at most 1 MiB)')
+    expect(estimate).toHaveTextContent('a strict output schema (at most 64 KiB)')
+    expect(estimate).toHaveTextContent('8,192 output tokens')
+    expect(estimate).toHaveTextContent(
+      'Apply the published text-input, image-input and output rates',
+    )
+    expect(estimate).toHaveTextContent('an estimate, not a quote')
+    expect(cover.queryByText(/per input token/u)).toBeNull()
+    // The Model row tracks a controlled input, so the list must not be a live
+    // region; the status paragraph above owns the announcements.
+    expect(facts).not.toHaveAttribute('aria-live')
+    expect(region.querySelector('p[aria-live]')).not.toBeNull()
+    // The primary action precedes the disclosure, so the key field reaches it
+    // without scrolling past the prose at any width.
+    const action = cover.getByRole('button', { name: 'Replace OpenRouter key' })
+    expect(
+      action.compareDocumentPosition(facts as Node) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+    // The disclosure carries no control, so the key field still tabs straight
+    // to the next available action past the disabled replace button.
+    screen.getByLabelText('API key').focus()
+    await userEvent.setup().tab()
+    expect(cover.getByRole('button', { name: 'Refresh current status' })).toHaveFocus()
+  })
+
+  it('tracks the typed cover model in the disclosure before anything is saved', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    renderRoute('/settings?group=reviewer', http)
+
+    const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
+    const model = cover.getByRole('textbox', { name: 'Model ID' })
+    expect(cover.getByText(/None yet\. Enter a model ID above/u)).toBeVisible()
+    await user.type(model, 'openai/gpt-4o')
+    expect(cover.getByText('openai/gpt-4o', { selector: 'dd' })).toBeVisible()
+    expect(cover.queryByText(/None yet\. Enter a model ID above/u)).toBeNull()
+    // Clearing the field returns the row to the instruction rather than to a
+    // model the page no longer offers.
+    await user.clear(model)
+    expect(cover.getByText(/None yet\. Enter a model ID above/u)).toBeVisible()
+  })
+
+  it('states an absent cover model in the disclosure instead of a blank fact', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    renderRoute('/settings?group=reviewer', http)
+
+    const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
+    expect(
+      await cover.findByText(
+        'None yet. Enter a model ID above; it is checked for image, text and structured output when you validate.',
+        { selector: 'dd' },
+      ),
+    ).toBeVisible()
+    expect(cover.getByText(/an estimate, not a quote/u)).toBeVisible()
+  })
+
+  it.each([
     ['usable', null],
     ['expired', null],
     ['cancelled', null],

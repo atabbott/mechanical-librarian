@@ -195,6 +195,25 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         ? codexReasonCopy[view.codex.reason]
         : null
   const effectiveModel = model || (view.mapping?.engine === 'openrouter' ? view.mapping.model : '')
+  // The cover task states its configured model beside the engine, as the
+  // description task already does. Only the engine and a model it actually has
+  // are emphasised; contained Codex reports no model of its own here, because
+  // the installed profile fixes one and this view never carries it.
+  const coverEngine =
+    view.mapping === null
+      ? 'No reviewer'
+      : view.mapping.engine === 'openrouter'
+        ? `OpenRouter — ${view.mapping.model}`
+        : view.codex.model === null
+          ? 'Contained Codex'
+          : `Contained Codex — ${view.codex.model}`
+  const coverModelNote =
+    view.mapping?.engine === 'codex' && view.codex.model === null
+      ? ' — no model selection; the installed profile fixes the model'
+      : ''
+  // The disclosure follows the field the owner is editing, then the saved
+  // selection, so it never describes a model the page is no longer offering.
+  const disclosedCoverModel = effectiveModel || (view.openrouter.model ?? '')
   const mutationFailure =
     mutation.error instanceof ApiError
       ? (failureCopy[mutation.error.code] ??
@@ -348,8 +367,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           </div>
           <div className="settings-field-control">
             <p>
-              Current selection:{' '}
-              <strong>{view.mapping ? view.mapping.engine : 'No reviewer'}</strong>
+              Current selection: <strong>{coverEngine}</strong>
+              {coverModelNote}
             </p>
             <button
               type="button"
@@ -517,6 +536,51 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             {mutation.isError && mutation.variables.kind.startsWith('openrouter') ? (
               <p role="alert">{mutationFailure}</p>
             ) : null}
+            <dl className="settings-reviewer-facts">
+              <div>
+                <dt>Model</dt>
+                <dd>
+                  {disclosedCoverModel === ''
+                    ? 'None yet. Enter a model ID above; it is checked for image, text and structured output when you validate.'
+                    : disclosedCoverModel}
+                </dd>
+              </div>
+              <div>
+                <dt>Capabilities</dt>
+                <dd>
+                  Image input, text output and structured output are required and are checked before
+                  a cover model can be selected.
+                </dd>
+              </div>
+              <div>
+                <dt>Price metadata observed</dt>
+                <dd>
+                  Not recorded. The cover capability check reads image and structured-output support
+                  only, never this model&apos;s prices, so no price observation date exists for the
+                  cover task.
+                </dd>
+              </div>
+              <div>
+                <dt>Prices in USD</dt>
+                <dd>
+                  Unavailable here. Providers charge cover previews by their own image tokenization,
+                  which this application never observes, so no rate is shown and no model is
+                  presented as the cheapest.
+                </dd>
+              </div>
+              <div>
+                <dt>Maximum-size request estimate</dt>
+                <dd>
+                  One request carries at most 12 cover previews, each at most 320 by 480 pixels and
+                  1 MiB and together at most 8 MiB, plus a text prompt of the pinned instruction (at
+                  most 4 KiB) and the sealed packet text (at most 1 MiB), a strict output schema (at
+                  most 64 KiB), and a reply capped at 8,192 output tokens. Apply the published
+                  text-input, image-input and output rates of the selected model to that whole
+                  request to judge cost. Actual tokenization, output length and charges vary; any
+                  such figure is an estimate, not a quote.
+                </dd>
+              </div>
+            </dl>
           </div>
         </div>
         {mutation.isError && mutation.variables.kind === 'without' ? (

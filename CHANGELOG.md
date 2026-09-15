@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Reviewer settings now name the cover reviewer's configured model beside its
+  engine, and say plainly when contained Codex reports none. The cover task
+  states what a cover model must support and the largest request it can send,
+  and says that no price, price date or per-request figure is observed for it,
+  so nothing is presented as the cheapest. (#1009)
+
 - Ebook preparation no longer fails when an audiobook provider returns multiple
   matching recordings. Recording fallback candidates remain audiobook-only. (#1065)
 
