@@ -3,7 +3,7 @@
     "clean_rebuild_required": true,
     "frozen_candidate_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v8.json",
-    "manifest_sha256": "6bd534aea63339403bbeb302f2eee051b1f2391e31f1f01e6adfce2ca972caef",
+    "manifest_sha256": "6cf0944a817d176d2224a97e971f059314d109c96921e6e94eb8f073d216fa87",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -87,7 +87,7 @@
   "binding_only_source_equivalence": {
     "ast_sha256": {
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "f2adfc9536857557246db555c2e1f03e5fd50674911486199d2b2886ded1700a",
-      "src/mechanical_librarian/domain/automatic_decision.py": "8eb2e2b133e6f24238c673934bfd5ebbd0619191fd6f765d6a43f8cfbe0a6952",
+      "src/mechanical_librarian/domain/automatic_decision.py": "b792caa7538c1d1e4d554d0e79ca8cc20528ae0cafa059cfcf316257f02aaeca",
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": "00db41e2c6f63479f6f6d0e22930531e73035ae77798ac05a078b03ab16af1d5"
     },
     "excluded_binding_assignments": [
@@ -97,7 +97,7 @@
       "_PRIOR_F19A_QUALIFICATION_MANIFESTS",
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
-    "meaning": "Only the existing named binding assignments in these three modules may differ from the final current source snapshot. This cycle-breaking comparison is not whole-source equivalence with the earlier authority measurement; measurement_source_continuity separately binds that source and the read/UI semantic delta.",
+    "meaning": "Only the existing named binding assignments in these three modules may differ from the final current source snapshot. This cycle-breaking comparison is not whole-source equivalence with the earlier authority measurement; measurement_source_continuity separately binds that source and the read/UI semantic delta. The F46 prior-digest list in the automatic decision module grew by the two superseded F46 digests that were current on main, so its stripped binding AST moves with it; the change is binding-only and adds no option, scoring or holdout, and records persisted under either digest stay readable.",
     "source_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f"
   },
   "classification": "Measured work and recording applicability, field election, durable no-change and guarded-effect semantic successor; historical quality is retained and is not rescored.",
@@ -195,7 +195,7 @@
     "authority_source_sha": "ead56d7fdc9cef2860e4c15e01de0ae87e35cc73",
     "binding_module_ast_sha256": {
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "f2adfc9536857557246db555c2e1f03e5fd50674911486199d2b2886ded1700a",
-      "src/mechanical_librarian/domain/automatic_decision.py": "8eb2e2b133e6f24238c673934bfd5ebbd0619191fd6f765d6a43f8cfbe0a6952",
+      "src/mechanical_librarian/domain/automatic_decision.py": "b792caa7538c1d1e4d554d0e79ca8cc20528ae0cafa059cfcf316257f02aaeca",
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": "00db41e2c6f63479f6f6d0e22930531e73035ae77798ac05a078b03ab16af1d5"
     },
     "changed_admission_sources": {
@@ -230,7 +230,7 @@
         "measured_sha256": "c0fbbac4714a187ebf6a5df5d7e07b7a9d79152b498d25b67ea07b1fe02f9eb4"
       },
       "frontend/src/routes/LibraryPage.tsx": {
-        "current_sha256": "b242832965b20fbf2c6f7a321585aa719ee8fcb9db95d70553848a8b23e6ab29",
+        "current_sha256": "9b68940b277d15cee18e80aa242e7e210d9ac1f0137393901e0afabeafdf6285",
         "measured_sha256": "8131f03ee35a88e7ea6720d6075e35522db6e9041419e09e8af74d766eea9f72"
       },
       "frontend/src/routes/PolicyPage.tsx": {
@@ -271,7 +271,7 @@
       }
     },
     "current_source_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f",
-    "meaning": "Authority/effect measurements remain immutable at their measured source. Other than the separately declared narrator admission source, all other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. The first review remediation also includes companion-aware in-flight override visibility and verified subtitle predecessor History, neutral selected audiobook synopsis alternatives, labelled paired title/subtitle preview and separated lifecycle timestamps. Guarded effect validation and corrective no-clear SQL remain unchanged. The CI correction excludes positively invalid/conflicting runtime narrator sources from ordinary and lookup choice admission and complete-set agreement, while retaining unresolved candidates and the unchanged chapter-tolerance boundary. The existing read-only observation projection retains excluded narrator facts with source references and a nonselectable timing explanation. Current actual owner refusal, automatic matching selection, lookup references, authenticated Evidence and Linux fixture lifecycle diagnostics are separately measured; historical aggregate results are not rescored or claimed as executions of the new narrator admission. The terminal strict-typing correction changes test annotations, local variable names and explicit expected fixture narrowing only; provider payloads and product semantics are unchanged. Full src/tests/scripts typing and affected actual consumer tests provide current proof. No authority scenario is counted as re-executed. The first-run setup sources re-pinned in place for #1008 -- the Audiobookshelf setup probe adapter, the setup web application and its frontend assets -- are read/UI sources of the guided first run alone, with no admission, scoring, option, holdout or authority role, so no measurement is re-executed or claimed. The preparation-presentation sources re-pinned in place for #1012 -- the Library route, the application router, their frontend tests, the changelog and the delivery checkpoint -- state one run's reconciled counts, per-stage numerators, shared retry explanation and popover dismissal from existing markup and styles, with no admission, scoring, option, holdout or authority role. The audiobook field-effect test re-pinned beside them reads the pending pair order at runtime instead of pinning a tie-break that this manifest's own digest decides; no product behaviour and no audiobook history changes, so no measurement is re-executed or claimed.",
+    "meaning": "Authority/effect measurements remain immutable at their measured source. Other than the separately declared narrator admission source, all other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. The first review remediation also includes companion-aware in-flight override visibility and verified subtitle predecessor History, neutral selected audiobook synopsis alternatives, labelled paired title/subtitle preview and separated lifecycle timestamps. Guarded effect validation and corrective no-clear SQL remain unchanged. The CI correction excludes positively invalid/conflicting runtime narrator sources from ordinary and lookup choice admission and complete-set agreement, while retaining unresolved candidates and the unchanged chapter-tolerance boundary. The existing read-only observation projection retains excluded narrator facts with source references and a nonselectable timing explanation. Current actual owner refusal, automatic matching selection, lookup references, authenticated Evidence and Linux fixture lifecycle diagnostics are separately measured; historical aggregate results are not rescored or claimed as executions of the new narrator admission. The terminal strict-typing correction changes test annotations, local variable names and explicit expected fixture narrowing only; provider payloads and product semantics are unchanged. Full src/tests/scripts typing and affected actual consumer tests provide current proof. No authority scenario is counted as re-executed. The first-run setup sources re-pinned in place for #1008 -- the Audiobookshelf setup probe adapter, the setup web application and its frontend assets -- are read/UI sources of the guided first run alone, with no admission, scoring, option, holdout or authority role, so no measurement is re-executed or claimed. The preparation-presentation sources re-pinned in place for #1012 -- the Library route, the application router, their frontend tests, the changelog and the delivery checkpoint -- state one run's reconciled counts, per-stage numerators, shared retry explanation and popover dismissal from existing markup and styles, with no admission, scoring, option, holdout or authority role. The audiobook field-effect test re-pinned beside them reads the pending pair order at runtime instead of pinning a tie-break that this manifest's own digest decides; no product behaviour and no audiobook history changes, so no measurement is re-executed or claimed. The automatic decision module also retains the two superseded F46 digests that were current on main, each bound to the tranche set the re-pins did not move, so no audiobook record loses its authority to a digest move; this is a binding assignment only and re-executes no measurement.",
     "unchanged_source_inventory_sha256": "39eb2e4d420870d3386c5b7374c2b6a57ebb671bfedc2598dc26636009d2af8b",
     "unchanged_source_paths": [
       "src/mechanical_librarian/__init__.py",
@@ -498,7 +498,7 @@
     "frontend/src/router.tsx": "c430dd100421ddef564ada2b8185d89b175fb690b13141a13343707320208934",
     "frontend/src/routes/ActivityPage.tsx": "fc59a35a4572398407fcf4af0133db201ace7fd1b5a530aedcf36236fd8235b8",
     "frontend/src/routes/DetailPage.tsx": "48c84fe57ba67f1a86fcbec7d17777383dda5849db03998eb1b9b2da96b1e935",
-    "frontend/src/routes/LibraryPage.tsx": "b242832965b20fbf2c6f7a321585aa719ee8fcb9db95d70553848a8b23e6ab29",
+    "frontend/src/routes/LibraryPage.tsx": "9b68940b277d15cee18e80aa242e7e210d9ac1f0137393901e0afabeafdf6285",
     "frontend/src/routes/PolicyPage.tsx": "b091b9012d5496045ef2cce2060ddd7a4fbb834ee957459893ca3a1927e8158c",
     "frontend/src/styles.css": "b4182ddb9912875186db40978e4c5517683415561d592305759ea662b9d3c1ad",
     "frontend/tests/http.test.ts": "dd40a69dcbabfd46e2b8d38ea689bda0ae6f1fdab45b81e852334303e5572f43",
@@ -506,7 +506,7 @@
     "frontend/tests/policyImpact.test.ts": "44dc17d36e5292075b042ed7c1ba12a259ec93759decb8d2375b43ea1c625cc3",
     "frontend/tests/router.activity.test.tsx": "d42168da365fc80c72ccc4b484e7b826d98e4fc063eb31d8fd91def857b0db07",
     "frontend/tests/router.detail.test.tsx": "4b1e3b7b0d59a19db92cbf4d46fb5f8e9f916125c096a1035ddd47e9fa61df26",
-    "frontend/tests/router.library.test.tsx": "b6d519f934ef18d4dbec9a392cf2532b213b230281288a95ae262cf83067ade1",
+    "frontend/tests/router.library.test.tsx": "201e30daad7f310cf315b185fd228cfdfaf01556ec86d3d5adb6bffd92b52e92",
     "frontend/tests/router.policy.test.tsx": "20de1e9e29969db530134f598e99c9ed9933c6d4ca5378908d7519b9be6e75fc",
     "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
     "scripts/qualify_provider_evidence_replay.py": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129",
