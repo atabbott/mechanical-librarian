@@ -452,6 +452,18 @@ explicit; unavailable metadata does not disable the cover task. Contained
 usage identifies the exact profile/model and consumes its plan allowance;
 per-request monetary quantification is unavailable.
 
+Settings → Reviewer states each task's configured model beside its engine.
+Contained Codex reports no model there because its installed profile fixes
+one, and that absence is stated rather than filled in. The cover task carries
+its own disclosure: the configured model, the image, text and structured-output
+capabilities a cover model must have, and the maximum-size request basis of at
+most 12 previews of at most 320 by 480 pixels and 1 MiB inside an 8 MiB packet
+with an 8,192-token reply cap. The cover capability check reads capabilities
+only and never prices, so that disclosure carries no rate, no price-observation
+date and no per-request monetary figure; a cost derived from the selected
+model's published rates is an estimate, not a quote, and no model is presented
+as the cheapest.
+
 A description request contains only canonical deduplicated provider-backed
 alternatives and the three cleanup choices, with pinned instruction/schema.
 It carries 1–256 alternatives, at most 16,384 characters each, within the

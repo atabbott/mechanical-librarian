@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Reviewer settings now name the cover reviewer's configured model beside its
+  engine, and say plainly when contained Codex reports none. The cover task
+  states what a cover model must support and the largest request it can send,
+  and says that no price, price date or per-request figure is observed for it,
+  so nothing is presented as the cheapest. (#1009)
+
 - Preparation now states one run's ready, failed and in-progress counts, each
   stage's own numerator and denominator, and a finishing rate only while the run
   is moving. Every completed book links into Works, and a book that stopped
