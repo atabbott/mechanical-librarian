@@ -9,7 +9,7 @@
 ## Unreleased
 
 - Ebook preparation no longer fails when an audiobook provider returns multiple
-  matching recordings. Recording fallback candidates remain audiobook-only. (#877)
+  matching recordings. Recording fallback candidates remain audiobook-only. (#1065)
 
 - Preparation now states one run's ready, failed and in-progress counts, each
   stage's own numerator and denominator, and a finishing rate only while the run
