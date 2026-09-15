@@ -1029,6 +1029,20 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
         "{error(form,'invalid_endpoint',endpoint);return}" in SETUP_JS
     )
     assert "endpoint:address,key:key.value" in SETUP_JS
+    # A key the contract cannot carry is refused on the key, and a refusal
+    # that is about neither field marks neither.
+    assert (
+        "if(!settingsSecretValid(key.value)){error(form,'invalid_secret',key);return}"
+        in SETUP_JS
+    )
+    assert (
+        "code=>code==='unauthorized'?key:addressCodes.includes(code)?endpoint:null"
+        in SETUP_JS
+    )
+    assert (
+        "const addressCodes=['invalid_endpoint','invalid_origin','tls','timeout',"
+        "'redirect','malformed','oversize']" in SETUP_JS
+    )
     assert (
         "const emailInvalid=control=>!control.checkValidity()||"
         "!settingsOpenLibraryEmailValid(control.value)" in SETUP_JS
@@ -1247,8 +1261,12 @@ def test_refused_navigation_reads_the_origin_remedy_and_callers_keep_json() -> N
     assert remedy in SETUP_JS
 
     for headers in (
+        # A real Chromium navigation, which states no quality for HTML at all.
         {"accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"},
         {"accept": "*/*", "sec-fetch-dest": "document"},
+        # Preference is stated by quality value, never by listing order.
+        {"accept": "application/json;q=0.8, text/html;q=0.9"},
+        {"accept": "text/html;q=0.9, application/json;q=0.8"},
     ):
         navigation = client.get("/", headers={**wrong_host, **headers})
         assert navigation.status_code == 400
@@ -1271,8 +1289,15 @@ def test_refused_navigation_reads_the_origin_remedy_and_callers_keep_json() -> N
 
     for headers in (
         {"accept": "application/json"},
+        # Equal quality is no preference, and a wildcard states nothing about
+        # HTML in particular; both keep the shape a caller can parse.
         {"accept": "application/json, text/html"},
+        {"accept": "text/html, application/json"},
         {"accept": "*/*"},
+        {"accept": "text/*"},
+        # `q=0` states that HTML is not acceptable at all.
+        {"accept": "text/html;q=0, application/json"},
+        {"accept": "text/html;q=0"},
         {},
     ):
         refused = client.get("/api/setup/state", headers={**wrong_host, **headers})

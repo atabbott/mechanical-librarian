@@ -210,16 +210,33 @@ def _prefers_document(request: Request) -> bool:
     """State whether this refused request is a browser navigation.
 
     A navigation renders the body as the whole page, so the refusal has to
-    read as a page; every other caller keeps the JSON shape it parses.
+    read as a page; every other caller keeps the JSON shape it parses. The
+    Accept header states preference by quality value and not by listing order,
+    `q=0` states that a type is not acceptable at all, and a wildcard states
+    nothing about HTML in particular, so only an exact `text/html` ranked
+    strictly above `application/json` is read as a navigation.
     """
     if request.headers.get("sec-fetch-dest") == "document":
         return True
-    accepted = request.headers.get("accept", "").lower()
-    document = accepted.find("text/html")
-    if document < 0:
-        return False
-    data = accepted.find("application/json")
-    return data < 0 or document < data
+    quality: dict[str, float] = {}
+    for entry in request.headers.get("accept", "").split(","):
+        media_type, _, parameters = entry.partition(";")
+        name = media_type.strip().lower()
+        if name not in {"text/html", "application/json"}:
+            continue
+        weight = 1.0
+        for parameter in parameters.split(";"):
+            key, separator, raw = parameter.partition("=")
+            if not separator or key.strip().lower() != "q":
+                continue
+            try:
+                weight = float(raw.strip())
+            except ValueError:
+                weight = 0.0
+            break
+        quality[name] = max(quality.get(name, 0.0), weight)
+    document = quality.get("text/html", 0.0)
+    return document > 0.0 and document > quality.get("application/json", 0.0)
 
 
 def _origin_refusal(request: Request) -> Response:

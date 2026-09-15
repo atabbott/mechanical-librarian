@@ -22,19 +22,21 @@ without creating a mount.
 
 Every step states its own rules before submission and associates each refusal
 with the field it belongs to, clearing it as soon as that field changes. The
-owner password and each API key have an accessible reveal control and stay only
-in their live inputs; nonsecret entries such as a service path survive a refused
-comparison. Each named failure states a safe cause and one remedy rather than an
-internal code, and the claim and connection steps say plainly what the chosen
-browser mode and the chosen Audiobookshelf scheme do and do not protect. Before
-kickoff a short summary states the connected address, the chosen providers,
-each library with its mount state, and the reviewer choice, each row reopening
-its own step, and a reopen the deployment refuses changes nothing the owner has
-already entered. One library carries one name everywhere: the name the owner
-recorded. Each mount comparison leads with that name and one short state, and
-only a failing state carries its remedy. A page reached through an address this
-deployment does not publish cannot load the wizard at all, so the refusal itself
-is readable and states that cause and how to reach the published address.
+owner password and the Audiobookshelf and provider API keys have an accessible
+reveal control, and the reviewer key is a write-only field cleared after each
+attempt; every secret stays only in its live input, while nonsecret entries
+such as a service path survive a refused comparison. Each named failure states
+a safe cause and one remedy rather than an internal code, and the claim and
+connection steps say plainly what the chosen browser mode and the chosen
+Audiobookshelf scheme do and do not protect. Before kickoff a short summary
+states the connected address, the chosen providers, each library with its mount
+state, and the reviewer choice, each row reopening its own step, and a reopen
+the deployment refuses changes nothing the owner has already entered. One
+library carries one name everywhere: the name the owner recorded. Each mount
+comparison leads with that name and one short state, and only a failing state
+carries its remedy. A page reached through an address this deployment does not
+publish cannot load the wizard at all, so the refusal itself is readable and
+states that cause and how to reach the published address.
 
 Kickoff says exactly: `Nothing in your library changes. Writes stay off until
 you turn them on in Activity.` The setup target swaps to the normal authenticated

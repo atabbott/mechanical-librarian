@@ -328,9 +328,9 @@ describe('shipped first-run setup script', () => {
     [502, 'malformed', 'not with the supported libraries response', 'endpoint'],
     [502, 'oversize', 'more data than setup can safely read', 'endpoint'],
     [400, 'invalid_origin', 'canonical forwarded host and protocol pair', 'endpoint'],
-    [403, 'csrf', 'This setup form expired.', 'endpoint'],
-    [401, 'unauthorized', 'Your setup sign-in expired', 'endpoint'],
-    [500, 'unavailable', 'Setup could not finish that step', 'endpoint'],
+    [403, 'csrf', 'This setup form expired.', null],
+    [401, 'unauthorized', 'Your setup sign-in expired', null],
+    [500, 'unavailable', 'Setup could not finish that step', null],
   ] as const)(
     'explains the %i %s connection refusal and keeps the entered address',
     async (status, code, copy, invalidField) => {
@@ -359,10 +359,20 @@ describe('shipped first-run setup script', () => {
       expect(alert.textContent).not.toMatch(/^[a-z_]+$/u)
       expect(endpoint).toHaveValue('https://books.invalid:8443')
       expect(key).toHaveValue('target-key')
-      const invalid = invalidField === 'key' ? key : endpoint
-      expect(invalid).toHaveAttribute('aria-invalid', 'true')
-      expect(invalid).toHaveAttribute('aria-describedby', alert.id)
-      expect(invalid).toHaveFocus()
+      // A refusal about neither field marks neither: a reachable address
+      // that answered badly is not an address the owner mistyped.
+      if (invalidField === null) {
+        expect(endpoint).not.toHaveAttribute('aria-invalid')
+        expect(key).not.toHaveAttribute('aria-invalid')
+        expect(document.querySelectorAll('#setup-main [aria-invalid]')).toHaveLength(0)
+      } else {
+        const invalid = invalidField === 'key' ? key : endpoint
+        const released = invalidField === 'key' ? endpoint : key
+        expect(invalid).toHaveAttribute('aria-invalid', 'true')
+        expect(invalid).toHaveAttribute('aria-describedby', alert.id)
+        expect(invalid).toHaveFocus()
+        expect(released).not.toHaveAttribute('aria-invalid')
+      }
     },
   )
 
@@ -405,6 +415,43 @@ describe('shipped first-run setup script', () => {
     await waitFor(() => expect(attempts).toHaveLength(1))
     expect(attempts[0]).toMatchObject({ endpoint: 'https://books.invalid:8443' })
     expect(endpoint).toHaveValue('https://books.invalid:8443')
+  })
+
+  it('states a key setup cannot carry before it travels to Audiobookshelf', async () => {
+    const attempts: unknown[] = []
+    const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/connect' && init?.method === 'POST') {
+        attempts.push(jsonBody(init.body))
+        return response({})
+      }
+      return response(setupState('connect', { completed_steps: ['claim'], connection: null }))
+    })
+    vi.stubGlobal('fetch', fetch)
+    runSetup()
+
+    const endpoint = await screen.findByLabelText('Audiobookshelf address')
+    const key = screen.getByLabelText('Audiobookshelf API key')
+    fireEvent.input(endpoint, { target: { value: 'https://books.invalid:8443' } })
+
+    // A key setup would refuse anyway states its own rule here, on the key,
+    // instead of reaching Audiobookshelf and reading back as a bad address.
+    for (const value of ['', 'a'.repeat(settingsVocabulary.secret.maximum + 1), 'Bearer key']) {
+      fireEvent.input(key, { target: { value } })
+      fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
+      const alert = await screen.findByRole('alert')
+      await waitFor(() => expect(alert).toHaveTextContent(settingsVocabulary.errors.secret))
+      expect(key).toHaveAttribute('aria-invalid', 'true')
+      expect(key).toHaveAttribute('aria-describedby', alert.id)
+      expect(key).toHaveFocus()
+      expect(endpoint).not.toHaveAttribute('aria-invalid')
+      expect(attempts).toEqual([])
+    }
+
+    fireEvent.input(key, { target: { value: 'target-key' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Verify and continue' }))
+    await waitFor(() => expect(attempts).toHaveLength(1))
+    expect(attempts[0]).toMatchObject({ key: 'target-key' })
   })
 
   it('states a contact email the browser cannot parse instead of staying silent', async () => {
