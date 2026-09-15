@@ -1,9 +1,9 @@
 {
   "audiobook_activation": {
     "clean_rebuild_required": true,
-    "frozen_candidate_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f",
+    "frozen_candidate_sha": "d8c72267ff9042621b4b0be12697ab673f5fe36b",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v8.json",
-    "manifest_sha256": "8a708d1bc25ca8cb42e42a09faa9616f0605eadcb0584f0b8a6f7cdfcf7750bc",
+    "manifest_sha256": "bcba61c83d38f91ee7d9577a4f5c3078504308017c84546145e7948d37b788e7",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -87,7 +87,7 @@
   "binding_only_source_equivalence": {
     "ast_sha256": {
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "f2adfc9536857557246db555c2e1f03e5fd50674911486199d2b2886ded1700a",
-      "src/mechanical_librarian/domain/automatic_decision.py": "159df45ae62388ee3ef8e4b3b96835ac2e436f92252eab6e10759344dcd650ef",
+      "src/mechanical_librarian/domain/automatic_decision.py": "f5d56e1c6774295232daa4054c87fc896b46993a7d15e4fede7a50a71555218a",
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": "00db41e2c6f63479f6f6d0e22930531e73035ae77798ac05a078b03ab16af1d5"
     },
     "excluded_binding_assignments": [
@@ -97,8 +97,8 @@
       "_PRIOR_F19A_QUALIFICATION_MANIFESTS",
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
-    "meaning": "Only the existing named binding assignments in these three modules may differ from the final current source snapshot. This cycle-breaking comparison is not whole-source equivalence with the earlier authority measurement; measurement_source_continuity separately binds that source and the read/UI semantic delta. The F46 prior-digest list in the automatic decision module grew by the two superseded F46 digests that were current on main, so its stripped binding AST moves with it; the change is binding-only and adds no option, scoring or holdout, and records persisted under either digest stay readable. The F46 prior-digest list in the automatic decision module grew by the one superseded F46 digest that was current on main for #1009, so its stripped binding AST moves with it; the change is binding-only, adds no option, scoring or holdout, and records persisted under any of those digests stay readable. The #1009 review corrections grew that F46 prior-digest list again by the digest the first #1009 re-pin had made current, so its stripped binding AST moves with it once more; the change is binding-only, adds no option, scoring or holdout, and records persisted under any of those digests stay readable. The #1009 connector-review corrections grew that F46 prior-digest list again by the digest the second #1009 re-pin had made current, so its stripped binding AST moves with it once more; the change is binding-only, adds no option, scoring or holdout, and records persisted under any of those digests stay readable.",
-    "source_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f"
+    "meaning": "Only the existing named binding assignments in these three modules may differ from the final current source snapshot. This cycle-breaking comparison is not whole-source equivalence with the earlier authority measurement; measurement_source_continuity separately binds that source and the read/UI semantic delta. The F46 prior-digest list in the automatic decision module grew by the two superseded F46 digests that were current on main, so its stripped binding AST moves with it; the change is binding-only and adds no option, scoring or holdout, and records persisted under either digest stay readable. Merging main e0458637 for #1009 left that F46 prior-digest list holding every digest either lane made current -- the #1065 re-pin's and all four #1009 re-pins' -- each paired with the tranche set it was current for, so the stripped binding AST moves once for the merged list; the change is binding-only, adds no option, scoring or holdout, and records persisted under any of those digests stay readable.",
+    "source_sha": "d8c72267ff9042621b4b0be12697ab673f5fe36b"
   },
   "classification": "Measured work and recording applicability, field election, durable no-change and guarded-effect semantic successor; historical quality is retained and is not rescored.",
   "clean_rebuild_required": true,
@@ -110,7 +110,7 @@
     "retained_controls": 2,
     "source_reconstructions": 2
   },
-  "frozen_candidate_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f",
+  "frozen_candidate_sha": "d8c72267ff9042621b4b0be12697ab673f5fe36b",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f19a-qualification-manifest-v24.json",
@@ -195,13 +195,17 @@
     "authority_source_sha": "ead56d7fdc9cef2860e4c15e01de0ae87e35cc73",
     "binding_module_ast_sha256": {
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "f2adfc9536857557246db555c2e1f03e5fd50674911486199d2b2886ded1700a",
-      "src/mechanical_librarian/domain/automatic_decision.py": "159df45ae62388ee3ef8e4b3b96835ac2e436f92252eab6e10759344dcd650ef",
+      "src/mechanical_librarian/domain/automatic_decision.py": "f5d56e1c6774295232daa4054c87fc896b46993a7d15e4fede7a50a71555218a",
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": "00db41e2c6f63479f6f6d0e22930531e73035ae77798ac05a078b03ab16af1d5"
     },
     "changed_admission_sources": {
       "src/mechanical_librarian/application/continuous_field_effects.py": {
         "current_sha256": "0067c7e4965f917c74f517275a6029c2d09c60d7405a5a30b32bc01caa743ef1",
         "measured_sha256": "6f92d12e652a128b68f89de4e3e5c57d59fdae12591408ab279630076d9905e7"
+      },
+      "src/mechanical_librarian/application/metadata_report.py": {
+        "current_sha256": "3ce04ba30a70105d8412a6f826b8bdf871130a8c5d95640c6f80d7cbd01af06a",
+        "measured_sha256": "3e15a785305fbb15945a1f8ce111797ce77211bcc8164e840eade93d838e1eb3"
       },
       "src/mechanical_librarian/domain/proposal_set.py": {
         "current_sha256": "420af0cdb3932b8851f40eb89cb56cb210397b84862d8f84b7cd1e60157c3d8e",
@@ -270,9 +274,9 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f",
-    "meaning": "Authority/effect measurements remain immutable at their measured source. Other than the separately declared narrator admission source, all other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. The first review remediation also includes companion-aware in-flight override visibility and verified subtitle predecessor History, neutral selected audiobook synopsis alternatives, labelled paired title/subtitle preview and separated lifecycle timestamps. Guarded effect validation and corrective no-clear SQL remain unchanged. The CI correction excludes positively invalid/conflicting runtime narrator sources from ordinary and lookup choice admission and complete-set agreement, while retaining unresolved candidates and the unchanged chapter-tolerance boundary. The existing read-only observation projection retains excluded narrator facts with source references and a nonselectable timing explanation. Current actual owner refusal, automatic matching selection, lookup references, authenticated Evidence and Linux fixture lifecycle diagnostics are separately measured; historical aggregate results are not rescored or claimed as executions of the new narrator admission. The terminal strict-typing correction changes test annotations, local variable names and explicit expected fixture narrowing only; provider payloads and product semantics are unchanged. Full src/tests/scripts typing and affected actual consumer tests provide current proof. No authority scenario is counted as re-executed. The first-run setup sources re-pinned in place for #1008 -- the Audiobookshelf setup probe adapter, the setup web application and its frontend assets -- are read/UI sources of the guided first run alone, with no admission, scoring, option, holdout or authority role, so no measurement is re-executed or claimed. The preparation-presentation sources re-pinned in place for #1012 -- the Library route, the application router, their frontend tests, the changelog and the delivery checkpoint -- state one run's reconciled counts, per-stage numerators, shared retry explanation and popover dismissal from existing markup and styles, with no admission, scoring, option, holdout or authority role. The audiobook field-effect test re-pinned beside them reads the pending pair order at runtime instead of pinning a tie-break that this manifest's own digest decides; no product behaviour and no audiobook history changes, so no measurement is re-executed or claimed. The automatic decision module also retains the two superseded F46 digests that were current on main, each bound to the tranche set the re-pins did not move, so no audiobook record loses its authority to a digest move; this is a binding assignment only and re-executes no measurement. The reviewer-surface sources re-pinned in place for #1009 -- the configuration reference and the changelog -- are closure-only documentation of Settings, stating the cover reviewer's configured model beside its engine and the capability and maximum-size request basis of its cost disclosure, with no admission, scoring, option, holdout or authority role, so no measurement is re-executed or claimed. The #1009 review corrections re-pin the configuration reference once more: it now scopes the model-beside-engine statement to the cover task's own selection line, leaving the description task's separate model and contained inspection unclaimed. It stays closure-only documentation with no admission, scoring, option, holdout or authority role, so no measurement is re-executed or claimed. The #1009 connector-review corrections re-pin the configuration reference once more: the cover task's maximum-size request basis now also names the bounded instruction, sealed packet text and output schema the request carries, because the 8 MiB bound covers the image payloads alone. It stays closure-only documentation with no admission, scoring, option, holdout or authority role, so no measurement is re-executed or claimed.",
-    "unchanged_source_inventory_sha256": "39eb2e4d420870d3386c5b7374c2b6a57ebb671bfedc2598dc26636009d2af8b",
+    "current_source_sha": "d8c72267ff9042621b4b0be12697ab673f5fe36b",
+    "meaning": "Authority/effect measurements remain immutable at their measured source. Other than the separately declared admission sources, all other backend source is byte-identical or has the original named binding-assignment AST equivalence. The listed read/UI sources have current consumer proof: exact selected scalar value reconstruction, retained lookup narrator evidence, audiobook-only combined-tag presentation with neutral different-source-list wording for a validated compatible union, read-only paged identifier observations, actual outcome and policy captions, scoped Activity labels, and strict current nested shadow sample transport, and the integrated main router unknown-error narrowing. Frontend package/lock changes are exact main PR 1058 integration and are independently bound in source_closure. The first review remediation also includes companion-aware in-flight override visibility and verified subtitle predecessor History, neutral selected audiobook synopsis alternatives, labelled paired title/subtitle preview and separated lifecycle timestamps. Guarded effect validation and corrective no-clear SQL remain unchanged. The CI correction excludes positively invalid/conflicting runtime narrator sources from ordinary and lookup choice admission and complete-set agreement, while retaining unresolved candidates and the unchanged chapter-tolerance boundary. The existing read-only observation projection retains excluded narrator facts with source references and a nonselectable timing explanation. Current actual owner refusal, automatic matching selection, lookup references, authenticated Evidence and Linux fixture lifecycle diagnostics are separately measured; historical aggregate results are not rescored or claimed as executions of the new narrator admission. The terminal strict-typing correction changes test annotations, local variable names and explicit expected fixture narrowing only; provider payloads and product semantics are unchanged. Full src/tests/scripts typing and affected actual consumer tests provide current proof. No authority scenario is counted as re-executed. The first-run setup sources re-pinned in place for #1008 -- the Audiobookshelf setup probe adapter, the setup web application and its frontend assets -- are read/UI sources of the guided first run alone, with no admission, scoring, option, holdout or authority role, so no measurement is re-executed or claimed. The preparation-presentation sources re-pinned in place for #1012 -- the Library route, the application router, their frontend tests, the changelog and the delivery checkpoint -- state one run's reconciled counts, per-stage numerators, shared retry explanation and popover dismissal from existing markup and styles, with no admission, scoring, option, holdout or authority role. The audiobook field-effect test re-pinned beside them reads the pending pair order at runtime instead of pinning a tie-break that this manifest's own digest decides; no product behaviour and no audiobook history changes, so no measurement is re-executed or claimed. The automatic decision module also retains the two superseded F46 digests that were current on main, each bound to the tranche set the re-pins did not move, so no audiobook record loses its authority to a digest move; this is a binding assignment only and re-executes no measurement. The #1065 correction restricts recording fallback candidates to lookups with audio context. Ebook reports no longer receive invalid recording candidates; audiobook candidate ordering, scoring, passing options and effect authority are unchanged. The ebook-negative and audiobook-positive regression assertions and the 18-item reviewer-free smoke supply current consumer proof. Historical quality measurements are not re-executed or rescored. Superseded qualification digests remain readable. Merging main e0458637 into the #1009 lane re-pins two closure-only documents on top of the #1065 measurement: the changelog, which now carries both lanes' bullets, and the configuration reference, whose cover reviewer paragraph states the model beside the engine on the cover task's selection line and the capability, text-input and maximum-size request basis of its cost disclosure. Neither has an admission, scoring, option, holdout or authority role, and the #1065 admission and read classifications are carried through unchanged, so no measurement is re-executed or claimed.",
+    "unchanged_source_inventory_sha256": "063df48c3915cfbdca586a3abb783b9d3e65b372ce2dc33d123336af6dbb1b30",
     "unchanged_source_paths": [
       "src/mechanical_librarian/__init__.py",
       "src/mechanical_librarian/__main__.py",
@@ -366,7 +370,6 @@
       "src/mechanical_librarian/application/field_effects.py",
       "src/mechanical_librarian/application/live_updates.py",
       "src/mechanical_librarian/application/metadata_policy.py",
-      "src/mechanical_librarian/application/metadata_report.py",
       "src/mechanical_librarian/application/operations.py",
       "src/mechanical_librarian/application/owner_settings.py",
       "src/mechanical_librarian/application/proposal_sets.py",
@@ -478,7 +481,7 @@
   "schema": "f19a-qualification-manifest-v25",
   "scope": "Existing ebook title authority preserved; measured audiobook authority is separately media-scoped.",
   "source_closure": {
-    "CHANGELOG.md": "7625c8fd3a8bca69ca9b96f5324e592adce75fc912e24b831cba5c4aec75fcdd",
+    "CHANGELOG.md": "b62f44cd4dadc46547e96954faa1159e20896eb931e4bfcf7ca670db4300f67b",
     "docs/architecture/decisions/0059-deterministic-cover-election.md": "b5f1e4c1b37d6029bbdda0caca202a97c210f18db2bc0f4423e37b128df6756e",
     "docs/architecture/decisions/0061-audiobook-provider-posture.md": "230acf3e386985d053fe428ce61f1301e857c70237f97d5bea5484ab132b7acd",
     "docs/architecture/decisions/0071-book-media-guarded-application.md": "325c5c20e4b7f41a4fe4149c0d225e0d025837571b2265cacc35faecbb448b14",
@@ -606,7 +609,7 @@
     "src/mechanical_librarian/application/field_effects.py": "c2dc3e5ec3ee3212f5906e823fa91ea564975a2ecebcacf13756140cb305a5d5",
     "src/mechanical_librarian/application/live_updates.py": "57832202ea86b248c54a7b92ece1b6be0452f28460c7be21a7d187f1e2e5f900",
     "src/mechanical_librarian/application/metadata_policy.py": "868e975df4f8824f22e183383f28ee5c8fbf255dd854feb05143d70a7d91d2db",
-    "src/mechanical_librarian/application/metadata_report.py": "3e15a785305fbb15945a1f8ce111797ce77211bcc8164e840eade93d838e1eb3",
+    "src/mechanical_librarian/application/metadata_report.py": "3ce04ba30a70105d8412a6f826b8bdf871130a8c5d95640c6f80d7cbd01af06a",
     "src/mechanical_librarian/application/operations.py": "ed2803f5cd42b4d78ef729ced604f0176410c74644ec48541cc96d486bef2455",
     "src/mechanical_librarian/application/owner_settings.py": "713fc9583a473a3578bdcd3da8e66003841252a279d9ec275e4ee3056937e354",
     "src/mechanical_librarian/application/proposal_sets.py": "4ac7347dc916468ce60624f06b226b440c62cfde06786dbb89063974d1f16dbe",
@@ -643,8 +646,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "b89ba1ed633dd10fb6191837b71f4eac05c3d7784e9191795a8c2454e312ea04",
-    "src/mechanical_librarian/domain/automatic_decision.py": "3f32384f900ad38eb654a058a53c4a357eddc312313c0e5e504f36d5b68165f9",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "adb82a854acfeb3526d3065aa16812b32a9e4b358e3d20aa032777972320e1af",
+    "src/mechanical_librarian/domain/automatic_decision.py": "63f50303fb98a4656e68ff23ab31155b1a3fa2b4976d2eeb23e7d14aa3802aa2",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -675,7 +678,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "f27ff5d53db07f40661bd59d2092cade6881671a540f829a2ee20938313843dd",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "deea0ee1b22cfafa4f07a5cf9cd8cd74c3c569998ed50a379da4c7bd945fa0e9",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "8d6fcff5b4af8a71d76a46efb3e6131caeb7cd7d06a03a027f95447f0850502f",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
@@ -738,7 +741,7 @@
     "tests/unit/test_inventaire_metadata.py": "e049bebde92110216363d31190eaf56a99aa5de816ad9d4a218b0ec420ab50cf",
     "tests/unit/test_metadata_policy.py": "6fcfac17c6d1da7961913be169cd5cd80c9f81b2f126e70aaf1574b4ab34edc2",
     "tests/unit/test_metadata_policy_activation.py": "dc7a1966eee6db2adfac6ad0bfab3abca079b55002fabdb09f68a448c8342f8b",
-    "tests/unit/test_metadata_report_discovery.py": "a8286b313902d0ad1c0f539bc7528469796844ca0bf8d24748a8c60e858fbf0c",
+    "tests/unit/test_metadata_report_discovery.py": "9693412ccea15a9dcd6104cbd64812fa56c9171d3be3ba5eceff45e50a720889",
     "tests/unit/test_metadata_report_evidence.py": "4c17e95af3070d6bf50efd00955be529df4d480fc498ab97b1e8d71018aa474e",
     "tests/unit/test_metadata_report_persistence.py": "e469e4683ec27183b0f23ee388a90ed32ebafc17bab72ecc95a08ebbfb50d996",
     "tests/unit/test_open_library_metadata.py": "7caf651e9bc3dd9348463758651b44b71c529d9d0be6e4b6adf70f3a1243444a",
@@ -749,7 +752,7 @@
     "tests/unit/test_review_web_read_models.py": "d365d78da40b7bb7d222c9eed39be1dabe1f3ca70ad7772b7570d2504ce509a4",
     "tests/unit/test_review_web_transport.py": "aa556f017fec401c8e05f0d5f7ab0811e92e20e554dfcbfeb96fdabc67da724d",
     "tests/unit/test_rich_metadata_preview.py": "1450abb8d097d10e4600f696715828a5dc0b66e003c86965ac057b14f46ed1f5",
-    "tests/unit/test_rich_metadata_qualification_manifest.py": "4975df9be417d8a193b87334e32618370d6c0fd62c9631b5b590654d62bf75fb",
+    "tests/unit/test_rich_metadata_qualification_manifest.py": "487e272d0f47c1f6a0e0957e3655415e0aeaf2b279087da1d104648534fc23c0",
     "tests/unit/test_shadow_decision.py": "eb07eddd3878840aea7c21a4d27d9948ff0dca215c2ec824b6c08710fd7ff614",
     "tests/unit/test_shadow_outcome_persistence.py": "148c8c790eafd7e91dab6f176d2d4127462d4667039a80e747043869805f9d30",
     "tests/unit/test_shadow_review_packets.py": "cc6a9b23ffc04c150bdb0522bf5cad6930fd8d6a34543909290e7db7efadfb56",

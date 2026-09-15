@@ -3121,6 +3121,8 @@ def test_failed_work_set_keeps_individual_recordings_and_original_runtime_order(
     lookup = MetadataLookup(
         ProviderQueryKind.WORK, plan.local_claims, plan.work_title, plan.work_authors
     )
+    assert qualify_provider_observation(raw, lookup).recording_lookup_candidates == ()
+    lookup = replace(lookup, audio=report.audio)
     result = qualify_provider_observation(raw, lookup)
     assert result.status is ProviderStatus.NO_MATCH and result.candidates == ()
     assert result.recording_lookup_candidates == hints

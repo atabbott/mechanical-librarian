@@ -14,6 +14,9 @@
   and says that no price, price date or per-request figure is observed for it,
   so nothing is presented as the cheapest. (#1009)
 
+- Ebook preparation no longer fails when an audiobook provider returns multiple
+  matching recordings. Recording fallback candidates remain audiobook-only. (#1065)
+
 - Preparation now states one run's ready, failed and in-progress counts, each
   stage's own numerator and denominator, and a finishing rate only while the run
   is moving. Every completed book links into Works, and a book that stopped

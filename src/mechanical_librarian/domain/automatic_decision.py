@@ -78,7 +78,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "3d0d7457d1704574f979121acaedfc5c4c7890f9f881042444161da8e1927202"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "c975fa0f6c4f18a51615c1ee6000227f37e1595dd7f29b0aff17b9e4909fe0e8"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -188,6 +188,14 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
     ),
     (
         "9d14ba06848eb001d160b617712b1126ba81a0f47465fb2ba0123fb569573130",
+        F19A_QUALIFIED_POLICY_OPTIONS,
+    ),
+    (
+        "02202d0705cb8403612c4efc71224e0f097ce8fb28d641c3410802a9e4d8c451",
+        F19A_QUALIFIED_POLICY_OPTIONS,
+    ),
+    (
+        "3d0d7457d1704574f979121acaedfc5c4c7890f9f881042444161da8e1927202",
         F19A_QUALIFIED_POLICY_OPTIONS,
     ),
 
@@ -401,6 +409,14 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         "4c1e65de7d93ed2473d4fb3200f810b550b8b57b7b97f5f3a356a04844405749",
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
+    (
+        "a51a59e57ac5ea3f2bbaf32e90c0d12e2c1e6453458bc16a1fe2354430b5f73c",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "e209f3f0e7bffede7f7f9aa048617c061652ce9c6e8de2e66b30816b4f639aec",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
 
 )
 # Retained published audiobook authority remains decodable, never current.
@@ -454,8 +470,8 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
             'title_layout:title_and_subtitle:audiobook_title_replace',
         }),
     ),
-    # Five F46 digests were current before the #1008, #1012 and the three #1009
-    # re-pins superseded them. No re-pin moved an option, so each speaks for the
+    # Seven F46 digests were current before the #1008, #1012, #1065 and the four
+    # #1009 re-pins superseded them. No re-pin moved an option, so each speaks for the
     # tranche set that is still current, and a record persisted while it was
     # current stays readable rather than losing its authority to a digest move.
     (
@@ -476,6 +492,14 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
     ),
     (
         "5c99d641474bc81a538463eec6cd619de7d6770a4e3876bef20a1b9ac3bf5656",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "5e2d5bb1306585f45db4a7d2788791f1c98152b40cff272b2e9d34c5b3b8748d",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "8a708d1bc25ca8cb42e42a09faa9616f0605eadcb0584f0b8a6f7cdfcf7750bc",
         audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
     ),
 )
