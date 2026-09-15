@@ -259,11 +259,11 @@
         "measured_sha256": "7ba2625d71ab1b11cdb7390a2736e595d9623fcdacc8b5f3a14cbe0bb2e42f89"
       },
       "src/mechanical_librarian/interfaces/web/setup.py": {
-        "current_sha256": "4a27179bdde88833fcc095f81cb499ce588acd72171a63b3a977acf376f4e98d",
+        "current_sha256": "aed677119f669104c3c457647b0cd29f77c949e1641ac815464587e193ecaf44",
         "measured_sha256": "242d61493e96080272c7884c1d5df0634b3718afe4227b434611f00ff3be6840"
       },
       "src/mechanical_librarian/interfaces/web/setup_frontend.py": {
-        "current_sha256": "13bca6844bc370987c7674f4a20e883db784dd5b80a74726bffc2da39faf4d7d",
+        "current_sha256": "9c9acbdeb6d3edb1db36576dd34617bd40b39c9950b167da0664a71af5b06562",
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
@@ -791,8 +791,8 @@
     "src/mechanical_librarian/interfaces/web/react_assets.py": "e8a43e6ef18ffbf0cb35e6aedaf98ba7d752cec91bd023be4704975c179d3bac",
     "src/mechanical_librarian/interfaces/web/review_frontend.py": "2ba0d623e8e093f5c42798ed264f4b4bd3b123f5b52cfdd7b6752fa625bc30a5",
     "src/mechanical_librarian/interfaces/web/runtime_dispatch.py": "4b365bfaf268cc912c3aa655fe3311dfb38677e32784f8d28ea2c0afa60e4284",
-    "src/mechanical_librarian/interfaces/web/setup.py": "4a27179bdde88833fcc095f81cb499ce588acd72171a63b3a977acf376f4e98d",
-    "src/mechanical_librarian/interfaces/web/setup_frontend.py": "13bca6844bc370987c7674f4a20e883db784dd5b80a74726bffc2da39faf4d7d",
+    "src/mechanical_librarian/interfaces/web/setup.py": "aed677119f669104c3c457647b0cd29f77c949e1641ac815464587e193ecaf44",
+    "src/mechanical_librarian/interfaces/web/setup_frontend.py": "9c9acbdeb6d3edb1db36576dd34617bd40b39c9950b167da0664a71af5b06562",
     "tests/browser/test_react_platform_artifact.py": "16f6296753b8cd27f467354593d818f810dc237cdb0381f00887779344188d4f",
     "tests/browser/test_review_browser.py": "89220788669eb41f137ef793248055eca8e11f584c7b7b2f87ccb96a229162da",
     "tests/integration/test_audiobook_provider_activation.py": "bd0c15de0c9b385b5155882835780415fe42bb6e6ad35a9c7764a2d360b90a44",

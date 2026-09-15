@@ -3,7 +3,7 @@
     "clean_rebuild_required": true,
     "frozen_candidate_sha": "9f911d98d0952d0bae1b1a9967e01613b6d99c1f",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v8.json",
-    "manifest_sha256": "92bbeed3174a2e3c75357d160f35f41bf0a06629af381bcfac9ffc604f20db3d",
+    "manifest_sha256": "e675cf0efcc753ecdcb672bf96e4d0b225ece7f3822fe5d54316fc867b5ed41b",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -83,7 +83,7 @@
       "title_layout:title_and_subtitle:audiobook_title_subtitle_pair"
     ]
   },
-  "automatic_decision_after_f19_sha256": "96718f914d1db90e5e3cf831c694cb5b22cd63e491a2c9c6025f3eeb733c302a",
+  "automatic_decision_after_f19_sha256": "0c7a85f538b2da857a5b76d68d72cd77c0278e2aea552ef7f429782717d5ea16",
   "base_sha": "0a2a193a6645e3f7529f626ddf9abd957ae01251",
   "binding_only_source_equivalence": {
     "ast_sha256": {
@@ -263,11 +263,11 @@
         "measured_sha256": "7ba2625d71ab1b11cdb7390a2736e595d9623fcdacc8b5f3a14cbe0bb2e42f89"
       },
       "src/mechanical_librarian/interfaces/web/setup.py": {
-        "current_sha256": "4a27179bdde88833fcc095f81cb499ce588acd72171a63b3a977acf376f4e98d",
+        "current_sha256": "aed677119f669104c3c457647b0cd29f77c949e1641ac815464587e193ecaf44",
         "measured_sha256": "242d61493e96080272c7884c1d5df0634b3718afe4227b434611f00ff3be6840"
       },
       "src/mechanical_librarian/interfaces/web/setup_frontend.py": {
-        "current_sha256": "13bca6844bc370987c7674f4a20e883db784dd5b80a74726bffc2da39faf4d7d",
+        "current_sha256": "9c9acbdeb6d3edb1db36576dd34617bd40b39c9950b167da0664a71af5b06562",
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
@@ -775,8 +775,8 @@
     "src/mechanical_librarian/interfaces/web/react_assets.py": "e8a43e6ef18ffbf0cb35e6aedaf98ba7d752cec91bd023be4704975c179d3bac",
     "src/mechanical_librarian/interfaces/web/review_frontend.py": "2ba0d623e8e093f5c42798ed264f4b4bd3b123f5b52cfdd7b6752fa625bc30a5",
     "src/mechanical_librarian/interfaces/web/runtime_dispatch.py": "4b365bfaf268cc912c3aa655fe3311dfb38677e32784f8d28ea2c0afa60e4284",
-    "src/mechanical_librarian/interfaces/web/setup.py": "4a27179bdde88833fcc095f81cb499ce588acd72171a63b3a977acf376f4e98d",
-    "src/mechanical_librarian/interfaces/web/setup_frontend.py": "13bca6844bc370987c7674f4a20e883db784dd5b80a74726bffc2da39faf4d7d",
+    "src/mechanical_librarian/interfaces/web/setup.py": "aed677119f669104c3c457647b0cd29f77c949e1641ac815464587e193ecaf44",
+    "src/mechanical_librarian/interfaces/web/setup_frontend.py": "9c9acbdeb6d3edb1db36576dd34617bd40b39c9950b167da0664a71af5b06562",
     "tests/browser/test_react_platform_artifact.py": "16f6296753b8cd27f467354593d818f810dc237cdb0381f00887779344188d4f",
     "tests/browser/test_review_browser.py": "89220788669eb41f137ef793248055eca8e11f584c7b7b2f87ccb96a229162da",
     "tests/integration/test_audiobook_provider_activation.py": "bd0c15de0c9b385b5155882835780415fe42bb6e6ad35a9c7764a2d360b90a44",
@@ -830,7 +830,7 @@
     "tests/unit/test_shadow_review_packets.py": "cc6a9b23ffc04c150bdb0522bf5cad6930fd8d6a34543909290e7db7efadfb56",
     "tests/unit/test_work_identity.py": "561906ba2447c972ba5dc24bda35de965075a15860663935f1a8d990195dee87"
   },
-  "title_manifest_sha256": "176162c98ce354acaa60a2acfdc47c13f2cb192928d03abf891e5ffc38715dac",
+  "title_manifest_sha256": "ef0532a90bc6f4dd35973d62d3d8caa7f6b56189631d748fa999dc0c6027625b",
   "versions": {
     "action_policy": "shadow-review-action-policy-v4",
     "decision_policy": "deterministic-shadow-decision-policy-v14",
