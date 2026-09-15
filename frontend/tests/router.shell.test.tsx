@@ -148,6 +148,12 @@ describe('Application shell', () => {
             rescan_requested: false,
             scan_id: 'scan-1',
             state: 'completed_with_failures',
+            stages: [
+              { stage: 'queued', count: 0 },
+              { stage: 'extracting', count: 0 },
+              { stage: 'ready', count: 5 },
+              { stage: 'failed', count: 2 },
+            ],
             total: 7,
           },
         ],
@@ -162,6 +168,17 @@ describe('Application shell', () => {
     expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
     expect(screen.getByText('Unfinished work')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preparation needs attention' }))
+    expect(await screen.findByText('Complete · some books could not finish')).toBeVisible()
+    expect(screen.getByText('7 of 7 checked · 5 ready · 2 could not finish')).toBeVisible()
+    // A finished scan lists the buckets books actually reached, not a wall of
+    // zeros for the ones nothing did.
+    expect(
+      [...document.querySelectorAll('.preparation-stages dt')].map((term) => term.textContent),
+    ).toEqual(['Ready to browse', 'Could not finish'])
+    expect(screen.queryByText('Not started')).toBeNull()
+    expect(screen.queryByText('Reading your files')).toBeNull()
   })
 
   it('refreshes active projections when passive preparation progress changes', async () => {
@@ -237,8 +254,24 @@ describe('Application shell', () => {
 
     const trigger = await screen.findByRole('button', { name: 'Preparing libraries' })
     await user.click(trigger)
+    // A state the label table does not name still reads as a label, never as
+    // the store's identifier.
+    expect(screen.getByText('Scanning')).toBeVisible()
+    expect(screen.getByText('1 of 2 checked · 0 ready')).toBeVisible()
+    expect(
+      screen.getByText(
+        'Scan now and Retry both start a new preparation cycle for this library; books that could not finish are prepared again; provider lookups that hit limits recover automatically on the documented schedule; a failure before a report has no automatic retry.',
+      ),
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(trigger).toHaveFocus())
+
+    await user.click(trigger)
+    const scan = await screen.findByRole('button', { name: 'Scan now' })
+    scan.focus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(screen.queryByRole('heading', { name: 'Background activity' })).toBeNull()
   })
 
   it.each([

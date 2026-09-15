@@ -103,7 +103,7 @@ describe('Library route', () => {
 
     await act(async () => release(confirmed))
     expect(
-      await screen.findByText('Preparation completed with failures', {
+      await screen.findByText('Finished · 1 could not finish · 1 ready', {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -217,7 +217,7 @@ describe('Library route', () => {
     }
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
     expect(screen.getByText('Private title')).toBeVisible()
-    expect(screen.getByText('1.2 books/min')).toBeVisible()
+    expect(screen.getByText('1.2 books/min over the last five minutes')).toBeVisible()
     expect(screen.getByText('Finished title')).toBeVisible()
     let releaseOlderFetch!: (value: Awaited<ReturnType<typeof http.getPreparation>>) => void
     vi.mocked(http.getPreparation).mockImplementationOnce(
@@ -299,7 +299,9 @@ describe('Library route', () => {
         },
       })
     })
-    await waitFor(() => expect(screen.getByText('9.9 books/min')).toBeVisible())
+    await waitFor(() =>
+      expect(screen.getByText('9.9 books/min over the last five minutes')).toBeVisible(),
+    )
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
     const semanticChange = {
       ...confirmed,
@@ -424,26 +426,35 @@ describe('Library route', () => {
       'starting',
       'Preparation is starting',
       'The run is open and waiting for preparation work to begin or resume.',
+      'Preparation is starting',
     ],
     [
       'running',
       'Preparing your library',
       'Preparation continues here while ready works remain selectable.',
+      'Preparation continues',
     ],
     [
       'blocked',
       'Preparation needs attention',
       'Preparation is paused until the reported issue is resolved.',
+      'Paused until the reported connection issue is resolved',
     ],
-    ['completed_clean', 'Preparation complete', 'This run finished without a reported failure.'],
+    [
+      'completed_clean',
+      'Preparation complete',
+      'This run finished without a reported failure.',
+      'Finished · no failures',
+    ],
     [
       'completed_with_failures',
       'Preparation completed with failures',
       'This run finished with reported failures; ready books remain available and the failed outcomes stay visible.',
+      'Finished · 1 could not finish · 1 ready',
     ],
   ] as const)(
     'describes the %s preparation detail truthfully',
-    async (state, heading, introduction) => {
+    async (state, heading, introduction, runState) => {
       const runId = `preparation_run_${'8'.repeat(64)}`
       const base = terminalPreparation(runId)
       const terminal = state === 'completed_clean' || state === 'completed_with_failures'
@@ -471,9 +482,178 @@ describe('Library route', () => {
 
       const detailHeading = await screen.findByRole('heading', { name: heading })
       expect(screen.getByText(introduction)).toBeVisible()
+      expect(screen.getByText(runState, { selector: '.preparation-run-state' })).toBeVisible()
       await waitFor(() => expect(detailHeading).toHaveFocus())
     },
   )
+
+  it('routes every completed book into Works and states what a failed one becomes', async () => {
+    const runId = `preparation_run_${'c'.repeat(64)}`
+    const base = terminalPreparation(runId)
+    const runningPresentation = {
+      ...base.presentation,
+      state: 'running' as const,
+      passage: { read: 2, searches_finished: 2, compared: 1, checked: 1, ready: 1, failed: 0 },
+      active_books: [{ name: 'Active title', stage: 'Comparing candidates' }],
+      recent_completions: [{ name: 'Ready title', outcome: 'ready' as const, completed_at: 101 }],
+      total: 3,
+      completed_at: null,
+      dismissible: false,
+    }
+    const running: PreparationView = {
+      ...base,
+      active: true,
+      actionable: false,
+      presentation: runningPresentation,
+    }
+    const http = createHttp()
+    http.getPreparation = vi.fn(async () => running)
+    const { queryClient } = renderRoute('/library?lens=all', http)
+
+    fireEvent.click(await screen.findByRole('button', { name: /Preparing your library/u }))
+    await screen.findByRole('heading', { name: 'Preparing your library' })
+    const readyLink = screen.getByRole('link', { name: 'Find in Works' })
+    expect(readyLink).toHaveAttribute('href', '/library?lens=all&q=Ready+title')
+    expect(screen.getByText('A book appears in Works once it is ready.')).toBeVisible()
+    expect(document.querySelectorAll('.preparation-active-books a')).toHaveLength(0)
+    expect(screen.queryByText(/Preparation unavailable/u)).toBeNull()
+    expect(
+      screen.getByText('1 ready · 0 could not finish · 2 in progress in this run'),
+    ).toBeVisible()
+    expect(screen.getByText('1 ready · 0 could not finish · 2 in progress')).toBeVisible()
+    expect(screen.getByText('Started by an owner scan')).toBeVisible()
+
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...running,
+        active: false,
+        actionable: true,
+        presentation: {
+          ...runningPresentation,
+          state: 'completed_with_failures',
+          passage: { ...runningPresentation.passage, checked: 2, failed: 1 },
+          active_books: [],
+          recent_completions: [
+            { name: 'Ready title', outcome: 'ready', completed_at: 101 },
+            { name: 'Unfinished title', outcome: 'failed', completed_at: 102 },
+          ],
+          updated_at: 105,
+          completed_at: 105,
+          dismissible: true,
+        },
+      })
+    })
+
+    const failureSentence = await screen.findByText(
+      'A book that stopped before it could be read is listed in Works as Preparation unavailable, with its stage, reason, next step and reference.',
+    )
+    expect(failureSentence).toBeVisible()
+    const links = screen.getAllByRole('link', { name: 'Find in Works' })
+    expect(links.map((link) => link.getAttribute('href'))).toEqual([
+      '/library?lens=all&q=Ready+title',
+      '/library?lens=all&q=Unfinished+title',
+    ])
+    expect(
+      screen.getByText('1 ready · 1 could not finish · 1 in progress in this run'),
+    ).toBeVisible()
+    expect(screen.getByText('1 ready · 1 could not finish · 1 in progress')).toBeVisible()
+
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...running,
+        presentation: {
+          ...runningPresentation,
+          run_id: `preparation_run_${'d'.repeat(64)}`,
+          state: 'running',
+          triggers: [
+            {
+              trigger: 'manual_scan' as const,
+              accepted_count: 3,
+              first_accepted_at: 200,
+              last_accepted_at: 220,
+            },
+          ],
+          passage: { read: 1, searches_finished: 0, compared: 0, checked: 0, ready: 0, failed: 0 },
+          recent_completions: [],
+          updated_at: 221,
+        },
+      })
+    })
+
+    fireEvent.click(await screen.findByRole('button', { name: /Preparing your library/u }))
+    expect(await screen.findByText('Owner scan requested 3 times')).toBeVisible()
+    expect(screen.queryByText(/Preparation unavailable/u)).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Find in Works' })).toBeNull()
+  })
+
+  it('states every passage numerator and only a current throughput', async () => {
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    const base = terminalPreparation(runId)
+    const runningPresentation = {
+      ...base.presentation,
+      state: 'running' as const,
+      passage: { read: 3, searches_finished: 2, compared: 1, checked: 1, ready: 1, failed: 0 },
+      active_books: [{ name: 'Active title', stage: 'Comparing candidates' }],
+      recent_completions: [],
+      throughput_per_minute: 0,
+      total: 4,
+      completed_at: null,
+      dismissible: false,
+    }
+    const running: PreparationView = {
+      ...base,
+      active: true,
+      actionable: false,
+      presentation: runningPresentation,
+    }
+    const http = createHttp()
+    http.getPreparation = vi.fn(async () => running)
+    const { queryClient } = renderRoute(`/library?lens=all&preparation=${runId}`, http)
+
+    await screen.findByRole('heading', { name: 'Preparing your library' })
+    expect(
+      screen.getByText(
+        'Each stage counts books that reached it; a book that could not finish stops at its last stage.',
+      ),
+    ).toBeVisible()
+    expect(
+      screen
+        .getAllByRole('progressbar')
+        .map((bar) => bar.parentElement?.querySelector('strong')?.textContent.trim()),
+    ).toEqual(['3 of 4', '2 of 4', '1 of 4', '1 of 4'])
+    expect(screen.getByText('No book finished in the last five minutes')).toBeVisible()
+
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...running,
+        presentation: { ...runningPresentation, throughput_per_minute: 2.5, updated_at: 106 },
+      })
+    })
+    expect(await screen.findByText('2.5 books/min over the last five minutes')).toBeVisible()
+
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...running,
+        active: false,
+        actionable: true,
+        presentation: {
+          ...runningPresentation,
+          state: 'completed_with_failures',
+          passage: { ...runningPresentation.passage, failed: 1 },
+          active_books: [],
+          throughput_per_minute: 7,
+          updated_at: 107,
+          completed_at: 107,
+          dismissible: true,
+        },
+      })
+    })
+    await screen.findByText('Finished · 1 could not finish · 1 ready', {
+      selector: '.preparation-run-state',
+    })
+    expect(screen.queryByText(/books\/min/u)).toBeNull()
+    expect(screen.queryByText('No book finished in the last five minutes')).toBeNull()
+  })
 
   it('gives preparation exclusive left selection and restores the retained work', async () => {
     const user = userEvent.setup()
@@ -555,7 +735,7 @@ describe('Library route', () => {
       expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
       await user.click(screen.getByRole('button', { name: /Preparation completed with failures/u }))
       expect(
-        await screen.findByText('Preparation completed with failures', {
+        await screen.findByText('Finished · 1 could not finish · 1 ready', {
           selector: '.preparation-run-state',
         }),
       ).toBeVisible()
@@ -625,7 +805,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText('Preparation completed with failures', {
+      await screen.findByText('Finished · 1 could not finish · 1 ready', {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -671,7 +851,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText('Preparation completed with failures', {
+      await screen.findByText('Finished · 1 could not finish · 1 ready', {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -783,7 +963,7 @@ describe('Library route', () => {
       await screen.findByRole('button', { name: /Preparation completed with failures/u }),
     )
     expect(
-      await screen.findByText('Preparation completed with failures', {
+      await screen.findByText('Finished · 1 could not finish · 1 ready', {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
@@ -938,11 +1118,11 @@ describe('Library route', () => {
     expect(screen.getByRole('heading', { name: 'Works' })).toBeVisible()
     fireEvent.click(summary)
     expect(
-      await screen.findByText('Preparation completed with failures', {
+      await screen.findByText('Finished · 1 could not finish · 0 ready', {
         selector: '.preparation-run-state',
       }),
     ).toBeVisible()
-    expect(screen.getAllByText('Could not finish')).toHaveLength(2)
+    expect(screen.getAllByText('Could not finish')).toHaveLength(1)
     expect(screen.getByText('Unfinished work')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
     vi.stubGlobal('matchMedia', previousMatchMedia)
