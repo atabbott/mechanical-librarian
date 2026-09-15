@@ -614,6 +614,81 @@ describe('owner settings route', () => {
   })
 
   it.each([
+    ['an OpenRouter model', 'openrouter', 'openai/gpt-4o-mini', 'OpenRouter — openai/gpt-4o-mini'],
+    [
+      'contained Codex, which reports no model of its own here',
+      'codex',
+      '',
+      'Contained Codex — no model selection; the installed profile fixes the model',
+    ],
+    ['cleared', 'none', '', 'No reviewer'],
+  ] as const)(
+    'states the cover model beside its engine when the selection is %s',
+    async (_label, engine, model, expected) => {
+      const http = createHttp()
+      http.getSettings = vi.fn(async () => view())
+      http.getReviewerAccess = vi.fn(async () => ({
+        ...reviewerView,
+        mapping:
+          engine === 'openrouter'
+            ? { engine: 'openrouter' as const, model }
+            : engine === 'codex'
+              ? { engine: 'codex' as const }
+              : null,
+        codex: { ...reviewerView.codex, state: 'usable' as const, reason: null },
+      }))
+      renderRoute('/settings?group=reviewer', http)
+
+      expect(await screen.findByText(/Current selection:/u)).toHaveTextContent(expected)
+    },
+  )
+
+  it('discloses the cover request basis without a price, a date or a cheapest claim', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      mapping: { engine: 'openrouter' as const, model: 'openai/gpt-4o-mini' },
+      openrouter_key_configured: true,
+      openrouter: {
+        ...reviewerView.openrouter,
+        state: 'usable' as const,
+        model: 'openai/gpt-4o-mini',
+        tier: 'paid' as const,
+      },
+    }))
+    renderRoute('/settings?group=reviewer', http)
+
+    expect(await screen.findByText('Cover model', { selector: 'dt' })).toBeVisible()
+    expect(screen.getByText('openai/gpt-4o-mini', { selector: 'dd' })).toBeVisible()
+    expect(screen.getByText(/Image input, text output and structured output/u)).toBeVisible()
+    expect(screen.getByText(/no price observation date exists/u)).toBeVisible()
+    expect(screen.getByText(/no model is presented as the cheapest/u)).toBeVisible()
+    const estimate = screen.getByText(/at most 12 cover previews/u)
+    expect(estimate).toHaveTextContent('320 by 480 pixels and 1 MiB, within an 8 MiB packet')
+    expect(estimate).toHaveTextContent('8,192 output tokens')
+    expect(estimate).toHaveTextContent('an estimate, not a quote')
+    expect(screen.queryByText(/per input token/u)).toBeNull()
+    // The disclosure carries no control, so the key field still tabs straight
+    // to the next available action past the disabled replace button.
+    screen.getByLabelText('API key').focus()
+    await userEvent.setup().tab()
+    expect(screen.getByRole('button', { name: 'Refresh current status' })).toHaveFocus()
+  })
+
+  it('states an absent cover model in the disclosure instead of a blank fact', async () => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    renderRoute('/settings?group=reviewer', http)
+
+    expect(
+      await screen.findByText('No OpenRouter cover model is selected yet.', { selector: 'dd' }),
+    ).toBeVisible()
+    expect(screen.getByText(/an estimate, not a quote/u)).toBeVisible()
+  })
+
+  it.each([
     ['usable', null],
     ['expired', null],
     ['cancelled', null],
