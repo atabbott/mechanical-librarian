@@ -654,11 +654,22 @@ describe('Library route', () => {
     expect(screen.queryByText('No book finished in the last five minutes')).toBeNull()
   })
 
-  it('bounds a completion search by characters, never by half of one', async () => {
+  // The route bounds `q` by UTF-16 units and the backend by characters, so a
+  // name is cut to at most 128 units -- never through an astral pair, and never
+  // to a length the route would drop.
+  it.each([
+    // 127 ASCII plus one astral character is 128 characters but 129 units:
+    // bounding by characters makes the route drop `q` entirely.
+    ['an astral character past the unit bound', `${'a'.repeat(127)}\u{1f4d8}tail`, 'a'.repeat(127)],
+    // 64 astral characters are exactly 128 units, so all of them survive.
+    ['a name that is entirely astral characters', '\u{1f4d8}'.repeat(80), '\u{1f4d8}'.repeat(64)],
+    [
+      'a multibyte name inside both bounds',
+      '\u63a8\u7406\u5c0f\u8aac'.repeat(20),
+      '\u63a8\u7406\u5c0f\u8aac'.repeat(20),
+    ],
+  ])('bounds a completion search with %s', async (_case, name, expected) => {
     const runId = `preparation_run_${'e'.repeat(64)}`
-    // The 128th character is an astral pair: a UTF-16 slice would send half of
-    // it, and the row would search for a name no book has.
-    const name = `${'a'.repeat(127)}\u{1f4d8}tail`
     const http = createHttp()
     http.getPreparation = vi.fn(async () => {
       const view = terminalPreparation(runId)
@@ -674,9 +685,10 @@ describe('Library route', () => {
 
     const href = (await screen.findByRole('link', { name: 'Find in Works' })).getAttribute('href')
     const query = new URLSearchParams(href?.split('?')[1] ?? '').get('q')
-    expect(query).toBe(`${'a'.repeat(127)}\u{1f4d8}`)
-    expect(Array.from(query ?? '')).toHaveLength(128)
+    expect(query).toBe(expected)
+    expect(query?.length).toBeLessThanOrEqual(128)
     expect(query).not.toContain('\ufffd')
+    expect(Array.from(query ?? '').join('')).toBe(query)
   })
 
   it('gives preparation exclusive left selection and restores the retained work', async () => {

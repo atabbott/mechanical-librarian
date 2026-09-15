@@ -160,12 +160,19 @@ const preparationTriggerLine = (trigger: PreparationPresentation['triggers'][num
 /**
  * The display name, bounded to what the search route and the backend accept.
  *
- * 128 is a character bound on both sides, and `String.slice` counts UTF-16
- * units, so slicing there can cut an astral pair in half and send half a
- * character as the query. Counting code points keeps every name searchable as
- * the row shows it.
+ * The two bounds count differently: the route's ``bounded`` (router.tsx) tests
+ * ``value.length``, which is UTF-16 units, while the backend's `max_length=128`
+ * counts characters. At most 128 units therefore satisfies both, and bounding
+ * by characters does not -- 127 ASCII plus one astral character is 128
+ * characters but 129 units, which the route drops entirely. So the slice is by
+ * units, and a trailing high surrogate left behind by it is dropped rather than
+ * sent as half a character.
  */
-const boundedSearchName = (name: string) => Array.from(name).slice(0, 128).join('')
+const boundedSearchName = (name: string) => {
+  const bounded = name.slice(0, 128)
+  const last = bounded.charCodeAt(bounded.length - 1)
+  return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
+}
 
 const preparationScope = (presentation: PreparationPresentation) =>
   `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish · ${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} in progress`

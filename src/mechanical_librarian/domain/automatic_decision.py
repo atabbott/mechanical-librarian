@@ -430,6 +430,18 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
             'title_layout:title_and_subtitle:audiobook_title_replace',
         }),
     ),
+    # Two F46 digests were current on main before the #1008 and #1012 re-pins
+    # superseded them. Neither re-pin moved an option, so each speaks for the
+    # tranche set that is still current, and a record persisted while it was
+    # current stays readable rather than losing its authority to a digest move.
+    (
+        "6dbedf9d8e953928300425aef493508aa74798b6c0ef6a5d6fec756a3bd7a366",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "e675cf0efcc753ecdcb672bf96e4d0b225ece7f3822fe5d54316fc867b5ed41b",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+    ),
 )
 
 def automatic_safety_category(policy_category: str, policy_option: str) -> str:
