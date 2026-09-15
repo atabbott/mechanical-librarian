@@ -113,22 +113,69 @@ const initials = (title: string) =>
     .map((word) => word[0]?.toUpperCase())
     .join('') || 'ML'
 type PreparationPresentation = NonNullable<PreparationView['presentation']>
-const preparationStateCopy: Record<PreparationPresentation['state'], string> = {
-  starting: 'Preparation is starting',
-  running: 'Preparation continues',
-  blocked: 'Preparation needs recovery',
-  completed_clean: 'Preparation is complete',
-  completed_with_failures: 'Preparation completed with failures',
-  dismissed: 'Preparation dismissed',
+// What the run is doing now, said in the counts the owner is waiting on rather
+// than in the store's state name. A terminal run states its own outcome here
+// because that is the line a reader looks at first.
+const preparationStateLine = (presentation: PreparationPresentation) => {
+  switch (presentation.state) {
+    case 'starting':
+      return 'Preparation is starting'
+    case 'running':
+      return 'Preparation continues'
+    case 'blocked':
+      return 'Paused until the reported connection issue is resolved'
+    case 'completed_clean':
+      return 'Finished · no failures'
+    case 'completed_with_failures':
+      return `Finished · ${String(presentation.passage.failed)} could not finish · ${String(presentation.passage.ready)} ready`
+    case 'dismissed':
+      return 'Preparation dismissed'
+  }
 }
 const preparationTriggerCopy: Record<
   PreparationPresentation['triggers'][number]['trigger'],
   string
 > = {
-  initial_setup: 'Initial setup',
-  manual_scan: 'Owner scan',
-  library_added: 'Library added',
+  initial_setup: 'Started by initial setup',
+  manual_scan: 'Started by an owner scan',
+  library_added: 'Started when a library was added',
 }
+// A request accepted once is just how the run began; a number there would be
+// noise on every ordinary run. Repeats are the case worth counting, so only
+// they carry one.
+const preparationRepeatedTriggerCopy: Record<
+  PreparationPresentation['triggers'][number]['trigger'],
+  string
+> = {
+  initial_setup: 'Initial setup requested',
+  manual_scan: 'Owner scan requested',
+  library_added: 'Library addition requested',
+}
+const preparationTriggerLine = (trigger: PreparationPresentation['triggers'][number]) =>
+  trigger.accepted_count > 1
+    ? `${preparationRepeatedTriggerCopy[trigger.trigger]} ${String(trigger.accepted_count)} times`
+    : preparationTriggerCopy[trigger.trigger]
+// The scope every count on this page reconciles to: one run, whose books are
+// either ready, unable to finish, or still moving.
+/**
+ * The display name, bounded to what the search route and the backend accept.
+ *
+ * The two bounds count differently: the route's ``bounded`` (router.tsx) tests
+ * ``value.length``, which is UTF-16 units, while the backend's `max_length=128`
+ * counts characters. At most 128 units therefore satisfies both, and bounding
+ * by characters does not -- 127 ASCII plus one astral character is 128
+ * characters but 129 units, which the route drops entirely. So the slice is by
+ * units, and a trailing high surrogate left behind by it is dropped rather than
+ * sent as half a character.
+ */
+const boundedSearchName = (name: string) => {
+  const bounded = name.slice(0, 128)
+  const last = bounded.charCodeAt(bounded.length - 1)
+  return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
+}
+
+const preparationScope = (presentation: PreparationPresentation) =>
+  `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish · ${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} in progress`
 const preparationPassage = [
   ['read', 'Read from library'],
   ['searches_finished', 'Searches finished'],
@@ -253,16 +300,10 @@ const PreparationDetail = ({
       >
         {reconnecting
           ? 'Reconnecting · showing the last confirmed state'
-          : preparationStateCopy[presentation.state]}
+          : preparationStateLine(presentation)}
       </p>
       <p className="preparation-provenance">
-        Triggered by{' '}
-        {presentation.triggers
-          .map(
-            (trigger) =>
-              `${preparationTriggerCopy[trigger.trigger]} ×${String(trigger.accepted_count)}`,
-          )
-          .join(' · ')}
+        {presentation.triggers.map(preparationTriggerLine).join(' · ')}
       </p>
       <section aria-labelledby="now-preparing-title">
         <div className="preparation-section-heading">
@@ -291,14 +332,33 @@ const PreparationDetail = ({
         {presentation.active_overflow ? (
           <p>{String(presentation.active_overflow)} more active books follow in this run.</p>
         ) : null}
+        {presentation.active_books.length ? (
+          <small className="activity-backup-note">A book appears in Works once it is ready.</small>
+        ) : null}
       </section>
       <section aria-labelledby="preparation-progress-title">
         <div className="preparation-section-heading">
           <div>
             <h3 id="preparation-progress-title">Preparation progress</h3>
-            <p>How many books made it this far?</p>
+            <p>
+              Each stage counts books that reached it; a book that could not finish stops at its
+              last stage.
+            </p>
           </div>
-          <strong>{presentation.throughput_per_minute.toFixed(1)} books/min</strong>
+          {/*
+           * A rate is only a fact while the run is moving. A finished, paused
+           * or dismissed run has no current rate, and a reconnected page has
+           * no current anything -- printing 0.0 books/min there read as a
+           * performance fault rather than as silence.
+           */}
+          {!reconnecting &&
+          (presentation.state === 'starting' || presentation.state === 'running') ? (
+            <strong>
+              {presentation.throughput_per_minute > 0
+                ? `${presentation.throughput_per_minute.toFixed(1)} books/min over the last five minutes`
+                : 'No book finished in the last five minutes'}
+            </strong>
+          ) : null}
         </div>
         <dl className="preparation-passage">
           {preparationPassage.map(([field, label]) => (
@@ -310,18 +370,16 @@ const PreparationDetail = ({
                   max={Math.max(presentation.total, 1)}
                   value={presentation.passage[field]}
                 />
-                <strong>{String(presentation.passage[field])}</strong>
+                <strong>
+                  {String(presentation.passage[field])} of {String(presentation.total)}
+                </strong>
               </dd>
             </div>
           ))}
           <div className="preparation-outcomes">
-            <dt>Ready for review</dt>
+            <dt>In this run</dt>
             <dd>
-              <strong>{String(presentation.passage.ready)}</strong>
-            </dd>
-            <dt>Could not finish</dt>
-            <dd>
-              <strong>{String(presentation.passage.failed)}</strong>
+              <strong>{preparationScope(presentation)}</strong>
             </dd>
           </div>
         </dl>
@@ -335,7 +393,19 @@ const PreparationDetail = ({
           <ul className="preparation-completions">
             {presentation.recent_completions.map((completion, index) => (
               <li key={`${completion.name}:${String(completion.completed_at)}:${String(index)}`}>
-                <span>{completion.name}</span>
+                <span>
+                  {completion.name}{' '}
+                  {/*
+                   * The link sits inside the name so it wraps with it, and the
+                   * name shown is the only thing this row has to search with.
+                   */}
+                  <Link
+                    to="/library"
+                    search={{ lens: 'all', q: boundedSearchName(completion.name) }}
+                  >
+                    Find in Works
+                  </Link>
+                </span>
                 <strong>{completion.outcome === 'ready' ? 'Ready' : 'Could not finish'}</strong>
               </li>
             ))}
@@ -343,6 +413,12 @@ const PreparationDetail = ({
         ) : (
           <p>No terminal book has been reported yet.</p>
         )}
+        {presentation.passage.failed > 0 ? (
+          <small className="activity-backup-note">
+            A book that stopped before it could be read is listed in Works as Preparation
+            unavailable, with its stage, reason, next step and reference.
+          </small>
+        ) : null}
       </section>
       {presentation.dismissible ? (
         <button type="button" disabled={dismissing} onClick={onDismiss}>

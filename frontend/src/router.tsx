@@ -33,6 +33,7 @@ import {
   useLiveStreamState,
 } from './liveInvalidation'
 import type { LiveUpdateStream } from './liveUpdates'
+import { fieldLabel } from './labels'
 
 const LibraryPage = recoverableLazy(() => import('./routes/LibraryPage'))
 const AttentionPage = recoverableLazy(() => import('./routes/AttentionPage'))
@@ -528,10 +529,26 @@ const stageLabels: Readonly<Record<string, string>> = {
   failed: 'Could not finish',
 }
 
+/**
+ * What a library's scan is doing, in the words the owner reads elsewhere.
+ *
+ * The store state was printed raw, so an owner read `completed_with_failures`
+ * and had to translate it. Anything the store adds later still reads as a
+ * label through ``fieldLabel`` rather than as an identifier.
+ */
+const scanStateLabels: Readonly<Record<string, string>> = {
+  queued: 'Waiting to start',
+  discovering: 'Finding your books',
+  processing: 'Preparing your books',
+  completed: 'Complete',
+  completed_with_failures: 'Complete · some books could not finish',
+}
+
 export const PreparationActivity = () => {
   const { data, queryClient, http } = usePreparation()
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
+  const popover = useRef<HTMLElement>(null)
   const action = useMutation({
     mutationFn: (path: string) => http.preparationAction(path),
     retry: false,
@@ -557,7 +574,31 @@ export const PreparationActivity = () => {
     setOpen(false)
   }
   return (
-    <div className="preparation-activity">
+    <div
+      className="preparation-activity"
+      // Escape closes from the trigger or from anywhere inside the popover,
+      // and ``close`` already returns focus to the trigger. Tabbing off either
+      // end closes it where it stands -- the Dropdown precedent -- so the
+      // popover never stays open behind a focus ring that has left it; the
+      // browser keeps the tab order it was going to follow. Nothing is bound
+      // while the popover is shut, so both keys stay available to the page.
+      onKeyDown={(event) => {
+        if (!open) return
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          close()
+          return
+        }
+        if (event.key !== 'Tab') return
+        const focusable = popover.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]),a[href]',
+        )
+        if (!focusable?.length) return
+        const edge = event.shiftKey ? focusable[0] : focusable[focusable.length - 1]
+        if (event.target === edge) setOpen(false)
+      }}
+    >
       <button
         ref={trigger}
         type="button"
@@ -571,21 +612,31 @@ export const PreparationActivity = () => {
             : 'Preparing libraries'}
       </button>
       {open && data ? (
-        <section className="preparation-popover" aria-label="Background activity">
+        <section ref={popover} className="preparation-popover" aria-label="Background activity">
           <h2>Background activity</h2>
           {data.libraries.map((item) => (
             <article key={`${item.connection}:${item.library}`}>
               <strong>{item.library}</strong>
+              <span>{scanStateLabels[item.state] ?? fieldLabel(item.state)}</span>
               <span>
-                {item.state} · {item.checked}/{item.total}
+                {String(item.checked)} of {String(item.total)} checked · {String(item.ready)} ready
+                {item.blocked > 0 ? ` · ${String(item.blocked)} could not finish` : ''}
               </span>
               <dl className="preparation-stages">
-                {(item.stages ?? []).map((stage) => (
-                  <div key={stage.stage}>
-                    <dt>{stageLabels[stage.stage] ?? stage.stage}</dt>
-                    <dd>{stage.count}</dd>
-                  </div>
-                ))}
+                {/*
+                 * A live scan keeps every bucket, including the empty ones, so
+                 * the pipeline holds one stable order as counts move through
+                 * it (#641). A finished scan is not moving, so the buckets
+                 * nothing reached are a wall of zeros and are left out.
+                 */}
+                {(item.stages ?? [])
+                  .filter((stage) => !item.state.startsWith('completed') || stage.count > 0)
+                  .map((stage) => (
+                    <div key={stage.stage}>
+                      <dt>{stageLabels[stage.stage] ?? stage.stage}</dt>
+                      <dd>{stage.count}</dd>
+                    </div>
+                  ))}
               </dl>
               <button
                 disabled={
@@ -614,6 +665,18 @@ export const PreparationActivity = () => {
                   Retry
                 </button>
               ) : null}
+              {/*
+               * Both controls call the same operation -- a new library cycle --
+               * and the recovery schedule they do not control is documented in
+               * `docs/operations/provider-recovery.md`. This states what they
+               * do; it decides nothing.
+               */}
+              <small className="activity-backup-note">
+                Scan now — and Retry after a run with failures — start a new preparation cycle for
+                this library; books that could not finish are prepared again; provider lookups that
+                hit limits recover automatically on the documented schedule; a failure before a
+                report has no automatic retry.
+              </small>
             </article>
           ))}
           <button

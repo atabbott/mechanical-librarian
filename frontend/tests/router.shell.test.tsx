@@ -148,6 +148,12 @@ describe('Application shell', () => {
             rescan_requested: false,
             scan_id: 'scan-1',
             state: 'completed_with_failures',
+            stages: [
+              { stage: 'queued', count: 0 },
+              { stage: 'extracting', count: 0 },
+              { stage: 'ready', count: 5 },
+              { stage: 'failed', count: 2 },
+            ],
             total: 7,
           },
         ],
@@ -162,6 +168,17 @@ describe('Application shell', () => {
     expect(await screen.findByText('Preparation completed with failures')).toBeVisible()
     expect(screen.getByText('Unfinished work')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss preparation' })).toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Preparation needs attention' }))
+    expect(await screen.findByText('Complete · some books could not finish')).toBeVisible()
+    expect(screen.getByText('7 of 7 checked · 5 ready · 2 could not finish')).toBeVisible()
+    // A finished scan lists the buckets books actually reached, not a wall of
+    // zeros for the ones nothing did.
+    expect(
+      [...document.querySelectorAll('.preparation-stages dt')].map((term) => term.textContent),
+    ).toEqual(['Ready to browse', 'Could not finish'])
+    expect(screen.queryByText('Not started')).toBeNull()
+    expect(screen.queryByText('Reading your files')).toBeNull()
   })
 
   it('refreshes active projections when passive preparation progress changes', async () => {
@@ -237,8 +254,85 @@ describe('Application shell', () => {
 
     const trigger = await screen.findByRole('button', { name: 'Preparing libraries' })
     await user.click(trigger)
+    // A state the label table does not name still reads as a label, never as
+    // the store's identifier.
+    expect(screen.getByText('Scanning')).toBeVisible()
+    expect(screen.getByText('1 of 2 checked · 0 ready')).toBeVisible()
+    expect(
+      screen.getByText(
+        'Scan now \u2014 and Retry after a run with failures \u2014 start a new preparation cycle for this library; books that could not finish are prepared again; provider lookups that hit limits recover automatically on the documented schedule; a failure before a report has no automatic retry.',
+      ),
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(trigger).toHaveFocus())
+
+    await user.click(trigger)
+    const scan = await screen.findByRole('button', { name: 'Scan now' })
+    scan.focus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(screen.queryByRole('heading', { name: 'Background activity' })).toBeNull()
+
+    // Escape from the trigger itself closes too, and returns nothing anywhere
+    // else: focus was already where it belongs.
+    await user.click(trigger)
+    trigger.focus()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(trigger).toHaveFocus())
+    expect(screen.queryByRole('heading', { name: 'Background activity' })).toBeNull()
+  })
+
+  it('closes the preparation panel when focus tabs off either end of it', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        schema_version: 'review-preparation-v2',
+        active: true,
+        actionable: false,
+        paused: false,
+        libraries: [
+          {
+            blocked: 0,
+            recorded: 0,
+            checked: 1,
+            connection: 'primary',
+            library: 'Books',
+            library_id: 'books',
+            ready: 0,
+            rescan_requested: false,
+            scan_id: 'scan-1',
+            state: 'processing',
+            total: 2,
+          },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+
+    const trigger = await screen.findByRole('button', { name: 'Preparing libraries' })
+    await user.click(trigger)
+    // Tabbing off the last control closes the panel where it stands and lets
+    // the browser carry on: focus lands on the next masthead control, never
+    // outside a panel that is still open.
+    screen.getByRole('button', { name: 'Close' }).focus()
+    await user.tab()
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Background activity' })).toBeNull(),
+    )
+    // Focus is not pulled back to the trigger: the browser continues the tab
+    // order from where it was. jsdom restarts that order once the panel
+    // unmounts, so the landing control itself is proved in the browser.
+    expect(trigger).not.toHaveFocus()
+
+    await user.click(trigger)
+    // Shift+Tab off the first control closes it the same way.
+    screen.getByRole('button', { name: 'Scan now' }).focus()
+    await user.tab({ shift: true })
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { name: 'Background activity' })).toBeNull(),
+    )
+    expect(trigger).not.toHaveFocus()
   })
 
   it.each([

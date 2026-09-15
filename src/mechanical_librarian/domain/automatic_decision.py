@@ -78,7 +78,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "ef0532a90bc6f4dd35973d62d3d8caa7f6b56189631d748fa999dc0c6027625b"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "63151c7ea3f24b8a568148a7f73dc62aa3279760af9d35fcb77593d3ecd5f0b3"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -172,6 +172,10 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
     ),
     (
         "f22c32088a1a7048df6d9897352a874241c99fb75656553e850eb828dcce1361",
+        F19A_QUALIFIED_POLICY_OPTIONS,
+    ),
+    (
+        "ef0532a90bc6f4dd35973d62d3d8caa7f6b56189631d748fa999dc0c6027625b",
         F19A_QUALIFIED_POLICY_OPTIONS,
     ),
 
@@ -369,6 +373,10 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         "1588793ea2063ff80a1e8fd8e5d11cf32c599da316665bf476ef32f10654d988",
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
+    (
+        "766e6313f2f6bd81ab2ff5137ddf5eca120de5fa3800e7cab89327c8c020e0b1",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
 
 )
 # Retained published audiobook authority remains decodable, never current.
@@ -421,6 +429,18 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
             'title_layout:title_and_subtitle:audiobook_title_fill',
             'title_layout:title_and_subtitle:audiobook_title_replace',
         }),
+    ),
+    # Two F46 digests were current on main before the #1008 and #1012 re-pins
+    # superseded them. Neither re-pin moved an option, so each speaks for the
+    # tranche set that is still current, and a record persisted while it was
+    # current stays readable rather than losing its authority to a digest move.
+    (
+        "6dbedf9d8e953928300425aef493508aa74798b6c0ef6a5d6fec756a3bd7a366",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "e675cf0efcc753ecdcb672bf96e4d0b225ece7f3822fe5d54316fc867b5ed41b",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
     ),
 )
 

@@ -46,6 +46,34 @@ As soon as one work is ready, a focused handover card appears above the live,
 bounded preparation list. The terminal first-boot measurement appears only in
 Library and counts every unique checked work, including terminal failures.
 
+The preparation panel states one run's outcome in the counts an owner is
+waiting on: how many books are ready, how many could not finish, and how many
+are still in progress, reconciled to that run rather than to the page. Each
+stage bar states its own numerator and denominator, and one sentence says that
+a stage counts the books that reached it and that a book which could not finish
+stops at its last stage. A finishing rate is stated only while the run is
+starting or running; a run that is finished, paused, dismissed or showing the
+last confirmed state after a reconnect states no rate at all, because it has
+none. Every completed book links into Works by the name the panel shows. A book
+that stopped before a report existed has no catalogue name to search for, so
+the panel says plainly that it is listed in Works as `Preparation unavailable`
+with its stage, reason, next step and reference.
+
+Four affordances are shaped like a retry and mean different things. `Scan now`
+and `Retry` in the background-work popover both start a new preparation cycle
+for one library. Retrying a cover consideration asks the configured reviewer
+about that one cover again, and retrying description advice asks it about that
+one description again. Reviewing a current comparison after a cover has moved
+retries nothing: it reads the comparison as it stands now. The popover
+states what its two controls do, including that provider lookups which hit
+limits recover automatically on the documented schedule and that a failure
+before a report has no automatic retry
+([provider recovery](../operations/provider-recovery.md)). That control also
+names each library's scan state in words, states checked, ready and
+could-not-finish for that library, and once a scan is finished lists only the
+buckets books actually reached. `Escape` closes it and returns focus to the
+control that opened it.
+
 Each persisted failure code maps to one closed safe reason and exactly one
 owner posture: a named supported action, a stated pending automatic recovery,
 or an explicit statement that no owner action is available. Unknown codes are
@@ -370,6 +398,14 @@ server-ordered reviewable work without recording a decision; compact entry is
 list-first. The rail preserves its ordered fields after a recorded decision,
 allows direct revisiting, compresses labels before scrolling, and is never
 replaced by a competing review back control.
+
+A book reached from a preparation completion arrives as an ordinary bounded
+search over the work index. A book that produced a report is found by the name
+the panel showed; one that stopped before a report exists is not, because the
+index holds no catalogue name for it. That search states that it matched
+nothing and offers to clear itself, and the terminal row is waiting in the
+unfiltered index with its stage, safe reason, owner posture, bounded reference
+and media-health aside.
 
 Current values and exact eligible changes are the commands. Pointer selection
 may show recording and recorded acknowledgement before authoritative
