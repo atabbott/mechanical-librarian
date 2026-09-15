@@ -50,6 +50,7 @@ from mechanical_librarian.interfaces.web.setup_frontend import (
     SETUP_HANDOFF_CSS,
     SETUP_HTML,
     SETUP_JS,
+    SETUP_ORIGIN_REFUSAL_HTML,
 )
 
 _PROVIDER_ADAPTER: TypeAdapter[ProviderSettings] = TypeAdapter(ProviderSettings)
@@ -205,6 +206,51 @@ class _KickOffRequest(BaseModel):
     expected_revision: StrictInt = Field(ge=1)
 
 
+def _prefers_document(request: Request) -> bool:
+    """State whether this refused request is a browser navigation.
+
+    A navigation renders the body as the whole page, so the refusal has to
+    read as a page; every other caller keeps the JSON shape it parses. The
+    Accept header states preference by quality value and not by listing order,
+    `q=0` states that a type is not acceptable at all, and a wildcard states
+    nothing about HTML in particular, so only an exact `text/html` ranked
+    strictly above `application/json` is read as a navigation.
+    """
+    if request.headers.get("sec-fetch-dest") == "document":
+        return True
+    quality: dict[str, float] = {}
+    for entry in request.headers.get("accept", "").split(","):
+        media_type, _, parameters = entry.partition(";")
+        name = media_type.strip().lower()
+        if name not in {"text/html", "application/json"}:
+            continue
+        weight = 1.0
+        for parameter in parameters.split(";"):
+            key, separator, raw = parameter.partition("=")
+            if not separator or key.strip().lower() != "q":
+                continue
+            try:
+                weight = float(raw.strip())
+            except ValueError:
+                weight = 0.0
+            break
+        quality[name] = max(quality.get(name, 0.0), weight)
+    document = quality.get("text/html", 0.0)
+    return document > 0.0 and document > quality.get("application/json", 0.0)
+
+
+def _origin_refusal(request: Request) -> Response:
+    """Refuse a non-canonical origin in the shape the caller can read.
+
+    The wizard's own assets are refused on that origin too, so a navigation
+    would render the JSON body as its entire page and the wizard's recovery
+    sentence would never be shown (#1008).
+    """
+    if _prefers_document(request):
+        return HTMLResponse(SETUP_ORIGIN_REFUSAL_HTML, status_code=400)
+    return JSONResponse({"detail": {"error": "invalid_origin"}}, status_code=400)
+
+
 def _secure_setup_response(response: Response, *, hsts: bool) -> Response:
     response.headers["cache-control"] = "private, no-store"
     response.headers["content-security-policy"] = (
@@ -270,9 +316,7 @@ def create_setup_app(
                 trusted_proxy_ips,
                 require_forwarding=require_forwarding,
             ):
-                response = JSONResponse(
-                    {"detail": {"error": "invalid_origin"}}, status_code=400
-                )
+                response = _origin_refusal(request)
             elif app.state.setup_complete and path != "/health/ready":
                 response = PlainTextResponse("not found\n", status_code=404)
             else:

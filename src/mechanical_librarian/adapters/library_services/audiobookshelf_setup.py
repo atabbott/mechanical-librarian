@@ -117,10 +117,14 @@ class AudiobookshelfSetupProbe:
             raise AudiobookshelfSetupProbeError("timeout") from None
         except httpx.TransportError as error:
             current: BaseException | None = error
-            while current is not None:
+            seen: set[int] = set()
+            while current is not None and id(current) not in seen:
+                seen.add(id(current))
                 if "SSL" in type(current).__name__.upper():
                     raise AudiobookshelfSetupProbeError("tls") from None
-                current = current.__cause__
+                # `httpcore` re-raises without `from`, so the certificate error
+                # is the implicit context rather than the declared cause.
+                current = current.__cause__ or current.__context__
             raise AudiobookshelfSetupProbeError("unavailable") from None
         except (httpx.HTTPError, OSError):
             raise AudiobookshelfSetupProbeError("unavailable") from None

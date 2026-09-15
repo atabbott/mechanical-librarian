@@ -15,7 +15,7 @@ CASES = (
     "tests/unit/test_first_boot.py",
     "tests/unit/test_setup_state_store.py",
     "tests/unit/test_setup_web.py::test_surviving_session_rotates_csrf_for_mutation_after_restart",
-    "tests/unit/test_setup_web.py::test_six_step_journey_closes_setup_routes_after_exact_kickoff_copy",
+    "tests/unit/test_setup_web.py::test_seven_step_journey_closes_setup_routes_after_exact_kickoff_copy",
     "tests/unit/test_setup_journey.py::test_kickoff_atomically_promotes_and_preserves_connection_secret",
     "tests/unit/test_composition_reopen.py::test_ordinary_server_releases_first_owner_state_for_interruption_and_resume",
     "tests/unit/test_runtime_dispatch.py::test_transition_orders_dormant_start_commit_publish_admit_and_drain",

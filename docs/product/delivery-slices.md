@@ -200,7 +200,7 @@ shaped from the 0.20.0 production measurement recorded on #749.
 | F46 Qualified automatic audiobook decisions | #967 | Audiobook decision classes earn their own measured field/operation authority, independently of ebook qualification. | Delivered. The first expanded record registered 44 operations across six fields; its frozen source quality and software correspondence remain historical evidence. |
 | F46a Useful automatic audiobook metadata | #1047; #1046–#1056 | Supported work and recording facts reach useful automatic decisions and guarded effects, including complete narrator/tag sets, original dates, paired title/subtitle, positive-only explicit and bounded cover replacement. | Combined implementation and activation, preserving F46's prior authority and existing owner, consent and recovery boundaries. #877 remains a separate closing measurement. |
 | F47 Guarded audiobook application | #968 | Exact-current human and qualified automatic audiobook decisions apply through the existing guarded Audiobookshelf path, canary first. | Delivered. |
-| F51 Chapter-based recording corroboration | #1004 | Complete reliable local/provider chapters establish an attributed owner-reviewable recording match when overall runtime is unavailable, across local-ASIN, target-asserted, promoted-ASIN and WORK-derived acquisition. | First increment delivered through #1042/#1043. The ADR-0064/0069 amendment defines the broad activation increment; The assigned Ready activation increment implements complete missing-runtime support and bounded lookup-only acquisition; exact-candidate qualification remains required. Only the complete qualified activation outcome closes #1004. |
+| F51 Chapter-based recording corroboration | #1004 | Complete reliable local/provider chapters establish an attributed owner-reviewable recording match when overall runtime is unavailable, across local-ASIN, target-asserted, promoted-ASIN and WORK-derived acquisition. | Delivered. The first increment landed through #1042/#1043 under the ADR-0064/0069 amendment, and #1044 completed the qualified activation outcome: complete missing-runtime support with bounded lookup-only acquisition. |
 | F08 Audiobook media-health observations | #144 | The audiobook report states typed, cited media-health observations distinct from metadata evidence. | Delivered. Unit 1 states the derived media-health section over retained evidence, the six composed set observations, and the zero-byte reclassification; unit 2 adds the probe's container, codec and encryption facts, preparation-time truncation for the lanes publication demotes, and `metadata-report-v40`. |
 
 Focused work remains outside the slice sequence, each using `Delivery slice:
@@ -215,6 +215,31 @@ No release, tag, deployment, chapter or cover or media write, transcription
 Open Library/Hardcover WORK projections, or ebook format-ladder work
 (#751 rungs 1–2) is included.
 
+## Delivery checkpoint 0.22.0: first-run and review usability
+
+This checkpoint makes the existing first-run, preparation and review flows
+understandable, actionable and consistent before series and structure work
+begins. It is the 2026-09-07 fresh-install audit workstream, grouped by owner
+outcome rather than one issue per finding, and contains no new slice: every
+row is focused work using `Delivery slice: Not applicable`.
+
+| Outcome | Issue | Demonstrable result | Planning state |
+| --- | --- | --- | --- |
+| Clear, recoverable first-run setup | #1008 | A new owner reads the seven-step sequence and its prerequisites, supplies values with field-associated validation, recovers from connection, origin and mount failures without losing nonsecret work or reading internal codes, and kicks off once from a short editable summary. | In delivery. Owns this checkpoint section and the 0.21.0 row reconciliation. |
+| Reviewer setup inside the wizard and Settings | #1009 | The optional cover reviewer is provisioned, tested and changed from the wizard and from Settings, with truthful unavailable states. | Triaged pending a bounded containment and authentication design. |
+| Readable, trustworthy Library choices | #1010 | Library rows, choices and source evidence state what they are based on and what a decision will do. | Ready. |
+| Clear policy impact, write permission and history | #1011 | Policy pages state their real effect, write permission is scoped, and history is truthful about what was applied. | Ready. |
+| Actionable preparation progress and recovery | #1012 | Preparation progress and each failed book state one supported owner action. | Ready. |
+| Settings overhaul with shared controls | #1034 | Settings uses the accepted section editor, one global draft and a Policy-style save tray built from genuinely shared components. | Triaged pending the full-library measurement and a live Settings inventory. |
+| Responsive layout, spacing and copy pass | #1013 | One final pass aligns layout, spacing and everyday copy across the changed surfaces, with an integrated completion walkthrough. | Blocked by #1008-#1012 and #1034. |
+
+Closure requires all seven outcomes delivered and verified on the exact
+installed artifact, every audit finding reconciled to concrete evidence, and
+one fresh-setup-to-preparation-to-decision-to-policy walkthrough exercising
+real failure and recovery, long content, keyboard focus, both themes and
+desktop, 390 and 320 widths. #1013 gates the first 0.23.0 unit, #984, which
+creates the 0.23.0 checkpoint section.
+
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 
 Write-capable slices use fake or disposable services until their explicit
@@ -225,7 +250,7 @@ be reopened or recreated.
 
 | Outcome | Issue | Demonstrable result | Planning state |
 | --- | --- | --- | --- |
-| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Retained planned designation. |
+| F08 Audiobook health report | #144 | One generated audiobook produces bounded tag, chapter, duration, and media-health observations without transcription or production mutation. | Delivered in 0.21.0; #144 is closed. The row keeps the historical 1.0.0 designation for the same outcome. |
 
 The checkpoint's other outcomes are delivered and their trackers are closed:
 F15a supported container operation #151, F16a authenticated browser review and

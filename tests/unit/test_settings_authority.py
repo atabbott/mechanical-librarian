@@ -506,6 +506,26 @@ def test_the_settings_marketplace_vocabulary_stays_one_closed_set() -> None:
     )
 
 
+def test_the_first_run_vocabulary_states_owner_rules_and_every_contribution() -> None:
+    """The wizard states its password rule and each provider's relevance from
+    the one shared vocabulary, so no copy is authored twice (#1008).
+
+    The owner-password bound is the server's own byte range in
+    `interfaces.web.setup.login`; the contribution map must cover exactly the
+    closed adapter set, because the providers step reads it by adapter and a
+    missing entry would render `undefined` beside a named provider.
+    """
+    vocabulary = _settings_vocabulary()
+
+    assert vocabulary["owner_password"] == {"minimum_bytes": 1, "maximum_bytes": 1024}
+    assert "1,024 bytes" in vocabulary["errors"]["owner_password"]
+    assert set(vocabulary["provider_contributions"]) == set(PROVIDER_LABELS)
+    assert all(
+        value.strip() == value and value.endswith(".")
+        for value in vocabulary["provider_contributions"].values()
+    )
+
+
 @pytest.mark.parametrize("mode", ["http", "direct", "proxy"])
 def test_bootstrap_accepts_exact_browser_modes(tmp_path: Path, mode: str) -> None:
     source = {

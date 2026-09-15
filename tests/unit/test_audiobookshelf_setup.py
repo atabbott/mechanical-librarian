@@ -137,3 +137,28 @@ def test_setup_probe_classifies_tls_failure_without_exposing_certificate_detail(
 
     assert error.value.code == "tls"
     assert "private certificate detail" not in str(error.value)
+
+
+def test_setup_probe_classifies_a_contextual_certificate_failure_as_tls() -> None:
+    """The real stack attaches the certificate error as context, not cause.
+
+    `httpcore` re-raises its own `ConnectError` without `from`, so walking only
+    `__cause__` stopped one link short of `ssl.SSLCertVerificationError` and a
+    genuine self-signed endpoint reached the owner as the generic unavailable
+    recovery instead of the certificate one (#1008).
+    """
+
+    def tls_failure(request: httpx.Request) -> httpx.Response:
+        try:
+            raise ssl.SSLCertVerificationError("private certificate detail")
+        except ssl.SSLCertVerificationError:
+            # No `from`: the certificate error becomes the implicit context.
+            raise httpx.ConnectError(  # noqa: B904 - the shape under test
+                "private transport detail", request=request
+            )
+
+    with pytest.raises(AudiobookshelfSetupProbeError) as error:
+        _probe(httpx.MockTransport(tls_failure))("https://abs.invalid", "secret-value")
+
+    assert error.value.code == "tls"
+    assert "private certificate detail" not in str(error.value)
