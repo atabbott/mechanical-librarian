@@ -78,7 +78,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "ef0532a90bc6f4dd35973d62d3d8caa7f6b56189631d748fa999dc0c6027625b"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "854af9705560b9b055efcd39047c5382f2acfe91ad872a1bcd4969522d56b181"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -172,6 +172,10 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
     ),
     (
         "f22c32088a1a7048df6d9897352a874241c99fb75656553e850eb828dcce1361",
+        F19A_QUALIFIED_POLICY_OPTIONS,
+    ),
+    (
+        "ef0532a90bc6f4dd35973d62d3d8caa7f6b56189631d748fa999dc0c6027625b",
         F19A_QUALIFIED_POLICY_OPTIONS,
     ),
 
@@ -367,6 +371,10 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
     ),
     (
         "1588793ea2063ff80a1e8fd8e5d11cf32c599da316665bf476ef32f10654d988",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "766e6313f2f6bd81ab2ff5137ddf5eca120de5fa3800e7cab89327c8c020e0b1",
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
 

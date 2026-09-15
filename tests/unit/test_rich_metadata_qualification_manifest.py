@@ -2795,12 +2795,13 @@ def _predecessor_source_digest(name: str) -> str:
 
 
 def test_current_title_successors_bind_complete_consumer_source_inventory():
-    """The three current manifests re-pinned in place for #1008.
+    """The three current manifests re-pinned in place for #1012.
 
-    No option, scoring or holdout moves. Three first-run read/UI sources move
-    from the unchanged inventory into the read classification, and every live
-    pin is recomputed from the file it names, so a source that moved without
-    being classified fails here rather than at review.
+    No option, scoring or holdout moves, and no source changes classification:
+    the preparation panel, the application router and their styles, tests and
+    documentation were already read/UI sources. Every live pin is recomputed
+    from the file it names, so a source that moved without being classified
+    fails here rather than at review.
     """
 
     from mechanical_librarian.domain.audiobook_decision_qualification import (
