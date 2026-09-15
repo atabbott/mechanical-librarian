@@ -1770,7 +1770,8 @@ def qualify_provider_observation(
                     audiobook=lookup.audio is not None,
                 ).admitted
             )
-            if observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
+            if lookup.audio is not None
+            and observation.authority in AUDIOBOOK_PROVIDER_AUTHORITIES
             else (),
         )
     # Gate order: the work-identity admission above has already decided that
