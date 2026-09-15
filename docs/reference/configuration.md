@@ -452,9 +452,12 @@ explicit; unavailable metadata does not disable the cover task. Contained
 usage identifies the exact profile/model and consumes its plan allowance;
 per-request monetary quantification is unavailable.
 
-Settings → Reviewer states each task's configured model beside its engine.
-Contained Codex reports no model there because its installed profile fixes
-one, and that absence is stated rather than filled in. The cover task carries
+The cover task's selection line in Settings → Reviewer states its configured
+model beside its engine. Contained Codex reports no model on that one line
+because its installed profile fixes one, and that absence is stated there
+rather than filled in; the description task names its own selected model and
+offers a separate contained inspection that reports the exact contained model
+and profile. The cover task carries
 its own disclosure: the configured model, the image, text and structured-output
 capabilities a cover model must have, and the maximum-size request basis of at
 most 12 previews of at most 320 by 480 pixels and 1 MiB inside an 8 MiB packet
