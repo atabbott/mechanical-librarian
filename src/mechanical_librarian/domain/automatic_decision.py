@@ -179,6 +179,10 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
         F19A_QUALIFIED_POLICY_OPTIONS,
     ),
 
+    (
+        "63151c7ea3f24b8a568148a7f73dc62aa3279760af9d35fcb77593d3ecd5f0b3",
+        F19A_QUALIFIED_POLICY_OPTIONS,
+    ),
 )
 _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "subtitle:fill_empty",
@@ -378,6 +382,10 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
 
+    (
+        "8c447eac5fa621e6ee705c79ac9757028ecf6f8d3073baaaba77faec5fa9cebc",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
 )
 # Retained published audiobook authority remains decodable, never current.
 _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
@@ -440,6 +448,10 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
     ),
     (
         "e675cf0efcc753ecdcb672bf96e4d0b225ece7f3822fe5d54316fc867b5ed41b",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "6cf0944a817d176d2224a97e971f059314d109c96921e6e94eb8f073d216fa87",
         audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
     ),
 )
