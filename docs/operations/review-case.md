@@ -240,13 +240,14 @@ It states each library's scan state in owner words rather than the store's own
 identifier, states checked, ready and could-not-finish counts for that library,
 and lists every stage bucket in one fixed order while a scan is running so a
 live update reads as progress; a finished scan lists only the buckets books
-reached. Both **Scan now** and **Retry** start a new preparation cycle for one
-library, and the control says so, including that provider lookups which hit
-limits recover automatically on their documented schedule and that a failure
-before a report has no automatic retry
+reached. **Scan now**, and **Retry** where a run reported failures, both start a
+new preparation cycle for one library, and the control says so, including that
+provider lookups which hit limits recover automatically on their documented
+schedule and that a failure before a report has no automatic retry
 ([provider recovery](provider-recovery.md)). `Escape` closes the control and
-returns focus to the button that opened it; a control failure keeps its
-announcement while activity refreshes behind it.
+returns focus to the button that opened it, and tabbing off either end closes it
+where it stands rather than leaving it open behind the focus ring; a control
+failure keeps its announcement while activity refreshes behind it.
 Each activity response reads every configured library and the pause flag from
 one validated repository snapshot rather than reopening the database per row.
 Provider adapters perform their bounded local attempts and retain a safe

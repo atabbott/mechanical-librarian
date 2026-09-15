@@ -157,6 +157,16 @@ const preparationTriggerLine = (trigger: PreparationPresentation['triggers'][num
     : preparationTriggerCopy[trigger.trigger]
 // The scope every count on this page reconciles to: one run, whose books are
 // either ready, unable to finish, or still moving.
+/**
+ * The display name, bounded to what the search route and the backend accept.
+ *
+ * 128 is a character bound on both sides, and `String.slice` counts UTF-16
+ * units, so slicing there can cut an astral pair in half and send half a
+ * character as the query. Counting code points keeps every name searchable as
+ * the row shows it.
+ */
+const boundedSearchName = (name: string) => Array.from(name).slice(0, 128).join('')
+
 const preparationScope = (presentation: PreparationPresentation) =>
   `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish · ${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} in progress`
 const preparationPassage = [
@@ -275,7 +285,7 @@ const PreparationDetail = ({
           </h2>
           <p>{introduction}</p>
         </div>
-        <strong>{preparationScope(presentation)} in this run</strong>
+        <strong>{String(presentation.passage.ready)} ready</strong>
       </header>
       <p
         className={`preparation-run-state state-${presentation.state}${animateChange ? ' reported-change' : ''}`}
@@ -315,7 +325,9 @@ const PreparationDetail = ({
         {presentation.active_overflow ? (
           <p>{String(presentation.active_overflow)} more active books follow in this run.</p>
         ) : null}
-        <small className="activity-backup-note">A book appears in Works once it is ready.</small>
+        {presentation.active_books.length ? (
+          <small className="activity-backup-note">A book appears in Works once it is ready.</small>
+        ) : null}
       </section>
       <section aria-labelledby="preparation-progress-title">
         <div className="preparation-section-heading">
@@ -378,10 +390,12 @@ const PreparationDetail = ({
                   {completion.name}{' '}
                   {/*
                    * The link sits inside the name so it wraps with it, and the
-                   * name shown is the only thing this row has to search with --
-                   * 128 is the bound the route and the backend already agree on.
+                   * name shown is the only thing this row has to search with.
                    */}
-                  <Link to="/library" search={{ lens: 'all', q: completion.name.slice(0, 128) }}>
+                  <Link
+                    to="/library"
+                    search={{ lens: 'all', q: boundedSearchName(completion.name) }}
+                  >
                     Find in Works
                   </Link>
                 </span>

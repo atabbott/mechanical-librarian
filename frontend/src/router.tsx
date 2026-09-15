@@ -548,6 +548,7 @@ export const PreparationActivity = () => {
   const { data, queryClient, http } = usePreparation()
   const [open, setOpen] = useState(false)
   const trigger = useRef<HTMLButtonElement>(null)
+  const popover = useRef<HTMLElement>(null)
   const action = useMutation({
     mutationFn: (path: string) => http.preparationAction(path),
     retry: false,
@@ -576,13 +577,26 @@ export const PreparationActivity = () => {
     <div
       className="preparation-activity"
       // Escape closes from the trigger or from anywhere inside the popover,
-      // and ``close`` already returns focus to the trigger. Nothing is bound
-      // while the popover is shut, so Escape stays available to the page.
+      // and ``close`` already returns focus to the trigger. Tabbing off either
+      // end closes it where it stands -- the Dropdown precedent -- so the
+      // popover never stays open behind a focus ring that has left it; the
+      // browser keeps the tab order it was going to follow. Nothing is bound
+      // while the popover is shut, so both keys stay available to the page.
       onKeyDown={(event) => {
-        if (!open || event.key !== 'Escape') return
-        event.preventDefault()
-        event.stopPropagation()
-        close()
+        if (!open) return
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          event.stopPropagation()
+          close()
+          return
+        }
+        if (event.key !== 'Tab') return
+        const focusable = popover.current?.querySelectorAll<HTMLElement>(
+          'button:not([disabled]),a[href]',
+        )
+        if (!focusable?.length) return
+        const edge = event.shiftKey ? focusable[0] : focusable[focusable.length - 1]
+        if (event.target === edge) setOpen(false)
       }}
     >
       <button
@@ -598,7 +612,7 @@ export const PreparationActivity = () => {
             : 'Preparing libraries'}
       </button>
       {open && data ? (
-        <section className="preparation-popover" aria-label="Background activity">
+        <section ref={popover} className="preparation-popover" aria-label="Background activity">
           <h2>Background activity</h2>
           {data.libraries.map((item) => (
             <article key={`${item.connection}:${item.library}`}>
@@ -658,10 +672,10 @@ export const PreparationActivity = () => {
                * do; it decides nothing.
                */}
               <small className="activity-backup-note">
-                Scan now and Retry both start a new preparation cycle for this library; books that
-                could not finish are prepared again; provider lookups that hit limits recover
-                automatically on the documented schedule; a failure before a report has no automatic
-                retry.
+                Scan now — and Retry after a run with failures — start a new preparation cycle for
+                this library; books that could not finish are prepared again; provider lookups that
+                hit limits recover automatically on the documented schedule; a failure before a
+                report has no automatic retry.
               </small>
             </article>
           ))}

@@ -517,10 +517,12 @@ describe('Library route', () => {
     expect(screen.getByText('A book appears in Works once it is ready.')).toBeVisible()
     expect(document.querySelectorAll('.preparation-active-books a')).toHaveLength(0)
     expect(screen.queryByText(/Preparation unavailable/u)).toBeNull()
-    expect(
-      screen.getByText('1 ready · 0 could not finish · 2 in progress in this run'),
-    ).toBeVisible()
+    // The reconciliation reads once, in the outcomes row; the header keeps the
+    // short count it always carried rather than repeating it.
     expect(screen.getByText('1 ready · 0 could not finish · 2 in progress')).toBeVisible()
+    expect(document.querySelector('.preparation-detail > header > strong')?.textContent).toBe(
+      '1 ready',
+    )
     expect(screen.getByText('Started by an owner scan')).toBeVisible()
 
     act(() => {
@@ -553,9 +555,6 @@ describe('Library route', () => {
       '/library?lens=all&q=Ready+title',
       '/library?lens=all&q=Unfinished+title',
     ])
-    expect(
-      screen.getByText('1 ready · 1 could not finish · 1 in progress in this run'),
-    ).toBeVisible()
     expect(screen.getByText('1 ready · 1 could not finish · 1 in progress')).toBeVisible()
 
     act(() => {
@@ -653,6 +652,31 @@ describe('Library route', () => {
     })
     expect(screen.queryByText(/books\/min/u)).toBeNull()
     expect(screen.queryByText('No book finished in the last five minutes')).toBeNull()
+  })
+
+  it('bounds a completion search by characters, never by half of one', async () => {
+    const runId = `preparation_run_${'e'.repeat(64)}`
+    // The 128th character is an astral pair: a UTF-16 slice would send half of
+    // it, and the row would search for a name no book has.
+    const name = `${'a'.repeat(127)}\u{1f4d8}tail`
+    const http = createHttp()
+    http.getPreparation = vi.fn(async () => {
+      const view = terminalPreparation(runId)
+      return {
+        ...view,
+        presentation: {
+          ...view.presentation,
+          recent_completions: [{ name, outcome: 'ready' as const, completed_at: 120 }],
+        },
+      }
+    })
+    renderRoute(`/library?lens=all&preparation=${runId}`, http)
+
+    const href = (await screen.findByRole('link', { name: 'Find in Works' })).getAttribute('href')
+    const query = new URLSearchParams(href?.split('?')[1] ?? '').get('q')
+    expect(query).toBe(`${'a'.repeat(127)}\u{1f4d8}`)
+    expect(Array.from(query ?? '')).toHaveLength(128)
+    expect(query).not.toContain('\ufffd')
   })
 
   it('gives preparation exclusive left selection and restores the retained work', async () => {
