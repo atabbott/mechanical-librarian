@@ -78,7 +78,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "7fbe2ea38f06b0ad0bd3a6941ec1bc7dc08079bdf1a38202898201a3720f9f00"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "d0b29dac7d84e62ec96acca48440c5ac09592d49426a880604005bdd778d8549"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -230,10 +230,6 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
     ),
     (
         "3d0d7457d1704574f979121acaedfc5c4c7890f9f881042444161da8e1927202",
-        F19A_QUALIFIED_POLICY_OPTIONS,
-    ),
-    (
-        "c975fa0f6c4f18a51615c1ee6000227f37e1595dd7f29b0aff17b9e4909fe0e8",
         F19A_QUALIFIED_POLICY_OPTIONS,
     ),
     (
@@ -496,10 +492,6 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
     (
-        "97a5e0adca62c63acfba4cf7d67318e184e0bfa521f8c4e8b6321916b1afd2a7",
-        F20_PASSING_AUTOMATIC_OPTIONS,
-    ),
-    (
         "4d5fb5a6bba6e2e5c41cdc50c0091748fcbb578f000ec0cb48535d5792a95aa9",
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
@@ -743,10 +735,6 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
     ),
     (
         "8a708d1bc25ca8cb42e42a09faa9616f0605eadcb0584f0b8a6f7cdfcf7750bc",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
-    ),
-    (
-        "bcba61c83d38f91ee7d9577a4f5c3078504308017c84546145e7948d37b788e7",
         audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
     ),
     (

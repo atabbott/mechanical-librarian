@@ -852,6 +852,7 @@ def test_each_historical_manifest_digest_has_one_frozen_option_binding() -> None
     for rows in (
         automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS,
         automatic_decision._PRIOR_F20_QUALIFICATION_MANIFESTS,
+        automatic_decision._PRIOR_F46_QUALIFICATION_MANIFESTS,
     ):
         assert len(rows) == len({digest for digest, _ in rows})
     f19a_bindings = dict(automatic_decision._PRIOR_F19A_QUALIFICATION_MANIFESTS)

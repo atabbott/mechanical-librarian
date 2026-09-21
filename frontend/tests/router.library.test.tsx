@@ -909,6 +909,20 @@ describe('Library route', () => {
       )
 
       expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+      await waitFor(() =>
+        expect(
+          screen.getByRole('heading', { name: 'A Book' }).closest('[data-route-focus]'),
+        ).toHaveFocus(),
+      )
+      const queued = new Map<number, FrameRequestCallback>()
+      let nextFrame = 0
+      vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+        queued.set(++nextFrame, callback)
+        return nextFrame
+      })
+      vi.spyOn(window, 'cancelAnimationFrame').mockImplementation((id) => {
+        queued.delete(id)
+      })
       await user.click(screen.getByRole('button', { name: /Preparation completed with failures/u }))
       expect(
         await screen.findByText('Finished · 1 could not finish · 1 ready', {
@@ -941,6 +955,10 @@ describe('Library route', () => {
         }),
       )
       const workHeading = await screen.findByRole('heading', { name: 'A Book' })
+      await act(async () => {
+        for (const callback of queued.values()) callback(0)
+        queued.clear()
+      })
       if (interaction === 'pointer')
         await waitFor(() => expect(workHeading.closest('[data-route-focus]')).toHaveFocus())
       expect(screen.getByRole('button', { name: /Choose current value/u })).toBeEnabled()
