@@ -10,6 +10,7 @@
     "source_sha256": {
       "CHANGELOG.md": "bc4b987d4040d92a2850433e8ac281ebc58951286c6d860b5cb858278c1a7c1d",
       "docs/architecture/security.md": "254481f8a50208314f8285d4e4a25acaf2ad1c648f11b5d6543e4616a5ac81b8",
+      "tests/browser/test_review_browser.py": "c522c630d0088d1a51ca576d7abfa444aec4d574bf64bd4e95f9f3b88cc70ddc",
       "tests/unit/test_continuous_field_effects.py": "25b13ae63619b9e76ffa565b2187a111633dde5c6cbbd466ac8ca93294505402",
       "tests/unit/test_rich_metadata_qualification_manifest.py": "6d914d4b401f1b141a3e1f4a57d014336bfdb74572cd4e252307013ac68d4520"
     },

@@ -3,6 +3,6 @@
   "prior_manifest_path": "docs/reference/f20-rich-metadata-qualification-candidate-v39.json",
   "prior_manifest_sha256": "6c3e07eae971e632093c4cd57dddf95e6d5d8b197c7013b69bb553fbc00862d9",
   "shared_amendment_path": "docs/reference/f46-audiobook-qualification-candidate-v9.json",
-  "shared_amendment_sha256": "97df1c2f742ab5f7c048d2ce7d80ea558458ed13e9039214f5b87bc3ab513f61",
-  "automatic_decision_after_f19_sha256": "c30ee211039fcaf32f9e8de5360964d1d65aecc7866d86e70b4ade32f3cbcb8f"
+  "shared_amendment_sha256": "8e43f608421f18bdcca447eb0b99c2b676648f8a156a9e4ac0e57a2e093eec7a",
+  "automatic_decision_after_f19_sha256": "b7c2a3d6f3ddea1b1c19ef16a2923dfd8bbbc3f1bc1c527011571dbad2d9ed35"
 }

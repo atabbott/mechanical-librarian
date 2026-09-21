@@ -4456,6 +4456,10 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                 page.get_by_role("button", name="Create owner access").click()
                 expect(password).to_have_attribute("aria-invalid", "true")
                 assert confirmation.get_attribute("aria-invalid") is None
+                # Error focus settles on the next frame; filling another field
+                # before then races that focus transition and types in password.
+                page.evaluate("() => new Promise(requestAnimationFrame)")
+                expect(password).to_be_focused()
                 confirmation.fill("a different password")
                 expect(alert).not_to_be_empty()
                 expect(password).to_have_attribute("aria-invalid", "true")

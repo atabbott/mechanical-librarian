@@ -3,5 +3,5 @@
   "prior_manifest_path": "docs/reference/f19a-qualification-manifest-v25.json",
   "prior_manifest_sha256": "f0284ac2b336fc72071de5ad76d601d67fd78fbdc02b40214879c7c053d1453e",
   "shared_amendment_path": "docs/reference/f46-audiobook-qualification-candidate-v9.json",
-  "shared_amendment_sha256": "97df1c2f742ab5f7c048d2ce7d80ea558458ed13e9039214f5b87bc3ab513f61"
+  "shared_amendment_sha256": "8e43f608421f18bdcca447eb0b99c2b676648f8a156a9e4ac0e57a2e093eec7a"
 }
