@@ -64,3 +64,10 @@ scales with persisted state. Concurrent owner operations have independent
 connection ownership, but SQLite retains its ordinary transaction and locking
 limits. The full installed synthetic journey and timing envelope in #1072 are
 the acceptance authority; a fast count or health response is insufficient.
+
+Preparation output can already hold the SQLite writer lock when it completes a
+stage. It tries the existing claim gate without waiting: when another initial
+claim owns that gate, the stage still publishes atomically and leaves its
+successor queued for an ordinary worker claim. This avoids waiting for a claimant
+that is itself waiting for the writer. The gate still serializes initial claims
+and draining; lease, recovery, worker-count and publication authority are unchanged.

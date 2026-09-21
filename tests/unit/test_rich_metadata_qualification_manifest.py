@@ -2841,6 +2841,8 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         "frontend/tests/focus.test.tsx",
         "frontend/src/liveInvalidation.ts",
         "frontend/tests/liveUpdates.test.ts",
+        "src/mechanical_librarian/application/review_pipeline.py",
+        "tests/unit/test_review_pipeline.py",
         "tests/support/continuous_review_scale.py",
         "tests/integration/test_continuous_review_scale.py",
     }
@@ -2888,6 +2890,12 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "src/mechanical_librarian/application/review_application.py",
             "src/mechanical_librarian/bootstrap/composition.py",
         }
+        assert set(continuity["changed_coordination_sources"]) == {
+            "src/mechanical_librarian/application/review_pipeline.py",
+        }
+        for name, delta in continuity["changed_coordination_sources"].items():
+            assert delta["current_sha256"] == document["source_closure"][name]
+            assert delta["measured_sha256"] != delta["current_sha256"]
         assert set(continuity["changed_persistence_sources"]) == {
             "src/mechanical_librarian/adapters/persistence/cover_considerations.py",
             "src/mechanical_librarian/adapters/persistence/schema.py",

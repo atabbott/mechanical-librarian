@@ -1012,13 +1012,20 @@ class ReviewPreparationPipeline:
     ) -> PipelineAction | None:
         try:
             if claim_next:
-                with self._claim_lock:
+                # An output transaction may already own SQLite's writer lock.
+                # A competing initial claim can hold this gate while waiting
+                # for that writer, so publish without taking another claim.
+                acquired = self._claim_lock.acquire(blocking=False)
+                try:
                     advanced = repository.advance_review_pipeline_action(
                         action,
                         output_id,
                         self._clock(),
-                        not self._draining.is_set(),
+                        acquired and not self._draining.is_set(),
                     )
+                finally:
+                    if acquired:
+                        self._claim_lock.release()
             elif exact_next:
                 advanced = repository.advance_review_pipeline_action(
                     action,

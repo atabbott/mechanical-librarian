@@ -9987,6 +9987,187 @@ def test_preparation_stages_emit_exact_advisory_timing_classes() -> None:
     ]
 
 
+@pytest.mark.parametrize("gate_state", ("available", "busy", "draining", "contending"))
+def test_output_advance_publishes_without_waiting_for_a_competing_claim(
+    application_path: Path, gate_state: str
+) -> None:
+    """A real SQLite writer never waits behind a claim waiting for that writer."""
+    with ExitStack() as owners:
+        repository = open_repository(application_path)
+        owners.callback(repository.close)
+        contender = open_repository(
+            application_path,
+            authority=repository.authority,
+            cross_thread=True,
+        )
+        owners.callback(contender.close)
+        contender._connection.execute("PRAGMA busy_timeout=250")
+        report = _report()
+        repository.publish(report, lambda: True)
+        repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            (replace(_entry("item-1", report.file.identity), library="ebooks"),),
+            12,
+        )
+        action = repository.claim_review_pipeline_action(13)
+        assert action is not None
+        action = repository.advance_review_pipeline_action(
+            action, report.report_id, 14, claim_next=True
+        )
+        assert action is not None and action.stage == "provider"
+        action = repository.advance_review_pipeline_action(
+            action, None, 15, claim_next=True
+        )
+        assert action is not None and action.stage == "proposal"
+        proposal = evaluate_report(report)
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: contender,
+            libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            providers=lambda *_: (),
+            propose=lambda *_: proposal.proposal_set_id,
+            admit=lambda *_: ("no_case", None),
+            project=lambda *_: True,
+            clock=lambda: 20,
+        )
+        if gate_state == "draining":
+            pipeline.begin_drain()
+        repository.begin_review_pipeline_output()
+        repository.publish_proposal(proposal)
+        assert contender._connection.execute(
+            "SELECT COUNT(*) FROM proposal_sets WHERE proposal_set_id=?",
+            (proposal.proposal_set_id,),
+        ).fetchone() == (0,)
+        entered = threading.Event()
+        release = threading.Event()
+        failures: list[BaseException] = []
+        claimed: list[PipelineAction | None] = []
+
+        def compete() -> None:
+            try:
+                with pipeline._claim_lock:
+                    if gate_state == "contending":
+                        contender._connection.set_trace_callback(
+                            lambda statement: (
+                                entered.set()
+                                if statement == "BEGIN IMMEDIATE"
+                                else None
+                            )
+                        )
+                        claimed.append(contender.claim_review_pipeline_action(21))
+                    else:
+                        entered.set()
+                        assert release.wait(2)
+            except BaseException as error:
+                failures.append(error)
+
+        thread = None
+        try:
+            if gate_state in {"busy", "contending"}:
+                thread = threading.Thread(target=compete)
+                thread.start()
+                assert entered.wait(2)
+            successor = pipeline._advance(
+                repository, action, proposal.proposal_set_id, claim_next=True
+            )
+            assert not repository._connection.in_transaction
+            assert (
+                repository.get_proposal(proposal.proposal_set_id) == proposal.to_json()
+            )
+            if gate_state == "available":
+                assert successor is not None and successor.stage == "admission"
+            else:
+                assert successor is None
+            if gate_state in {"busy", "draining"}:
+                assert repository._connection.execute(
+                    "SELECT stage,state FROM review_preparation_work WHERE work_id=?",
+                    (action.action_id,),
+                ).fetchone() == ("admission", "queued")
+        finally:
+            if repository._connection.in_transaction:
+                repository.rollback_review_pipeline_output()
+            release.set()
+            if thread is not None:
+                thread.join(2)
+                assert not thread.is_alive()
+            contender._connection.set_trace_callback(None)
+        assert failures == []
+        if gate_state == "contending":
+            assert len(claimed) == 1
+            ordinary = claimed[0]
+            assert ordinary is not None
+            assert (ordinary.action_id, ordinary.stage) == (
+                action.action_id,
+                "admission",
+            )
+        elif gate_state == "busy":
+            ordinary = contender.claim_review_pipeline_action(21)
+            assert ordinary is not None
+            assert (ordinary.action_id, ordinary.stage) == (
+                action.action_id,
+                "admission",
+            )
+        assert (
+            repository._connection.execute(
+                "SELECT COUNT(*) FROM review_preparation_work WHERE state='running'"
+            ).fetchone()[0]
+            <= 2
+        )
+        assert pipeline._claim_lock.acquire(blocking=False)
+        pipeline._claim_lock.release()
+
+
+@pytest.mark.parametrize("fault", (RuntimeError("failed"), KeyboardInterrupt()))
+def test_output_advance_releases_an_acquired_claim_gate_on_failure(
+    application_path: Path,
+    fault: BaseException,
+) -> None:
+    with ExitStack() as owners:
+        repository = open_repository(application_path)
+        owners.callback(repository.close)
+        pipeline = ReviewPreparationPipeline(
+            repository_factory=lambda: repository,
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            providers=lambda *_: (),
+            propose=lambda *_: "proposal_set_" + "2" * 64,
+            admit=lambda *_: ("no_case", None),
+            project=lambda *_: True,
+        )
+        action = PipelineAction(
+            "action",
+            "scan",
+            "proposal",
+            1,
+            "primary",
+            "fiction",
+            "lib-1",
+            _PRODUCER,
+            1,
+            "a" * 64,
+            "item",
+            "b" * 64,
+            0,
+            source_fingerprint="c" * 64,
+        )
+        with patch.object(
+            repository, "advance_review_pipeline_action", side_effect=fault
+        ):
+            with pytest.raises(
+                ReviewPipelineError if isinstance(fault, Exception) else type(fault)
+            ):
+                pipeline._advance(repository, action, None, claim_next=True)
+        assert pipeline._claim_lock.acquire(blocking=False)
+        pipeline._claim_lock.release()
+
+
 def test_drain_rejects_initial_claim_and_persisted_claim_boundary_is_serialized() -> (
     None
 ):
