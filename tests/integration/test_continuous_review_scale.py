@@ -236,19 +236,40 @@ def test_exited_installed_server_reports_its_exit_code() -> None:
 def test_installed_repository_topology_keeps_web_and_pipeline_owners_independent() -> (
     None
 ):
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from mechanical_librarian.bootstrap import composition
+
     with tempfile.TemporaryDirectory() as directory:
         topology = _InstalledRepositoryTopology.open(Path(directory) / "state.sqlite3")
+        review = ReviewWebConfiguration(
+            "http://127.0.0.1:18444", "/synthetic/owner.hash"
+        )
+        covers = composition._compose_cover_considerations(
+            topology.web_state_owner,
+            Path(directory) / "artifacts",
+            review,
+            composition._compose_reviewer_access(topology.web_state_owner, review),
+        )
+        browse = topology.open_browse(covers, None)
         observation = topology.open_foreground_observation()
         first_action = topology.open_action()
         second_action = topology.open_action()
-        handles = (topology.web_state_owner, observation, first_action, second_action)
-        assert len({id(handle) for handle in handles}) == 4
+        handles = (
+            topology.web_state_owner,
+            browse,
+            observation,
+            first_action,
+            second_action,
+        )
+        assert len({id(handle) for handle in handles}) == 5
+        assert len({id(handle._connection) for handle in handles}) == 5
         if sys.platform.startswith("linux"):
-            assert len({id(handle.authority) for handle in handles}) == 4
+            assert len({id(handle.authority) for handle in handles}) == 5
         try:
             for handle in handles:
                 handle.operational_snapshot()
         finally:
+            browse.close()
             observation.close()
             first_action.close()
             second_action.close()

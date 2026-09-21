@@ -53,6 +53,9 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ReviewWebConfiguration,
 )
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationService,
+)
 from mechanical_librarian.application.operations import (
     StageTimer,
     support_preparation_incidents,
@@ -320,6 +323,15 @@ class _InstalledRepositoryTopology:
             create=False,
             authority=self.web_state_owner.authority,
             cross_thread=True,
+        )
+
+    def open_browse(
+        self,
+        covers: CoverConsiderationService,
+        recovery: SQLiteProviderRecoveryStore | None,
+    ):
+        return open_review_browse_repository(
+            self._database, self.web_state_owner.authority, covers, recovery
         )
 
     def open_activity_projection(self):
@@ -703,9 +715,7 @@ def _start_deterministic_installed_server(
     cover_considerations = _compose_cover_considerations(
         web_state_owner, artifacts, review, reviewer_access, recovery
     )
-    browse_repository = open_review_browse_repository(
-        database, web_state_owner.authority, cover_considerations, recovery
-    )
+    browse_repository = topology.open_browse(cover_considerations, recovery)
     try:
         activity_projection = compose_field_effect_activity_projection(
             configuration, activity_repository, recovery

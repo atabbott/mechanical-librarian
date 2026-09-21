@@ -50,7 +50,10 @@ async def _runtime_app(scope: object, receive: object, send: object) -> None:
     return None
 
 
-def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() -> None:
+@pytest.mark.parametrize("failure", (None, "composition", "http"))
+def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
+    failure: str | None,
+) -> None:
     repository = Mock()
     settings = repository.owner_settings_store.return_value
     settings.activate_runtime.return_value = (
@@ -64,6 +67,10 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     cover_considerations = Mock()
     cover_considerations.current_authority.return_value = ("policy", "replay")
     review_application = Mock()
+    browse_repository = Mock()
+    close_order: list[str] = []
+    browse_repository.close.side_effect = lambda: close_order.append("browse")
+    repository.close.side_effect = lambda: close_order.append("root")
     preparation = Mock()
     preparation.libraries = (
         ("primary", "fiction", "library-1"),
@@ -86,6 +93,9 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
 
     with (
         patch.object(composition, "open_repository", return_value=repository),
+        patch.object(
+            composition, "open_review_browse_repository", return_value=browse_repository
+        ),
         patch.object(
             composition, "_open_review_session_store", return_value=session_store
         ),
@@ -114,9 +124,35 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
             composition,
             "compose_review_application",
             return_value=review_application,
+            side_effect=RuntimeError("activation failed")
+            if failure == "composition"
+            else None,
         ) as compose_application,
-        patch.object(composition, "create_review_app", return_value=_runtime_app),
+        patch.object(
+            composition,
+            "create_review_app",
+            return_value=_runtime_app,
+            side_effect=RuntimeError("activation failed")
+            if failure == "http"
+            else None,
+        ),
     ):
+        if failure is not None:
+            with pytest.raises(RuntimeError, match="activation failed"):
+                composition.compose_store_runtime_generation(
+                    ReviewBootstrap(
+                        schema_version="review-bootstrap-v2",
+                        canonical_origin="https://library.invalid",
+                        tls_certificate_file="/synthetic/certificate",
+                        tls_private_key_file="/synthetic/private-key",
+                    ),
+                    Path("application.sqlite3"),
+                    Path("catalogue.sqlite3"),
+                    Path("artifacts"),
+                    repository_authority=object(),
+                )
+            assert close_order == ["browse", "root"]
+            return
         runtime, _configuration = composition.compose_store_runtime_generation(
             ReviewBootstrap(
                 schema_version="review-bootstrap-v2",
@@ -131,6 +167,11 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
         )
 
     assert create_pipeline.call_args.args[4] is reviewer_access
+    assert compose_application.call_args.kwargs["library_store"] is browse_repository
+    assert compose_application.call_args.kwargs["report_store"] is repository
+    assert (
+        compose_application.call_args.kwargs["close_browse"] == browse_repository.close
+    )
     assert compose_cover.call_args.args[3] is reviewer_access
     assert compose_application.call_args.kwargs["reviewer_access"] is reviewer_access
     assert (

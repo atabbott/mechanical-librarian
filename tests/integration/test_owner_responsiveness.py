@@ -281,3 +281,122 @@ def test_browse_borrower_closes_before_root_and_refuses_later_reads(
     assert closed == ["browse", "root"]
     with pytest.raises(ReviewApplicationError, match="unavailable"):
         fixture.application.library(lens="all", search=None, limit=5, cursor=None)
+
+
+def test_mixed_complete_fixture_runs_real_preparation_and_preserves_owner_final(
+    tmp_path: Path,
+) -> None:
+    import time
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 10, mixed=True, prepare=True)
+    try:
+        assert len(fixture.cases) == 9
+        assert (
+            fixture.application.library(
+                lens="all", search=None, limit=25, cursor=None
+            ).counts["all"]
+            == 10
+        )
+        fixture.application.start_dormant()
+        fixture.application.admit()
+        assert fixture.preparation is not None
+        for index in range(5):
+            fixture.preparation.request("primary", f"books-{index}")
+        deadline = time.monotonic() + 10
+        while True:
+            states = [
+                fixture.preparation.progress("primary", f"books-{index}")
+                for index in range(5)
+            ]
+            if all(
+                state is not None
+                and state.state in {"completed", "completed_with_failures"}
+                for state in states
+            ):
+                break
+            assert time.monotonic() < deadline, states
+            time.sleep(0.01)
+        assert sum(state.checked for state in states if state is not None) == 10
+        assert sum(state.blocked for state in states if state is not None) == 1
+        assert fixture.repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (1,)
+        detail = fixture.application.case_detail(fixture.cases[1].review_case_id)
+        title = next(
+            field for field in detail.fields if field["destination"] == "title"
+        )
+        assert title["human_decision"] is not None
+        assert title["needs_attention"] is False
+        assert fixture.repository._connection.execute(
+            "SELECT count(*) FROM cover_considerations WHERE currentness_document != 'null'"
+        ).fetchone() == (9,)
+    finally:
+        fixture.close()
+
+
+def test_populated_owner_http_runtime_reopens_and_serves_independent_routes(
+    tmp_path: Path,
+) -> None:
+    import httpx
+
+    from tests.support.owner_responsiveness import running_owner_fixture
+
+    for works in (10, 0):
+        with running_owner_fixture(tmp_path, works) as (fixture, origin):
+            assert len(fixture.cases) == 9
+            with httpx.Client(base_url=origin, headers={"Origin": origin}) as client:
+                assert (
+                    client.post(
+                        "/api/v1/session/login", json={"password": "synthetic-owner"}
+                    ).status_code
+                    == 200
+                )
+                library = client.get("/api/v1/library?lens=all")
+                assert library.status_code == 200
+                assert library.json()["counts"]["all"] == 10
+                for route in (
+                    "/api/v1/attention",
+                    "/api/v1/review-preparation",
+                    "/api/v1/settings",
+                ):
+                    assert client.get(route).status_code == 200
+
+
+def test_failed_fixture_activation_releases_root_authority(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.support import owner_responsiveness
+
+    def fail(*args, **kwargs):
+        raise RuntimeError("fixture activation failed")
+
+    with monkeypatch.context() as failure:
+        failure.setattr(owner_responsiveness, "compose_review_application", fail)
+        with pytest.raises(RuntimeError, match="fixture activation failed"):
+            OwnerResponsivenessFixture(tmp_path, 1)
+    reopened = open_repository(tmp_path / "reports.sqlite", create=False)
+    reopened.close()
+
+
+def test_persistent_browse_observes_live_cover_policy_rebinding(tmp_path: Path) -> None:
+    from mechanical_librarian.application.cover_policy import CoverPolicy
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    try:
+        capture = fixture.browse._capture_cover_read
+        assert capture is not None
+        original = capture()
+        connection = fixture.browse._connection
+        initial = fixture.application.attention(search=None, limit=25, cursor=None)
+        fixture.covers.update_policy(CoverPolicy(prefer_minimal_composition=True))
+        changed = capture()
+        assert changed[0] != original[0]
+        assert changed[0] == fixture.covers.current_authority()
+        current = fixture.application.attention(search=None, limit=25, cursor=None)
+        assert fixture.browse._connection is connection
+        assert current.total < initial.total
+    finally:
+        fixture.close()

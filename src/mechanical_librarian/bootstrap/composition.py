@@ -3352,6 +3352,7 @@ def compose_store_runtime_generation(
                 first_boot=first_boot,
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
             )
+            review_app = create_review_app(review_application, review)
         except BaseException:
             if browse_repository is not None:
                 browse_repository.close()
@@ -3371,7 +3372,7 @@ def compose_store_runtime_generation(
 
         return (
             RuntimeGeneration(
-                create_review_app(review_application, review),
+                review_app,
                 start_dormant=review_application.start_dormant,
                 stop_admission=review_application.stop_admission,
                 resume_admission=review_application.resume_admission,
@@ -3830,13 +3831,13 @@ def run_review_server(
                     reviewer_access=reviewer_access,
                     first_boot=first_boot,
                 )
+                app = create_review_app(review_application, review)
             except BaseException:
                 if browse_repository is not None:
                     browse_repository.close()
                 if close_activity_projection is not None:
                     close_activity_projection()
                 raise
-            app = create_review_app(review_application, review)
 
             def close_generation() -> None:
                 try:
