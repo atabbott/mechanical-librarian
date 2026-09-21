@@ -37,7 +37,7 @@ jobs:
       - name: Install the exact frontend toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.19.0"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -71,8 +71,8 @@ jobs:
       - name: Qualify the frontend source
         working-directory: frontend
         run: |
-          test "$(node --version)" = "v24.19.0"
-          test "$(npm --version)" = "11.17.0"
+          test "$(node --version)" = "v24.21.0"
+          test "$(npm --version)" = "11.19.0"
           npm ci --ignore-scripts --no-audit --no-fund
           npm run generate -- --output "$RUNNER_TEMP/review-api-a.d.ts"
           npm run generate -- --output "$RUNNER_TEMP/review-api-b.d.ts"
@@ -109,7 +109,7 @@ jobs:
       - name: Install the exact frontend toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.19.0"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -147,7 +147,7 @@ jobs:
       - name: Install the exact frontend toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.19.0"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -221,8 +221,8 @@ jobs:
       - name: Build the exact React browser artifact
         working-directory: frontend
         run: |
-          test "$(node --version)" = "v24.19.0"
-          test "$(npm --version)" = "11.17.0"
+          test "$(node --version)" = "v24.21.0"
+          test "$(npm --version)" = "11.19.0"
           npm ci --ignore-scripts --no-audit --no-fund
           npm run generate
           ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/react-assets" npm run build
@@ -250,7 +250,7 @@ jobs:
       - name: Install the exact frontend toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.19.0"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 

@@ -338,9 +338,9 @@ def test_application_manifests_and_toolchains_remain_exact() -> None:
             assert re.search(r"^\d+\.\d+\.\d+$", requirement) is not None
     for requirement in frontend["overrides"].values():
         assert re.search(r"^\d+\.\d+\.\d+$", requirement) is not None
-    assert frontend["engines"]["node"] == "24.19.0"
-    assert frontend["engines"]["npm"] == "11.17.0"
-    assert frontend["packageManager"] == "npm@11.17.0"
+    assert frontend["engines"]["node"] == "24.21.0"
+    assert frontend["engines"]["npm"] == "11.19.0"
+    assert frontend["packageManager"] == "npm@11.19.0"
 
 
 class _PinSite(NamedTuple):

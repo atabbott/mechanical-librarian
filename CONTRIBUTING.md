@@ -116,8 +116,8 @@ rather than left behind.
 
 ## Frontend bootstrap
 
-The authenticated-browser source under `frontend/` uses Node 24.19.0 and npm
-11.17.0. A clean checkout needs no manual generation step:
+The authenticated-browser source under `frontend/` uses Node 24.21.0 and npm
+11.19.0. A clean checkout needs no manual generation step:
 
 ```text
 cd frontend

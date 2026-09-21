@@ -78,7 +78,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "ca8d03313746886788e2b83e6baca10fc2a6275726c7861902c032341c408093"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "f0284ac2b336fc72071de5ad76d601d67fd78fbdc02b40214879c7c053d1453e"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -200,6 +200,10 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
     ),
     (
         "c975fa0f6c4f18a51615c1ee6000227f37e1595dd7f29b0aff17b9e4909fe0e8",
+        F19A_QUALIFIED_POLICY_OPTIONS,
+    ),
+    (
+        "ca8d03313746886788e2b83e6baca10fc2a6275726c7861902c032341c408093",
         F19A_QUALIFIED_POLICY_OPTIONS,
     ),
 
@@ -425,6 +429,10 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
         "97a5e0adca62c63acfba4cf7d67318e184e0bfa521f8c4e8b6321916b1afd2a7",
         F20_PASSING_AUTOMATIC_OPTIONS,
     ),
+    (
+        "4d5fb5a6bba6e2e5c41cdc50c0091748fcbb578f000ec0cb48535d5792a95aa9",
+        F20_PASSING_AUTOMATIC_OPTIONS,
+    ),
 
 )
 # Retained published audiobook authority remains decodable, never current.
@@ -478,8 +486,8 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
             'title_layout:title_and_subtitle:audiobook_title_replace',
         }),
     ),
-    # Eight F46 digests were current before the #1008, #1012, #1065, the four
-    # #1009 re-pins and the #1087 dependency refresh superseded them. No re-pin
+    # Nine F46 digests were current before the #1008, #1012, #1065, the four
+    # #1009 re-pins and the #1087 and #950 dependency refreshes superseded them. No re-pin
     # moved an option, so each speaks for the tranche set that is still current,
     # and a record persisted while it was current stays readable rather than
     # losing its authority to a digest move.
@@ -513,6 +521,10 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
     ),
     (
         "bcba61c83d38f91ee7d9577a4f5c3078504308017c84546145e7948d37b788e7",
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+    ),
+    (
+        "e6160457f180870eaf6914bc2b15ff2b18246e721cd6d101e8f2a40a6334c796",
         audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
     ),
 )
