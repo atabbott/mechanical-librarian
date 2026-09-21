@@ -203,6 +203,18 @@ same-parent repository. Use separate directories or close the first repository
 before opening another. The watchdog regression deliberately takes a real
 blocking lock; it does not reproduce a current production locking defect.
 
+Exact-artifact `--test-tier slow` runs the complete slow inventory as two
+sequential commands in the same freshly built wheel environment: the remaining
+slow files, then `test_owner_browser_responsiveness.py`. Each command retains
+the 825-second deadline. Before execution, both subsets must be nonempty,
+disjoint, and together equal the full current slow test IDs; omission or overlap
+refuses qualification. `--test-tier complete` first runs `required-installed`
+in that same environment, then both slow commands. Completion evidence is issued
+only after every command succeeds; a constituent failure or timeout stops the
+sequence with its own reason. The five-cold/30-warm owner envelope and all other
+slow tests remain unchanged. The routine public exact-installed gate continues
+to select `--test-tier required`; protected-browser scheduling is unchanged.
+
 ## What the gate proves
 
 Every pull-request candidate runs independent required `fast-source`,

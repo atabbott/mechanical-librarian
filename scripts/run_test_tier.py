@@ -172,6 +172,14 @@ def cohort_targets(root: Path, name: str) -> tuple[str, ...]:
     and never a sibling that a directory-wide collection would sweep in.
     """
 
+    if name in ("slow-remaining", "slow-owner-browser"):
+        slow_targets = cohort_targets(root, "slow")
+        return tuple(
+            target
+            for target in slow_targets
+            if (Path(target).name == "test_owner_browser_responsiveness.py")
+            == (name == "slow-owner-browser")
+        )
     try:
         cohort = COHORTS[name]
     except KeyError:
@@ -825,6 +833,15 @@ def collect_cohort(root: Path, name: str) -> tuple[str, ...]:
     return session.identifiers
 
 
+def _verify_slow_partition(root: Path) -> None:
+    """Both bounded executions must cover the complete current slow inventory."""
+    full = set(collect_cohort(root, "slow"))
+    remaining = set(collect_cohort(root, "slow-remaining"))
+    owner = set(collect_cohort(root, "slow-owner-browser"))
+    if not remaining or not owner or remaining & owner or remaining | owner != full:
+        raise RuntimeError("slow_partition_invalid")
+
+
 def cohort_manifest(root: Path, name: str) -> dict[str, object]:
     identifiers = collect_cohort(root, name)
     digest = hashlib.sha256("\n".join(identifiers).encode("utf-8")).hexdigest()
@@ -1179,6 +1196,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--list", action="store_true")
     parser.add_argument("--source-sha")
+    parser.add_argument("--slow-part", choices=("remaining", "owner-browser"))
     parser.add_argument("--test-timeout-seconds", type=int)
     arguments = parser.parse_args(argv)
     if arguments.test_timeout_seconds is not None and (
@@ -1189,6 +1207,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "--test-timeout-seconds requires fast execution and a positive integer"
         )
+    if arguments.slow_part is not None and (arguments.tier != "slow" or arguments.list):
+        parser.error("--slow-part requires slow execution")
     root = Path(__file__).resolve().parents[1]
     if arguments.tier is None:
         if not arguments.list:
@@ -1196,7 +1216,10 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(tier_inventory(), sort_keys=True, separators=(",", ":")))
         return 0
     try:
-        if arguments.tier == "complete":
+        if arguments.slow_part is not None:
+            _verify_slow_partition(root)
+            passed = run_cohort(root, f"slow-{arguments.slow_part}")
+        elif arguments.tier == "complete":
             if arguments.list or arguments.source_sha is None:
                 parser.error("complete requires --source-sha and cannot be listed")
             passed = _run_complete(root, arguments.source_sha)

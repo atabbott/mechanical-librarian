@@ -28,6 +28,7 @@ from scripts.run_test_tier import (
     COHORTS,
     _CohortSession,
     _retained_traceback,
+    _verify_slow_partition,
     cohort_manifest,
     cohort_targets,
     collect_cohort,
@@ -1623,3 +1624,87 @@ with patch('scripts.run_test_tier.threading.Thread') as writer:
     )
     assert result.returncode == 1
     assert not result.stdout and not result.stderr
+
+
+def test_slow_partition_covers_the_actual_full_inventory() -> None:
+    root = Path(__file__).resolve().parents[2]
+    _verify_slow_partition(root)
+    full = set(collect_cohort(root, "slow"))
+    owner = set(collect_cohort(root, "slow-owner-browser"))
+    remaining = set(collect_cohort(root, "slow-remaining"))
+    assert len(full) == 30
+    assert len(owner) == 1
+    assert len(remaining) == 29
+    assert owner.isdisjoint(remaining)
+    assert owner | remaining == full
+    assert all("test_owner_browser_responsiveness" in name for name in owner)
+
+
+@pytest.mark.parametrize(
+    "inventories",
+    [
+        (("a", "b"), ("a",), ("a", "b")),
+        (("a", "b", "c"), ("a",), ("b",)),
+        (("a", "b"), ("a",), ("b", "extra")),
+        (("a",), (), ("a",)),
+    ],
+    ids=["overlap", "omission", "extra", "empty"],
+)
+def test_slow_partition_refuses_incomplete_or_overlapping_ids(inventories) -> None:
+    with patch("scripts.run_test_tier.collect_cohort", side_effect=inventories):
+        with pytest.raises(RuntimeError, match="^slow_partition_invalid$"):
+            _verify_slow_partition(Path.cwd())
+
+
+def test_slow_part_refuses_before_execution_when_partition_is_invalid() -> None:
+    with (
+        patch(
+            "scripts.run_test_tier._verify_slow_partition",
+            side_effect=RuntimeError("slow_partition_invalid"),
+        ),
+        patch("scripts.run_test_tier.run_cohort") as run,
+    ):
+        assert main(["slow", "--slow-part", "owner-browser"]) == 1
+    run.assert_not_called()
+
+
+@pytest.mark.parametrize("part", ["remaining", "owner-browser"])
+def test_slow_part_validates_before_running_only_its_selected_subset(part: str) -> None:
+    calls: list[str] = []
+
+    def run(_root: Path, name: str) -> bool:
+        calls.append(name)
+        return True
+
+    with (
+        patch(
+            "scripts.run_test_tier._verify_slow_partition",
+            side_effect=lambda _root: calls.append("validated"),
+        ),
+        patch(
+            "scripts.run_test_tier.run_cohort",
+            side_effect=run,
+        ),
+    ):
+        assert main(["slow", "--slow-part", part]) == 0
+    assert calls == ["validated", f"slow-{part}"]
+
+
+@pytest.mark.parametrize("fault", ["omission", "overlap"])
+def test_slow_partition_refuses_real_collection_membership_fault(fault: str) -> None:
+    root = Path(__file__).resolve().parents[2]
+    full = cohort_targets(root, "slow")
+    owner = tuple(
+        path
+        for path in full
+        if Path(path).name == "test_owner_browser_responsiveness.py"
+    )
+    remaining = tuple(path for path in full if path not in owner)
+    faulty = remaining[1:] if fault == "omission" else remaining + owner
+    targets = {"slow": full, "slow-remaining": faulty, "slow-owner-browser": owner}
+    with patch(
+        "scripts.run_test_tier.cohort_targets",
+        side_effect=lambda _root, name: targets[name],
+    ):
+        with pytest.raises(RuntimeError, match="^slow_partition_invalid$"):
+            _verify_slow_partition(root)

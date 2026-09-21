@@ -1000,3 +1000,91 @@ def _command(*arguments: str, cwd: Path | None = None) -> str:
     if completed.returncode != 0:
         raise AssertionError(completed.stderr)
     return completed.stdout
+
+
+@pytest.mark.parametrize(
+    "tier,failure,timeout",
+    [("complete", None, False), ("slow", None, False), ("required", None, False)]
+    + [
+        ("complete", part, timeout)
+        for part in ("required-installed", "remaining", "owner-browser")
+        for timeout in (False, True)
+    ],
+)
+def test_partitioned_complete_uses_one_installed_wheel_and_stops_on_failure(
+    tmp_path: Path, tier: str, failure: str | None, timeout: bool
+) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    _write_probe(source, "partitioned")
+    scripts = source / "scripts"
+    scripts.mkdir()
+    receipt = tmp_path / "invocations.jsonl"
+    (scripts / "run_test_tier.py").write_text(
+        "import json, sys, time\nfrom pathlib import Path\nimport cache_probe\n"
+        f"receipt = Path({str(receipt)!r})\n"
+        "part = sys.argv[-1]\n"
+        "with receipt.open('a') as stream:\n"
+        " stream.write(json.dumps([part, sys.executable, cache_probe.__file__]) + '\\n')\n"
+        f"if part == {failure!r}:\n"
+        + (" time.sleep(10)\n" if timeout else " raise SystemExit(2)\n")
+    )
+    source_sha = _commit(source, "partitioned qualification probe")
+    real_run = qualifier_module._run
+
+    def run(command, **kwargs):
+        if timeout and "scripts/run_test_tier.py" in command:
+            with patch.object(qualifier_module, "_COMMAND_TIMEOUT_SECONDS", 0.2):
+                return real_run(command, **kwargs)
+        return real_run(command, **kwargs)
+
+    test_args = {
+        "complete": qualifier_module._COMPLETE_INSTALLED_TEST_ARGS,
+        "slow": qualifier_module._SLOW_TEST_ARGS,
+        "required": qualifier_module._REQUIRED_INSTALLED_TEST_ARGS,
+    }[tier]
+    with patch.object(qualifier_module, "_run", side_effect=run):
+        if failure is None:
+            evidence = qualify_exact_artifact(
+                source,
+                source_sha,
+                distribution="cache-probe",
+                import_name="cache_probe",
+                console_script="cache-probe",
+                console_args=(),
+                test_args=test_args,
+            )
+            assert evidence.required_suite_executed == (tier != "slow")
+            assert evidence.slow_qualification_executed == (tier != "required")
+            assert evidence.qualification_tier == tier
+            assert evidence.wheel_payload_sha256 == evidence.installed_payload_sha256
+        else:
+            reason = (
+                "installed_test_suite"
+                if failure == "required-installed"
+                else "installed_slow_" + failure.replace("-", "_")
+            )
+            with pytest.raises(
+                QualificationFailure,
+                match="^" + reason + ("_timeout" if timeout else "_failed") + "$",
+            ):
+                qualify_exact_artifact(
+                    source,
+                    source_sha,
+                    distribution="cache-probe",
+                    import_name="cache_probe",
+                    console_script="cache-probe",
+                    console_args=(),
+                    test_args=test_args,
+                )
+    records = [json.loads(line) for line in receipt.read_text().splitlines()]
+    order = ["required-installed", "remaining", "owner-browser"]
+    if tier == "slow":
+        order = order[1:]
+    elif tier == "required":
+        order = order[:1]
+    expected = order if failure is None else order[: order.index(failure) + 1]
+    assert [record[0] for record in records] == expected
+    assert len({record[1] for record in records}) == 1
+    assert len({record[2] for record in records}) == 1
+    assert all(not Path(record[2]).is_relative_to(source) for record in records)
