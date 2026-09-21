@@ -83,7 +83,7 @@
       "title_layout:title_and_subtitle:audiobook_title_subtitle_pair"
     ]
   },
-  "automatic_decision_after_f19_sha256": "de4ab273587d16a00c0604fd8a9a535a0c419a2d1d62d91550ad78c0b75c7fc4",
+  "automatic_decision_after_f19_sha256": "2e80342d30fa2f572ac892a675760b842af59e7fcf525f9e4ac5e5b6373c72a7",
   "base_sha": "0a2a193a6645e3f7529f626ddf9abd957ae01251",
   "binding_only_source_equivalence": {
     "ast_sha256": {
