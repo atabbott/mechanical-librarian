@@ -16,9 +16,9 @@ from mechanical_librarian.application.cover_consideration import (
     ReviewRunner,
     cover_consideration_currentness,
     cover_consideration_currentness_document,
-    cover_currentness_from_facts,
     cover_consideration_is_current,
     cover_consideration_replay_digest,
+    cover_currentness_from_facts,
 )
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
