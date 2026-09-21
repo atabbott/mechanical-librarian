@@ -7,8 +7,9 @@ import math
 import re
 import statistics
 import time
-from contextlib import closing
+from contextlib import closing, nullcontext
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from playwright.sync_api import expect, sync_playwright
 from scripts.verify_playwright_browser import verify_playwright_browser
@@ -23,6 +24,8 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
     misses: list[dict[str, object]] = []
     progress: list[int] = []
     preparation_active: list[bool] = []
+    external_actors: list[dict[str, object]] = []
+    decision_subjects: set[str] = set()
 
     def receipt():
         return {
@@ -40,6 +43,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
             "misses": misses,
             "preparation_checked": progress,
             "preparation_active": preparation_active,
+            "external_actors": external_actors,
         }
 
     def record(name, elapsed, observed, failure, budget):
@@ -236,173 +240,221 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                         if cold < 4:
                             continue
                         for sample in range(30):
-                            assert fixture.preparation is not None
-                            measured(
-                                "warm_full_reload",
-                                page.reload,
-                                lambda page=page: expect(
-                                    page.get_by_role(
-                                        "heading", name="Works", exact=True
+                            with (
+                                fixture.hold_external_actors()
+                                if sample == 0
+                                else nullcontext(None)
+                            ) as actors:
+                                if actors is not None:
+                                    external_actors.append(actors.receipt)
+                                    before = context.request.get(
+                                        origin + "/api/v1/review-preparation"
                                     )
-                                ).to_be_visible(),
-                            )
-                            search = page.get_by_role("searchbox")
-                            measured(
-                                "search",
-                                lambda search=search: search.fill("Synthetic title"),
-                                lambda page=page: expect(
-                                    page.get_by_text("2070 total", exact=True)
-                                ).to_be_visible(),
-                            )
-                            measured(
-                                "pagination",
-                                lambda page=page: page.get_by_role(
-                                    "button", name="Next →", exact=True
-                                ).click(),
-                                lambda page=page: expect(
-                                    page.get_by_text("Page 2", exact=True)
-                                ).to_be_visible(),
-                            )
-                            page.get_by_role(
-                                "button", name="← Previous", exact=True
-                            ).click()
-                            expect(
-                                page.get_by_text("Page 1", exact=True)
-                            ).to_be_visible()
-                            if sample >= 20:
+                                    assert before.ok
+                                    actors.receipt["preparation_before"] = before.json()
+                                    assert (
+                                        actors.receipt["reserved_work"] == "work-2298"
+                                    )
+                                assert fixture.preparation is not None
+                                measured(
+                                    "warm_full_reload",
+                                    page.reload,
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "heading", name="Works", exact=True
+                                        )
+                                    ).to_be_visible(),
+                                )
+                                search = page.get_by_role("searchbox")
+                                measured(
+                                    "search",
+                                    lambda search=search: search.fill(
+                                        "Synthetic title"
+                                    ),
+                                    lambda page=page: expect(
+                                        page.get_by_text("2070 total", exact=True)
+                                    ).to_be_visible(),
+                                )
+                                measured(
+                                    "pagination",
+                                    lambda page=page: page.get_by_role(
+                                        "button", name="Next →", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_text("Page 2", exact=True)
+                                    ).to_be_visible(),
+                                )
                                 page.get_by_role(
-                                    "button", name="Next →", exact=True
+                                    "button", name="← Previous", exact=True
                                 ).click()
                                 expect(
-                                    page.get_by_text("Page 2", exact=True)
+                                    page.get_by_text("Page 1", exact=True)
                                 ).to_be_visible()
-                            row = page.get_by_role(
-                                "button",
-                                name="Synthetic title. Author details unavailable. 1 field needs attention",
-                                exact=True,
-                            ).first
-                            measured(
-                                "selected_detail",
-                                row.click,
-                                lambda page=page: expect(
+                                if sample >= 20:
                                     page.get_by_role(
-                                        "heading",
-                                        name="Which cover should this work use?",
-                                        exact=True,
-                                    )
-                                ).to_be_visible(),
-                            )
-                            measured(
-                                "choice_confirmation",
-                                lambda page=page: page.get_by_role(
+                                        "button", name="Next →", exact=True
+                                    ).click()
+                                    expect(
+                                        page.get_by_text("Page 2", exact=True)
+                                    ).to_be_visible()
+                                row = page.get_by_role(
                                     "button",
-                                    name="Current cover Current cover Same edition Keep the cover currently held by the local library. No recommendation retained",
+                                    name="Synthetic title. Author details unavailable. 1 field needs attention",
                                     exact=True,
-                                ).click(),
-                                lambda page=page: expect(
-                                    page.get_by_role(
-                                        "heading", name="Review complete", exact=True
-                                    )
-                                ).to_be_visible(),
-                            )
-                            page.get_by_role("link", name="History", exact=True).click()
-                            expect(
-                                page.get_by_text(
-                                    "Owner chose the current value.", exact=True
+                                ).first
+                                measured(
+                                    "selected_detail",
+                                    row.click,
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "heading",
+                                            name="Which cover should this work use?",
+                                            exact=True,
+                                        )
+                                    ).to_be_visible(),
                                 )
-                            ).to_be_visible()
-                            measured(
-                                "policy_navigation",
-                                lambda page=page: page.get_by_role(
-                                    "link", name="Policy", exact=True
-                                ).click(),
-                                lambda page=page: expect(
-                                    page.get_by_role(
-                                        "heading", name="Library policy", exact=True
-                                    )
-                                ).to_be_visible(),
-                                1000,
-                            )
-                            measured(
-                                "settings_navigation",
-                                lambda page=page: page.get_by_role(
-                                    "link", name="Settings", exact=True
-                                ).click(),
-                                lambda page=page: expect(
-                                    page.get_by_role(
-                                        "heading", name="Settings", exact=True
-                                    )
-                                ).to_be_visible(),
-                                1000,
-                            )
-                            measured(
-                                "library_navigation",
-                                lambda page=page: page.get_by_role(
-                                    "link", name="Library", exact=True
-                                ).click(),
-                                lambda page=page: expect(
-                                    page.get_by_text("2300 total", exact=True)
-                                ).to_be_visible(),
-                            )
-                            measured(
-                                "attention_status",
-                                lambda page=page: page.get_by_role(
-                                    "button", name="Attention queue", exact=True
-                                ).click(),
-                                lambda page=page: expect(
-                                    page.get_by_role(
-                                        "button", name="Load more attention", exact=True
-                                    )
-                                ).to_be_visible(),
-                            )
-                            page.get_by_role("button", name="Close", exact=True).click()
-                            status_button = page.get_by_role(
-                                "button",
-                                name=re.compile(
-                                    r"^(Preparing libraries|Preparation needs attention)$"
-                                ),
-                            )
-                            measured(
-                                "preparation_status",
-                                status_button.click,
-                                lambda page=page: expect(
-                                    page.get_by_role(
-                                        "heading",
-                                        name="Background activity",
+                                selected_case = parse_qs(urlsplit(page.url).query)[
+                                    "preview"
+                                ][0]
+                                decision_subjects.add(selected_case)
+                                assert selected_case != fixture.cases[-1].review_case_id
+                                measured(
+                                    "choice_confirmation",
+                                    lambda page=page: page.get_by_role(
+                                        "button",
+                                        name="Current cover Current cover Same edition Keep the cover currently held by the local library. No recommendation retained",
                                         exact=True,
-                                    )
-                                ).to_be_visible(),
-                            )
-                            status_button.click()
-                            page.get_by_role(
-                                "button", name="Sign out", exact=True
-                            ).click()
-                            page.get_by_label("Owner password", exact=True).fill(
-                                "synthetic-owner"
-                            )
-                            measured(
-                                "warm_sign_in_destination",
-                                lambda page=page: page.get_by_role(
-                                    "button", name="Sign in", exact=True
-                                ).click(),
-                                lambda page=page: expect(
-                                    page.get_by_text("2300 total", exact=True)
-                                ).to_be_visible(),
-                            )
-                            response = context.request.get(
-                                origin + "/api/v1/review-preparation"
-                            )
-                            assert response.ok
-                            preparation_active.append(response.json()["active"])
-                            progress.append(
-                                sum(
-                                    row["checked"]
-                                    for row in response.json()["libraries"]
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "heading",
+                                            name="Review complete",
+                                            exact=True,
+                                        )
+                                    ).to_be_visible(),
                                 )
-                            )
+                                page.get_by_role(
+                                    "link", name="History", exact=True
+                                ).click()
+                                expect(
+                                    page.get_by_text(
+                                        "Owner chose the current value.", exact=True
+                                    )
+                                ).to_be_visible()
+                                if actors is not None:
+                                    actors.confirm_unrelated(selected_case)
+                                measured(
+                                    "policy_navigation",
+                                    lambda page=page: page.get_by_role(
+                                        "link", name="Policy", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "heading", name="Library policy", exact=True
+                                        )
+                                    ).to_be_visible(),
+                                    1000,
+                                )
+                                measured(
+                                    "settings_navigation",
+                                    lambda page=page: page.get_by_role(
+                                        "link", name="Settings", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "heading", name="Settings", exact=True
+                                        )
+                                    ).to_be_visible(),
+                                    1000,
+                                )
+                                measured(
+                                    "library_navigation",
+                                    lambda page=page: page.get_by_role(
+                                        "link", name="Library", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_text("2300 total", exact=True)
+                                    ).to_be_visible(),
+                                )
+                                measured(
+                                    "attention_status",
+                                    lambda page=page: page.get_by_role(
+                                        "button", name="Attention queue", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "button",
+                                            name="Load more attention",
+                                            exact=True,
+                                        )
+                                    ).to_be_visible(),
+                                )
+                                page.get_by_role(
+                                    "button", name="Close", exact=True
+                                ).click()
+                                status_button = page.get_by_role(
+                                    "button",
+                                    name=re.compile(
+                                        r"^(Preparing libraries|Preparation needs attention)$"
+                                    ),
+                                )
+                                measured(
+                                    "preparation_status",
+                                    status_button.click,
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "heading",
+                                            name="Background activity",
+                                            exact=True,
+                                        )
+                                    ).to_be_visible(),
+                                )
+                                status_button.click()
+                                page.get_by_role(
+                                    "button", name="Sign out", exact=True
+                                ).click()
+                                page.get_by_label("Owner password", exact=True).fill(
+                                    "synthetic-owner"
+                                )
+                                measured(
+                                    "warm_sign_in_destination",
+                                    lambda page=page: page.get_by_role(
+                                        "button", name="Sign in", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_text("2300 total", exact=True)
+                                    ).to_be_visible(),
+                                )
+                                response = context.request.get(
+                                    origin + "/api/v1/review-preparation"
+                                )
+                                assert response.ok
+                                if actors is not None:
+                                    actors.receipt["preparation_after"] = (
+                                        response.json()
+                                    )
+                                    assert response.json()["active"]
+                                    assert sum(
+                                        row["checked"]
+                                        for row in response.json()["libraries"]
+                                    ) > sum(
+                                        row["checked"]
+                                        for row in before.json()["libraries"]
+                                    )
+                                preparation_active.append(response.json()["active"])
+                                progress.append(
+                                    sum(
+                                        row["checked"]
+                                        for row in response.json()["libraries"]
+                                    )
+                                )
         finally:
             browser.close()
             print(json.dumps(receipt(), sort_keys=True), flush=True)
+    assert len(decision_subjects) == 30
+    assert len(external_actors) == 1
+    assert external_actors[0]["target_effects"] == 1
+    assert external_actors[0]["reserved_case_id"] not in decision_subjects
     assert len(progress) == 30 and progress[-1] > progress[0]
     assert any(preparation_active)
     assert all(

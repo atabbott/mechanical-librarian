@@ -363,7 +363,9 @@ it('promotes a cold background command-result read before native invalidation', 
   const stop = observer.subscribe(() => undefined)
   const query = client.getQueryCache().find({ queryKey: key })
   if (!query) throw new Error('missing command result query')
-  const meta: NonNullable<Query['state']['fetchMeta']> & { ownerWorkClass: 'background' } = { ownerWorkClass: 'background' }
+  const meta: NonNullable<Query['state']['fetchMeta']> & { ownerWorkClass: 'background' } = {
+    ownerWorkClass: 'background',
+  }
   const old = query.fetch(undefined, { meta }).catch(() => undefined)
   observer.setOptions({ ...observer.options, enabled: true })
   onTestFinished(() => {

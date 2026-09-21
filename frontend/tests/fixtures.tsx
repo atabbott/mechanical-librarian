@@ -299,7 +299,7 @@ export const createHttp = (): ReviewHttp => ({
     paused: false,
     libraries: [],
   })),
-  recordDecision: vi.fn(async (caseId, command) =>
+  recordDecision: vi.fn<ReviewHttp['recordDecision']>(async (caseId, command) =>
     recordedAcknowledgement(
       { ...detail, id: caseId },
       {

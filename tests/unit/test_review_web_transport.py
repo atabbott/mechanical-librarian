@@ -2046,12 +2046,18 @@ def test_argon2i_hash_file_is_rejected(
         create_transport_test_app(web.repository, configuration)
 
 
-def test_composition_opens_root_and_borrowed_browse_for_worker_threads(
+def test_composition_uses_one_application_owner_for_worker_threads(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
+    from threading import RLock
+
+    from mechanical_librarian.application.operation_admission import OperationAdmission
     from tests.support.tls import synthetic_tls_identity
 
+    admission = OperationAdmission()
     repository = Mock()
+    repository.operation_admission = admission
+    repository.operation_lock = RLock()
     repository.reviewer_access_store.return_value.read.return_value = (
         SimpleNamespace(cover_observation=None),
         False,
@@ -2069,6 +2075,10 @@ def test_composition_opens_root_and_borrowed_browse_for_worker_threads(
         tls_private_key_file=str(private_key),
     )
     with (
+        patch(
+            "mechanical_librarian.bootstrap.composition.OperationAdmission",
+            return_value=admission,
+        ),
         patch(
             "mechanical_librarian.bootstrap.composition.load_configuration_file",
             return_value=SimpleNamespace(
@@ -2106,13 +2116,7 @@ def test_composition_opens_root_and_borrowed_browse_for_worker_threads(
             8443,
         )
     assert opened.call_args_list == [
-        call(database, create=True, cross_thread=True),
-        call(
-            database,
-            create=False,
-            authority=repository.authority,
-            cross_thread=True,
-        ),
+        call(database, create=True, cross_thread=True, admission=admission),
     ]
 
 

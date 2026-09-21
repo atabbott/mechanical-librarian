@@ -2190,22 +2190,37 @@ it.each([
 })
 
 it('skips speculative Activity data work and starts its required navigation read in foreground', async () => {
-  const reads: { signal: AbortSignal | undefined; purpose: string | undefined; resolve: (value: ActivityView) => void }[] = []
+  const reads: {
+    signal: AbortSignal | undefined
+    purpose: string | undefined
+    resolve: (value: ActivityView) => void
+  }[] = []
   const http = createHttp()
-  http.getActivity = vi.fn<ReviewHttp['getActivity']>((_search, signal, purpose) =>
-    new Promise((resolve, reject) => {
-      reads.push({ signal, purpose, resolve })
-      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
-    }),
-  ).mockResolvedValueOnce(activity())
+  http.getActivity = vi
+    .fn<ReviewHttp['getActivity']>(
+      (_search, signal, purpose) =>
+        new Promise((resolve, reject) => {
+          reads.push({ signal, purpose, resolve })
+          signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+        }),
+    )
+    .mockResolvedValueOnce(activity())
   const { router } = renderRoute('/library?lens=all', http)
   expect(await screen.findByRole('heading', { name: 'Works' })).toBeVisible()
   await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(1))
   expect(vi.mocked(http.getActivity).mock.calls[0]?.[2]).toBe('foreground')
-  await router.preloadRoute({ to: '/activity' })
+  await router.preloadRoute({
+    to: '/activity',
+    search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
+  })
   expect(reads).toHaveLength(0)
   let navigation: Promise<void> | undefined
-  act(() => { navigation = router.navigate({ to: '/activity' }) })
+  act(() => {
+    navigation = router.navigate({
+      to: '/activity',
+      search: { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
+    })
+  })
   await waitFor(() => expect(reads).toHaveLength(1))
   expect(reads[0]?.purpose).toBe('foreground')
   expect(reads[0]?.signal?.aborted).toBe(false)

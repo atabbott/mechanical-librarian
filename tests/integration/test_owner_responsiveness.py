@@ -1430,3 +1430,57 @@ def test_shutdown_retains_entire_browse_lifetime(
         release.set()
         if not closed:
             fixture.close()
+
+
+def test_real_external_actors_leave_same_owner_interactions_available(
+    tmp_path: Path,
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        assert fixture.application._reviewer_access is fixture.reviewer_access
+        fixture.application.start()
+        fixture.application.request_review_scan("primary", "books-0")
+        with fixture.hold_external_actors() as actors:
+            assert actors.receipt["reserved_work"] == "work-0018"
+            assert (
+                fixture.application.library(
+                    lens="all", search=None, limit=25, cursor=None
+                ).counts["all"]
+                == 20
+            )
+            assert fixture.application.owner_settings() is not None
+            reviewer_access = fixture.application.reviewer_access
+            assert reviewer_access is not None
+            assert reviewer_access.read() is not None
+            other = fixture.cases[2]
+            assert other.review_case_id != actors.reserved_case_id
+            proposal = next(
+                value for value in other.proposals if value["destination"] == "title"
+            )
+            proposal_id = proposal["proposal_id"]
+            assert type(proposal_id) is str
+            acknowledgement = fixture.application.record_decision(
+                other.review_case_id,
+                proposal_id=proposal_id,
+                target_fingerprint=other.target_fingerprint,
+                destination="title",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="external-overlap-unrelated",
+            )
+            confirmation = acknowledgement["confirmation"]
+            assert type(confirmation) is dict and confirmation["status"] == "confirmed"
+            actors.confirm_unrelated(other.review_case_id)
+            assert fixture.preparation is not None
+            assert any(value is not None for value in fixture.preparation.status()[0])
+            assert "effect_state" not in actors.receipt
+            assert "reviewer_model" not in actors.receipt
+        assert actors.receipt["effect_state"] == "verified"
+        assert actors.receipt["verified_events"] == 1
+        assert actors.receipt["reviewer_unchanged"] is True
+        assert actors.receipt["census_unchanged"] is True
+        assert actors.receipt["confirmed_unrelated_cases"] == [other.review_case_id]
+        print(json.dumps(actors.receipt, sort_keys=True))
+    finally:
+        fixture.close()

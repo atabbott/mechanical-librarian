@@ -2170,17 +2170,24 @@ export default function LibraryPage({
     staleTime: 15_000,
     retry: false,
   })
-  const attention = useMemo(() => ({
-    ...attentionQuery,
-    refetch: () =>
-      runRequiredRead(queryClient, ['attention', 'workspace', search.attentionCursor ?? null], () =>
-        attentionQuery.refetch(),
-      ),
-    fetchNextPage: () =>
-      runRequiredRead(queryClient, ['attention', 'workspace', search.attentionCursor ?? null], () =>
-        attentionQuery.fetchNextPage(),
-      ),
-  }), [attentionQuery, queryClient, search.attentionCursor])
+  const attention = useMemo(
+    () => ({
+      ...attentionQuery,
+      refetch: () =>
+        runRequiredRead(
+          queryClient,
+          ['attention', 'workspace', search.attentionCursor ?? null],
+          () => attentionQuery.refetch(),
+        ),
+      fetchNextPage: () =>
+        runRequiredRead(
+          queryClient,
+          ['attention', 'workspace', search.attentionCursor ?? null],
+          () => attentionQuery.fetchNextPage(),
+        ),
+    }),
+    [attentionQuery, queryClient, search.attentionCursor],
+  )
   useRequiredRead(queryClient, ['attention', 'workspace', search.attentionCursor ?? null])
   const attentionItems = useMemo(
     () =>

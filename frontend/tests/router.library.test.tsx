@@ -5885,7 +5885,11 @@ describe('Library route', () => {
 
     expect(http.getCaseSuccessor).toHaveBeenCalledTimes(1)
     expect(await screen.findByRole('heading', { name: 'Null-subject successor' })).toBeVisible()
-    expect(http.getCaseSuccessor).toHaveBeenCalledWith('case-1', expect.any(AbortSignal), 'foreground')
+    expect(http.getCaseSuccessor).toHaveBeenCalledWith(
+      'case-1',
+      expect.any(AbortSignal),
+      'foreground',
+    )
     expect(router.state.location.search.preview).toBe('case-2')
   })
 

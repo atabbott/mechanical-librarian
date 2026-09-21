@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from collections.abc import Callable, Iterator
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -76,6 +77,7 @@ class OwnerResponsivenessFixture:
     ) -> None:
         self.root = root
         self.database = root / "reports.sqlite"
+        self._close_external_actors: Callable[[], None] | None = None
         with ExitStack() as activation:
             self.repository = open_repository(
                 self.database, cross_thread=True, admission=OperationAdmission()
@@ -88,11 +90,14 @@ class OwnerResponsivenessFixture:
             base, _ = _qualified_cover_report(root)
             review = ReviewWebConfiguration(origin, "/synthetic/owner.hash")
             self.review = review
+            self.reviewer_access = composition._compose_reviewer_access(
+                self.repository, review
+            )
             self.covers = composition._compose_cover_considerations(
                 self.repository,
                 root / "artifacts",
                 review,
-                composition._compose_reviewer_access(self.repository, review),
+                self.reviewer_access,
                 self.recovery,
             )
             self.cases: list[ReviewCase] = []
@@ -254,6 +259,7 @@ class OwnerResponsivenessFixture:
                 session_lifetime_seconds=3600,
                 graceful_shutdown_seconds=2,
                 cover_considerations=self.covers,
+                reviewer_access=self.reviewer_access,
                 preparation=self.preparation,
                 settings=OwnerSettingsOperations(
                     FileOwnerSettingsRepository(settings.document, settings.secrets)
@@ -382,7 +388,19 @@ class OwnerResponsivenessFixture:
         )
         return ReviewPreparationSupervisor(pipeline, polling_interval_seconds=None)
 
+    @contextmanager
+    def hold_external_actors(self) -> Iterator[OwnerExternalActors]:
+        actors = OwnerExternalActors(self)
+        self._close_external_actors = actors.close
+        try:
+            actors.start()
+            yield actors
+        finally:
+            actors.close()
+
     def close(self) -> None:
+        if self._close_external_actors is not None:
+            self._close_external_actors()
         self.application.stop()
         self.sessions.close()
         self.recovery.close()
@@ -501,3 +519,316 @@ def measure_owner_routes(
         "misses": misses,
         "preparation_progress": preparation_progress,
     }
+
+
+class OwnerExternalActors:
+    """Hold two real application actors at fake external leaves for one warm pass."""
+
+    def __init__(self, fixture: OwnerResponsivenessFixture) -> None:
+        from mechanical_librarian.adapters.field_effect_authority import (
+            PersistedFieldEffectAuthority,
+        )
+        from mechanical_librarian.adapters.field_effect_fakes import (
+            FakeBackupReadiness,
+            FakeCapabilityObserver,
+            FakeForwardReevaluation,
+            FakeTargetService,
+            PrivateCoverRecoveryStore,
+        )
+        from mechanical_librarian.adapters.field_effect_runtime import (
+            PersistedEffectConsent,
+            PersistedEffectDependencies,
+        )
+        from mechanical_librarian.application.continuous_field_effects import (
+            ContinuousGuardedApplication,
+        )
+        from mechanical_librarian.application.field_effects import (
+            GuardedFieldApplication,
+            TargetEffectResult,
+            TargetObservation,
+        )
+        from mechanical_librarian.domain.field_effect import FieldEffectPlan
+        from mechanical_librarian.domain.human_decision import HumanDecision
+
+        self.fixture = fixture
+        self._release = threading.Event()
+        self._entered = {name: threading.Event() for name in ("effect", "reviewer")}
+        self._threads: list[threading.Thread] = []
+        self._errors: list[BaseException] = []
+        self._closed = False
+        self._target_calls: list[str] = []
+        self.receipt: dict[str, object] = {
+            "coverage": "first warm interaction pass only",
+            "hard_hold_seconds": 60,
+            "events": [],
+            "confirmed_unrelated_cases": [],
+        }
+        self._events: list[dict[str, object]] = []
+        self._confirmed: list[str] = []
+        self.receipt["events"] = self._events
+        self.receipt["confirmed_unrelated_cases"] = self._confirmed
+        self._event_lock = threading.Lock()
+        self._admission = fixture.repository.operation_admission
+        assert self._admission is not None
+        self._before_reviewer = fixture.reviewer_access._repository.snapshot()[0]
+        self._before_identity = (
+            fixture.reviewer_access.current_cover_observation_identity()
+        )
+        self._before_authority = fixture.covers.current_authority()
+        self._original_factory = fixture.reviewer_access._openrouter_factory
+        self.reserved_case_id = fixture.cases[-1].review_case_id
+        case = fixture.cases[-1]
+        proposal = next(
+            value for value in case.proposals if value["destination"] == "title"
+        )
+        result = proposal["result"]
+        assert type(result) is dict
+        alternatives = result["alternatives"]
+        assert type(alternatives) is list and alternatives
+        alternative = alternatives[0]
+        assert type(alternative) is dict
+        proposal_id = proposal["proposal_id"]
+        assert type(proposal_id) is str
+        acknowledgement = fixture.application.record_decision(
+            case.review_case_id,
+            proposal_id=proposal_id,
+            target_fingerprint=case.target_fingerprint,
+            destination="title",
+            actor="owner",
+            outcome="accept",
+            selected_value=alternative["value"],
+            idempotency_key="owner-overlap-reserved-title",
+        )
+        confirmation = acknowledgement["confirmation"]
+        assert type(confirmation) is dict and confirmation["status"] == "confirmed"
+        decision = next(
+            HumanDecision.from_json(raw)
+            for raw in fixture.repository.get_review_case_decisions(case.review_case_id)
+            if json.loads(raw).get("decision_id") == acknowledgement["decision_id"]
+        )
+        authority = PersistedFieldEffectAuthority(fixture.repository)
+        snapshot = authority.resolve(decision)
+        self.receipt["reserved_case_id"] = case.review_case_id
+        self.receipt["reserved_work"] = snapshot.work_id
+        self.receipt["work_count"] = len(fixture.reports)
+        self.receipt["library_count"] = len(
+            {report.target.library for report in fixture.reports.values()}
+        )
+        capability = FakeCapabilityObserver("a" * 64)
+        actors = self
+
+        class HeldTarget(FakeTargetService):
+            def apply(self, plan: FieldEffectPlan) -> TargetEffectResult:
+                actors._hold("effect")
+                value = super().apply(plan)
+                actors._target_calls.append("effect_return")
+                actors._event("effect_return")
+                return value
+
+            def read(self, plan: FieldEffectPlan) -> TargetObservation:
+                actors._assert_external()
+                actors._target_calls.append("read")
+                return super().read(plan)
+
+        self._target = HeldTarget()
+
+        def now() -> int:
+            return int(time.time())
+
+        fixture.repository.grant_field_effect_consents(
+            snapshot.connection, (snapshot.library,), ("title",), now()
+        )
+        guarded = GuardedFieldApplication(
+            fixture.repository,
+            self._target,
+            FakeBackupReadiness(),
+            capability,
+            authority,
+            PersistedEffectDependencies(fixture.repository),
+            PersistedEffectConsent(fixture.repository),
+            PrivateCoverRecoveryStore(
+                fixture.root / "effect-recovery", lambda _: b"old-cover"
+            ),
+            FakeForwardReevaluation(),
+            now,
+        )
+        operation = guarded.plan(
+            decision,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=snapshot.destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=capability.digest,
+        )
+        assert operation is not None
+        self._plan_id = operation.plan.plan_id
+        self._target.seed(operation.plan)
+        self._lane = ContinuousGuardedApplication(
+            fixture.repository,
+            {(snapshot.connection, snapshot.library): guarded},
+            {(snapshot.connection, snapshot.library): capability},
+            authority,
+            ((snapshot.connection, snapshot.library),),
+            now,
+            lambda *_: None,
+            operation_admission=self._admission,
+        )
+        self._lane.attach_serialization(fixture.application.serialized)
+
+    def _event(self, name: str) -> None:
+        with self._event_lock:
+            self._events.append(
+                {
+                    "event": name,
+                    "monotonic_ms": time.perf_counter() * 1000,
+                    "epoch_ms": time.time() * 1000,
+                }
+            )
+
+    def _assert_external(self) -> None:
+        assert self._admission is not None and not self._admission.held
+        owner = self.fixture.repository._serialization_lock
+        assert owner is not None and owner.depth() == 0
+
+    def _hold(self, name: str) -> None:
+        self._assert_external()
+        self._event(name + "_enter")
+        self._entered[name].set()
+        assert self._release.wait(60), "synthetic external hold exceeded sixty seconds"
+
+    def start(self) -> None:
+        from mechanical_librarian.application.reviewer_contracts import (
+            OpenRouterAccountStatus,
+        )
+
+        actors = self
+
+        class HeldReviewer:
+            def probe_description(self) -> OpenRouterAccountStatus:
+                actors._hold("reviewer")
+                return OpenRouterAccountStatus(
+                    tier="free",
+                    model="example/model",
+                    input_modalities=("text",),
+                    output_modalities=("text",),
+                    structured_outputs=True,
+                    observed_at=1,
+                    prompt_price="0.000001",
+                    completion_price="0.000002",
+                    request_price="0",
+                )
+
+            def probe(self) -> OpenRouterAccountStatus:
+                raise AssertionError("unexpected cover probe")
+
+            def run(
+                self,
+                profile: bytes,
+                instruction: bytes,
+                packet: bytes,
+                schema: bytes,
+                images: tuple[tuple[str, str, bytes], ...],
+            ) -> str:
+                raise AssertionError("reviewer execution is outside this fixture")
+
+            def run_description(
+                self, profile: bytes, instruction: bytes, packet: bytes, schema: bytes
+            ) -> str:
+                raise AssertionError("reviewer execution is outside this fixture")
+
+            def close(self) -> None:
+                actors._event("reviewer_close")
+
+        self.fixture.reviewer_access._openrouter_factory = lambda _key, _model: (
+            HeldReviewer()
+        )
+
+        def worker(name: str) -> None:
+            try:
+                assert self._admission is not None
+                with self._admission.classify("background"):
+                    if name == "effect":
+                        effect_result = self._lane.apply(self._plan_id)
+                        assert effect_result.state == "verified"
+                        self.receipt["effect_state"] = effect_result.state
+                    else:
+                        reviewer_result = (
+                            self.fixture.reviewer_access.test_description_model(
+                                "synthetic-key", "example/model"
+                            )
+                        )
+                        assert reviewer_result.model == "example/model"
+                        self.receipt["reviewer_model"] = reviewer_result.model
+            except BaseException as error:
+                self._errors.append(error)
+
+        for name in self._entered:
+            thread = threading.Thread(target=worker, args=(name,))
+            self._threads.append(thread)
+            thread.start()
+        assert all(event.wait(5) for event in self._entered.values()), self._errors
+        self.receipt["both_held"] = True
+
+    def confirm_unrelated(self, review_case_id: str) -> None:
+        assert review_case_id != self.reserved_case_id
+        assert not self._release.is_set()
+        detail = self.fixture.application.case_detail(review_case_id)
+        assert detail.current
+        assert any(
+            type(field["human_decision"]) is dict
+            and field["human_decision"]["actor"] == "owner"
+            for field in detail.fields
+        )
+        self._confirmed.append(review_case_id)
+        self._event("unrelated_durable_confirmation")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._event("release")
+        self._release.set()
+        for thread in self._threads:
+            thread.join(5)
+        assert not any(thread.is_alive() for thread in self._threads)
+        self.fixture.reviewer_access._openrouter_factory = self._original_factory
+        self._closed = True
+        self.fixture._close_external_actors = None
+        self.receipt["errors"] = [type(error).__name__ for error in self._errors]
+        assert not self._errors, self._errors
+        assert (
+            self.fixture.reviewer_access._repository.snapshot()[0]
+            == self._before_reviewer
+        )
+        assert (
+            self.fixture.reviewer_access.current_cover_observation_identity()
+            == self._before_identity
+        )
+        assert self.fixture.covers.current_authority() == self._before_authority
+        events = [
+            json.loads(raw)
+            for raw in self.fixture.repository.field_effect_event_documents(
+                self._plan_id
+            )
+        ]
+        assert sum(event["state"] == "verified" for event in events) == 1
+        assert len(self._target._effects) == 1
+        assert self._target_calls[self._target_calls.index("effect_return") + 1 :] == [
+            "read"
+        ]
+        total, _ = self.fixture.repository.count_current_review_cases(None)
+        assert total == len(self.fixture.reports)
+        self.receipt.update(
+            {
+                "verified_events": 1,
+                "target_effects": 1,
+                "reviewer_unchanged": True,
+                "cover_identity_unchanged": True,
+                "census_unchanged": True,
+                "target_calls": self._target_calls,
+            }
+        )

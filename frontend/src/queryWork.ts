@@ -110,9 +110,10 @@ const backgroundOwner = (
     for (const query of [...ready]) void invalidate(query)
   }
   const unsubscribe = cache.subscribe((event) => {
-    const query = event.type === 'removed'
-      ? [...reads, ...owed, ...ready, ...held.keys()].find((retained) => retained === event.query)
-      : cache.get(event.query.queryHash)
+    const query =
+      event.type === 'removed'
+        ? [...reads, ...owed, ...ready, ...held.keys()].find((retained) => retained === event.query)
+        : cache.get(event.query.queryHash)
     if (!query || query !== event.query) return
     if (event.type === 'removed') {
       reads.delete(query)
