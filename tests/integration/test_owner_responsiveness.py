@@ -1484,3 +1484,71 @@ def test_real_external_actors_leave_same_owner_interactions_available(
         print(json.dumps(actors.receipt, sort_keys=True))
     finally:
         fixture.close()
+
+
+def test_supported_fixture_activity_projects_real_owner_history(tmp_path: Path) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 20, mixed=True, prepare=True)
+    try:
+        activity = fixture.application.activity()
+        assert activity["ledger"]["total"] > 0
+        assert any(event["category"] == "owner" for event in activity["events"])
+        assert fixture.application._activity_projection is not None
+        assert (
+            fixture.application._activity_projection._operation_admission
+            is fixture.repository.operation_admission
+        )
+    finally:
+        fixture.close()
+
+
+def test_dormant_preparation_classifies_startup_and_recovery_as_background(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 10, prepare=True)
+    supervisor = fixture.preparation
+    assert supervisor is not None
+    admission = fixture.repository.operation_admission
+    assert admission is not None
+    observed: dict[str, str] = {}
+    completed = threading.Event()
+    recover = supervisor._pipeline.recover
+    schedule = supervisor._schedule_due
+
+    def observe(name: str) -> None:
+        assert not admission.held
+        admission.acquire()
+        try:
+            assert admission._active is not None
+            observed[name] = admission._active.work_class
+        finally:
+            admission.release()
+
+    def recovering() -> None:
+        observe("startup")
+        recover()
+
+    def scheduling() -> None:
+        observe("schedule")
+        schedule()
+
+    def recovery_wake(_now: int) -> None:
+        observe("recovery")
+        completed.set()
+
+    monkeypatch.setattr(supervisor._pipeline, "recover", recovering)
+    monkeypatch.setattr(supervisor, "_schedule_due", scheduling)
+    monkeypatch.setattr(supervisor, "_recovery_wake", recovery_wake)
+    try:
+        supervisor.start_dormant()
+        supervisor.admit()
+        assert completed.wait(5)
+        supervisor.stop()
+        assert observed == {
+            "startup": "background",
+            "schedule": "background",
+            "recovery": "background",
+        }
+        observe("owner")
+        assert observed["owner"] == "foreground"
+    finally:
+        fixture.close()

@@ -2534,3 +2534,41 @@ def test_destination_consent_is_reported_without_granting_anything(
     repository.asked.clear()
     assert service.destinations_consented("primary", "gamma", ("title",)) is False
     assert repository.asked == []
+
+
+def test_dormant_worker_recovery_uses_background_admission(monkeypatch) -> None:
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+
+    repository = _RecoveryRepository()
+    application = _RecoveryApplication(repository)
+    service = _recovery_service(repository, application)
+    admission = OperationAdmission()
+    service._operation_admission = admission
+    recover = service._recover_startup
+    observed = []
+    completed = threading.Event()
+
+    def recovering():
+        assert not admission.held
+        admission.acquire()
+        try:
+            assert admission._active is not None
+            observed.append(admission._active.work_class)
+        finally:
+            admission.release()
+        result = recover()
+        service._stop.set()
+        completed.set()
+        return result
+
+    monkeypatch.setattr(service, "_recover_startup", recovering)
+    try:
+        service.start_dormant()
+        service.admit()
+        assert completed.wait(5)
+    finally:
+        service.begin_drain()
+    assert observed == ["background"]
+    assert (repository.plans, repository.actions, application.cleanups) == ([], [], 0)
+    assert service._recover_startup() == (0, 0, 0)
+    assert observed == ["background", "foreground"]

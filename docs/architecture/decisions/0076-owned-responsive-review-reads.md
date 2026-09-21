@@ -40,7 +40,10 @@ original classification. Waiting foreground work forms a finite cohort, followed
 by the oldest waiting background operation; later arrivals cannot extend that
 cohort or steal a reserved turn. Scheduling grants no domain authority.
 
-Classification is separate from admission. No permit spans target/provider or
+Classification is separate from admission. Background worker entry includes
+dormant startup, recovery and scheduling; explicit owner operations retain
+foreground classification. Artifact-recovery borrowers share root admission for
+local writes and reference reads. No permit spans target/provider or
 reviewer I/O, device authentication, filesystem recovery, or a whole preparation
 stage. Blocking actor and reviewer-command locks are acquired without admission.
 Transactions retain their permit through commit or proven rollback/revocation.

@@ -909,7 +909,15 @@ const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
     <h1>Loading {title.toLowerCase()}…</h1>
   </section>
 )
-const RouteFailure = ({ error, reset }: { error: unknown; reset: () => void }) => {
+const RouteFailure = ({
+  error,
+  reset,
+  title = 'This workspace',
+}: {
+  error: unknown
+  reset: () => void
+  title?: string
+}) => {
   const router = useRouter()
   return error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">
@@ -921,7 +929,7 @@ const RouteFailure = ({ error, reset }: { error: unknown; reset: () => void }) =
   ) : (
     <section className="route-state">
       <p className="eyebrow">Review unavailable</p>
-      <h1>This workspace could not be loaded.</h1>
+      <h1>{title} could not be loaded.</h1>
       <p role="alert">{error instanceof Error ? error.message : String(error)}</p>
       <button onClick={() => void router.invalidate().then(reset)}>Try again</button>
     </section>
@@ -1061,21 +1069,36 @@ export const policyRoute = createRoute({
   validateSearch: normalizePolicySearch,
   component: PolicyRouteComponent,
 })
+const ActivityRouteComponent = () => {
+  const { http } = rootRoute.useRouteContext()
+  const search = activityRoute.useSearch()
+  const query = useQuery(activityQuery(http, search))
+  if (!query.data) {
+    if (query.isError)
+      return <RouteFailure error={query.error} reset={() => undefined} title="Activity" />
+    return <RoutePending title="Activity" />
+  }
+  return <ActivityPage initial={query.data} />
+}
 export const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/activity',
   validateSearch: normalizeActivitySearch,
   loaderDeps: ({ search }) => search,
   preload: false,
-  loader: ({ context, deps, abortController }) =>
-    context.queryClient.query({
-      ...activityQuery(context.http, deps),
-      queryFn: (queryContext) =>
-        context.http.getActivity(deps, abortController.signal, queryWorkClass(queryContext)),
-      staleTime: 'static',
-    }),
+  loader: ({ context, deps, abortController, cause }) =>
+    cause === 'enter'
+      ? undefined
+      : context.queryClient.query({
+          ...activityQuery(context.http, deps),
+          queryFn: (queryContext) =>
+            context.http.getActivity(deps, abortController.signal, queryWorkClass(queryContext)),
+          staleTime: 'static',
+        }),
   pendingMs: Infinity,
-  component: () => <ActivityPage initial={activityRoute.useLoaderData()} />,
+  pendingComponent: () => <RoutePending title="Activity" />,
+  errorComponent: (props) => <RouteFailure {...props} title="Activity" />,
+  component: ActivityRouteComponent,
 })
 export const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,

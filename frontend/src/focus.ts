@@ -14,14 +14,14 @@ export const useRouteReadyFocus = (identity: string, preserveFocusedSearch = fal
       const main = document.querySelector<HTMLElement>('#main-content')
       const focusIdentity = `${path}:${identity}`
       if (main?.dataset.routeFocusIdentity === focusIdentity) return
-      if (document.activeElement !== held) return
+      const target = document.querySelector<HTMLElement>('#main-content [data-route-focus]')
+      if (document.activeElement !== held && document.activeElement !== target) return
       // Library's debounced search updates its URL while the owner is typing.
       // Keep that input's caret; pagination and route controls still move focus.
       if (preserveFocusedSearch && held?.matches('input[type="search"]') && main?.contains(held))
         return
-      const target = document.querySelector<HTMLElement>('#main-content [data-route-focus]')
       if (!target) return
-      target.focus({ preventScroll: true })
+      if (document.activeElement !== target) target.focus({ preventScroll: true })
       if (main) main.dataset.routeFocusIdentity = focusIdentity
     })
     return () => cancelAnimationFrame(frame)

@@ -719,8 +719,9 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             (review_case_id,),
         )
 
+    @local_operation
     def interrupt_recovered(self, now: int) -> None:
-        """Called once by startup recovery before preparation workers start."""
+        """Interrupt retained attempts at the runtime artifact-recovery boundary."""
         self._connection.execute(
             "UPDATE description_advice_attempts SET state='interrupted',failure='interrupted',updated_at=max(updated_at,?) WHERE state IN ('requested','running')",
             (now,),

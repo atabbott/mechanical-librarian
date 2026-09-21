@@ -83,3 +83,18 @@ describe('useRouteReadyFocus', () => {
     expect(document.getElementById('main-content')).not.toHaveAttribute('data-route-focus-identity')
   })
 })
+
+it('records readiness when shell restoration already focused the same target', () => {
+  render(<Route identity="activity" />)
+  const target = document.querySelector<HTMLElement>('[data-route-focus]')
+  if (!target) throw new Error('route target fixture required')
+  target.focus()
+  const focus = vi.spyOn(target, 'focus')
+  runFrames()
+  expect(target).toHaveFocus()
+  expect(focus).not.toHaveBeenCalled()
+  expect(document.getElementById('main-content')).toHaveAttribute(
+    'data-route-focus-identity',
+    '/:activity',
+  )
+})

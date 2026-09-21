@@ -8987,6 +8987,7 @@ class _ConcurrentRepository:
 
 
 class _ScheduledPipeline:
+    _operation_admission = None
     libraries = (
         ("primary", "fiction", "lib-1"),
         ("primary", "non-fiction", "lib-2"),
@@ -9048,6 +9049,7 @@ class _LifecyclePipeline:
     """Small supervisor double that records only its lifecycle contract."""
 
     libraries: tuple[tuple[str, str, str], ...] = ()
+    _operation_admission = None
 
     def __init__(self, *, fail_recover: bool = False, hold_run: bool = False) -> None:
         self.events: list[str] = []

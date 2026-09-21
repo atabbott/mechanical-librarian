@@ -2214,6 +2214,7 @@ def create_review_pipeline(
                 database_path,
                 create=False,
                 authority=database_authority,
+                admission=admission,
             )
             try:
                 recovery_repository.description_advice_store().interrupt_recovered(

@@ -2156,13 +2156,16 @@ export default function LibraryPage({
     refetchOnWindowFocus: false,
   })
   const attentionQuery = useInfiniteQuery({
-    queryKey: ['attention', 'workspace', search.attentionCursor ?? null],
+    queryKey: ['attention', 'workspace', search.q ?? null, search.attentionCursor ?? null],
     initialPageParam: search.attentionCursor,
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     queryFn: (queryContext) =>
       http.getAttention(
-        queryContext.pageParam ? { cursor: queryContext.pageParam } : {},
+        {
+          ...(search.q ? { q: search.q } : {}),
+          ...(queryContext.pageParam ? { cursor: queryContext.pageParam } : {}),
+        },
         queryContext.signal,
         queryWorkClass(queryContext),
       ),
@@ -2176,19 +2179,24 @@ export default function LibraryPage({
       refetch: () =>
         runRequiredRead(
           queryClient,
-          ['attention', 'workspace', search.attentionCursor ?? null],
+          ['attention', 'workspace', search.q ?? null, search.attentionCursor ?? null],
           () => attentionQuery.refetch(),
         ),
       fetchNextPage: () =>
         runRequiredRead(
           queryClient,
-          ['attention', 'workspace', search.attentionCursor ?? null],
+          ['attention', 'workspace', search.q ?? null, search.attentionCursor ?? null],
           () => attentionQuery.fetchNextPage(),
         ),
     }),
-    [attentionQuery, queryClient, search.attentionCursor],
+    [attentionQuery, queryClient, search.q, search.attentionCursor],
   )
-  useRequiredRead(queryClient, ['attention', 'workspace', search.attentionCursor ?? null])
+  useRequiredRead(queryClient, [
+    'attention',
+    'workspace',
+    search.q ?? null,
+    search.attentionCursor ?? null,
+  ])
   const attentionItems = useMemo(
     () =>
       attention.data?.pages.flatMap((page, pageIndex) => {
@@ -2771,6 +2779,7 @@ export default function LibraryPage({
               search: (current) => {
                 const next = { ...current }
                 delete next.cursor
+                delete next.attentionCursor
                 if (pending) next.q = pending
                 else delete next.q
                 expectedSearchIdentity.current = librarySearchIdentity(next)

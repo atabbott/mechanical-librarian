@@ -530,3 +530,94 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         assert successor["policy"] == selected_history["consideration"]["policy"]
         assert repository.field_effect_dependencies_current(snapshot.dependency_digests)
         repository.close()
+
+
+def test_artifact_recovery_borrower_shares_admission_without_holding_it_for_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+    from mechanical_librarian.application.review_pipeline_stages import (
+        ReviewPipelineStages,
+    )
+
+    admission = OperationAdmission()
+    repository = open_repository(
+        tmp_path / "reports.sqlite", cross_thread=True, admission=admission
+    )
+    _qualified_cover_report(tmp_path)
+    recovery = composition.SQLiteProviderRecoveryStore.open(
+        tmp_path / "recovery.sqlite"
+    )
+    stages: list[ReviewPipelineStages] = []
+    make_pipeline = ReviewPipelineStages.pipeline
+
+    def capture(self, *args, **kwargs):
+        stages.append(self)
+        return make_pipeline(self, *args, **kwargs)
+
+    monkeypatch.setattr(ReviewPipelineStages, "pipeline", capture)
+    supervisor = composition.create_review_pipeline(
+        _pipeline_configuration(),
+        tmp_path / "reports.sqlite",
+        tmp_path / "catalogue.sqlite",
+        tmp_path / "artifacts",
+        _test_reviewer_access(repository),
+        database_authority=repository.authority,
+        provider_recovery=recovery,
+        admission=admission,
+    )
+    entered_files = threading.Event()
+    release_files = threading.Event()
+    failures: list[BaseException] = []
+    borrowers = []
+    open_real = composition.open_repository
+    recover_real = CoverArtifactStore.recover_unreferenced
+
+    def open_borrower(*args, **kwargs):
+        borrower = open_real(*args, **kwargs)
+        borrowers.append(borrower)
+        return borrower
+
+    def recover_files(self, referenced):
+        assert not admission.held
+        entered_files.set()
+        assert release_files.wait(5)
+        return recover_real(self, referenced)
+
+    def run() -> None:
+        try:
+            with admission.classify("background"):
+                stages[0]._recover_artifacts()
+        except BaseException as error:
+            failures.append(error)
+
+    monkeypatch.setattr(composition, "open_repository", open_borrower)
+    monkeypatch.setattr(CoverArtifactStore, "recover_unreferenced", recover_files)
+    thread = threading.Thread(target=run)
+    try:
+        admission.acquire()
+        try:
+            thread.start()
+            with admission._condition:
+                assert admission._condition.wait_for(
+                    lambda: bool(admission._waiting), 5
+                )
+                assert admission._waiting[0].work_class == "background"
+            assert not entered_files.is_set()
+        finally:
+            admission.release()
+        assert entered_files.wait(5)
+        assert borrowers and all(
+            item.operation_admission is admission for item in borrowers
+        )
+        admission.acquire()
+        admission.release()
+    finally:
+        release_files.set()
+        thread.join(5)
+        assert not thread.is_alive()
+        supervisor.stop()
+        repository.close()
+    assert failures == []

@@ -167,6 +167,60 @@ const terminalPreparation = (
   },
 })
 
+it('keeps Attention in the Library search scope with its own cursor', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const item = {
+    id: 'case-1',
+    destination: 'title',
+    title: 'Scoped work',
+    authors: [],
+    library: 'Books',
+    mediaKind: 'ebook',
+    notices: [],
+    provenance: [],
+    workAttentionCount: 1,
+  }
+  http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ q, cursor }) => ({
+    total: q === 'none' ? 0 : 1,
+    items: q === 'none' ? [] : [{ ...item, title: cursor ? 'Later scoped work' : 'Scoped work' }],
+    ...(cursor ? {} : { nextCursor: 'attention-page-2' }),
+  }))
+  const { router } = renderRoute(
+    '/library?lens=all&q=needle&cursor=library-page&attention=open',
+    http,
+  )
+  expect(await screen.findByRole('button', { name: /Scoped work.*Title/u })).toBeVisible()
+  expect(http.getAttention).toHaveBeenCalledWith(
+    { q: 'needle', cursor: undefined },
+    expect.any(AbortSignal),
+    'foreground',
+  )
+  await user.click(screen.getByRole('button', { name: 'Load more attention' }))
+  expect(await screen.findByRole('button', { name: /Later scoped work.*Title/u })).toBeVisible()
+  expect(http.getAttention).toHaveBeenCalledWith(
+    { q: 'needle', cursor: 'attention-page-2' },
+    expect.any(AbortSignal),
+    'foreground',
+  )
+  await user.click(screen.getByRole('button', { name: 'Close' }))
+  await user.clear(screen.getByRole('searchbox'))
+  await user.type(screen.getByRole('searchbox'), 'none')
+  await waitFor(() => expect(router.state.location.search.q).toBe('none'))
+  expect(router.state.location.search.cursor).toBeUndefined()
+  expect(router.state.location.search.attentionCursor).toBeUndefined()
+  await user.click(screen.getByRole('button', { name: /^Attention /u }))
+  await waitFor(() =>
+    expect(http.getAttention).toHaveBeenCalledWith(
+      { q: 'none', cursor: undefined },
+      expect.any(AbortSignal),
+      'foreground',
+    ),
+  )
+  expect(screen.queryByRole('button', { name: /Scoped work.*Title/u })).toBeNull()
+  expect(screen.queryByRole('button', { name: /Later scoped work.*Title/u })).toBeNull()
+})
+
 describe('Library route', () => {
   it('retains a setup handoff until the first authoritative preparation snapshot selects it', async () => {
     const runId = `preparation_run_${'9'.repeat(64)}`

@@ -338,7 +338,9 @@ Attention is a contextual, URL-owned field queue inside the regular-width
 Library workspace, not a peer navigation destination. It contains only
 unresolved ordinary fields that can benefit from an owner decision, groups them
 by readable work identity, and keeps the current work, active field, and queue
-position visible beside the decision canvas. At narrower regular widths the
+position visible beside the decision canvas. Its rows use the same bounded search
+as the Library attention count; its cursor is independent of the work-list cursor
+and resets when the search changes. At narrower regular widths the
 work index and selected detail remain concurrent while attention opens as a
 contextual drawer. At phone widths the queue may become a separate
 single-column step while preserving Back/Forward state and task continuity.
@@ -659,7 +661,10 @@ widths in both themes without document-level horizontal overflow. The selected
 theme is non-authoritative presentation state and cannot affect review data or
 decision authority.
 
-Activity preserves the Library workspace and Policy hierarchy. Once durable
+Activity preserves the Library workspace and Policy hierarchy. Initial entry
+mounts navigation and a useful loading state without waiting for its ledger. An
+unavailable initial read keeps navigation and an explicit retry available;
+pending filter changes preserve the mounted page and its editing focus. Once durable
 activity exists, its current guarded state, shared recovery, and recent outcomes
 lead the page; write-permission inventory remains reachable from that state and
 collapses to a concise summary for returning owners. Before any activity or

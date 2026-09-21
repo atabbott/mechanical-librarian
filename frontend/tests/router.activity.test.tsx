@@ -8,6 +8,38 @@ import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture
 import { activityRoute } from '../src/router'
 import { activity, createHttp, openActivityAuthority, renderRoute } from './fixtures'
 
+it('keeps navigation available during initial Activity failure and retries the real read', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  let rejectRead!: (error: Error) => void
+  http.getActivity = vi
+    .fn<ReviewHttp['getActivity']>()
+    .mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectRead = reject
+        }),
+    )
+    .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
+    .mockResolvedValue(activity())
+  renderRoute('/activity', http)
+  expect(await screen.findByRole('heading', { name: 'Loading activity…' })).toBeVisible()
+  expect(screen.getByRole('navigation', { name: 'Primary workspace' })).toBeVisible()
+  await act(async () => rejectRead(new ApiError(503, 'unavailable')))
+  expect(
+    await screen.findByRole('heading', { name: 'Activity could not be loaded.' }),
+  ).toBeVisible()
+  expect(screen.getByRole('link', { name: 'Library' })).toBeVisible()
+  await user.click(screen.getByRole('button', { name: 'Try again' }))
+  await waitFor(() => {
+    expect(http.getActivity).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('heading', { name: 'Activity could not be loaded.' })).toBeVisible()
+  })
+  await user.click(screen.getByRole('button', { name: 'Try again' }))
+  expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+  expect(http.getActivity).toHaveBeenCalledTimes(3)
+})
+
 describe('Activity route', () => {
   it('labels real description preparation results without relabeling policy records', async () => {
     const http = createHttp()

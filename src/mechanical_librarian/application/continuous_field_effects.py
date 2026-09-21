@@ -1566,28 +1566,33 @@ class ContinuousGuardedApplication:
         return results
 
     def _run(self) -> None:
-        self._admission.wait()
-        if self._stop.is_set():
-            return
-        if self._dormant_start:
-            self._dormant_start = False
-            try:
-                self._recover_startup()
-            except Exception as error:
-                self._set_last_failure(getattr(error, "code", "unavailable"))
-        while not self._stop.is_set():
-            self._wake.wait(self._polling_seconds)
-            self._wake.clear()
-            try:
-                self._run_until_idle()
-            except (FieldEffectError, GuardedApplicationError, ValueError) as error:
-                self._set_last_failure(getattr(error, "code", "unavailable"))
-            else:
-                # A completed poll recovers a transient worker/storage fault,
-                # not a rejected decision still pending behind the cursor.
-                self._set_last_failure(
-                    self._failed_decision[1] if self._failed_decision else None
-                )
+        with (
+            nullcontext()
+            if self._operation_admission is None
+            else self._operation_admission.classify("background")
+        ):
+            self._admission.wait()
+            if self._stop.is_set():
+                return
+            if self._dormant_start:
+                self._dormant_start = False
+                try:
+                    self._recover_startup()
+                except Exception as error:
+                    self._set_last_failure(getattr(error, "code", "unavailable"))
+            while not self._stop.is_set():
+                self._wake.wait(self._polling_seconds)
+                self._wake.clear()
+                try:
+                    self._run_until_idle()
+                except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+                    self._set_last_failure(getattr(error, "code", "unavailable"))
+                else:
+                    # A completed poll recovers a transient worker/storage fault,
+                    # not a rejected decision still pending behind the cursor.
+                    self._set_last_failure(
+                        self._failed_decision[1] if self._failed_decision else None
+                    )
 
     def _run_until_idle(self) -> None:
         with (

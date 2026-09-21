@@ -25,6 +25,9 @@ connection locks; no network or device operation holds it.
 The finite foreground cohort yields to one oldest background waiter before a new
 cohort. Session, catalogue and provider-recovery databases keep their independent
 authority; recovery calls that enter the application repository use its coordinator.
+Worker startup, recovery and scheduling retain background classification. Artifact
+recovery borrows that same coordinator for its retained-attempt update and reference
+reads, releasing admission for filesystem inspection and cleanup.
 
 Library and Attention need no additional browse borrower. Membership, counts and
 row facts share a short deferred transaction; visible projection remains inside

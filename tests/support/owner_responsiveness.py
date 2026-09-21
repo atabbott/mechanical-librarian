@@ -238,6 +238,16 @@ class OwnerResponsivenessFixture:
                 (),
                 review=review,
             )
+            activity, close_activity = (
+                composition.open_field_effect_activity_projection(
+                    configuration,
+                    self.database,
+                    self.repository.authority,
+                    self.recovery,
+                    admission=self.repository.operation_admission,
+                )
+            )
+            activation.callback(close_activity)
             settings = file_settings_projection(configuration)
             owner_binding = owner_password_binding(
                 PasswordHasher().hash("synthetic-owner")
@@ -260,6 +270,8 @@ class OwnerResponsivenessFixture:
                 graceful_shutdown_seconds=2,
                 cover_considerations=self.covers,
                 reviewer_access=self.reviewer_access,
+                activity_projection=activity,
+                close_activity_projection=close_activity,
                 preparation=self.preparation,
                 settings=OwnerSettingsOperations(
                     FileOwnerSettingsRepository(settings.document, settings.secrets)
