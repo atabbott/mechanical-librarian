@@ -22,6 +22,15 @@ The browse borrower closes before root authority during shutdown or failed
 activation. No pool, per-request repository, new database or journal-mode change
 is introduced. ADR-0060 continues to govern session isolation.
 
+Only Library and Attention watch transport disconnection while their existing
+authentication, application read and response validation run in a worker. A
+request-scoped active check runs before waiting for the browse gate and again
+after acquiring it. A disconnected queued request performs no snapshot or
+projection. Once executing, a read finishes normally under exclusive ownership
+and currentness recheck; neither disconnect nor handler cancellation interrupts
+SQLite or releases its connection early. The transport awaits worker and watcher
+cleanup. Ordinary application callers need no cancellation callback.
+
 One immutable `currentness_document` column accompanies each canonical cover
 consideration. Full producer validation derives its target, report identity,
 fetching state and saved replay reference; invalid or nonadmissible input derives
@@ -55,6 +64,14 @@ transfers to another key or replacement cache object. Hidden or inactive queries
 do not start background refreshes, and failures retain the existing retry path.
 Teardown cancels outstanding debt reads before preserving their stale state.
 Frames remain invalidation notices, never authoritative cache data.
+
+Decision confirmation owns the existing exact-case query until its native
+post-acknowledgement read settles. Same-case confirmations serialize; other
+cases and history/evidence reads remain independent. A temporary disabled
+observer keeps route departure from cancelling that read. Case invalidations
+coalesce behind it, then refresh once if the bridge is visible and active; a
+failed confirmation remains stale/error without a retry loop. Removed queries
+are never recreated, and cancellation rollback cannot count as fresh authority.
 
 ## Consequences
 

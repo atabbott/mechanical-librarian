@@ -786,31 +786,52 @@ class ReviewApplication:
     def history(self, review_case_id: str) -> dict[str, object]:
         return self.serialized(lambda: self._cases.history(review_case_id))
 
-    def _browse_serialized(self, call: Callable[[], _Result]) -> _Result:
+    def _browse_serialized(
+        self,
+        call: Callable[[], _Result],
+        check_active: Callable[[], None] | None = None,
+    ) -> _Result:
+        if check_active is not None:
+            check_active()
         with self._browse_gate:
+            if check_active is not None:
+                check_active()
             if self._browse_closed:
                 raise ReviewApplicationError("unavailable")
             with self._browse_observation():
                 return call()
 
     def library(
-        self, *, lens: str, search: str | None, limit: int, cursor: str | None
+        self,
+        *,
+        lens: str,
+        search: str | None,
+        limit: int,
+        cursor: str | None,
+        check_active: Callable[[], None] | None = None,
     ) -> LibraryView:
         return self._browse_serialized(
             lambda: LibraryView.from_data(
                 self._browse.library(
                     lens=lens, search=search, limit=limit, cursor=cursor
                 )
-            )
+            ),
+            check_active,
         )
 
     def attention(
-        self, *, search: str | None, limit: int, cursor: str | None
+        self,
+        *,
+        search: str | None,
+        limit: int,
+        cursor: str | None,
+        check_active: Callable[[], None] | None = None,
     ) -> AttentionView:
         return self._browse_serialized(
             lambda: AttentionView.from_data(
                 self._browse.attention(search=search, limit=limit, cursor=cursor)
-            )
+            ),
+            check_active,
         )
 
     def report_detail(

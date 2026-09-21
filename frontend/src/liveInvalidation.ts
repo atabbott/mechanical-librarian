@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react'
 
 import type { Query, QueryClient } from '@tanstack/react-query'
-import { classifyDecisionEcho, forgetSettledKeys } from './decisionEcho'
+import { classifyDecisionEcho, deferDecisionCaseRefresh, forgetSettledKeys } from './decisionEcho'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from './liveUpdates'
 
 /**
@@ -197,7 +197,26 @@ export const startLiveInvalidation = (
         // Inactive pages are stale for their next mount, with no background work.
         void queryClient.invalidateQueries({ queryKey, refetchType: 'none' })
         for (const query of queries) refreshCollection(query)
-      } else void queryClient.invalidateQueries({ queryKey })
+      } else {
+        const deferred = new Set<Query>()
+        for (const query of queryClient.getQueryCache().findAll({ queryKey })) {
+          if (
+            deferDecisionCaseRefresh(queryClient, query, (succeeded) => {
+              if (!succeeded || stopped || !visible()) return
+              if (queryClient.getQueryCache().get(query.queryHash) !== query) return
+              void queryClient.invalidateQueries(
+                { queryKey: query.queryKey, exact: true },
+                { cancelRefetch: false },
+              )
+            })
+          )
+            deferred.add(query)
+        }
+        void queryClient.invalidateQueries({
+          queryKey,
+          predicate: (query) => ![...deferred].some((owned) => owned === query),
+        })
+      }
       // Each collection obligation is now a fresh read, concrete completion
       // debt, or an inactive stale page. Its decision echo can relinquish it.
       forgetSettledKeys(queryClient, [queryKey])

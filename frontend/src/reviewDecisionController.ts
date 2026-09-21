@@ -4,7 +4,12 @@ import { useEffect, useRef, useState } from 'react'
 import { AmbiguousMutationError, ApiError } from './api/http'
 import type { CaseDetailView, DecisionCommand } from './api/http'
 import { labelWords } from './labels'
-import { beginDecisionEcho, endDecisionEcho, settleDecisionEcho } from './decisionEcho'
+import {
+  beginDecisionEcho,
+  confirmDecisionCase,
+  endDecisionEcho,
+  settleDecisionEcho,
+} from './decisionEcho'
 import { detailQuery, useReviewContext } from './router'
 
 export const actionable = (field: CaseDetailView['fields'][number]) =>
@@ -137,7 +142,9 @@ export const useReviewDecisionController = ({
   // here; Library counts and the case's own history converge behind it.
   const refreshCase = async () => {
     try {
-      return await queryClient.query({ ...detailQuery(http, reviewCaseId), staleTime: 0 })
+      return await confirmDecisionCase(queryClient, reviewCaseId, () =>
+        queryClient.query({ ...detailQuery(http, reviewCaseId), staleTime: 0 }),
+      )
     } catch {
       return undefined
     }

@@ -473,3 +473,175 @@ def test_persistent_browse_observes_live_cover_policy_rebinding(tmp_path: Path) 
         assert current.total < initial.total
     finally:
         fixture.close()
+
+
+@pytest.mark.parametrize("route", ["library?lens=all", "attention"])
+def test_disconnected_queued_browse_requests_do_not_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    import socket
+    from urllib.parse import urlsplit
+
+    import httpx
+    from starlette.requests import Request
+
+    from tests.support.owner_responsiveness import running_owner_fixture
+
+    with running_owner_fixture(tmp_path, 3) as (fixture, origin):
+        path = f"/api/v1/{route}"
+        disconnected = threading.Condition()
+        disconnects = 0
+        receive_property = Request.receive
+
+        def receive_for(request: Request):
+            receive = receive_property.__get__(request, Request)
+
+            async def receive_message():
+                nonlocal disconnects
+                message = await receive()
+                if message["type"] == "http.disconnect":
+                    with disconnected:
+                        disconnects += 1
+                        disconnected.notify_all()
+                return message
+
+            return receive_message
+
+        monkeypatch.setattr(Request, "receive", property(receive_for))
+        queued = threading.Condition()
+        entrants = 0
+        projections = 0
+        original = fixture.application._browse_serialized
+
+        def observe(call, check_active=None):
+            nonlocal entrants, projections
+            with queued:
+                entrants += 1
+                queued.notify_all()
+
+            def project():
+                nonlocal projections
+                projections += 1
+                return call()
+
+            return original(project, check_active)
+
+        monkeypatch.setattr(fixture.application, "_browse_serialized", observe)
+        with httpx.Client(base_url=origin, headers={"Origin": origin}) as client:
+            assert client.get(path).status_code == 401
+            assert (
+                client.post(
+                    "/api/v1/session/login", json={"password": "synthetic-owner"}
+                ).status_code
+                == 200
+            )
+            assert client.get(path, params={"limit": 0}).status_code == 422
+            assert entrants == 0
+            cookie = client.build_request("GET", path).headers["cookie"]
+            address = urlsplit(origin)
+            assert address.hostname is not None and address.port is not None
+            connections: list[socket.socket] = []
+            responses: list[httpx.Response] = []
+            failures: list[BaseException] = []
+
+            def live_read():
+                try:
+                    responses.append(client.get(path))
+                except BaseException as error:
+                    failures.append(error)
+
+            live = threading.Thread(target=live_read)
+            fixture.application._browse_gate.acquire()
+            try:
+                for _ in range(2):
+                    connection = socket.create_connection(
+                        (address.hostname, address.port), timeout=5
+                    )
+                    connections.append(connection)
+                    connection.sendall(
+                        f"GET {path} HTTP/1.1\r\nHost: {address.netloc}\r\nCookie: {cookie}\r\n\r\n".encode()
+                    )
+                with queued:
+                    assert queued.wait_for(lambda: entrants == 2, timeout=5)
+                for connection in connections:
+                    connection.shutdown(socket.SHUT_RDWR)
+                    connection.close()
+                with disconnected:
+                    assert disconnected.wait_for(lambda: disconnects >= 2, timeout=5)
+                live.start()
+                with queued:
+                    assert queued.wait_for(lambda: entrants == 3, timeout=5)
+                assert projections == 0
+            finally:
+                fixture.application._browse_gate.release()
+                for connection in connections:
+                    connection.close()
+                if live.ident is not None:
+                    live.join(5)
+            assert not live.is_alive() and not failures
+            assert len(responses) == 1 and responses[0].status_code == 200
+            assert projections == 1
+            assert not fixture.browse._connection.in_transaction
+
+
+@pytest.mark.parametrize("route", ["library?lens=all", "attention"])
+def test_disconnected_active_browse_finishes_before_next_reader(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    import socket
+    from urllib.parse import urlsplit
+
+    import httpx
+
+    from tests.support.owner_responsiveness import running_owner_fixture
+
+    with running_owner_fixture(tmp_path, 3) as (fixture, origin):
+        entered, release, finished = (threading.Event() for _ in range(3))
+        original = fixture.application._browse_serialized
+        projections = 0
+
+        def observe(call, check_active=None):
+            def project():
+                nonlocal projections
+                projections += 1
+                if projections == 1:
+                    entered.set()
+                    assert release.wait(5)
+                result = call()
+                finished.set()
+                return result
+
+            return original(project, check_active)
+
+        monkeypatch.setattr(fixture.application, "_browse_serialized", observe)
+        with httpx.Client(base_url=origin, headers={"Origin": origin}) as client:
+            assert (
+                client.post(
+                    "/api/v1/session/login", json={"password": "synthetic-owner"}
+                ).status_code
+                == 200
+            )
+            path = f"/api/v1/{route}"
+            cookie = client.build_request("GET", path).headers["cookie"]
+            address = urlsplit(origin)
+            assert address.hostname is not None and address.port is not None
+            connection = socket.create_connection(
+                (address.hostname, address.port), timeout=5
+            )
+            try:
+                connection.sendall(
+                    f"GET {path} HTTP/1.1\r\nHost: {address.netloc}\r\nCookie: {cookie}\r\n\r\n".encode()
+                )
+                assert entered.wait(5)
+                connection.shutdown(socket.SHUT_RDWR)
+                connection.close()
+                assert not fixture.application._browse_gate.acquire(blocking=False)
+                assert not finished.is_set()
+            finally:
+                release.set()
+                connection.close()
+            assert client.get(path).status_code == 200
+            assert finished.is_set() and projections == 2
+            assert not fixture.browse._connection.in_transaction
+            assert client.get("/api/v1/library?lens=invalid").status_code == 400
+            assert client.get(path).status_code == 200

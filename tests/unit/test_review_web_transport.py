@@ -17,7 +17,7 @@ from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 from argon2 import PasswordHasher
@@ -2046,7 +2046,7 @@ def test_argon2i_hash_file_is_rejected(
         create_transport_test_app(web.repository, configuration)
 
 
-def test_composition_opens_the_single_database_for_worker_threads(
+def test_composition_opens_root_and_borrowed_browse_for_worker_threads(
     web: ReviewWebContext[FakeReviewRepository],
 ) -> None:
     from tests.support.tls import synthetic_tls_identity
@@ -2105,11 +2105,15 @@ def test_composition_opens_the_single_database_for_worker_threads(
             "127.0.0.1",
             8443,
         )
-    opened.assert_called_once_with(
-        database,
-        create=True,
-        cross_thread=True,
-    )
+    assert opened.call_args_list == [
+        call(database, create=True, cross_thread=True),
+        call(
+            database,
+            create=False,
+            authority=repository.authority,
+            cross_thread=True,
+        ),
+    ]
 
 
 def test_store_composition_fault_preserves_pending_restart_acknowledgement(
