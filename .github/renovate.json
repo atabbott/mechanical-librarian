@@ -7,7 +7,8 @@
     "dockerfile",
     "github-actions",
     "npm",
-    "pep621"
+    "pep621",
+    "custom.regex"
   ],
   "dependencyDashboard": true,
   "timezone": "Europe/London",
@@ -21,10 +22,10 @@
   "branchConcurrentLimit": 5,
   "prHourlyLimit": 2,
   "rangeStrategy": "pin",
-  "rebaseWhen": "conflicted",
+  "rebaseWhen": "behind-base-branch",
   "ignoreTests": false,
   "platformAutomerge": true,
-  "automerge": false,
+  "automerge": true,
   "automergeType": "pr",
   "automergeStrategy": "squash",
   "labels": [
@@ -56,118 +57,33 @@
       "enabled": false
     },
     {
-      "description": "Track npm through the pinned Node runtime rather than independently",
-      "matchManagers": [
+      "description": "Move all Node runtime declarations together",
+      "matchDepNames": [
+        "node"
+      ],
+      "groupName": "Node runtime"
+    },
+    {
+      "description": "Move all Python runtime declarations together",
+      "matchDepNames": [
+        "python"
+      ],
+      "groupName": "Python runtime"
+    },
+    {
+      "description": "Move all uv resolver declarations together",
+      "matchDepNames": [
+        "astral-sh/uv",
+        "ghcr.io/astral-sh/uv"
+      ],
+      "groupName": "uv resolver"
+    },
+    {
+      "description": "Move all npm package manager declarations together",
+      "matchDepNames": [
         "npm"
       ],
-      "matchDepTypes": [
-        "engines",
-        "packageManager"
-      ],
-      "matchPackageNames": [
-        "npm"
-      ],
-      "enabled": false
-    },
-    {
-      "description": "Group compatible frontend updates",
-      "matchManagers": [
-        "npm"
-      ],
-      "matchUpdateTypes": [
-        "patch",
-        "minor"
-      ],
-      "groupName": "compatible frontend dependencies",
-      "automerge": true
-    },
-    {
-      "description": "Group Python patch updates",
-      "matchManagers": [
-        "pep621"
-      ],
-      "matchUpdateTypes": [
-        "patch"
-      ],
-      "groupName": "Python patch dependencies",
-      "automerge": true
-    },
-    {
-      "description": "Group stable Python minor updates",
-      "matchManagers": [
-        "pep621"
-      ],
-      "matchCurrentVersion": "!/^0\\./",
-      "matchUpdateTypes": [
-        "minor"
-      ],
-      "groupName": "Python stable minor dependencies",
-      "automerge": true
-    },
-    {
-      "description": "Prevent automatic merging of pre-1.0 minor updates",
-      "matchManagers": [
-        "npm",
-        "pep621"
-      ],
-      "matchCurrentVersion": "/^0\\./",
-      "matchUpdateTypes": [
-        "minor"
-      ],
-      "automerge": false,
-      "groupName": "pre-1.0 minor dependencies"
-    },
-    {
-      "description": "Require approval for major updates",
-      "matchUpdateTypes": [
-        "major"
-      ],
-      "automerge": false,
-      "dependencyDashboardApproval": true
-    },
-    {
-      "description": "Prevent automatic merging of infrastructure and workflow updates",
-      "matchManagers": [
-        "dockerfile",
-        "github-actions"
-      ],
-      "automerge": false,
-      "groupName": "infrastructure dependencies"
-    },
-    {
-      "description": "Prevent automatic merging of runtime, toolchain, and build-backend updates",
-      "matchPackageNames": [
-        "@eslint/js",
-        "@types/node",
-        "@vitejs/plugin-react",
-        "eslint",
-        "eslint-plugin-react-hooks",
-        "eslint-plugin-react-refresh",
-        "globals",
-        "jsdom",
-        "node",
-        "npm",
-        "openapi-typescript",
-        "python",
-        "setuptools",
-        "typescript",
-        "typescript-eslint",
-        "vite",
-        "vitest"
-      ],
-      "automerge": false,
-      "groupName": "runtime, toolchain, and build-backend dependencies"
-    },
-    {
-      "description": "Prevent automatic merging of Playwright minor updates",
-      "matchPackageNames": [
-        "playwright"
-      ],
-      "matchUpdateTypes": [
-        "minor"
-      ],
-      "groupName": "Playwright browser dependency",
-      "automerge": false
+      "groupName": "npm package manager"
     },
     {
       "description": "Require approval for dependency replacements",
@@ -176,20 +92,20 @@
       ],
       "automerge": false,
       "dependencyDashboardApproval": true
-    },
+    }
+  ],
+  "updateNotScheduled": true,
+  "customManagers": [
     {
-      "description": "Move the qualified and shipped interpreter and resolver in lockstep",
-      "matchManagers": [
-        "dockerfile",
-        "github-actions"
+      "customType": "regex",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/public-gate\\.yml$/"
       ],
-      "matchDepNames": [
-        "python",
-        "astral-sh/uv",
-        "ghcr.io/astral-sh/uv"
+      "matchStrings": [
+        "ghcr\\.io/google/osv-scanner:(?<currentValue>v[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
       ],
-      "groupName": "qualified runtime toolchain",
-      "automerge": false
+      "depNameTemplate": "ghcr.io/google/osv-scanner",
+      "datasourceTemplate": "docker"
     }
   ]
 }

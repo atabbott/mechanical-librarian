@@ -45,13 +45,15 @@ RUN ./configure \
 FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS frontend-build
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN cd frontend && npm ci --ignore-scripts --no-audit --no-fund
+RUN cd frontend \
+    && npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./package.json").engines.npm')" \
+    && npm ci --ignore-scripts --no-audit --no-fund
 COPY frontend ./frontend
 COPY docs/reference/review-openapi-v1.json ./docs/reference/review-openapi-v1.json
 COPY src/mechanical_librarian/interfaces/web/settings_vocabulary.json ./src/mechanical_librarian/interfaces/web/settings_vocabulary.json
 RUN cd frontend \
-    && test "$(node --version)" = "v24.21.0" \
-    && test "$(npm --version)" = "11.19.0" \
+    && test "$(node --version)" = "v$(node -p 'require("./package.json").engines.node')" \
+    && test "$(npm --version)" = "$(node -p 'require("./package.json").engines.npm')" \
     && npm run generate \
     && npm run typecheck \
     && npm run build

@@ -93,3 +93,4 @@ Use [the template](template.md) for new decisions. Never edit the substance of
 an accepted ADR to make history match current preference; supersede it.
 
 | [0075](0075-independent-evidence-led-titles.md) | accepted | Elect ISBN-linked ebook titles independently of companion choices |
+| [0076](0076-dependency-build-provenance.md) | accepted | Separate dependency build provenance from semantic qualification |

@@ -5,19 +5,37 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-NODE_VERSION = "v24.21.0"
-NPM_VERSION = "11.19.0"
-
 
 class FrontendBuildError(RuntimeError):
     """A fixed, path-free frontend build failure."""
+
+
+def toolchain_versions(source_root: Path) -> tuple[str, str]:
+    """Read the canonical exact pins shared by builds and qualification."""
+    try:
+        manifest = json.loads((source_root / "frontend/package.json").read_bytes())
+        node = manifest["engines"]["node"]
+        npm = manifest["engines"]["npm"]
+        if (
+            type(node) is not str
+            or type(npm) is not str
+            or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", node) is None
+            or re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", npm) is None
+            or manifest["packageManager"] != "npm@" + npm
+        ):
+            raise ValueError
+        return node, npm
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise FrontendBuildError("frontend_toolchain_manifest_invalid") from error
 
 
 def _run(command: tuple[str, ...], *, cwd: Path) -> None:
@@ -109,9 +127,10 @@ def build_frontend(source_root: Path, output: Path) -> None:
         shutil.copytree(prebuilt, output)
         return
 
-    if _version(("node", "--version"), cwd=source_root) != NODE_VERSION:
+    node, npm = toolchain_versions(source_root)
+    if _version(("node", "--version"), cwd=source_root) != "v" + node:
         raise FrontendBuildError("frontend_node_version_invalid")
-    if _version(("npm", "--version"), cwd=source_root) != NPM_VERSION:
+    if _version(("npm", "--version"), cwd=source_root) != npm:
         raise FrontendBuildError("frontend_npm_version_invalid")
 
     with tempfile.TemporaryDirectory(
