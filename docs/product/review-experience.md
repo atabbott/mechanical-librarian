@@ -233,6 +233,13 @@ Attention or Policy collections. Appearance, preparation and URL-selected
 review detail load independently. Pending or unavailable counts are never zero;
 a failed collection keeps navigation and a manual retry usable. Superseded
 queries cancel, and an older response cannot replace a newer URL selection.
+Owner navigation, typing, paging, retries and command results take priority over
+background refreshes at the next safe local-operation boundary. Recurring polls
+join ongoing work without accumulating redundant requests. A recorded choice is
+confirmed from the server's actual post-commit case before the interface advances;
+failed confirmation stays visibly unconfirmed with an explicit reload. A partially
+completed reviewer sign-in change retains its explanation after state is reloaded,
+so the owner is not told that an external change was undone.
 The #1072 envelope is approximately 2,300 complete synthetic works across five
 libraries during preparation: useful shell/navigation within one second and
 requested initial list/detail/status within two seconds. Measurements retain

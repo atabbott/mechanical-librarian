@@ -1,3 +1,4 @@
+import { hasBackgroundDebt } from '../src/queryWork'
 import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
@@ -87,7 +88,7 @@ describe('Application shell', () => {
     ).toBeVisible()
     expect(http.getPreparation).toHaveBeenCalled()
     expect(http.getAttention).toHaveBeenCalled()
-    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal), 'foreground')
     expect(screen.queryByText('0 total')).toBeNull()
     expect(screen.queryByText('No exact-current works match this search and lens.')).toBeNull()
     await act(async () => {
@@ -291,8 +292,10 @@ describe('Application shell', () => {
         await vi.advanceTimersByTimeAsync(1_600)
       })
 
-      await vi.waitFor(() => expect(invalidations).toHaveBeenCalledWith({ queryKey: ['library'] }))
-      expect(invalidations).toHaveBeenCalledWith({ queryKey: ['attention'] })
+      await vi.waitFor(() =>
+        expect(invalidations).toHaveBeenCalledWith({ queryKey: ['library'], refetchType: 'none' }),
+      )
+      expect(invalidations).toHaveBeenCalledWith({ queryKey: ['attention'], refetchType: 'none' })
     } finally {
       vi.useRealTimers()
     }
@@ -999,6 +1002,7 @@ describe('Application shell', () => {
   })
 
   it('bounds the captured active-preparation cadence and resyncs after foreground recovery', async () => {
+    await import('../src/routes/LibraryPage')
     vi.useFakeTimers()
     try {
       let visibility: DocumentVisibilityState = 'visible'
@@ -1058,11 +1062,12 @@ describe('Application shell', () => {
         </QueryClientProvider>,
       )
       await act(async () => {
-        await vi.waitFor(
-          () => expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible(),
-          { interval: 0 },
-        )
+        await vi.advanceTimersByTimeAsync(0)
       })
+      await vi.waitFor(
+        () => expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible(),
+        { interval: 1 },
+      )
       expect(screen.getByRole('heading', { level: 2, name: 'Works' })).toBeVisible()
       const before = {
         attention: vi.mocked(http.getAttention).mock.calls.length,
@@ -1240,14 +1245,19 @@ describe('Application shell', () => {
     await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
     act(() => updates.announce({ sequence: 2, subject: null, topic: 'preparation' }))
 
-    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3))
-    expect(firstEventAborted).toBe(true)
-    expect(queryClient.getQueryData(['review-preparation'])).toBe(afterSecondEvent)
+    const query = queryClient
+      .getQueryCache()
+      .find({ queryKey: ['review-preparation'], exact: true })
+    if (!query) throw new Error('preparation query required')
+    await waitFor(() => expect(hasBackgroundDebt(queryClient, query)).toBe(true))
+    expect(http.getPreparation).toHaveBeenCalledTimes(2)
+    expect(firstEventAborted).toBe(false)
     await act(async () => releaseFirstEvent(afterFirstEvent))
+    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3))
     expect(queryClient.getQueryData(['review-preparation'])).toBe(afterSecondEvent)
   })
 
-  it('keeps reconnect debt through cancellation and a failed superseding read', async () => {
+  it('keeps reconnect debt through an old success and a failed follow-up read', async () => {
     const updates = createLiveStream()
     const runId = `preparation_run_${'c'.repeat(64)}`
     const initialPresentation: NonNullable<PreparationView['presentation']> = {
@@ -1285,13 +1295,15 @@ describe('Application shell', () => {
       presentation: { ...initialPresentation, updated_at: 101 },
     }
     let heldAborted = false
+    let releaseHeld: (value: PreparationView) => void = () => undefined
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn((signal?: AbortSignal) => {
         const request = vi.mocked(http.getPreparation).mock.calls.length
         if (request === 1) return Promise.resolve(initial)
         if (request === 2)
-          return new Promise<PreparationView>((_resolve, reject) => {
+          return new Promise<PreparationView>((resolve, reject) => {
+            releaseHeld = resolve
             signal?.addEventListener('abort', () => {
               heldAborted = true
               reject(new DOMException('aborted', 'AbortError'))
@@ -1322,8 +1334,15 @@ describe('Application shell', () => {
     await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
     act(() => updates.announce({ sequence: 1, subject: null, topic: 'preparation' }))
 
+    const query = queryClient
+      .getQueryCache()
+      .find({ queryKey: ['review-preparation'], exact: true })
+    if (!query) throw new Error('preparation query required')
+    await waitFor(() => expect(hasBackgroundDebt(queryClient, query)).toBe(true))
+    expect(heldAborted).toBe(false)
+    await act(async () => releaseHeld(initial))
     await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3))
-    expect(heldAborted).toBe(true)
+    expect(heldAborted).toBe(false)
     expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(true)
     expect(screen.getByText(/Reconnecting · last confirmed progress shown/u)).toBeVisible()
     expect(queryClient.getQueryData(['review-preparation'])).toBe(initial)

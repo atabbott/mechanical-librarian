@@ -1,4 +1,5 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useMutation } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
 import { useLiveStream, usePreparation, useReviewContext } from '../router'
@@ -22,8 +23,12 @@ export const WriteReadyNotice = () => {
   const preparation = usePreparation().data
   const query = useQuery({
     queryKey: ['activity', 'library-handoff'] as const,
-    queryFn: ({ signal }) =>
-      http.getActivity({ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }, signal),
+    queryFn: (queryContext) =>
+      http.getActivity(
+        { eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 },
+        queryContext.signal,
+        queryWorkClass(queryContext),
+      ),
     staleTime: 4_000,
     retry: false,
     // The cadence is the degraded fallback only. While the stream is up, an

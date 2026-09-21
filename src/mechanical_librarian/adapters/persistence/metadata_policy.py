@@ -45,7 +45,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
 from mechanical_librarian.adapters.persistence.schema import (
     _validate_review_browse_row,
 )
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.metadata_policy import (
     PolicyContentionError,
     PolicyTransition,
@@ -93,6 +96,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         # and make the composing repository's delegating stub recurse.
         self._activate_metadata_policy = activate_metadata_policy
 
+    @local_operation
     def shadow_posture(self) -> str:
         """Return the closed global posture without implying authority."""
         try:
@@ -105,6 +109,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise MetadataReportError("shadow posture is unavailable") from error
 
+    @local_operation
     def enter_shadow_preview(self, updated_at: int) -> str:
         """Enter Preview and reconcile the exact-current cohort when leaving automatic."""
         if type(updated_at) is not int or updated_at < 0:
@@ -180,6 +185,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise
             raise MetadataReportError("shadow posture persistence failed") from error
 
+    @local_operation
     def activate_qualified_automatic(self, updated_at: int) -> str:
         """Confirm Preview only when every requested automatic option is sealed."""
         if type(updated_at) is not int or updated_at < 0:
@@ -237,6 +243,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise
             raise MetadataReportError("automatic posture persistence failed") from error
 
+    @local_operation
     def create_metadata_policy_draft(self, document: str) -> str:
         """Persist an exact canonical draft; there is intentionally no update."""
         transaction = self._transaction("create_metadata_policy_draft")
@@ -283,6 +290,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise
             raise MetadataReportError("metadata policy draft is unavailable") from error
 
+    @local_operation
     def get_metadata_policy_draft(self, policy_id: str) -> str:
         try:
             row = self._connection.execute(
@@ -298,6 +306,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         except (MetadataPolicyError, ValueError, TypeError, sqlite3.Error) as error:
             raise MetadataReportError("metadata policy draft is unavailable") from error
 
+    @local_operation
     def active_metadata_policy(self) -> str:
         try:
             row = self._connection.execute(
@@ -315,6 +324,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "active metadata policy is unavailable"
             ) from error
 
+    @local_operation
     def current_resolved_policy_id(self, library: str) -> str:
         if type(library) is not str or not library:
             raise MetadataReportError("active metadata policy is unavailable")
@@ -346,16 +356,19 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "active metadata policy is unavailable"
             ) from error
 
+    @local_operation
     def current_resolved_metadata_policy(
         self, library: str
     ) -> ResolvedMetadataPolicy | None:
         return self._metadata_policy_resolution(library, allow_missing=False)
 
+    @local_operation
     def metadata_policy_resolution_for_preview(
         self, library: str
     ) -> ResolvedMetadataPolicy | None:
         return self._metadata_policy_resolution(library, allow_missing=True)
 
+    @local_operation
     def metadata_policy_preview_baseline(
         self, libraries: tuple[str, ...]
     ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]:
@@ -453,6 +466,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "active metadata policy is unavailable"
             ) from error
 
+    @local_operation
     def bind_initial_metadata_policy_resolution(self, document: str) -> str:
         """Bind one exact configured resolution while generation one is active."""
         transaction = self._transaction("bind_initial_metadata_policy_resolution")
@@ -519,6 +533,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "active metadata policy resolution is unavailable"
             ) from error
 
+    @local_operation
     def activate_metadata_policy(
         self,
         policy_id: str,
@@ -822,6 +837,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
             (state, updated_at, transition_id),
         )
 
+    @local_operation
     def metadata_policy_transition(self) -> PolicyTransition | None:
         try:
             row = self._connection.execute(
@@ -849,6 +865,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "metadata policy transition is unavailable"
             ) from error
 
+    @local_operation
     def retry_metadata_policy_transition(
         self, transition_id: str, retried_at: int
     ) -> PolicyTransition:
@@ -925,6 +942,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "metadata policy transition is unavailable"
             ) from error
 
+    @local_operation
     def acknowledge_metadata_policy_transition(
         self, transition_id: str, acknowledged_at: int
     ) -> PolicyTransition:
@@ -952,6 +970,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 "metadata policy transition is unavailable"
             ) from error
 
+    @local_operation
     def current_unapplied_count(self, library: str) -> int:
         """Count only current, undecided review cases for one configured library."""
         if type(library) is not str or not library:
@@ -969,6 +988,7 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         except (sqlite3.Error, TypeError, ValueError) as error:
             raise MetadataReportError("policy preview is unavailable") from error
 
+    @local_operation
     def current_policy_impact_pairs(
         self, library: str, limit: int
     ) -> tuple[int, tuple[tuple[MetadataReport, ProposalSet], ...]]:

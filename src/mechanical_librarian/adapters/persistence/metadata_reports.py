@@ -85,6 +85,7 @@ from mechanical_librarian.adapters.persistence.setup_state import SetupStateStor
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     TransactionScope,
+    local_operation,
 )
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
@@ -97,6 +98,7 @@ from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ReportRepository,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     PipelineProgress,
@@ -104,6 +106,7 @@ from mechanical_librarian.application.review_pipeline import (
     is_first_boot_scan_id,
 )
 from mechanical_librarian.application.review_web import (
+    CoverReadObservation,
     CurrentReviewCaseSnapshot,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
@@ -159,8 +162,6 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
     ShadowReviewValueError,
 )
-
-CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -470,6 +471,43 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
         )
+        self.bind_operation_admission(None)
+
+    @property
+    def operation_lock(self) -> RLock:
+        """The one physical owner shared by facade and directly borrowed stores."""
+        return self._setup_serialization_lock
+
+    @property
+    def operation_admission(self) -> OperationAdmission | None:
+        return self._admission
+
+    def bind_operation_admission(
+        self,
+        admission: OperationAdmission | None,
+        serialization_lock: RLock | None = None,
+    ) -> None:
+        lock = serialization_lock or self._setup_serialization_lock
+        self._setup_serialization_lock = lock
+        super().bind_operation_admission(admission, lock)
+        for aggregate in (
+            self._recovery_outbox,
+            self._proposal_sets,
+            self._cover_considerations,
+            self._reports,
+            self._metadata_policy,
+            self._owner_settings,
+            self._reviewer_access,
+            self._description_advice,
+            self._review_scans,
+            self._field_effects,
+            self._review_preparation,
+            self._review_cases,
+            self._field_effect_activity,
+            self._decisions,
+            self._review_projections,
+        ):
+            aggregate.bind_operation_admission(admission, lock)
 
     def _record_browse_unavailable_exception(self, error: sqlite3.Error) -> None:
         """Retain bounded storage-failure classes for the support export only."""
@@ -517,31 +555,57 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def bind_cover_read_observation(
         self, capture: Callable[[], CoverReadObservation]
     ) -> None:
-        """Bind external authority capture for this separately owned browse reader."""
+        """Bind external authority capture for bounded browse operations."""
         self._capture_cover_read = capture
+
+    def capture_browse_observation(self) -> CoverReadObservation | None:
+        """Read external authorities before acquiring local database admission."""
+        if self._capture_cover_read is None:
+            return None
+        try:
+            return self._capture_cover_read()
+        except Exception:
+            raise MetadataReportError("review snapshot is unavailable") from None
+
+    @contextmanager
+    def install_browse_observation(
+        self, observation: CoverReadObservation | None
+    ) -> Iterator[None]:
+        """Install immutable facts while this reader's physical owner is held."""
+        if self._cover_read_observation is not None:
+            raise MetadataReportError("review snapshot is unavailable")
+        self._cover_read_observation = observation
+        try:
+            yield
+        finally:
+            self._cover_read_observation = None
+
+    def recheck_browse_observation(
+        self, observation: CoverReadObservation | None
+    ) -> None:
+        """Reject external drift after releasing the local operation and owner."""
+        if self.capture_browse_observation() != observation:
+            raise MetadataReportError("review snapshot is unavailable")
 
     @contextmanager
     def browse_observation(self) -> Iterator[None]:
-        """Capture external facts outside SQL and reject drift after projection."""
-        if self._capture_cover_read is None or self._cover_read_observation is not None:
+        """Convenience scope for directly owned readers; nested reads reuse facts."""
+        if (
+            self._cover_read_observation is not None
+            and self._serialization_lock is not None
+            and self._serialization_lock.depth() > 0
+        ):
             yield
             return
-        capture = self._capture_cover_read
+        observation = self.capture_browse_observation()
+        lease = self._operation_lease()
+        lease.acquire()
         try:
-            try:
-                observation = capture()
-            except Exception:
-                raise MetadataReportError("review snapshot is unavailable") from None
-            self._cover_read_observation = observation
-            yield
-            try:
-                current = capture()
-            except Exception:
-                raise MetadataReportError("review snapshot is unavailable") from None
-            if current != observation:
-                raise MetadataReportError("review snapshot is unavailable")
+            with self.install_browse_observation(observation):
+                yield
         finally:
-            self._cover_read_observation = None
+            lease.release()
+        self.recheck_browse_observation(observation)
 
     def bind_cover_consideration_currentness(
         self, predicate: Callable[[str, str], str]
@@ -676,6 +740,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         return self._field_effect_activity.pending_field_effect_decision_counts()
 
+    @local_operation
     def field_effect_manual_override(
         self,
         review_case_id: str,
@@ -1090,9 +1155,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
         return self._review_scans.deferred_library_additions()
 
+    @local_operation
     def preparation_presentation(self, now: int) -> PreparationPresentation | None:
         return preparation_presentation_snapshot(self._connection, now)
 
+    @local_operation
     def dismiss_preparation_presentation(self, run_id: str, dismissed_at: int) -> None:
         transaction = self._transaction("dismiss_preparation_presentation")
         try:
@@ -1404,6 +1471,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def _schedule_current_shadow_work(self, case: ReviewCase, updated_at: int) -> None:
         self._review_preparation._schedule_current_shadow_work(case, updated_at)
 
+    @local_operation
     def _persisted_shadow_sources(
         self,
         review_case_id: str,
@@ -1455,6 +1523,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
         return case, packet
 
+    @local_operation
     def _validate_shadow_outcome_row(
         self, row: tuple[object, ...] | sqlite3.Row
     ) -> tuple[str, int]:
@@ -1521,6 +1590,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise MetadataReportError("shadow outcome persistence is invalid")
         return expected.to_json(), row[6]
 
+    @local_operation
     def persist_shadow_outcome(
         self,
         review_case_id: str,
@@ -1713,6 +1783,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> None:
         self._decisions._record_automatic_outcomes(outcome, occurred_at)
 
+    @local_operation
     def list_shadow_outcomes(self, limit: int) -> tuple[tuple[str, int], ...]:
         if type(limit) is not int or not 1 <= limit <= 50:
             raise MetadataReportError("shadow outcome sample is unavailable")
@@ -1932,6 +2003,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> tuple[dict[str, object], ...]:
         return self._decisions.get_review_case_history(review_case_id, limit)
 
+    @local_operation
     def preview_shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
         """Project the exact provider-independent packet without durable state."""
         try:
@@ -1945,9 +2017,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         ) as error:
             raise MetadataReportError("shadow review preview failed") from error
 
+    @local_operation
     def _shadow_packet(self, review_case_id: str) -> ShadowReviewPacket:
         return self._shadow_packet_source(review_case_id)[1]
 
+    @local_operation
     def _shadow_packet_source(
         self,
         review_case_id: str,
@@ -1970,6 +2044,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         ):
             raise ReviewAdmissionStaleError
 
+    @local_operation
     def _require_staged_shadow_projection_current(
         self, review_case_id: str, action: PipelineAction
     ) -> None:
@@ -2079,6 +2154,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._reports.artifact_is_referenced(digest)
 
     def close(self) -> None:
+        if self._owns_authority and self._admission is not None:
+            self._admission.close()
         try:
             self._connection.close()
         finally:
@@ -2097,8 +2174,14 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
 
     def setup_state_store(self) -> SetupStateStore:
         """The setup-only composition is the sole caller of this incomplete-state port."""
-        return SetupStateStore(self._connection, self._setup_serialization_lock)
+        store = SetupStateStore(self._connection, self._setup_serialization_lock)
+        if self._admission is not None:
+            store.bind_operation_admission(
+                self._admission, self._setup_serialization_lock
+            )
+        return store
 
+    @local_operation
     def has_first_boot_preparation(self) -> bool:
         """Read explicit setup-origin scan identities without inferring store history."""
         acknowledged = self._connection.execute(
@@ -2114,6 +2197,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             for scan_id, connection, library in rows
         )
 
+    @local_operation
     def acknowledge_first_boot_preparation(self) -> None:
         """Durably retire only the setup-origin handover presentation."""
         transaction = self._transaction("acknowledge_first_boot_preparation")
@@ -2322,6 +2406,7 @@ def open_repository(
     expected_identity: tuple[int, int] | None = None,
     cross_thread: bool = False,
     authority: object | None = None,
+    admission: OperationAdmission | None = None,
 ) -> SQLiteMetadataReportRepository:
     created = False
     descriptor = -1
@@ -2447,6 +2532,8 @@ def open_repository(
             repository.reviewer_access_store().snapshot()
         except ReviewerAccessStoreError as error:
             raise MetadataReportError("reviewer access state is unavailable") from error
+        if admission is not None:
+            repository.bind_operation_admission(admission)
         connection = None
         binding = None
         return repository

@@ -55,8 +55,10 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
+    LocalOperationLease,
     _revoke_connection,
     _unwind_outer,
+    local_operation,
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -153,7 +155,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         self._refresh_metadata_policy_transition = refresh_metadata_policy_transition
         self._enqueue_provider_recovery_outbox = enqueue_provider_recovery_outbox
         self._review_pipeline_claim: PipelineAction | None = None
+        self._output_lease: LocalOperationLease | None = None
 
+    @local_operation
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None:
         transaction = self._transaction("claim_review_pipeline_action")
         try:
@@ -373,6 +377,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 raise
         raise interruption from None
 
+    @local_operation
     def claim_review_pipeline_work(
         self, work_id: str, claimed_at: int
     ) -> PipelineAction | None:
@@ -452,6 +457,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 raise
         raise interruption from None
 
+    @local_operation
     def stage_provider_retry_successor(
         self, source_report_id: str, report: MetadataReport, staged_at: int
     ) -> str:
@@ -498,6 +504,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         )
         return cast(str, row[0])
 
+    @local_operation
     def provider_retry_work_id(self, report_id: str) -> str:
         try:
             row = self._connection.execute(
@@ -513,6 +520,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             raise MetadataReportError("provider retry staging is stale")
         return cast(str, row[0])
 
+    @local_operation
     def provider_retry_complete(self, report_id: str) -> bool:
         try:
             row = self._connection.execute(
@@ -528,6 +536,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ) from error
         return row is not None
 
+    @local_operation
     def completed_provider_retry_successor(self, source_report_id: str) -> str | None:
         """Return only the exact staged successor that completed package cutover."""
         if type(source_report_id) is not str or not source_report_id:
@@ -549,6 +558,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             raise MetadataReportError("provider retry staging conflicts")
         return None if not rows else rows[0][0]
 
+    @local_operation
     def complete_review_discovery(
         self,
         action: PipelineAction,
@@ -951,6 +961,10 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             raise MetadataReportError("review preparation state is invalid")
         if action.stage == "admission" and output_id is None:
             target = ("complete", None)
+        lease = self._output_lease
+        if lease is None:
+            lease = self._operation_lease()
+            lease.acquire()
         try:
             if not self._connection.in_transaction:
                 self._connection.execute("BEGIN IMMEDIATE")
@@ -1085,20 +1099,39 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 ) from error
             else:
                 raise
+        finally:
+            try:
+                clean = not self._connection.in_transaction
+            except BaseException:
+                clean = False
+            if clean or _revoke_connection(self._connection):
+                if lease is self._output_lease:
+                    self._output_lease = None
+                lease.release()
         raise interruption from None
 
     def begin_review_pipeline_output(self) -> None:
-        if self._connection.in_transaction:
+        lease = self._operation_lease()
+        lease.acquire()
+        try:
+            already_open = self._connection.in_transaction
+        except BaseException:
+            if _revoke_connection(self._connection):
+                lease.release()
+            raise
+        if already_open:
+            lease.release()
             raise MetadataReportError("review preparation state is invalid")
         failure: BaseException | None = None
         try:
             self._connection.execute("BEGIN IMMEDIATE")
             if not self._connection.in_transaction:
                 raise MetadataReportError("review preparation state is invalid")
+            self._output_lease = lease
         except BaseException as error:
             cleanup_proven, _cleanup_error = _unwind_outer(self._connection)
-            if not cleanup_proven:
-                _revoke_connection(self._connection)
+            if cleanup_proven or _revoke_connection(self._connection):
+                lease.release()
             failure = error
         if isinstance(failure, sqlite3.Error):
             raise MetadataReportError(
@@ -1115,8 +1148,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
     def rollback_review_pipeline_output(self) -> None:
         original = sys.exception()
         cleanup_proven, cleanup_error = _unwind_outer(self._connection)
-        if not cleanup_proven:
-            _revoke_connection(self._connection)
+        releasable = cleanup_proven or _revoke_connection(self._connection)
+        if releasable and self._output_lease is not None:
+            lease = self._output_lease
+            self._output_lease = None
+            lease.release()
         if original is not None:
             return
         if isinstance(cleanup_error, sqlite3.Error):
@@ -1126,6 +1162,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         if cleanup_error is not None:
             raise cleanup_error from None
 
+    @local_operation
     def complete_review_extraction_publication(
         self,
         action: PipelineAction,
@@ -1285,6 +1322,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             self.claim_review_pipeline_action(completed_at) if claim_next else None
         )
 
+    @local_operation
     def fail_review_pipeline_action(
         self,
         action: PipelineAction,
@@ -1437,6 +1475,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 raise
         raise interruption from None
 
+    @local_operation
     def review_case_ready_at(self, review_case_id: str) -> int | None:
         """Return the exact preparation-complete checkpoint for advisory timing."""
         try:

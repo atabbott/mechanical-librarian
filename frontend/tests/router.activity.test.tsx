@@ -1339,6 +1339,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ eventType: 'policy', page: 1 }),
         expect.anything(),
+        'foreground',
       ),
     )
     expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(1)
@@ -1347,6 +1348,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ eventType: 'policy', page: 2 }),
         expect.anything(),
+        'foreground',
       ),
     )
   })
@@ -1401,6 +1403,7 @@ describe('Activity route', () => {
           expect(http.getActivity).toHaveBeenLastCalledWith(
             expect.objectContaining({ eventType: 'review' }),
             expect.anything(),
+            'foreground',
           ),
         )
         const originalNavigate = router.navigate.bind(router)
@@ -1486,6 +1489,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ q: 'ab', page: 1 }),
         expect.anything(),
+        'foreground',
       )
       expect(screen.getByRole('searchbox', { name: 'Search activity' })).toHaveFocus()
 
@@ -1497,6 +1501,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ q: 'desktop', page: 1 }),
         expect.anything(),
+        'foreground',
       )
       expect(search).toHaveValue('desktop')
       expect(search).toHaveFocus()
@@ -1510,6 +1515,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ q: 'desktop', page: 2 }),
         expect.anything(),
+        'foreground',
       ),
     )
     await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toHaveFocus())
@@ -1521,6 +1527,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ page: 3 }),
         expect.anything(),
+        'foreground',
       ),
     )
     await waitFor(() =>
@@ -1533,6 +1540,7 @@ describe('Activity route', () => {
     expect(http.getActivity).toHaveBeenLastCalledWith(
       expect.objectContaining({ page: 3 }),
       expect.anything(),
+      'foreground',
     )
     await waitFor(() =>
       expect(screen.getByRole('spinbutton', { name: 'Activity page number' })).toHaveValue(3),
@@ -1590,6 +1598,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ page: 3, pageSize: 50 }),
         expect.anything(),
+        'foreground',
       ),
     )
   })
@@ -1735,6 +1744,7 @@ describe('Activity route', () => {
       expect(getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ page: 2 }),
         expect.anything(),
+        'foreground',
       ),
     )
     expect(getActivity.mock.calls.filter(([search]) => search.page === 2)).toHaveLength(1)
@@ -1906,6 +1916,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ q: 'desktop' }),
         expect.anything(),
+        'foreground',
       ),
     )
   }, 10_000)
@@ -1975,6 +1986,7 @@ describe('Activity route', () => {
       expect(http.getActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({ q: 'desktop' }),
         expect.anything(),
+        'foreground',
       ),
     )
   })
@@ -2175,4 +2187,32 @@ it.each([
   expect(screen.getByText(reason)).toBeVisible()
   expect(screen.getByText('No ISBN change was prepared at this evaluation')).toBeVisible()
   expect(screen.queryByRole('button', { name: /Apply ISBN|Retry ISBN/ })).toBeNull()
+})
+
+it('skips speculative Activity data work and starts its required navigation read in foreground', async () => {
+  const reads: { signal: AbortSignal | undefined; purpose: string | undefined; resolve: (value: ActivityView) => void }[] = []
+  const http = createHttp()
+  http.getActivity = vi.fn<ReviewHttp['getActivity']>((_search, signal, purpose) =>
+    new Promise((resolve, reject) => {
+      reads.push({ signal, purpose, resolve })
+      signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+    }),
+  ).mockResolvedValueOnce(activity())
+  const { router } = renderRoute('/library?lens=all', http)
+  expect(await screen.findByRole('heading', { name: 'Works' })).toBeVisible()
+  await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(1))
+  expect(vi.mocked(http.getActivity).mock.calls[0]?.[2]).toBe('foreground')
+  await router.preloadRoute({ to: '/activity' })
+  expect(reads).toHaveLength(0)
+  let navigation: Promise<void> | undefined
+  act(() => { navigation = router.navigate({ to: '/activity' }) })
+  await waitFor(() => expect(reads).toHaveLength(1))
+  expect(reads[0]?.purpose).toBe('foreground')
+  expect(reads[0]?.signal?.aborted).toBe(false)
+  await act(async () => {
+    reads[0]?.resolve(activity())
+    await navigation
+  })
+  expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
+  expect(http.getActivity).toHaveBeenCalledTimes(2)
 })

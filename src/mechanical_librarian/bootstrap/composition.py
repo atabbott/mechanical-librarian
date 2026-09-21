@@ -191,6 +191,7 @@ from mechanical_librarian.application.metadata_report import (
     admitted_audiobook_identity,
     require_report_current,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.owner_settings import (
     FileOwnerSettingsRepository,
     OwnerSettingsOperations,
@@ -223,6 +224,7 @@ from mechanical_librarian.application.provider_retry_successor import (
     ProviderRetrySuccessorError,
 )
 from mechanical_librarian.application.review_application import (
+    ReviewApplication,
     compose_review_application,
 )
 from mechanical_librarian.application.review_cases import (
@@ -415,7 +417,9 @@ class _StoreRuntimeActivation:
         artifact_store_path: Path,
         settings_store: Any,
         repository_authority: object,
+        operation_admission: OperationAdmission,
     ) -> None:
+        self._operation_admission = operation_admission
         self._bootstrap = bootstrap
         self._database_path = database_path
         self._catalogue_path = catalogue_path
@@ -447,6 +451,7 @@ class _StoreRuntimeActivation:
             self._catalogue_path,
             self._artifact_store_path,
             repository_authority=self._repository_authority,
+            operation_admission=self._operation_admission,
             authority_snapshot=snapshot,
             activation=self,
         )
@@ -482,6 +487,7 @@ class _StoreRuntimeActivation:
                 self._catalogue_path,
                 self._artifact_store_path,
                 repository_authority=self._repository_authority,
+                operation_admission=self._operation_admission,
                 authority_snapshot=snapshot,
                 activation=self,
                 first_boot=True,
@@ -719,6 +725,7 @@ def compose_continuous_guarded_application(
         scan_progress=preparation.progress,
         provider_recovery_snapshot=provider_recovery.activity_snapshot,
         activity_snapshot=repository.field_effect_activity_snapshot,
+        operation_admission=repository.operation_admission,
     )
 
 
@@ -753,6 +760,7 @@ def compose_field_effect_activity_projection(
             else None
         ),
         activity_snapshot=repository.field_effect_activity_snapshot,
+        operation_admission=repository.operation_admission,
     )
 
 
@@ -761,10 +769,15 @@ def open_field_effect_activity_projection(
     database_path: Path,
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    admission: OperationAdmission | None = None,
 ) -> tuple[ContinuousGuardedApplication, Callable[[], None]]:
     """Open the Activity reader independently of the state-owner connection."""
     repository = open_repository(
-        database_path, create=False, authority=authority, cross_thread=True
+        database_path,
+        create=False,
+        authority=authority,
+        cross_thread=True,
+        admission=admission,
     )
     try:
         repository.configure_activity_page_reader()
@@ -2186,6 +2199,7 @@ def create_review_pipeline(
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
     credentials: dict[str, str] | None = None,
     first_boot: bool = False,
+    admission: OperationAdmission | None = None,
 ) -> ReviewPreparationSupervisor:
     artifact_recovery_lock = threading.Lock()
     artifacts_recovered = False
@@ -2302,7 +2316,10 @@ def create_review_pipeline(
 
     def repository_factory() -> SQLiteMetadataReportRepository:
         repository = open_repository(
-            database_path, create=False, authority=database_authority
+            database_path,
+            create=False,
+            authority=database_authority,
+            admission=admission,
         )
         _bind_description_authority(repository, configuration.review)
         return repository
@@ -2313,6 +2330,7 @@ def create_review_pipeline(
             create=False,
             authority=database_authority,
             cross_thread=True,
+            admission=admission,
         )
         _bind_description_authority(repository, configuration.review)
         return repository
@@ -2717,7 +2735,7 @@ def create_review_pipeline(
         discovery_lock=discovery_lock,
         clock=lambda: int(time.time()),
     )
-    pipeline = stages.pipeline(timing, first_boot=first_boot)
+    pipeline = stages.pipeline(timing, first_boot=first_boot, admission=admission)
     pipeline_holder["pipeline"] = pipeline
     provider_recovery.require_generation_compatible(
         generation=configuration.provider_recovery_generation
@@ -3175,6 +3193,7 @@ def compose_store_runtime_generation(
     artifact_store_path: Path,
     *,
     repository_authority: object,
+    operation_admission: OperationAdmission,
     authority_snapshot: tuple[SettingsView, dict[str, str], str] | None = None,
     activation: _StoreRuntimeActivation | None = None,
     first_boot: bool = False,
@@ -3186,6 +3205,7 @@ def compose_store_runtime_generation(
         create=True,
         cross_thread=True,
         authority=repository_authority,
+        admission=operation_admission,
     )
     try:
         session_store = _open_review_session_store(database_path)
@@ -3249,6 +3269,7 @@ def compose_store_runtime_generation(
             provider_recovery,
             credentials=credentials,
             first_boot=first_boot,
+            admission=repository.operation_admission,
         )
         field_application = (
             compose_continuous_guarded_application(
@@ -3273,6 +3294,7 @@ def compose_store_runtime_generation(
                     database_path,
                     repository.authority,
                     provider_recovery,
+                    admission=repository.operation_admission,
                 )
             )
         support_bundle = SupportBundle(
@@ -3306,24 +3328,17 @@ def compose_store_runtime_generation(
             reviewer_access,
             provider_recovery,
         )
-        browse_repository = None
         try:
-            browse_repository = open_review_browse_repository(
-                database_path,
-                repository.authority,
-                cover_considerations,
-                provider_recovery,
-            )
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
                 state_owner=repository,
                 session_store=session_store,
                 case_store=repository,
                 decision_store=repository,
-                library_store=browse_repository,
-                report_store=repository,
-                browse_observation=browse_repository.browse_observation,
-                close_browse=browse_repository.close,
+                library_store=repository,
+                browse_observation=repository,
+                admission=repository.operation_admission,
+                operation_lock=repository.operation_lock,
                 policy_store=repository,
                 verify_password=owner_binding[0],
                 session_digest=owner_binding[1],
@@ -3354,8 +3369,6 @@ def compose_store_runtime_generation(
             )
             review_app = create_review_app(review_application, review)
         except BaseException:
-            if browse_repository is not None:
-                browse_repository.close()
             if close_activity_projection is not None:
                 close_activity_projection()
             raise
@@ -3463,6 +3476,7 @@ def _compose_setup_runtime_generation(
         artifact_store_path,
         repository.owner_settings_store(),
         repository.authority,
+        operation_admission=repository.operation_admission,
     )
 
     def activate_setup(expected_revision: int) -> None:
@@ -3615,7 +3629,13 @@ def run_review_server(
     with identity as tls:
         if authority == "store":
             assert bootstrap is not None
-            control = open_repository(database_path, create=True, cross_thread=True)
+            operation_admission = OperationAdmission()
+            control = open_repository(
+                database_path,
+                create=True,
+                cross_thread=True,
+                admission=operation_admission,
+            )
             setup_session_store: SQLiteReviewSessionRepository | None = None
             try:
                 if first_boot_mode in {
@@ -3641,6 +3661,7 @@ def run_review_server(
                         artifact_store_path,
                         control.owner_settings_store(),
                         control.authority,
+                        operation_admission=operation_admission,
                     )
                     runtime, _ = compose_store_runtime_generation(
                         bootstrap,
@@ -3648,6 +3669,7 @@ def run_review_server(
                         catalogue_path,
                         artifact_store_path,
                         repository_authority=control.authority,
+                        operation_admission=operation_admission,
                         activation=activation,
                     )
                     acknowledge = activation.acknowledge_initial_runtime
@@ -3674,12 +3696,18 @@ def run_review_server(
         CoverArtifactStore(artifact_store_path, create=True)
         open_catalogue(catalogue_path, create=True).close()
         private_root = _private_root(database_path)
-        repository = open_repository(database_path, create=True, cross_thread=True)
+        repository = open_repository(
+            database_path,
+            create=True,
+            cross_thread=True,
+            admission=OperationAdmission(),
+        )
         try:
             session_store = _open_review_session_store(database_path)
         except Exception:
             repository.close()
             raise
+        active_review_application: ReviewApplication | None = None
         try:
             assert configuration is not None and review is not None
             credentials = _load_batch_credentials(
@@ -3734,6 +3762,7 @@ def run_review_server(
                 provider_recovery,
                 credentials=credentials,
                 first_boot=first_boot,
+                admission=repository.operation_admission,
             )
             field_application = (
                 compose_continuous_guarded_application(
@@ -3758,6 +3787,7 @@ def run_review_server(
                         database_path,
                         repository.authority,
                         provider_recovery,
+                        admission=repository.operation_admission,
                     )
                 )
             support_bundle = SupportBundle(
@@ -3791,23 +3821,16 @@ def run_review_server(
                 reviewer_access,
                 provider_recovery,
             )
-            browse_repository = None
             try:
-                browse_repository = open_review_browse_repository(
-                    database_path,
-                    repository.authority,
-                    cover_considerations,
-                    provider_recovery,
-                )
                 review_application = compose_review_application(
                     state_owner=repository,
                     session_store=session_store,
                     case_store=repository,
                     decision_store=repository,
-                    library_store=browse_repository,
-                    report_store=repository,
-                    browse_observation=browse_repository.browse_observation,
-                    close_browse=browse_repository.close,
+                    library_store=repository,
+                    browse_observation=repository,
+                    admission=repository.operation_admission,
+                    operation_lock=repository.operation_lock,
                     policy_store=repository,
                     verify_password=password_binding[0],
                     session_digest=password_binding[1],
@@ -3831,10 +3854,9 @@ def run_review_server(
                     reviewer_access=reviewer_access,
                     first_boot=first_boot,
                 )
+                active_review_application = review_application
                 app = create_review_app(review_application, review)
             except BaseException:
-                if browse_repository is not None:
-                    browse_repository.close()
                 if close_activity_projection is not None:
                     close_activity_projection()
                 raise
@@ -3890,9 +3912,17 @@ def run_review_server(
                     else {}
                 ),
             )
-        except Exception:
-            session_store.close()
-            repository.close()
+        except Exception as error:
+            if active_review_application is None:
+                session_store.close()
+                repository.close()
+            else:
+                try:
+                    active_review_application.stop()
+                except Exception as shutdown_error:
+                    error.add_note(f"further shutdown failure: {shutdown_error!r}")
+                else:
+                    session_store.close()
             raise
 
 
@@ -4338,51 +4368,15 @@ def _compose_cover_considerations(
         )
     )
     service.update_policy(policy)
-    return service
-
-
-def open_review_browse_repository(
-    database_path: Path,
-    authority: object,
-    cover_considerations: CoverConsiderationService,
-    provider_recovery: SQLiteProviderRecoveryStore | None,
-) -> SQLiteMetadataReportRepository:
-    """Own one persistent borrower for complete Library/Attention operations."""
-    repository = open_repository(
-        database_path, create=False, authority=authority, cross_thread=True
+    repository.bind_cover_read_observation(
+        lambda: (
+            service.current_authority(),
+            frozenset()
+            if provider_recovery is None
+            else provider_recovery.cover_fetching_identities(),
+        )
     )
-    try:
-        repository.bind_current_cover_authority(
-            *cover_considerations.current_authority()
-        )
-        repository.bind_cover_consideration_currentness(
-            lambda document, replay: cover_currentness_from_facts(
-                document,
-                replay,
-                lambda connection, library, item, report: (
-                    False
-                    if provider_recovery is None
-                    else provider_recovery.cover_fetching(
-                        target_connection=connection,
-                        library=library,
-                        item=item,
-                        source_report_id=report,
-                    )
-                ),
-            )
-        )
-        repository.bind_cover_read_observation(
-            lambda: (
-                cover_considerations.current_authority(),
-                frozenset()
-                if provider_recovery is None
-                else provider_recovery.cover_fetching_identities(),
-            )
-        )
-        return repository
-    except BaseException:
-        repository.close()
-        raise
+    return service
 
 
 class _OfflineSessionStore:

@@ -187,7 +187,12 @@ describe('Library review ownership', () => {
     await user.click(screen.getByRole('button', { name: 'Load more evidence' }))
     expect(await screen.findByText('Title: <script>Second observation</script>')).toBeVisible()
     expect(document.querySelector('script')).toBeNull()
-    expect(getEvidence).toHaveBeenLastCalledWith('case-1', 'next-page', expect.any(AbortSignal))
+    expect(getEvidence).toHaveBeenLastCalledWith(
+      'case-1',
+      'next-page',
+      expect.any(AbortSignal),
+      'foreground',
+    )
   })
 
   it('shows retained conflicting identifiers as observations without offering choices', async () => {
@@ -541,6 +546,7 @@ describe('Library review ownership', () => {
     expect(http.getAttention).toHaveBeenLastCalledWith(
       { cursor: 'later-page' },
       expect.any(AbortSignal),
+      'foreground',
     )
   })
 
@@ -584,6 +590,7 @@ describe('Library review ownership', () => {
         review_case_id: 'case-1',
         selected_value: field.proposedValues[0] ?? null,
         target_fingerprint: field.targetFingerprint,
+        confirmation: { status: 'confirmed' as const, case: current },
         invalidation_sequences: [],
       }
     })

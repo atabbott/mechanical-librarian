@@ -12,6 +12,7 @@ import type {
   ActivityView,
   AppearanceView,
   CaseDetailView,
+  DecisionAcknowledgementView,
   LibraryView,
   PolicyStateView,
   PreparationView,
@@ -21,6 +22,25 @@ import type {
 } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { createApplicationRouter } from '../src/router'
+
+/** A synthetic committed owner decision and its exact postcommit readback. */
+export const recordedAcknowledgement = (
+  before: CaseDetailView,
+  acknowledgement: Omit<Extract<DecisionAcknowledgementView, { actor: string }>, 'confirmation'>,
+): DecisionAcknowledgementView => ({
+  ...acknowledgement,
+  confirmation: {
+    status: 'confirmed',
+    case: {
+      ...before,
+      fields: before.fields.map((field) =>
+        field.destination === acknowledgement.destination
+          ? { ...field, needsAttention: false, humanDecision: acknowledgement }
+          : field,
+      ),
+    },
+  },
+})
 
 export const library: LibraryView = {
   lens: 'all',
@@ -279,20 +299,25 @@ export const createHttp = (): ReviewHttp => ({
     paused: false,
     libraries: [],
   })),
-  recordDecision: vi.fn(async () => ({
-    invalidation_sequences: [],
-    schema_version: 'review-decision-v1',
-    actor: 'owner',
-    application: 'apply' as const,
-    decision_id: 'decision-1',
-    destination: 'title',
-    occurred_at: 1,
-    outcome: 'keep_current',
-    proposal_id: 'proposal-1',
-    review_case_id: 'case-1',
-    selected_value: null,
-    target_fingerprint: 'fingerprint-1',
-  })),
+  recordDecision: vi.fn(async (caseId, command) =>
+    recordedAcknowledgement(
+      { ...detail, id: caseId },
+      {
+        invalidation_sequences: [],
+        schema_version: 'review-decision-v1',
+        actor: 'owner',
+        application: 'apply' as const,
+        decision_id: 'decision-1',
+        destination: command.destination,
+        occurred_at: 1,
+        outcome: command.outcome,
+        proposal_id: command.proposalId,
+        review_case_id: caseId,
+        selected_value: command.selectedValue ?? null,
+        target_fingerprint: command.targetFingerprint,
+      },
+    ),
+  ),
   retryDescriptionAdvice: vi.fn(async () => {
     throw new Error('not configured')
   }),

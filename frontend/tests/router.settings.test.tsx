@@ -1341,3 +1341,32 @@ it('presents peer reviewer tasks with one shared sign-in and labelled descriptio
     within(description).getByRole('button', { name: 'Use this OpenRouter model for descriptions' }),
   ).toBeDisabled()
 })
+
+it.each(['clear', 'start'] as const)('reconciles a partially completed Codex %s without claiming success or retrying', async (command) => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  const configured = {
+    ...reviewerView,
+    mapping: { engine: 'codex' as const },
+    codex: { ...reviewerView.codex, state: 'configured' as const, reason: null },
+  }
+  const reconciled = {
+    ...reviewerView, revision: configured.revision + 1, mapping: null,
+    codex: { ...reviewerView.codex, state: 'ready' as const, reason: null },
+  }
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn<ReviewHttp['getReviewerAccess']>()
+    .mockResolvedValueOnce(configured).mockResolvedValue(reconciled)
+  http.getCodexDevice = vi.fn(async () => ({ state: 'ready' as const, failure: null, verification_url: null, user_code: null, expires_in_seconds: null }))
+  http.clearCodex = vi.fn(async () => { throw new ApiError(409, 'reviewer_access_stale') })
+  http.startCodexDevice = vi.fn(async () => { throw new ApiError(409, 'reviewer_access_stale') })
+  renderRoute('/settings?group=reviewer', http)
+  await user.click(await screen.findByRole('button', { name: command === 'clear' ? 'Clear Codex sign-in' : 'Replace Codex sign-in' }))
+  await user.click(screen.getByRole('button', { name: command === 'clear' ? 'Confirm clear Codex sign-in' : 'Confirm replace Codex sign-in' }))
+  expect(await screen.findByText(/The change could not be fully confirmed/u)).toHaveTextContent('Your prior sign-in or reviewer selection may have changed')
+  await waitFor(() => expect(http.getReviewerAccess).toHaveBeenCalledTimes(2))
+  expect(http.getCodexDevice).toHaveBeenCalledOnce()
+  expect(screen.getByText(/Current selection:/u)).toHaveTextContent('No reviewer')
+  expect(command === 'clear' ? http.clearCodex : http.startCodexDevice).toHaveBeenCalledOnce()
+  expect(command === 'clear' ? http.startCodexDevice : http.clearCodex).not.toHaveBeenCalled()
+})

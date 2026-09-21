@@ -26,6 +26,7 @@ from mechanical_librarian.application.configuration import (
     ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.owner_settings import (
     FileOwnerSettingsRepository,
     OwnerSettingsOperations,
@@ -76,7 +77,9 @@ class OwnerResponsivenessFixture:
         self.root = root
         self.database = root / "reports.sqlite"
         with ExitStack() as activation:
-            self.repository = open_repository(self.database, cross_thread=True)
+            self.repository = open_repository(
+                self.database, cross_thread=True, admission=OperationAdmission()
+            )
             activation.callback(self.repository.close)
             self.recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
             activation.callback(self.recovery.close)
@@ -216,13 +219,7 @@ class OwnerResponsivenessFixture:
                     ),
                     key=lambda case: str(case.target["item"]),
                 )
-            self.browse = composition.open_review_browse_repository(
-                self.database,
-                self.repository.authority,
-                self.covers,
-                self.recovery,
-            )
-            activation.callback(self.browse.close)
+            self.browse = self.repository
             self.preparation = self._preparation() if prepare else None
             configuration = ApplicationConfiguration(
                 (TargetConnectionConfiguration("primary", "http://127.0.0.1:1", None),),
@@ -246,10 +243,10 @@ class OwnerResponsivenessFixture:
                 case_store=self.repository,
                 decision_store=self.repository,
                 library_store=self.browse,
-                report_store=self.repository,
                 policy_store=self.repository,
-                browse_observation=self.browse.browse_observation,
-                close_browse=self.browse.close,
+                browse_observation=self.browse,
+                admission=self.repository.operation_admission,
+                operation_lock=self.repository.operation_lock,
                 close_state_owner=True,
                 verify_password=owner_binding[0],
                 session_digest=owner_binding[1],
@@ -288,7 +285,10 @@ class OwnerResponsivenessFixture:
 
         def repository():
             return open_repository(
-                self.database, create=False, authority=self.repository.authority
+                self.database,
+                create=False,
+                authority=self.repository.authority,
+                admission=self.repository.operation_admission,
             )
 
         def discover(_connection: str, library: str):
@@ -360,12 +360,14 @@ class OwnerResponsivenessFixture:
             return result["status"], result.get("review_case_id")
 
         pipeline = ReviewPreparationPipeline(
+            admission=self.repository.operation_admission,
             repository_factory=repository,
             observation_repository_factory=lambda: open_repository(
                 self.database,
                 create=False,
                 authority=self.repository.authority,
                 cross_thread=True,
+                admission=self.repository.operation_admission,
             ),
             libraries=tuple(
                 ("primary", f"books-{index}", f"books-{index}", "f" * 64)
@@ -381,11 +383,9 @@ class OwnerResponsivenessFixture:
         return ReviewPreparationSupervisor(pipeline, polling_interval_seconds=None)
 
     def close(self) -> None:
-        try:
-            self.application.stop()
-        finally:
-            self.sessions.close()
-            self.recovery.close()
+        self.application.stop()
+        self.sessions.close()
+        self.recovery.close()
 
 
 @contextmanager

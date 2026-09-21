@@ -23,7 +23,10 @@ from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
@@ -220,6 +223,7 @@ class SQLiteReportRepository(ConnectionScoped):
             ) from failure
         raise failure from None
 
+    @local_operation
     def get(self, report_id: str) -> str:
         try:
             row = self._connection.execute(
@@ -235,6 +239,7 @@ class SQLiteReportRepository(ConnectionScoped):
                 raise
             raise MetadataReportError("persisted report is invalid") from error
 
+    @local_operation
     def get_proposal_input(self, report_id: str) -> str:
         """Read proposal input without collapsing absence into a store fault."""
         try:
@@ -251,6 +256,7 @@ class SQLiteReportRepository(ConnectionScoped):
         except MetadataReportError as error:
             raise ReportValueError("persisted report is invalid") from error
 
+    @local_operation
     def current_optional(
         self, connection: str, library: str, item: str, file_identity: str
     ) -> str | None:
@@ -279,6 +285,7 @@ class SQLiteReportRepository(ConnectionScoped):
             raise MetadataReportError("persisted current report scope disagrees")
         return document
 
+    @local_operation
     def preview_digest(
         self, report_id: str, artifact_id: str, preview_variant: str
     ) -> str:
@@ -316,6 +323,7 @@ class SQLiteReportRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise MetadataReportError("persisted cover is unavailable") from error
 
+    @local_operation
     def preview_digest_for_artifact(
         self, artifact_id: str, preview_variant: str
     ) -> str:
@@ -331,6 +339,7 @@ class SQLiteReportRepository(ConnectionScoped):
             raise MetadataReportError("persisted cover is unavailable")
         return rows[0][0]
 
+    @local_operation
     def artifact_is_referenced(self, digest: str) -> bool:
         """Check one cleanup candidate without semantically auditing history."""
         if (

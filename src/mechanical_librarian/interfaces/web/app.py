@@ -475,15 +475,6 @@ class _DescriptionRetryAcknowledgement(_ClosedModel):
     queued: Literal[True]
 
 
-class _DescriptionSelectionAcknowledgement(_ClosedModel):
-    schema_version: Literal["description-selection-ack-v1"] = (
-        "description-selection-ack-v1"
-    )
-    decision_id: str
-    advised: Literal[True]
-    invalidation_sequences: list[int]
-
-
 class _ReviewField(_ClosedModel):
     classification: Literal[
         "needs_attention",
@@ -579,6 +570,30 @@ class _CaseDetailResponse(_ClosedModel):
     schema_version: Literal["review-case-detail-v4"]
     target: _TargetIdentity
     writes_consented: bool
+
+
+class _ConfirmedDecision(_ClosedModel):
+    status: Literal["confirmed"]
+    case: _CaseDetailResponse
+
+
+class _UnavailableDecisionConfirmation(_ClosedModel):
+    status: Literal["unavailable"]
+
+
+_DecisionConfirmation: TypeAlias = Annotated[
+    _ConfirmedDecision | _UnavailableDecisionConfirmation, Field(discriminator="status")
+]
+
+
+class _DescriptionSelectionAcknowledgement(_ClosedModel):
+    schema_version: Literal["description-selection-ack-v1"] = (
+        "description-selection-ack-v1"
+    )
+    confirmation: _DecisionConfirmation
+    decision_id: str
+    advised: Literal[True]
+    invalidation_sequences: list[int]
 
 
 class _CaseSuccessorResponse(_ClosedModel):
@@ -1204,6 +1219,7 @@ class _DecisionRequest(_ClosedModel):
 
 
 class _DecisionAcknowledgement(_DecisionProjection):
+    confirmation: _DecisionConfirmation
     # The stream positions this decision's own announcements were given, so the
     # tab that recorded it can recognise its echo. Three: the case, its Library
     # row, and the write queue. Bounded because it is a fixed set of
@@ -1917,7 +1933,16 @@ def create_review_app(
                 and request.headers.get("origin") != configuration.canonical_origin
             ):
                 return _secured_error(403, "origin", hsts=origin.scheme == "https")
-        response = await call_next(request)
+        # This hint changes scheduling only. Route authentication and CSRF still
+        # run before application admission; mutations always remain foreground.
+        with application.classify_request(
+            "background"
+            if request.method == "GET"
+            and request.scope["path"].startswith("/api/v1/")
+            and request.headers.get("x-ml-work-class") == "background"
+            else "foreground"
+        ):
+            response = await call_next(request)
         _set_security_headers(response, hsts=origin.scheme == "https")
         return response
 

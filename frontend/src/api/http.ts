@@ -1,3 +1,5 @@
+export type ReadWorkClass = 'foreground' | 'background'
+
 import type { components } from '../generated/review-api'
 import settingsVocabulary from '../../../src/mechanical_librarian/interfaces/web/settings_vocabulary.json'
 
@@ -785,11 +787,18 @@ export interface DecisionCommand {
   authoredDescription?: { candidateId: string; binding: Schema<'DescriptionAdviceBinding'> }
 }
 
+type DecisionWireAcknowledgement =
+  Schema<'_DecisionAcknowledgement'> | Schema<'_DescriptionSelectionAcknowledgement'>
+export type DecisionAcknowledgementView = (
+  | Omit<Schema<'_DecisionAcknowledgement'>, 'confirmation'>
+  | Omit<Schema<'_DescriptionSelectionAcknowledgement'>, 'confirmation'>
+) & { confirmation: { status: 'confirmed'; case: CaseDetailView } | { status: 'unavailable' } }
+
 export interface ReviewHttp {
-  getAppearance(signal?: AbortSignal): Promise<AppearanceView>
-  getSettings(signal?: AbortSignal): Promise<SettingsView>
+  getAppearance(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<AppearanceView>
+  getSettings(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<SettingsView>
   writeSettings(value: SettingsWrite, signal?: AbortSignal): Promise<SettingsView>
-  getReviewerAccess(signal?: AbortSignal): Promise<ReviewerAccessView>
+  getReviewerAccess(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<ReviewerAccessView>
   refreshOpenRouter(signal?: AbortSignal, task?: ReviewerTask): Promise<ReviewerAccessView>
   configureOpenRouter(
     value: { expected_revision: number; api_key: string; model: string; task?: ReviewerTask },
@@ -808,22 +817,51 @@ export interface ReviewHttp {
     task?: ReviewerTask,
   ): Promise<ReviewerAccessView>
   startCodexDevice(expectedRevision: number, signal?: AbortSignal): Promise<CodexDeviceStartResult>
-  getCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
+  getCodexDevice(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<CodexDeviceAuthState>
   recheckCodex(signal?: AbortSignal): Promise<CodexDeviceAuthState>
   cancelCodexDevice(signal?: AbortSignal): Promise<CodexDeviceAuthState>
   clearCodex(expectedRevision: number, signal?: AbortSignal): Promise<ReviewerAccessView>
-  getLibrary(search: LibrarySearch, signal?: AbortSignal): Promise<LibraryView>
-  getReportDetail(detailUrl: string, signal?: AbortSignal): Promise<ReportDetailView>
-  getAttention(search: AttentionSearch, signal?: AbortSignal): Promise<AttentionView>
-  getCaseDetail(reviewCaseId: string, signal?: AbortSignal): Promise<CaseDetailView>
-  getCaseSuccessor(reviewCaseId: string, signal?: AbortSignal): Promise<string | null>
-  getEvidence(reviewCaseId: string, cursor?: string, signal?: AbortSignal): Promise<EvidenceView>
-  getHistory(reviewCaseId: string, signal?: AbortSignal): Promise<HistoryView>
+  getLibrary(
+    search: LibrarySearch,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<LibraryView>
+  getReportDetail(
+    detailUrl: string,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<ReportDetailView>
+  getAttention(
+    search: AttentionSearch,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<AttentionView>
+  getCaseDetail(
+    reviewCaseId: string,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<CaseDetailView>
+  getCaseSuccessor(
+    reviewCaseId: string,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<string | null>
+  getEvidence(
+    reviewCaseId: string,
+    cursor?: string,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<EvidenceView>
+  getHistory(
+    reviewCaseId: string,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<HistoryView>
   retryCoverConsideration(
     reviewCaseId: string,
     signal?: AbortSignal,
   ): Promise<CoverConsiderationView>
-  getPreparation(signal?: AbortSignal): Promise<PreparationView>
+  getPreparation(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<PreparationView>
   preparationAction(
     path: string,
     signal?: AbortSignal,
@@ -833,20 +871,28 @@ export interface ReviewHttp {
     reviewCaseId: string,
     command: DecisionCommand,
     signal?: AbortSignal,
-  ): Promise<Schema<'_DecisionAcknowledgement'> | Schema<'_DescriptionSelectionAcknowledgement'>>
+  ): Promise<DecisionAcknowledgementView>
   retryDescriptionAdvice(reviewCaseId: string, signal?: AbortSignal): Promise<void>
   returnToAutomatic(reviewCaseId: string, destination: string, signal?: AbortSignal): Promise<void>
-  getPolicyState(signal?: AbortSignal): Promise<PolicyStateView>
-  getShadowPosture(signal?: AbortSignal): Promise<ShadowPostureView>
-  getAutomaticSafety(signal?: AbortSignal): Promise<AutomaticSafetyView>
-  getShadowSample(signal?: AbortSignal): Promise<ShadowSampleView>
-  getPolicyTransition(signal?: AbortSignal): Promise<PolicyTransitionView | null>
+  getPolicyState(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<PolicyStateView>
+  getShadowPosture(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<ShadowPostureView>
+  getAutomaticSafety(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<AutomaticSafetyView>
+  getShadowSample(signal?: AbortSignal, workClass?: ReadWorkClass): Promise<ShadowSampleView>
+  getPolicyTransition(
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<PolicyTransitionView | null>
   policyCommand<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T>
-  getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView>
+  getActivity(
+    search?: ActivitySearch,
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<ActivityView>
   getActivityTransitions(
     eventId: string,
     afterSequence?: number,
     signal?: AbortSignal,
+    workClass?: ReadWorkClass,
   ): Promise<ActivityTransitionsView>
   activityCommand(
     path: string,
@@ -945,23 +991,31 @@ export class ReviewApiClient implements ReviewHttp {
         : undefined
   }
 
-  async getLibrary(search: LibrarySearch, signal?: AbortSignal) {
+  async getLibrary(
+    search: LibrarySearch,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
     const p = new URLSearchParams({ lens: search.lens })
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
-    return mapLibrary(await this.read(`/api/v1/library?${p}`, signal))
+    return mapLibrary(await this.read(`/api/v1/library?${p}`, signal, workClass))
   }
   // The address is the one the library row handed back, followed rather than
   // rebuilt: an item id may hold any character a target permits, and only the
   // server that escaped it knows how.
-  async getReportDetail(detailUrl: string, signal?: AbortSignal) {
-    return mapReportDetail(await this.read(detailUrl, signal))
+  async getReportDetail(
+    detailUrl: string,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
+    return mapReportDetail(await this.read(detailUrl, signal, workClass))
   }
-  async getSettings(signal?: AbortSignal) {
-    return mapSettings(await this.read('/api/v1/settings', signal))
+  async getSettings(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return mapSettings(await this.read('/api/v1/settings', signal, workClass))
   }
-  async getAppearance(signal?: AbortSignal) {
-    const value: unknown = await this.read('/api/v1/appearance', signal)
+  async getAppearance(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    const value: unknown = await this.read('/api/v1/appearance', signal, workClass)
     if (
       !record(value) ||
       (value.reduced_motion !== 'follow_system' && value.reduced_motion !== 'always_reduced')
@@ -972,8 +1026,8 @@ export class ReviewApiClient implements ReviewHttp {
   async writeSettings(value: SettingsWrite, signal?: AbortSignal) {
     return mapSettings(await this.mutate('/api/v1/settings', value, signal, undefined, 'PATCH'))
   }
-  async getReviewerAccess(signal?: AbortSignal) {
-    return mapReviewerAccess(await this.read('/api/v1/reviewer-access', signal))
+  async getReviewerAccess(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return mapReviewerAccess(await this.read('/api/v1/reviewer-access', signal, workClass))
   }
   async refreshOpenRouter(signal?: AbortSignal, task?: ReviewerTask) {
     return mapReviewerAccess(
@@ -1050,8 +1104,10 @@ export class ReviewApiClient implements ReviewHttp {
       throw new ApiError(502, 'invalid_reviewer_access_response')
     return { access: mapReviewerAccess(value.access), device: mapCodexDevice(value.device) }
   }
-  async getCodexDevice(signal?: AbortSignal) {
-    return mapCodexDevice(await this.read('/api/v1/reviewer-access/codex/device', signal))
+  async getCodexDevice(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return mapCodexDevice(
+      await this.read('/api/v1/reviewer-access/codex/device', signal, workClass),
+    )
   }
   async recheckCodex(signal?: AbortSignal) {
     return mapCodexDevice(await this.mutate('/api/v1/reviewer-access/codex/recheck', {}, signal))
@@ -1072,20 +1128,33 @@ export class ReviewApiClient implements ReviewHttp {
       ),
     )
   }
-  async getAttention(search: AttentionSearch, signal?: AbortSignal) {
+  async getAttention(
+    search: AttentionSearch,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
     const p = new URLSearchParams()
     if (search.q) p.set('q', search.q)
     if (search.cursor) p.set('cursor', search.cursor)
-    return mapAttention(await this.read(`/api/v1/attention${p.size ? `?${p}` : ''}`, signal))
+    return mapAttention(
+      await this.read(`/api/v1/attention${p.size ? `?${p}` : ''}`, signal, workClass),
+    )
   }
-  async getCaseDetail(id: string, signal?: AbortSignal) {
-    return mapCaseDetail(await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}`, signal))
+  async getCaseDetail(id: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return mapCaseDetail(
+      await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}`, signal, workClass),
+    )
   }
 
-  async getCaseSuccessor(id: string, signal?: AbortSignal) {
+  async getCaseSuccessor(
+    id: string,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
     const value = await this.read(
       `/api/v1/review-cases/${encodeURIComponent(id)}/successor`,
       signal,
+      workClass,
     )
     if (typeof value !== 'object' || value === null || !('review_case_id' in value))
       throw new ApiError(502, 'invalid_response')
@@ -1094,16 +1163,25 @@ export class ReviewApiClient implements ReviewHttp {
       throw new ApiError(502, 'invalid_response')
     return successor
   }
-  async getEvidence(id: string, cursor?: string, signal?: AbortSignal) {
+  async getEvidence(
+    id: string,
+    cursor?: string,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ) {
     const p = new URLSearchParams({ limit: '50' })
     if (cursor) p.set('cursor', cursor)
     return mapEvidence(
-      await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/evidence?${p}`, signal),
+      await this.read(
+        `/api/v1/review-cases/${encodeURIComponent(id)}/evidence?${p}`,
+        signal,
+        workClass,
+      ),
     )
   }
-  async getHistory(id: string, signal?: AbortSignal) {
+  async getHistory(id: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return mapHistory(
-      await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/history`, signal),
+      await this.read(`/api/v1/review-cases/${encodeURIComponent(id)}/history`, signal, workClass),
     )
   }
   async retryCoverConsideration(id: string, signal?: AbortSignal) {
@@ -1117,8 +1195,8 @@ export class ReviewApiClient implements ReviewHttp {
     if (value === null) throw new ApiError(502, 'invalid_cover_consideration_response')
     return value
   }
-  async getPreparation(signal?: AbortSignal) {
-    return mapPreparation(await this.read('/api/v1/review-preparation', signal))
+  async getPreparation(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return mapPreparation(await this.read('/api/v1/review-preparation', signal, workClass))
   }
   async preparationAction(path: string, signal?: AbortSignal) {
     const value = await this.mutate(`/api/v1/review-preparation/${path}`, undefined, signal)
@@ -1132,7 +1210,7 @@ export class ReviewApiClient implements ReviewHttp {
   }
   async recordDecision(id: string, command: DecisionCommand, signal?: AbortSignal) {
     if (command.authoredDescription) {
-      return schemaVersionOnly<Schema<'_DescriptionSelectionAcknowledgement'>>(
+      return mapDecisionAcknowledgement(
         await this.mutate(
           `/api/v1/review-cases/${encodeURIComponent(id)}/description-advice/selection`,
           {
@@ -1143,6 +1221,7 @@ export class ReviewApiClient implements ReviewHttp {
           { 'idempotency-key': command.idempotencyKey },
         ),
         'description_selection',
+        id,
       )
     }
     const {
@@ -1154,7 +1233,7 @@ export class ReviewApiClient implements ReviewHttp {
       outcome,
       considerationId,
     } = command
-    return schemaVersionOnly<Schema<'_DecisionAcknowledgement'>>(
+    return mapDecisionAcknowledgement(
       await this.mutate(
         `/api/v1/review-cases/${encodeURIComponent(id)}/decisions`,
         {
@@ -1169,6 +1248,7 @@ export class ReviewApiClient implements ReviewHttp {
         { 'idempotency-key': idempotencyKey },
       ),
       'decision',
+      id,
     )
   }
   async retryDescriptionAdvice(id: string, signal?: AbortSignal) {
@@ -1187,31 +1267,31 @@ export class ReviewApiClient implements ReviewHttp {
       signal,
     )
   }
-  async getPolicyState(signal?: AbortSignal) {
+  async getPolicyState(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return schemaVersionOnly<PolicyStateView>(
-      await this.read('/api/v1/metadata-policy/state', signal),
+      await this.read('/api/v1/metadata-policy/state', signal, workClass),
       'policy_state',
     )
   }
-  async getShadowPosture(signal?: AbortSignal) {
+  async getShadowPosture(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return schemaVersionOnly<ShadowPostureView>(
-      await this.read('/api/v1/metadata-policy/shadow', signal),
+      await this.read('/api/v1/metadata-policy/shadow', signal, workClass),
       'shadow_posture',
     )
   }
-  async getAutomaticSafety(signal?: AbortSignal) {
-    const value = await this.read('/api/v1/metadata-policy/automatic-safety', signal)
+  async getAutomaticSafety(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    const value = await this.read('/api/v1/metadata-policy/automatic-safety', signal, workClass)
     if (!record(value)) throw new ApiError(502, 'invalid_automatic_safety_response')
     return value as AutomaticSafetyView
   }
-  async getShadowSample(signal?: AbortSignal) {
+  async getShadowSample(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
     return schemaVersionOnly<ShadowSampleView>(
-      await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal),
+      await this.read('/api/v1/metadata-policy/shadow/outcomes?limit=10', signal, workClass),
       'shadow_sample',
     )
   }
-  async getPolicyTransition(signal?: AbortSignal) {
-    const value = await this.read('/api/v1/metadata-policy/transition', signal)
+  async getPolicyTransition(signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    const value = await this.read('/api/v1/metadata-policy/transition', signal, workClass)
     return value === null
       ? null
       : schemaVersionOnly<PolicyTransitionView>(value, 'policy_transition')
@@ -1221,7 +1301,11 @@ export class ReviewApiClient implements ReviewHttp {
     if (!record(value)) throw new ApiError(502, 'invalid_policy_response')
     return value as T
   }
-  async getActivity(search?: ActivitySearch, signal?: AbortSignal): Promise<ActivityView> {
+  async getActivity(
+    search?: ActivitySearch,
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ): Promise<ActivityView> {
     const p = new URLSearchParams()
     if (search) {
       if (search.q) p.set('q', search.q)
@@ -1230,18 +1314,22 @@ export class ReviewApiClient implements ReviewHttp {
       p.set('page', String(search.page))
       p.set('page_size', String(search.pageSize))
     }
-    return mapActivity(await this.read(`/api/v1/activity${p.size ? `?${p}` : ''}`, signal))
+    return mapActivity(
+      await this.read(`/api/v1/activity${p.size ? `?${p}` : ''}`, signal, workClass),
+    )
   }
 
   async getActivityTransitions(
     eventId: string,
     afterSequence?: number,
     signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
   ): Promise<ActivityTransitionsView> {
     const query = afterSequence === undefined ? '' : `?after_sequence=${String(afterSequence)}`
     const data = await this.read(
       `/api/v1/activity/${encodeURIComponent(eventId)}/transitions${query}`,
       signal,
+      workClass,
     )
     if (
       !record(data) ||
@@ -1277,8 +1365,12 @@ export class ReviewApiClient implements ReviewHttp {
     await this.mutate('/api/v1/session/logout', undefined, signal)
   }
 
-  private async read(path: string, signal?: AbortSignal) {
-    return this.request(path, { ...(signal ? { signal } : {}) }, false)
+  private async read(path: string, signal?: AbortSignal, workClass: ReadWorkClass = 'foreground') {
+    return this.request(
+      path,
+      { headers: { 'X-ML-Work-Class': workClass }, ...(signal ? { signal } : {}) },
+      false,
+    )
   }
   private async mutate(
     path: string,
@@ -1874,6 +1966,38 @@ const validateObject = (value: unknown, name: string): Record<string, unknown> =
 // eslint-disable-next-line @typescript-eslint/no-unnecessary-type-parameters
 const schemaVersionOnly = <T>(value: unknown, name: string): T =>
   validateObject(value, name) as unknown as T
+const mapDecisionAcknowledgement = (
+  value: unknown,
+  name: string,
+  reviewCaseId: string,
+): DecisionAcknowledgementView => {
+  if (
+    !record(value) ||
+    !record(value.confirmation) ||
+    !Array.isArray(value.invalidation_sequences) ||
+    value.invalidation_sequences.length > 8 ||
+    !value.invalidation_sequences.every(
+      (sequence) => Number.isSafeInteger(sequence) && sequence > 0,
+    )
+  )
+    throw new ApiError(502, 'invalid_decision_confirmation')
+  const confirmation = value.confirmation
+  let mapped: DecisionAcknowledgementView['confirmation']
+  if (confirmation.status === 'unavailable') {
+    if (!exactKeys(confirmation, ['status']))
+      throw new ApiError(502, 'invalid_decision_confirmation')
+    mapped = { status: 'unavailable' }
+  } else if (confirmation.status === 'confirmed') {
+    if (!exactKeys(confirmation, ['status', 'case']))
+      throw new ApiError(502, 'invalid_decision_confirmation')
+    const detail = mapCaseDetail(confirmation.case)
+    if (detail.id !== reviewCaseId) throw new ApiError(502, 'invalid_decision_confirmation')
+    mapped = { status: 'confirmed', case: detail }
+  } else throw new ApiError(502, 'invalid_decision_confirmation')
+  const wire = schemaVersionOnly<DecisionWireAcknowledgement>(value, name)
+  return { ...wire, confirmation: mapped }
+}
+
 const preparationProgress = (value: unknown): PreparationProgress => {
   if (!record(value)) throw new ApiError(502, 'invalid_preparation_progress')
   for (const field of ['scan_id', 'connection', 'library', 'library_id', 'state'])

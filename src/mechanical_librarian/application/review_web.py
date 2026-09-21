@@ -9,6 +9,7 @@ import re
 import secrets
 import unicodedata
 from collections.abc import Callable
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Protocol, cast
 from urllib.parse import urlencode
@@ -70,6 +71,22 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     compile_rich_metadata_preview,
 )
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+
+CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
+
+
+class BrowseObservationOwner(Protocol):
+    """External capture surrounds an exclusively owned local browse operation."""
+
+    def capture_browse_observation(self) -> CoverReadObservation | None: ...
+
+    def install_browse_observation(
+        self, observation: CoverReadObservation | None
+    ) -> AbstractContextManager[None]: ...
+
+    def recheck_browse_observation(
+        self, observation: CoverReadObservation | None
+    ) -> None: ...
 
 
 class ReviewWebError(RuntimeError):

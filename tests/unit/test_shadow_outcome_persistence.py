@@ -27,6 +27,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     PrivateCoverRecoveryStore,
 )
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
+from mechanical_librarian.adapters.persistence import metadata_reports as metadata
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
@@ -68,6 +69,7 @@ from mechanical_librarian.application.metadata_policy import (
     MAX_SHADOW_SAMPLE_RESPONSE_BYTES,
     PolicyNotebook,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
     ReviewPreparationPipeline,
@@ -2778,7 +2780,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
     "consumer", ("repository", "scheduler", "run_cycle", "background_recovery")
 )
 def test_rich_no_change_storage_failure_retries_without_a_wake(
-    tmp_path: Path, consumer: str
+    tmp_path: Path, consumer: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     report, category, option, _ = _automatic_no_change_inputs("genres_fill_empty")
     repository = open_repository(tmp_path / "reports.sqlite")
@@ -2824,7 +2826,9 @@ def test_rich_no_change_storage_failure_retries_without_a_wake(
             restored = False
             scheduler.attach_updates(lambda topic, _: announcements.append(topic))
 
-            def serialize(call: Callable[[], object]) -> object:
+            original_record = repository.record_current_field_effect_no_change
+
+            def record_no_change(*args, **kwargs):
                 nonlocal restored
                 if announcements and not restored:
                     assert repository.pending_field_effect_decision_documents(10) == (
@@ -2833,12 +2837,14 @@ def test_rich_no_change_storage_failure_retries_without_a_wake(
                     repository._connection.execute("PRAGMA query_only=OFF")
                     restored = True
                     transitions.append(scheduler.activity()["last_failure"])
-                result = call()
+                result = original_record(*args, **kwargs)
                 if repository.pending_field_effect_decision_documents(10) == ():
                     scheduler.close_admission()
                 return result
 
-            scheduler.attach_serialization(serialize)
+            monkeypatch.setattr(
+                repository, "record_current_field_effect_no_change", record_no_change
+            )
             scheduler.admit()
             scheduler._run()
             transitions.append(scheduler.activity()["last_failure"])
@@ -4513,56 +4519,58 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 )
 
             if authority_change == "replay":
+                real_facts = metadata.cover_currentness_from_facts
 
-                def observe_once(calls: list[str]) -> Callable[[str, str], str]:
-                    def currentness(document: str, _replay_reference: str) -> str:
-                        calls.append(document)
-                        return "refresh_required" if len(calls) == 1 else "inactive"
-
-                    return currentness
-
-                for attention_filter, expected_rows in (
-                    (None, 1),
-                    (True, 1),
-                    (False, 0),
-                ):
-                    calls: list[str] = []
-                    repository.bind_cover_consideration_currentness(observe_once(calls))
+                def observed_facts(document, replay_reference, fetching):
                     assert (
-                        len(
-                            repository.list_current_review_case_documents(
-                                "item", 1, 0, attention_filter
-                            )
-                        )
-                        == expected_rows
+                        real_facts(document, replay_reference, fetching)
+                        == "refresh_required"
                     )
+                    calls.append(document)
+                    return "refresh_required" if len(calls) == 1 else "inactive"
+
+                with patch.object(
+                    metadata, "cover_currentness_from_facts", observed_facts
+                ):
+                    for attention_filter, expected_rows in (
+                        (None, 1),
+                        (True, 1),
+                        (False, 0),
+                    ):
+                        calls: list[str] = []
+                        assert (
+                            len(
+                                repository.list_current_review_case_documents(
+                                    "item", 1, 0, attention_filter
+                                )
+                            )
+                            == expected_rows
+                        )
+                        assert len(calls) == 1
+
+                    calls = []
+                    attentive_rows = repository.list_current_attention_documents(
+                        "item", 1, 0
+                    )
+                    assert len(attentive_rows) == 1
+                    assert attentive_rows[0][3] == 1
                     assert len(calls) == 1
 
-                calls = []
-                repository.bind_cover_consideration_currentness(observe_once(calls))
-                attentive_rows = repository.list_current_attention_documents(
-                    "item", 1, 0
-                )
-                assert len(attentive_rows) == 1
-                assert attentive_rows[0][3] == 1
-                assert len(calls) == 1
-
-                calls = []
-                repository.bind_cover_consideration_currentness(observe_once(calls))
-                assert (
-                    repository.list_current_review_case_documents(
-                        "no matching work", 1, 0, None
+                    calls = []
+                    assert (
+                        repository.list_current_review_case_documents(
+                            "no matching work", 1, 0, None
+                        )
+                        == ()
                     )
-                    == ()
-                )
-                assert calls == []
-                assert (
-                    repository.list_current_attention_documents(
-                        "no matching work", 1, 0
+                    assert calls == []
+                    assert (
+                        repository.list_current_attention_documents(
+                            "no matching work", 1, 0
+                        )
+                        == ()
                     )
-                    == ()
-                )
-                assert calls == []
+                    assert calls == []
 
                 def provider_fetching(value: MetadataReport) -> bool:
                     return recovery.cover_fetching(
@@ -4769,61 +4777,118 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
         considerations.ensure(case_id, report.to_json(), cover_proposal)
         suspension_membership(True)
 
-        inside_sql = threading.Event()
-        setup_locked = threading.Event()
-        finished: list[str] = []
-        errors: list[BaseException] = []
+        admission = OperationAdmission()
+        repository.bind_operation_admission(admission, repository.operation_lock)
+        captured = threading.Event()
+        owner_held = threading.Event()
+        capture_returned = threading.Event()
+        errors = []
+        finished = []
+        captures = []
+        evaluations = []
+        real_capture = recovery.cover_fetching_identities
+        real_facts = metadata.cover_currentness_from_facts
 
-        def coordinated_provider_fetching(
-            connection: str, library: str, item: str, report_id: str
-        ) -> bool:
-            inside_sql.set()
-            if not setup_locked.wait(2):
-                raise AssertionError("setup lock was not acquired")
-            return recovery.cover_fetching(
-                target_connection=connection,
-                library=library,
-                item=item,
-                source_report_id=report_id,
-            )
+        def coordinated_capture():
+            assert not admission.held
+            assert not repository.operation_lock._is_owned()
+            assert not repository._connection.in_transaction
+            captures.append(True)
+            if len(captures) == 1:
+                captured.set()
+                assert owner_held.wait(3)
+            value = real_capture()
+            if len(captures) == 1:
+                capture_returned.set()
+            return value
 
-        repository.bind_cover_consideration_currentness(
-            lambda document, replay_reference: cover_currentness_from_facts(
-                document,
-                replay_reference,
-                coordinated_provider_fetching,
-            )
-        )
+        def observed_facts(document, replay, fetching):
+            assert admission.held and repository.operation_lock._is_owned()
+            assert repository._cover_read_observation is not None
+            evaluations.append(True)
+            return real_facts(document, replay, fetching)
 
-        def read_attention() -> None:
+        def read():
             try:
                 assert repository.count_current_attention_fields(None) >= 1
                 finished.append("read")
             except BaseException as error:
-                errors.append(error)
+                errors.append(repr(error))
 
-        def read_reviewer_authority() -> None:
+        def review():
             try:
-                if not inside_sql.wait(2):
-                    raise AssertionError("currentness callback was not entered")
-                with repository._setup_serialization_lock:
-                    setup_locked.set()
+                assert captured.wait(3)
+                with admission.enter(), repository.operation_lock:
                     repository.reviewer_access_store().snapshot()
-                    finished.append("reviewer")
+                    owner_held.set()
+                    assert capture_returned.wait(3)
+                finished.append("reviewer")
             except BaseException as error:
-                errors.append(error)
+                errors.append(repr(error))
 
-        reader = threading.Thread(target=read_attention, daemon=True)
-        reviewer = threading.Thread(target=read_reviewer_authority, daemon=True)
-        reader.start()
-        reviewer.start()
-        reader.join(2)
-        reviewer.join(2)
+        with (
+            patch.object(recovery, "cover_fetching_identities", coordinated_capture),
+            patch.object(metadata, "cover_currentness_from_facts", observed_facts),
+        ):
+            reader = threading.Thread(target=read)
+            reviewer = threading.Thread(target=review)
+            reader.start()
+            reviewer.start()
+            reader.join(5)
+            reviewer.join(5)
+            assert not reader.is_alive() and not reviewer.is_alive()
+            assert errors == [], errors
+            assert sorted(finished) == ["read", "reviewer"]
+            assert len(captures) == 2 and evaluations
+        before_count = repository.count_current_attention_fields(None)
+        with recovery._lock:
+            due = recovery._connection.execute(
+                "SELECT next_eligible_at FROM provider_recovery_health"
+            ).fetchone()[0]
+        assert type(due) is int
+        counted = threading.Event()
+        changed = threading.Event()
+        claim = []
+        race_errors = []
+        count_original = repository._review_cases.count_current_attention_fields
 
-        assert not reader.is_alive()
-        assert not reviewer.is_alive()
-        assert errors == []
-        assert sorted(finished) == ["read", "reviewer"]
+        def held_count(search):
+            result = count_original(search)
+            assert admission.held and repository.operation_lock._is_owned()
+            assert not repository._connection.in_transaction
+            counted.set()
+            assert changed.wait(3)
+            return result
+
+        def claim_recovery():
+            try:
+                assert counted.wait(3)
+                claimed = recovery.claim_one(
+                    generation=1, now=due, token="capture-race"
+                )
+                assert claimed is not None
+                claim.append(claimed)
+            except BaseException as error:
+                race_errors.append(repr(error))
+            finally:
+                changed.set()
+
+        racer = threading.Thread(target=claim_recovery)
+        racer.start()
+        try:
+            with patch.object(
+                repository._review_cases, "count_current_attention_fields", held_count
+            ):
+                with pytest.raises(
+                    MetadataReportError, match="review snapshot is unavailable"
+                ):
+                    repository.count_current_attention_fields(None)
+        finally:
+            racer.join(5)
+        assert not racer.is_alive() and not race_errors and len(claim) == 1
+        assert repository.count_current_attention_fields(None) == before_count - 1
+        assert repository._cover_read_observation is None
+        assert not repository._connection.in_transaction
         recovery.close()
         repository.close()
 

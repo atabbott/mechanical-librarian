@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, Mapping, Protocol, cast
@@ -716,44 +716,63 @@ class CoverConsiderationService:
         self._provider_fetching = provider_fetching or (lambda _report: False)
 
     def update_policy(self, policy: CoverPolicy) -> None:
-        """Replace the live preference snapshot and its authority references."""
+        """Bind a validated policy before publishing its immutable snapshot."""
+        if type(policy) is not CoverPolicy:
+            raise CoverConsiderationError("policy")
+        identity = (
+            None if self._reviewer_identity is None else self._reviewer_identity()
+        )
+        self._bind_policy(policy.reference, self._replay_reference(identity, policy))
+        self._policy = policy
+
+    def policy_update(self, policy: CoverPolicy) -> AbstractContextManager[None]:
+        """Prepare externally, then publish only after the admitted store commit."""
         if type(policy) is not CoverPolicy:
             raise CoverConsiderationError("policy")
         previous = self._policy
-        self._policy = policy
-        try:
-            self._bind_policy(policy.reference, self.replay_reference)
-        except Exception:
-            self._policy = previous
-            raise
+        identity = (
+            None if self._reviewer_identity is None else self._reviewer_identity()
+        )
+        previous_replay = self._replay_reference(identity, previous)
+        candidate_replay = self._replay_reference(identity, policy)
+        if self._policy is not previous:
+            raise CoverConsiderationError("stale")
 
-    @contextmanager
-    def policy_update(self, policy: CoverPolicy) -> Iterator[None]:
-        """Keep one live policy change only when its enclosing store commit succeeds."""
-        previous = self._policy
-        self.update_policy(policy)
-        try:
-            yield
-        except BaseException:
-            self.update_policy(previous)
-            raise
+        @contextmanager
+        def publish() -> Iterator[None]:
+            if self._policy is not previous:
+                raise CoverConsiderationError("stale")
+            self._bind_policy(policy.reference, candidate_replay)
+            try:
+                yield
+            except BaseException:
+                self._bind_policy(previous.reference, previous_replay)
+                raise
+            else:
+                self._policy = policy
+
+        return publish()
 
     def current_authority(self) -> tuple[str, str]:
-        """Capture the policy and live reviewer replay identity for one read."""
-        return self._policy.reference, self.replay_reference
+        """Capture one published policy with its externally observed reviewer identity."""
+        policy = self._policy
+        identity = (
+            None if self._reviewer_identity is None else self._reviewer_identity()
+        )
+        result = policy.reference, self._replay_reference(identity, policy)
+        if self._policy is not policy:
+            raise CoverConsiderationError("stale")
+        return result
 
     @property
     def replay_reference(self) -> str:
-        dynamic_identity = (
-            None if self._reviewer_identity is None else self._reviewer_identity()
-        )
-        return self._replay_reference(dynamic_identity)
+        return self.current_authority()[1]
 
     def _replay_reference(
-        self, dynamic_identity: tuple[int, str, str, bytes] | None
+        self, dynamic_identity: tuple[int, str, str, bytes] | None, policy: CoverPolicy
     ) -> str:
         value: dict[str, object] = {
-            "policy": self._policy.document,
+            "policy": policy.document,
             "contracts": {
                 "classifier_reference": CLASSIFIER_REFERENCE,
                 "identity_schema": IDENTITY_SCHEMA_VERSION,
@@ -878,7 +897,7 @@ class CoverConsiderationService:
                     binding.profile,
                 )
             )
-        replay_reference = self._replay_reference(dynamic_identity)
+        replay_reference = self._replay_reference(dynamic_identity, self._policy)
         replay_digest = self._replay_digest(
             review_case_id,
             report.report_id,
@@ -986,7 +1005,7 @@ class CoverConsiderationService:
                     (
                         replay_reference
                         if identity is None
-                        else self._replay_reference(identity)
+                        else self._replay_reference(identity, self._policy)
                     ),
                 )
         if profile is None or reviewer is None:

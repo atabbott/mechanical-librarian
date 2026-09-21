@@ -1,4 +1,7 @@
-import { QueryClient, queryOptions, useMutation, useQuery } from '@tanstack/react-query'
+import { invalidateForegroundQueries } from './queryWork'
+import { invalidateBackgroundQueries } from './queryWork'
+import { queryWorkClass, useRequiredQuery as useQuery } from './queryWork'
+import { QueryClient, queryOptions, useMutation } from '@tanstack/react-query'
 import {
   Link,
   Navigate,
@@ -156,42 +159,48 @@ export const normalizeSettingsSearch = (search: Record<string, unknown>): Settin
 export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) =>
   queryOptions({
     queryKey: ['library', search.lens, search.q ?? null, search.cursor ?? null] as const,
-    queryFn: ({ signal }) => http.getLibrary(search, signal),
+    queryFn: (queryContext) =>
+      http.getLibrary(search, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 export const attentionQuery = (http: ReviewHttp, search: AttentionSearch) =>
   queryOptions({
     queryKey: ['attention', search.q ?? null, search.cursor ?? null] as const,
-    queryFn: ({ signal }) => http.getAttention(search, signal),
+    queryFn: (queryContext) =>
+      http.getAttention(search, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 export const detailQuery = (http: ReviewHttp, id: string) =>
   queryOptions({
     queryKey: ['review-case', id] as const,
-    queryFn: ({ signal }) => http.getCaseDetail(id, signal),
+    queryFn: (queryContext) =>
+      http.getCaseDetail(id, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 const policyStateQuery = (http: ReviewHttp) =>
   queryOptions({
     queryKey: ['policy', 'state'] as const,
-    queryFn: ({ signal }) => http.getPolicyState(signal),
+    queryFn: (queryContext) =>
+      http.getPolicyState(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 const shadowQuery = (http: ReviewHttp) =>
   queryOptions({
     queryKey: ['policy', 'shadow'] as const,
-    queryFn: ({ signal }) => http.getShadowPosture(signal),
+    queryFn: (queryContext) =>
+      http.getShadowPosture(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 const safetyQuery = (http: ReviewHttp) =>
   queryOptions({
     queryKey: ['policy', 'safety'] as const,
-    queryFn: ({ signal }) => http.getAutomaticSafety(signal),
+    queryFn: (queryContext) =>
+      http.getAutomaticSafety(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
@@ -205,7 +214,8 @@ const activityQuery = (http: ReviewHttp, search: ActivitySearch) =>
       search.page,
       search.pageSize,
     ] as const,
-    queryFn: ({ signal }) => http.getActivity(search, signal),
+    queryFn: (queryContext) =>
+      http.getActivity(search, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 4_000,
     retry: false,
   })
@@ -215,7 +225,8 @@ export const preparationQuery = (
 ) =>
   queryOptions({
     queryKey: ['review-preparation'] as const,
-    queryFn: ({ signal }) => http.getPreparation(signal),
+    queryFn: (queryContext) =>
+      http.getPreparation(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 1_000,
     retry: false,
     structuralSharing: false,
@@ -287,8 +298,8 @@ export const usePreparation = () => {
     // coarser copy of an invalidation that already arrived (#641).
     if (live) return
     void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['library'] }),
-      queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
     ])
   }, [data?.presentation?.state, live, queryClient, snapshot])
   const adoptDismissal = useCallback(
@@ -302,13 +313,13 @@ export const usePreparation = () => {
       queryClient.setQueryData(['review-preparation'], value)
       const preparationDebt = queryClient.getQueryData(preparationInvalidationDebtKey) === true
       void Promise.all([
-        queryClient.invalidateQueries({
+        invalidateForegroundQueries(queryClient, {
           queryKey: ['review-preparation'],
           exact: true,
           refetchType: preparationDebt ? 'none' : 'active',
         }),
-        queryClient.invalidateQueries({ queryKey: ['library'] }),
-        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
       ])
       return true
     },
@@ -482,10 +493,10 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
       if (context?.previous) queryClient.setQueryData(['review-preparation'], context.previous)
     },
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      await invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['library'] }),
-        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
       ])
     },
   })
@@ -553,10 +564,10 @@ export const PreparationActivity = () => {
     mutationFn: (path: string) => http.preparationAction(path),
     retry: false,
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      await invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['library'] }),
-        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
       ])
     },
   })
@@ -735,7 +746,8 @@ const Shell = () => {
   const streamState = useLiveStreamState(updates)
   const appearance = useQuery({
     queryKey: ['appearance'] as const,
-    queryFn: ({ signal }) => http.getAppearance(signal),
+    queryFn: (queryContext) =>
+      http.getAppearance(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
@@ -1054,10 +1066,12 @@ export const activityRoute = createRoute({
   path: '/activity',
   validateSearch: normalizeActivitySearch,
   loaderDeps: ({ search }) => search,
+  preload: false,
   loader: ({ context, deps, abortController }) =>
     context.queryClient.query({
       ...activityQuery(context.http, deps),
-      queryFn: () => context.http.getActivity(deps, abortController.signal),
+      queryFn: (queryContext) =>
+        context.http.getActivity(deps, abortController.signal, queryWorkClass(queryContext)),
       staleTime: 'static',
     }),
   pendingMs: Infinity,
@@ -1084,7 +1098,10 @@ export const useReviewContext = () => rootRoute.useRouteContext()
 export const createApplicationRouter = (
   http: ReviewHttp,
   queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false },
+      mutations: { retry: false },
+    },
   }),
   history?: ReturnType<typeof createMemoryHistory>,
   updates?: LiveUpdateStream,

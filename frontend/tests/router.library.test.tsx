@@ -21,7 +21,15 @@ import type {
   ReviewHttp,
 } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
-import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
+import {
+  activity,
+  createHttp,
+  createLiveStream,
+  detail,
+  library,
+  recordedAcknowledgement,
+  renderRoute,
+} from './fixtures'
 
 it('keeps the active search caret through debounced Library URL changes', async () => {
   const user = userEvent.setup()
@@ -1332,12 +1340,13 @@ describe('Library route', () => {
     expect(http.getLibrary).toHaveBeenCalledWith(
       { lens: 'all', q: 'title' },
       expect.any(AbortSignal),
+      'foreground',
     )
     await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     expect(screen.queryByText('item-1')).toBeNull()
     expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
-    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal), 'foreground')
     expect(screen.getByRole('link', { name: 'Evidence' })).toHaveAttribute(
       'href',
       '/review/case-1?field=title&lens=all&subview=evidence&q=title',
@@ -1583,7 +1592,7 @@ describe('Library route', () => {
           within(evidence).queryByRole('region', { name: 'Recording identity evidence' }),
         ).toBeNull()
       }
-      expect(getReportDetail).toHaveBeenCalledWith(detailUrl, expect.anything())
+      expect(getReportDetail).toHaveBeenCalledWith(detailUrl, expect.anything(), 'foreground')
       expect(within(evidence).getByText('B0CW1KL2QD')).toBeVisible()
       expect(within(evidence).getByText('Recorded Narrator')).toBeVisible()
       expect(within(evidence).getByText('43200.000')).toBeVisible()
@@ -2950,7 +2959,12 @@ describe('Library route', () => {
       getCaseDetail: vi.fn(async () => current),
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [{ ...series, humanDecision: owner }] }
-        return { ...owner, schema_version: 'review-decision-v1', invalidation_sequences: [] }
+        return {
+          confirmation: { status: 'confirmed' as const, case: current },
+          ...owner,
+          schema_version: 'review-decision-v1',
+          invalidation_sequences: [],
+        }
       }),
     }
     renderRoute('/library?lens=all&preview=case-1&field=series', http)
@@ -3983,6 +3997,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = settled
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -4060,6 +4075,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [title, recordedSeries] }
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -4158,6 +4174,7 @@ describe('Library route', () => {
         currentDetail = { ...detail, fields: [recorded] }
         currentLibrary = settledLibrary
         return {
+          confirmation: { status: 'confirmed' as const, case: currentDetail },
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -4233,6 +4250,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [recorded, authors] }
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -4296,6 +4314,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [recorded, authors] }
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -4331,7 +4350,9 @@ describe('Library route', () => {
       rejectNavigation?.(new Error('navigation unavailable after unmount'))
     })
 
-    await waitFor(() => expect(invalidations).toHaveBeenCalledWith({ queryKey: ['library'] }))
+    await waitFor(() =>
+      expect(invalidations).toHaveBeenCalledWith({ queryKey: ['library'], refetchType: 'none' }),
+    )
   })
 
   it('settles an owner advance when an exact-source route supersedes its held target', async () => {
@@ -4377,6 +4398,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = { ...detail, fields: [recorded, authors] }
         return {
+          confirmation: { status: 'confirmed' as const, case: await refresh },
           invalidation_sequences: [],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -4405,7 +4427,8 @@ describe('Library route', () => {
     await user.click(
       await screen.findByRole('button', { name: 'Choose proposed value: New title' }),
     )
-    await waitFor(() => expect(reads).toBe(2))
+    await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
+    expect(reads).toBe(1)
     await act(async () => {
       releaseRefresh?.(current)
     })
@@ -4591,6 +4614,7 @@ describe('Library route', () => {
       if (attempts === 1) throw new ApiError(503, 'persistence')
       current = settled
       return {
+        confirmation: { status: 'confirmed' as const, case: current },
         invalidation_sequences: [],
         schema_version: 'review-decision-v1' as const,
         actor: 'owner' as const,
@@ -4766,7 +4790,10 @@ describe('Library route', () => {
       }
       const acknowledgement = await defaultHttp.recordDecision(...args)
       successfulDecisions += 1
-      return acknowledgement
+      if (!('actor' in acknowledgement)) throw new Error('ordinary cover decision required')
+      if (failRecordedRefresh && !recordedRefreshAvailable)
+        return { ...acknowledgement, confirmation: { status: 'unavailable' } }
+      return recordedAcknowledgement(current, acknowledgement)
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -4843,7 +4870,7 @@ describe('Library route', () => {
         expect(recordDecision).toHaveBeenCalledTimes(2)
         expect(successfulDecisions).toBe(1)
         recordedRefreshAvailable = true
-        await user.click(screen.getByRole('button', { name: 'Try again' }))
+        await user.click(screen.getByRole('button', { name: 'Reload current case' }))
         expect(await screen.findByRole('button', { name: /Alternative 1 cover/u })).toBeVisible()
         await waitFor(() =>
           expect(queryClient.getQueryData(reconciliationKey('case-1'))).toBeNull(),
@@ -4966,6 +4993,7 @@ describe('Library route', () => {
             ],
           }
           return {
+            confirmation: { status: 'confirmed' as const, case: current },
             invalidation_sequences: [],
             schema_version: 'review-decision-v1',
             actor: 'owner',
@@ -5490,7 +5518,11 @@ describe('Library route', () => {
       ).toBeVisible()
       expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull()
       expect(screen.queryByText('Case superseded')).toBeNull()
-      expect(http.getCaseDetail).toHaveBeenCalledWith('missing-case', expect.any(AbortSignal))
+      expect(http.getCaseDetail).toHaveBeenCalledWith(
+        'missing-case',
+        expect.any(AbortSignal),
+        'foreground',
+      )
     },
   )
 
@@ -5530,7 +5562,11 @@ describe('Library route', () => {
     expect(within(rail).queryByText('internal-library-notice')).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Load more attention' }))
     expect(await screen.findByText('Second queued work')).toBeVisible()
-    expect(http.getAttention).toHaveBeenLastCalledWith({ cursor: 'next' }, expect.any(AbortSignal))
+    expect(http.getAttention).toHaveBeenLastCalledWith(
+      { cursor: 'next' },
+      expect.any(AbortSignal),
+      'foreground',
+    )
   })
 
   it('uses the review-case identity for workspace selection and advances through the frozen attention cohort', async () => {
@@ -5601,6 +5637,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = settled
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
           schema_version: 'review-decision-v1',
           actor: 'owner',
@@ -5635,8 +5672,8 @@ describe('Library route', () => {
       }),
     )
     expect(await screen.findByRole('heading', { name: 'Off-page successor' })).toBeVisible()
-    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
-    expect(http.getCaseDetail).toHaveBeenCalledWith('case-2', expect.any(AbortSignal))
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal), 'foreground')
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-2', expect.any(AbortSignal), 'foreground')
   })
 
   it('retains completion identity and a return path after the completed work leaves its lens', async () => {
@@ -5707,6 +5744,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = settled
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [90, 91, 92],
           schema_version: 'review-decision-v1',
           actor: 'owner',
@@ -5847,7 +5885,7 @@ describe('Library route', () => {
 
     expect(http.getCaseSuccessor).toHaveBeenCalledTimes(1)
     expect(await screen.findByRole('heading', { name: 'Null-subject successor' })).toBeVisible()
-    expect(http.getCaseSuccessor).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+    expect(http.getCaseSuccessor).toHaveBeenCalledWith('case-1', expect.any(AbortSignal), 'foreground')
     expect(router.state.location.search.preview).toBe('case-2')
   })
 
@@ -6099,7 +6137,11 @@ describe('Library route', () => {
     }
     const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http, updates)
     await waitFor(() =>
-      expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal)),
+      expect(http.getCaseDetail).toHaveBeenCalledWith(
+        'case-1',
+        expect.any(AbortSignal),
+        'foreground',
+      ),
     )
 
     stale = true
@@ -6255,6 +6297,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = settled
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [40, 41, 42],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -6364,6 +6407,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = settled
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [70, 71, 72],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -6447,6 +6491,7 @@ describe('Library route', () => {
         await answered
         current = settled
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [80, 81, 82],
           schema_version: 'review-decision-v1' as const,
           actor: 'owner' as const,
@@ -6541,20 +6586,23 @@ describe('Library route', () => {
       getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
       recordDecision: vi.fn(async () => {
         await deferred
-        return {
-          invalidation_sequences: [],
-          schema_version: 'review-decision-v1',
-          actor: 'owner',
-          application: 'apply' as const,
-          decision_id: 'decision-title',
-          destination: 'title',
-          occurred_at: 1,
-          outcome: 'keep_current',
-          proposal_id: titleField.proposalId,
-          review_case_id: 'case-1',
-          selected_value: null,
-          target_fingerprint: titleField.targetFingerprint,
-        }
+        return recordedAcknowledgement(
+          { ...detail, fields: [titleField, authorsField] },
+          {
+            invalidation_sequences: [],
+            schema_version: 'review-decision-v1',
+            actor: 'owner',
+            application: 'apply' as const,
+            decision_id: 'decision-title',
+            destination: 'title',
+            occurred_at: 1,
+            outcome: 'keep_current',
+            proposal_id: titleField.proposalId,
+            review_case_id: 'case-1',
+            selected_value: null,
+            target_fingerprint: titleField.targetFingerprint,
+          },
+        )
       }),
     }
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
@@ -6603,20 +6651,23 @@ describe('Library route', () => {
     })
     const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => {
       await deferred
-      return {
-        invalidation_sequences: [],
-        schema_version: 'review-decision-v1' as const,
-        actor: 'owner' as const,
-        application: 'apply' as const,
-        decision_id: `decision-${command.destination}`,
-        destination: command.destination,
-        occurred_at: 1,
-        outcome: 'keep_current' as const,
-        proposal_id: command.proposalId,
-        review_case_id: 'case-1',
-        selected_value: null,
-        target_fingerprint: command.targetFingerprint,
-      }
+      return recordedAcknowledgement(
+        { ...detail, fields: [titleField, authorsField] },
+        {
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          actor: 'owner' as const,
+          application: 'apply' as const,
+          decision_id: `decision-${command.destination}`,
+          destination: command.destination,
+          occurred_at: 1,
+          outcome: 'keep_current' as const,
+          proposal_id: command.proposalId,
+          review_case_id: 'case-1',
+          selected_value: null,
+          target_fingerprint: command.targetFingerprint,
+        },
+      )
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -6662,20 +6713,23 @@ describe('Library route', () => {
     const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => {
       if (command.destination === 'title') return await titlePending
       await authorsPending
-      return {
-        invalidation_sequences: [],
-        schema_version: 'review-decision-v1' as const,
-        actor: 'owner' as const,
-        application: 'apply' as const,
-        decision_id: 'decision-authors',
-        destination: 'authors',
-        occurred_at: 1,
-        outcome: 'keep_current' as const,
-        proposal_id: command.proposalId,
-        review_case_id: 'case-1',
-        selected_value: null,
-        target_fingerprint: command.targetFingerprint,
-      }
+      return recordedAcknowledgement(
+        { ...detail, fields: [titleField, authorsField] },
+        {
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          actor: 'owner' as const,
+          application: 'apply' as const,
+          decision_id: 'decision-authors',
+          destination: 'authors',
+          occurred_at: 1,
+          outcome: 'keep_current' as const,
+          proposal_id: command.proposalId,
+          review_case_id: 'case-1',
+          selected_value: null,
+          target_fingerprint: command.targetFingerprint,
+        },
+      )
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -6687,12 +6741,13 @@ describe('Library route', () => {
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
     await user.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
-    await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
-    const authorsKey = recordDecision.mock.calls[1]?.[1].idempotencyKey
+    expect(recordDecision).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       rejectTitle?.(new ApiError(422, 'unsupported'))
     })
+    await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
+    const authorsKey = recordDecision.mock.calls[1]?.[1].idempotencyKey
     await user.click(screen.getByRole('button', { name: /Authors.*Needs review/u }))
     await user.click(screen.getByRole('button', { name: 'Choose current value: Old title' }))
     expect(recordDecision).toHaveBeenCalledTimes(2)
@@ -6721,20 +6776,23 @@ describe('Library route', () => {
     const recordDecision = vi.fn<ReviewHttp['recordDecision']>(async (_id, command) => {
       sent.push(command.destination)
       if (command.destination === 'title') await deferred
-      return {
-        invalidation_sequences: [],
-        schema_version: 'review-decision-v1' as const,
-        actor: 'owner' as const,
-        application: 'apply' as const,
-        decision_id: `decision-${command.destination}`,
-        destination: command.destination,
-        occurred_at: 1,
-        outcome: 'keep_current' as const,
-        proposal_id: command.proposalId,
-        review_case_id: 'case-1',
-        selected_value: null,
-        target_fingerprint: command.targetFingerprint,
-      }
+      return recordedAcknowledgement(
+        { ...detail, fields: [titleField, authorsField] },
+        {
+          invalidation_sequences: [],
+          schema_version: 'review-decision-v1' as const,
+          actor: 'owner' as const,
+          application: 'apply' as const,
+          decision_id: `decision-${command.destination}`,
+          destination: command.destination,
+          occurred_at: 1,
+          outcome: 'keep_current' as const,
+          proposal_id: command.proposalId,
+          review_case_id: 'case-1',
+          selected_value: null,
+          target_fingerprint: command.targetFingerprint,
+        },
+      )
     })
     const http: ReviewHttp = {
       ...createHttp(),
@@ -6804,6 +6862,7 @@ describe('Library route', () => {
         recordDecision: vi.fn(async () => {
           current = settled(writesConsented)
           return {
+            confirmation: { status: 'confirmed' as const, case: current },
             invalidation_sequences: [],
             schema_version: 'review-decision-v1',
             actor: 'owner',
@@ -7299,6 +7358,7 @@ describe('Library route', () => {
       recordDecision: vi.fn(async () => {
         current = settled
         return {
+          confirmation: { status: 'confirmed' as const, case: current },
           invalidation_sequences: [],
           schema_version: 'review-decision-v1',
           actor: 'owner',
@@ -7319,7 +7379,11 @@ describe('Library route', () => {
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
     expect(await screen.findByText('Review complete')).toBeVisible()
     expect(await screen.findByRole('button', { name: 'Review next work →' })).toBeVisible()
-    expect(getAttention).toHaveBeenCalledWith({ cursor: 'later' }, expect.any(AbortSignal))
+    expect(getAttention).toHaveBeenCalledWith(
+      { cursor: 'later' },
+      expect.any(AbortSignal),
+      'foreground',
+    )
     await user.click(screen.getByRole('button', { name: 'Review next work →' }))
     await waitFor(() =>
       expect(first.router.state.location.search).toMatchObject({
@@ -7978,8 +8042,46 @@ it('offers advised text in the ordinary Description chooser with its immutable a
   if (!field) throw new Error('description fixture requires its field')
   const advice = field.descriptionAdvice
   if (!advice?.candidate) throw new Error('description fixture requires its candidate')
+  const candidate = advice.candidate
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
+  http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => ({
+    schema_version: 'description-selection-ack-v1',
+    decision_id: `human_decision_${'a'.repeat(64)}`,
+    advised: true,
+    invalidation_sequences: [],
+    confirmation: {
+      status: 'confirmed',
+      case: {
+        ...authored,
+        id: 'case-1',
+        fields: [
+          {
+            ...field,
+            needsAttention: false,
+            descriptionAdvice: {
+              ...advice,
+              selected_advice: { candidate, binding: advice.binding, current: true },
+              selection: {
+                schema_version: 'authored-description-decision-v1',
+                decision_id: `human_decision_${'a'.repeat(64)}`,
+                candidate_id: candidate.candidate_id,
+                binding: advice.binding,
+                origin: 'human',
+                resolved_policy_id: `resolved_policy_${'b'.repeat(64)}`,
+                qualification_manifest_sha256: 'c'.repeat(64),
+                idempotency_digest: 'd'.repeat(64),
+                occurred_at: 10,
+                destination: 'description',
+                outcome: 'accept',
+                application: 'guarded',
+              },
+            },
+          },
+        ],
+      },
+    },
+  }))
   renderRoute('/library?lens=all&preview=case-1&field=description', http)
   const option = await screen.findByRole('button', {
     name: 'Choose advised value: Authored synthetic description.',

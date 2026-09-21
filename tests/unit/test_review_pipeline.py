@@ -11355,3 +11355,65 @@ def test_unchanged_completed_discovery_is_valid_before_next_claim(
         "SELECT stage,state,outcome FROM review_preparation_work"
     ).fetchone() == ("complete", "complete", "evidence_only")
     reopened.close()
+
+
+@pytest.mark.parametrize("entry", ("retained_output", "independent", "publisher"))
+def test_output_admission_balances_only_its_own_increment(application_path, entry):
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+
+    admission = OperationAdmission()
+    repository = open_repository(application_path, admission=admission)
+    try:
+        report = _report()
+        repository.request_review_scan("primary", "ebooks", "lib-1", _PRODUCER, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "a" * 64,
+            (replace(_entry("item-1", report.file.identity), library="ebooks"),),
+            12,
+        )
+        action = repository.claim_review_pipeline_action(13)
+        assert action is not None and action.stage == "extraction"
+        owner = repository._review_preparation
+        lock = owner._serialization_lock
+        assert lock is not None and lock.depth() == 0
+
+        def advance():
+            repository.advance_review_pipeline_action(action, report.report_id, 14)
+            assert not repository._connection.in_transaction
+
+        if entry == "publisher":
+
+            def published(_repository, _report):
+                assert admission.held and admission._local.depth == 1
+                assert lock.depth() == 1
+                advance()
+                assert admission.held and admission._local.depth == 1
+                assert lock.depth() == 1
+
+            repository.publish(report, lambda: True, None, published)
+        else:
+            repository.publish(report, lambda: True)
+            if entry == "retained_output":
+                repository.begin_review_pipeline_output()
+                assert admission.held and admission._local.depth == 1
+                assert lock.depth() == 1
+                with pytest.raises(
+                    MetadataReportError, match="review preparation state is invalid"
+                ):
+                    repository.begin_review_pipeline_output()
+                assert admission._local.depth == 1 and lock.depth() == 1
+                assert repository._connection.in_transaction
+            advance()
+        assert not admission.held and lock.depth() == 0
+        assert owner._output_lease is None
+        repository.rollback_review_pipeline_output()
+        repository.rollback_review_pipeline_output()
+        assert not admission.held and lock.depth() == 0
+        next_action = repository.claim_review_pipeline_action(15)
+        assert next_action is not None and next_action.stage == "provider"
+    finally:
+        repository.close()

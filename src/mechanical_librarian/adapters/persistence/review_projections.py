@@ -48,7 +48,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _POLICY_ASK_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
 )
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import PipelineAction
@@ -153,6 +156,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             transaction.rollback()
             raise MetadataReportError("review snapshot is unavailable") from error
 
+    @local_operation
     def read_staged_description_preparation(
         self, action: PipelineAction
     ) -> tuple[str, str]:
@@ -167,6 +171,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             raise MetadataReportError("review case is unavailable")
         return str(row[0]), str(row[1])
 
+    @local_operation
     def read_staged_cover_preparation(
         self, action: PipelineAction
     ) -> tuple[str, str, bool] | None:
@@ -656,6 +661,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             raise MetadataReportError("review attention is unavailable")
         return tuple((destination, causes[scope]) for destination, scope in rows)
 
+    @local_operation
     def read_current_report_document(
         self, connection: str, library: str, item: str
     ) -> str | None:

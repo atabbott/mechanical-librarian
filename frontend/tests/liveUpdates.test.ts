@@ -1,3 +1,4 @@
+import { mountBackgroundWork } from '../src/queryWork'
 import { QueryClient, QueryObserver, onlineManager } from '@tanstack/react-query'
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -9,6 +10,16 @@ import {
 import { createLiveUpdateStream, readLiveUpdate } from '../src/liveUpdates'
 import type { LiveUpdate } from '../src/liveUpdates'
 import { beginDecisionEcho, endDecisionEcho, settleDecisionEcho } from '../src/decisionEcho'
+
+// These harnesses own a complete query lifetime, separately from its stream bridge.
+const startOwnedLiveInvalidation = (...args: Parameters<typeof startLiveInvalidation>) => {
+  const disposeOwner = mountBackgroundWork(args[1], args[2])
+  const stopStream = startLiveInvalidation(...args)
+  return () => {
+    stopStream()
+    disposeOwner()
+  }
+}
 
 const CASE = `review_case_${'a'.repeat(64)}`
 
@@ -25,7 +36,7 @@ const collectionHarness = (warm = false, key: readonly string[] = ['library', 'a
   let visible = true
   let visibilityListener: () => void = () => undefined
   const listeners = new Set<(update: LiveUpdate) => void>()
-  const stop = startLiveInvalidation(
+  const stop = startOwnedLiveInvalidation(
     {
       state: 'live',
       subscribe(listener) {
@@ -482,7 +493,7 @@ describe('live invalidation', () => {
       },
       close: () => undefined,
     }
-    const stop = startLiveInvalidation(stream, queryClient, {
+    const stop = startOwnedLiveInvalidation(stream, queryClient, {
       schedule: () => 7,
       cancel: (handle) => canceled.push(handle),
       observeActivity: () => () => {
@@ -542,7 +553,7 @@ describe('live invalidation', () => {
       observeState: () => () => undefined,
       close: () => undefined,
     }
-    const stop = startLiveInvalidation(stream, queryClient, {
+    const stop = startOwnedLiveInvalidation(stream, queryClient, {
       schedule: (run) => {
         timers.push(run)
         return timers.length
@@ -581,7 +592,7 @@ describe('live invalidation', () => {
       observeState: () => () => undefined,
       close: () => undefined,
     }
-    const stop = startLiveInvalidation(stream, queryClient, {
+    const stop = startOwnedLiveInvalidation(stream, queryClient, {
       schedule: (run) => {
         timers.push(run)
         return timers.length
@@ -629,7 +640,7 @@ describe('live invalidation', () => {
       observeState: () => () => undefined,
       close: () => undefined,
     }
-    const stop = startLiveInvalidation(stream, queryClient, {
+    const stop = startOwnedLiveInvalidation(stream, queryClient, {
       schedule: (run, delay) => {
         nextTimer += 1
         timers.set(nextTimer, { delay, run })
@@ -680,7 +691,7 @@ describe('live invalidation', () => {
       observeState: () => () => undefined,
       close: () => undefined,
     }
-    const stop = startLiveInvalidation(stream, queryClient, {
+    const stop = startOwnedLiveInvalidation(stream, queryClient, {
       schedule: (run) => {
         nextTimer += 1
         timers.set(nextTimer, run)
@@ -753,7 +764,7 @@ describe('live invalidation', () => {
       observeState: () => () => undefined,
       close: () => undefined,
     }
-    const stop = startLiveInvalidation(stream, queryClient, {
+    const stop = startOwnedLiveInvalidation(stream, queryClient, {
       schedule: (run) => {
         timers.push(run)
         return timers.length

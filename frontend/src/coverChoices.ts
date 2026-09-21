@@ -1,3 +1,4 @@
+import { invalidateForegroundQueries } from './queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
@@ -17,7 +18,7 @@ export function useCoverChoiceData(reviewCaseId: string) {
       mutationFn: () => http.retryCoverConsideration(reviewCaseId),
       retry: false,
       onSuccess: async () => {
-        await queryClient.invalidateQueries({ queryKey: ['review-case', reviewCaseId] })
+        await invalidateForegroundQueries(queryClient, { queryKey: ['review-case', reviewCaseId] })
       },
     }),
     imageSource: (considerationId: string, reference: string) =>

@@ -2451,6 +2451,7 @@ it('sends an ordinary chooser authored command only to the bound authored select
   const fetchMock = vi.fn<typeof fetch>(async () =>
     Response.json({
       schema_version: 'description-selection-ack-v1',
+      confirmation: { status: 'confirmed', case: { ...payload, review_case_id: 'case-1' } },
       decision_id: 'human_decision_' + 'a'.repeat(64),
       advised: true,
       invalidation_sequences: [],
@@ -2582,4 +2583,63 @@ it.each([
       ),
     }),
   ).toThrow(ApiError)
+})
+
+it('validates the closed decision confirmation and maps its case exactly once', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const command = {
+    destination: 'title',
+    outcome: 'keep_current' as const,
+    proposalId: 'proposal-1',
+    targetFingerprint: 'fingerprint-1',
+    idempotencyKey: 'same-decision',
+  }
+  const casePayload = { ...payload, review_case_id: 'case-1', current: false }
+  for (const confirmation of [
+    { status: 'other' },
+    { status: 'unavailable', case: casePayload },
+    { status: 'confirmed' },
+    { status: 'confirmed', case: { ...casePayload, current: 'yes' } },
+    { status: 'confirmed', case: { ...casePayload, review_case_id: 'another-case' } },
+    { status: 'confirmed', case: casePayload, extra: true },
+  ]) {
+    const client = new ReviewApiClient({
+      csrf,
+      buildIdentity: 'c'.repeat(64),
+      fetch: vi.fn(async () =>
+        Response.json({
+          schema_version: 'review-decision-v1',
+          invalidation_sequences: [],
+          confirmation,
+        }),
+      ),
+    })
+    await expect(client.recordDecision('case-1', command)).rejects.toBeInstanceOf(ApiError)
+  }
+  const client = new ReviewApiClient({
+    csrf,
+    buildIdentity: 'c'.repeat(64),
+    fetch: vi.fn(async () =>
+      Response.json({
+        schema_version: 'review-decision-v1',
+        invalidation_sequences: [],
+        confirmation: { status: 'confirmed', case: casePayload },
+      }),
+    ),
+  })
+  const result = await client.recordDecision('case-1', command)
+  expect(result.confirmation).toEqual({ status: 'confirmed', case: mapCaseDetail(casePayload) })
+  if (result.confirmation.status !== 'confirmed') throw new Error('confirmed response required')
+  expect(result.confirmation.case.current).toBe(false)
+})
+
+it('sends the actual read scheduling hint while ordinary reads remain foreground', async () => {
+  const { default: payload } = await import('./descriptionAdviceFixture.json')
+  const fetchMock = vi.fn<typeof fetch>(async () => Response.json(payload))
+  const client = new ReviewApiClient({ csrf, fetch: fetchMock })
+  await client.getCaseDetail(payload.review_case_id)
+  await client.getCaseDetail(payload.review_case_id, undefined, 'background')
+  expect(
+    fetchMock.mock.calls.map((call) => new Headers(call[1]?.headers).get('X-ML-Work-Class')),
+  ).toEqual(['foreground', 'background'])
 })

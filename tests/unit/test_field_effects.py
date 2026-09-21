@@ -6828,3 +6828,212 @@ def test_audiobook_pair_current_override_and_owner_history(
                 not api_fields["title"]["editable"]
                 and not api_fields["subtitle"]["editable"]
             )
+
+
+def test_admitted_effect_releases_database_owner_during_target_io(effects):
+    from mechanical_librarian.application.operation_admission import (
+        OperationAdmission as Admission,
+    )
+    from mechanical_librarian.domain.human_decision import HumanDecisionError
+    from tests.support.evidence_led_titles import isbn_title_report, publish_title_case
+
+    env = effects
+    admission = Admission()
+    lock = threading.RLock()
+    repo = env.repository
+    repo.bind_operation_admission(admission, lock)
+    release = threading.Event()
+    entered = threading.Event()
+    errors = []
+    results = []
+    target_calls = []
+    thread = None
+    try:
+        case_id, _ = publish_title_case(env.repository, isbn_title_report())
+        base = isbn_title_report()
+        other = MetadataReport.create(
+            target=replace(base.target, item="other-work"),
+            file=replace(base.file, identity="2" * 64),
+            local_claims=base.local_claims,
+            local_reasons=base.local_reasons,
+            providers=base.providers,
+            identifier_evidence=base.identifier_evidence,
+        )
+        policy = repo.current_resolved_metadata_policy(other.target.library)
+        proposal = evaluate_report(other, policy.resolved_id, dict(policy.destinations))
+        repo.publish(other, lambda: True)
+        repo.publish_proposal(proposal)
+        other_id = json.loads(repo.admit_review_case(proposal))["review_case_id"]
+        other_case = ReviewCase.create_from_data(
+            json.loads(repo.get_review_case(other_id))["case"]
+        )
+        raw = env.repository._connection.execute(
+            "SELECT document FROM automatic_decisions WHERE destination='title'"
+        ).fetchone()[0]
+        source = AutomaticDecision.from_json(raw)
+        authority = PersistedFieldEffectAuthority(repo)
+        snapshot = authority.resolve(source)
+        repo.grant_field_effect_consents(
+            snapshot.connection, (snapshot.library,), ("title",), 5
+        )
+        service = GuardedFieldApplication(
+            repo,
+            env.target,
+            env.backup,
+            env.capabilities,
+            authority,
+            env.dependencies,
+            PersistedEffectConsent(repo),
+            env.recovery,
+            env.reevaluation,
+            env.clock,
+        )
+        operation = service.plan(
+            source,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination="title",
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+        assert operation
+        plan = operation.plan
+        env.target.seed(plan)
+        next_source = decision("subtitle", envelope("subtitle", "new"), "f")
+        env.authority.bind(
+            next_source,
+            connection="primary",
+            library=snapshot.library,
+            work_id="next-work",
+            target_version="version-1",
+        )
+        env.consent.allow(
+            connection="primary", library=snapshot.library, destination="subtitle"
+        )
+        next_operation = env.service.plan(
+            next_source,
+            connection="primary",
+            library=snapshot.library,
+            work_id="next-work",
+            destination="subtitle",
+            pre_value="old",
+            desired_value=envelope("subtitle", "new"),
+            target_fingerprint="d" * 64,
+            target_version="version-1",
+            dependency_digests=(DEPENDENCY,),
+            capability_digest=CAPABILITY,
+        )
+        assert next_operation
+        env.target.seed(next_operation.plan)
+        env.service._repository = repo
+        case = ReviewCase.create_from_data(
+            json.loads(repo.get_review_case(case_id))["case"]
+        )
+
+        def command(destination, key, case=case):
+            proposal = next(
+                (p for p in case.proposals if p["destination"] == destination)
+            )
+            return HumanDecision.create(
+                case,
+                proposal_id=proposal["proposal_id"],
+                target_fingerprint=case.target_fingerprint,
+                destination=destination,
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key=key,
+                occurred_at=env.clock(),
+            )
+
+        replacement = command("title", "active-effect-title-refusal")
+        repo.claim_field_effect(plan.plan_id, "planned", "c" * 64, env.clock())
+        try:
+            repo.record_human_decision(replacement)
+            raise AssertionError("claimed replacement accepted")
+        except HumanDecisionError as e:
+            assert e.code == "already_decided"
+        original_apply = env.target.apply
+        original_read = env.target.read
+
+        def held_apply(p):
+            assert not admission.held
+            assert not lock._is_owned()
+            assert not env.repository._connection.in_transaction
+            target_calls.append("apply_enter")
+            entered.set()
+            assert release.wait(5)
+            result = original_apply(p)
+            target_calls.append("apply_return")
+            return result
+
+        def observed_read(p):
+            assert not admission.held
+            assert not lock._is_owned()
+            target_calls.append("read")
+            return original_read(p)
+
+        env.target.apply = held_apply
+        env.target.read = observed_read
+
+        def worker():
+            try:
+                with admission.classify("background"):
+                    results.append(service.apply(plan.plan_id))
+            except BaseException as e:
+                errors.append(repr(e))
+
+        thread = threading.Thread(target=worker)
+        thread.start()
+        assert entered.wait(5)
+        assert repo.get_field_effect(plan.plan_id).state == "applying"
+        try:
+            repo.record_human_decision(replacement)
+            raise AssertionError("applying replacement accepted")
+        except HumanDecisionError as e:
+            assert e.code == "already_decided"
+        unrelated = command("title", "unrelated-foreground-keep", other_case)
+        repo.record_human_decision(unrelated)
+        assert any(
+            (
+                json.loads(x)["decision_id"] == unrelated.decision_id
+                for x in repo.get_review_case_decisions(other_id)
+            )
+        )
+        service.set_paused(True)
+        try:
+            env.service.apply(next_operation.plan.plan_id)
+            raise AssertionError("paused next claim accepted")
+        except GuardedApplicationError as e:
+            assert e.code == "paused"
+        assert repo.get_field_effect(next_operation.plan.plan_id).state == "planned"
+        service.set_paused(False)
+        repo.revoke_field_effect_consent(
+            next_operation.plan.consent.consent_id, env.clock()
+        )
+        assert env.service.apply(next_operation.plan.plan_id).state == "superseded"
+        assert not release.is_set()
+        release.set()
+        thread.join(5)
+        assert not thread.is_alive()
+        assert not errors, errors
+        assert len(results) == 1 and results[0].state == "verified"
+        assert service.apply(plan.plan_id).state == "verified"
+        events = [
+            json.loads(x) for x in repo.field_effect_event_documents(plan.plan_id)
+        ]
+        assert sum((x["state"] == "verified" for x in events)) == 1, events
+        assert len(env.target._effects) == 1
+        assert target_calls[target_calls.index("apply_return") + 1 :] == ["read"], (
+            target_calls
+        )
+    finally:
+        release.set()
+        if thread is not None:
+            thread.join(5)
+            assert not thread.is_alive()

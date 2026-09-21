@@ -4,6 +4,7 @@ import hashlib
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
@@ -12,6 +13,7 @@ from mechanical_librarian.application.catalogue import (
     TargetConnectionError,
 )
 from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
@@ -446,9 +448,11 @@ class ReviewPreparationPipeline:
         timing: StageTimer | None = None,
         announce: Callable[[str, str | None], object] = lambda *_args: None,
         first_boot: bool = False,
+        admission: OperationAdmission | None = None,
     ) -> None:
         if not libraries or len(libraries) != len(set(libraries)):
             raise ReviewPipelineError("configuration")
+        self._operation_admission = admission
         self._repository_factory = repository_factory
         self._observation_repository_factory = (
             repository_factory
@@ -755,33 +759,38 @@ class ReviewPreparationPipeline:
     def run_next(self, maximum_actions: int = 64) -> bool:
         if type(maximum_actions) is not int or not 1 <= maximum_actions <= 64:
             raise ReviewPipelineError("configuration")
-        repository = self._open_repository()
-        try:
-            with self._claim_lock:
-                if self._draining.is_set():
+        with (
+            nullcontext()
+            if self._operation_admission is None
+            else self._operation_admission.classify("background")
+        ):
+            repository = self._open_repository()
+            try:
+                with self._claim_lock:
+                    if self._draining.is_set():
+                        return False
+                    try:
+                        action = repository.claim_review_pipeline_action(self._clock())
+                    except ReviewPipelineError:
+                        raise
+                    except Exception as error:
+                        raise ReviewPipelineError("persistence") from error
+                if action is None:
                     return False
-                try:
-                    action = repository.claim_review_pipeline_action(self._clock())
-                except ReviewPipelineError:
-                    raise
-                except Exception as error:
-                    raise ReviewPipelineError("persistence") from error
-            if action is None:
-                return False
-            for index in range(maximum_actions):
-                next_action = self._run_claimed_action(
-                    repository,
-                    action,
-                    claim_next=(
-                        index + 1 < maximum_actions and not self._draining.is_set()
-                    ),
-                )
-                if next_action is None:
-                    return True
-                action = next_action
-            return True
-        finally:
-            repository.close()
+                for index in range(maximum_actions):
+                    next_action = self._run_claimed_action(
+                        repository,
+                        action,
+                        claim_next=(
+                            index + 1 < maximum_actions and not self._draining.is_set()
+                        ),
+                    )
+                    if next_action is None:
+                        return True
+                    action = next_action
+                return True
+            finally:
+                repository.close()
 
     def run_recovery_successor(
         self, report_id: str, heartbeat: Callable[[], None] = lambda: None

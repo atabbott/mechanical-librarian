@@ -1,8 +1,14 @@
+import {
+  runRequiredRead,
+  useRequiredRead,
+  queryWorkClass,
+  useRequiredQuery as useQuery,
+} from '../queryWork'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
 import { DescriptionAdvicePreparation } from '../components/DescriptionAdvice'
 import { MediaHealth } from '../components/MediaHealth'
 import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
-import { useInfiniteQuery, useMutation, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent, SyntheticEvent } from 'react'
@@ -696,7 +702,8 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
   const { http } = useReviewContext()
   const report = useQuery({
     queryKey: ['library-report', detailUrl],
-    queryFn: ({ signal }) => http.getReportDetail(detailUrl, signal),
+    queryFn: (queryContext) =>
+      http.getReportDetail(detailUrl, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
@@ -1807,7 +1814,7 @@ export default function LibraryPage({
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
   const router = useRouter()
-  const { http, updates } = useReviewContext()
+  const { http, updates, queryClient } = useReviewContext()
   const preparationState = usePreparation()
   const presentation =
     preparationState.data?.presentation?.state === 'dismissed'
@@ -2133,8 +2140,12 @@ export default function LibraryPage({
       lineageReconciliation?.predecessor ?? null,
       lineageReconciliation?.generation ?? null,
     ],
-    queryFn: ({ signal }) =>
-      http.getCaseSuccessor(lineageReconciliation?.predecessor ?? '', signal),
+    queryFn: (queryContext) =>
+      http.getCaseSuccessor(
+        lineageReconciliation?.predecessor ?? '',
+        queryContext.signal,
+        queryWorkClass(queryContext),
+      ),
     enabled: activeLineageReconciliation,
     retry: (failureCount) => activeLineageReconciliation && failureCount < 1,
     retryDelay: coalesceMilliseconds,
@@ -2144,15 +2155,33 @@ export default function LibraryPage({
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   })
-  const attention = useInfiniteQuery({
+  const attentionQuery = useInfiniteQuery({
     queryKey: ['attention', 'workspace', search.attentionCursor ?? null],
     initialPageParam: search.attentionCursor,
-    queryFn: ({ pageParam, signal }) =>
-      http.getAttention(pageParam ? { cursor: pageParam } : {}, signal),
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+    queryFn: (queryContext) =>
+      http.getAttention(
+        queryContext.pageParam ? { cursor: queryContext.pageParam } : {},
+        queryContext.signal,
+        queryWorkClass(queryContext),
+      ),
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     staleTime: 15_000,
     retry: false,
   })
+  const attention = useMemo(() => ({
+    ...attentionQuery,
+    refetch: () =>
+      runRequiredRead(queryClient, ['attention', 'workspace', search.attentionCursor ?? null], () =>
+        attentionQuery.refetch(),
+      ),
+    fetchNextPage: () =>
+      runRequiredRead(queryClient, ['attention', 'workspace', search.attentionCursor ?? null], () =>
+        attentionQuery.fetchNextPage(),
+      ),
+  }), [attentionQuery, queryClient, search.attentionCursor])
+  useRequiredRead(queryClient, ['attention', 'workspace', search.attentionCursor ?? null])
   const attentionItems = useMemo(
     () =>
       attention.data?.pages.flatMap((page, pageIndex) => {
@@ -3941,6 +3970,15 @@ export default function LibraryPage({
                       {controller.statusFor(selected.destination) ||
                         controller.messageFor(selected.destination)}
                     </p>
+                  ) : null}
+                  {controller.reloadRequired ? (
+                    <button
+                      type="button"
+                      disabled={detail.isFetching}
+                      onClick={() => void controller.settle()}
+                    >
+                      {detail.isFetching ? 'Reloading current case…' : 'Reload current case'}
+                    </button>
                   ) : null}
                 </article>
               ) : (

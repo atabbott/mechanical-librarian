@@ -526,6 +526,23 @@ and recovery locks together, and this observation does not promise cross-databas
 atomicity or freshness after the response. Browse borrowers close before root
 authority during failed activation, handover and shutdown (#1072).
 
+Foreground/background request hints affect only local scheduling after the normal
+authentication boundary. They cannot widen a read, bypass CSRF, grant effect
+consent, or upgrade nested background work. All owner mutations remain foreground.
+Accepted transactions drain through commit or proven rollback; disconnected queued
+browse reads are removed before SQL, while executing reads finish under ownership.
+External reviewer and target calls hold no local database permit. Durable effect
+claims and reviewer revision checks still prevent stale or duplicate authority.
+A credential operation whose external change succeeds before a mapping conflict
+remains a partial failure, with read-only reconciliation and no compensating guess.
+
+Decision acknowledgements distinguish a durable decision from confirmed current
+case readback. Only a validated confirmed case can update the same browser query
+and advance its field; unavailable confirmation never implies the write failed or
+permits an optimistic advance. Repeating the same idempotency key can retry this
+readback without adding another decision.
+
+
 The reachable assets are private case metadata and evidence plus session
 authority. Exact canonical Host and state-changing Origin checks prevent
 cross-origin use; HttpOnly SameSite cookies (Secure for browser HTTPS) and per-session CSRF protect

@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
 import type { ReviewHttp, SettingsView } from '../api/http'
@@ -14,7 +15,7 @@ const labels: Readonly<Record<keyof Preferences, string>> = {
 export const DescriptionAdviceSettings = ({ http }: { http: ReviewHttp }) => {
   const query = useQuery({
     queryKey: ['settings'],
-    queryFn: ({ signal }) => http.getSettings(signal),
+    queryFn: (queryContext) => http.getSettings(queryContext.signal, queryWorkClass(queryContext)),
     retry: false,
   })
   return (

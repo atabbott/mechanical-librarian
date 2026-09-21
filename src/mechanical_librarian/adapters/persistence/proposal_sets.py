@@ -16,7 +16,10 @@ from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ProposalNotFoundError,
@@ -52,6 +55,7 @@ class SQLiteProposalSetRepository(ConnectionScoped):
         super().__init__(connection, binding)
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
 
+    @local_operation
     def publish_proposal(self, proposal_set: ProposalSet) -> str:
         """Insert one exact ProposalSet after transaction-local report recheck."""
         if type(proposal_set) is not ProposalSet:
@@ -144,6 +148,7 @@ class SQLiteProposalSetRepository(ConnectionScoped):
                 "proposal publication precondition failed"
             ) from error
 
+    @local_operation
     def get_proposal(self, proposal_set_id: str) -> str:
         try:
             row = self._connection.execute(

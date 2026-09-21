@@ -1,4 +1,5 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useMutation } from '@tanstack/react-query'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
@@ -388,7 +389,7 @@ export default function SettingsPage() {
   const { http, queryClient } = useReviewContext()
   const query = useQuery({
     queryKey: ['settings'] as const,
-    queryFn: ({ signal }) => http.getSettings(signal),
+    queryFn: (queryContext) => http.getSettings(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })

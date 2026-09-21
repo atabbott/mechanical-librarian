@@ -432,13 +432,13 @@ def test_fallback_activity_serializes_a_worker_commit_past_its_read_snapshot(
             connection.rollback()
 
         def activity(self, **_query: object) -> dict[str, object]:
-            self._read_snapshot()
+            self.serialize(self._read_snapshot)
             return {"events": []}
 
         def activity_transitions(
             self, _event_id: str, _after_sequence: int | None = None
         ) -> dict[str, object]:
-            self._read_snapshot()
+            self.serialize(self._read_snapshot)
             return {"transitions": []}
 
         def commit_worker_transition(self) -> None:

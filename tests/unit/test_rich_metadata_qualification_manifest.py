@@ -2798,7 +2798,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
     """Current successors bind responsive read/currentness behavior and its consumers.
 
     Historical measurements and manifests remain frozen. The new compact facts,
-    separate ownership and nonblocking UI are classified semantic read changes;
+    local admission, confirmed decisions and nonblocking UI are semantic changes;
     only named qualification assignments use cycle-breaking AST equivalence.
     """
 
@@ -2852,6 +2852,19 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         "tests/support/continuous_review_scale.py",
         "tests/integration/test_continuous_review_scale.py",
     }
+    required.update(
+        {
+            "frontend/src/queryWork.ts",
+            "tests/unit/test_owner_settings_store.py",
+            "src/mechanical_librarian/application/operation_admission.py",
+            "tests/unit/test_transaction_scope.py",
+            "tests/unit/test_operation_admission.py",
+            "tests/unit/test_composition_reopen.py",
+            "tests/unit/test_reviewer_access_application.py",
+            "frontend/tests/queryWork.test.ts",
+            "frontend/tests/decisionCaseOwnership.test.ts",
+        }
+    )
     for path, digest in documents:
         document = json.loads(path.read_bytes())
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
@@ -2868,45 +2881,63 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         )
         assert continuity["current_source_sha"] == document["frozen_candidate_sha"]
         assert set(continuity["changed_read_sources"]) == {
-            # The guided first run reads and renders only: no admission,
-            # scoring, option, holdout or authority role (#1008).
-            "src/mechanical_librarian/adapters/library_services/"
-            "audiobookshelf_setup.py",
-            "src/mechanical_librarian/interfaces/web/setup.py",
-            "src/mechanical_librarian/interfaces/web/setup_frontend.py",
-            "frontend/src/components/MediaHealth.tsx",
-            "src/mechanical_librarian/adapters/persistence/decisions.py",
-            "src/mechanical_librarian/adapters/persistence/review_projections.py",
-            "src/mechanical_librarian/application/review_web.py",
-            "frontend/src/routes/LibraryPage.tsx",
-            "src/mechanical_librarian/domain/activity_records.py",
-            "src/mechanical_librarian/interfaces/web/app.py",
-            "frontend/src/routes/ActivityPage.tsx",
-            "frontend/src/routes/PolicyPage.tsx",
-            "frontend/src/routes/DetailPage.tsx",
             "frontend/src/api/http.ts",
-            "frontend/src/router.tsx",
-            "frontend/src/routes/AttentionPage.tsx",
+            "frontend/src/components/DescriptionAdvice.tsx",
+            "frontend/src/components/DescriptionAdviceSettings.tsx",
+            "frontend/src/components/MediaHealth.tsx",
+            "frontend/src/components/ReviewerAccessPanel.tsx",
+            "frontend/src/components/WriteReadyNotice.tsx",
+            "frontend/src/coverChoices.ts",
+            "frontend/src/decisionEcho.ts",
             "frontend/src/focus.ts",
             "frontend/src/liveInvalidation.ts",
-            "frontend/src/decisionEcho.ts",
             "frontend/src/reviewDecisionController.ts",
+            "frontend/src/router.tsx",
+            "frontend/src/routes/ActivityPage.tsx",
+            "frontend/src/routes/AttentionPage.tsx",
+            "frontend/src/routes/DetailPage.tsx",
+            "frontend/src/routes/LibraryPage.tsx",
+            "frontend/src/routes/PolicyPage.tsx",
+            "frontend/src/routes/SettingsPage.tsx",
+            "src/mechanical_librarian/adapters/library_services/audiobookshelf_setup.py",
             "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
             "src/mechanical_librarian/adapters/persistence/provider_recovery.py",
+            "src/mechanical_librarian/adapters/persistence/review_projections.py",
             "src/mechanical_librarian/adapters/persistence/review_sql.py",
             "src/mechanical_librarian/application/cover_consideration.py",
             "src/mechanical_librarian/application/review_application.py",
+            "src/mechanical_librarian/application/review_web.py",
             "src/mechanical_librarian/bootstrap/composition.py",
+            "src/mechanical_librarian/domain/activity_records.py",
+            "src/mechanical_librarian/interfaces/web/app.py",
+            "src/mechanical_librarian/interfaces/web/live_stream.py",
+            "src/mechanical_librarian/interfaces/web/setup.py",
+            "src/mechanical_librarian/interfaces/web/setup_frontend.py",
         }
         assert set(continuity["changed_coordination_sources"]) == {
             "src/mechanical_librarian/application/review_pipeline.py",
+            "src/mechanical_librarian/application/review_pipeline_stages.py",
+            "src/mechanical_librarian/application/reviewer_access.py",
         }
         for name, delta in continuity["changed_coordination_sources"].items():
             assert delta["current_sha256"] == document["source_closure"][name]
             assert delta["measured_sha256"] != delta["current_sha256"]
         assert set(continuity["changed_persistence_sources"]) == {
             "src/mechanical_librarian/adapters/persistence/cover_considerations.py",
+            "src/mechanical_librarian/adapters/persistence/decisions.py",
+            "src/mechanical_librarian/adapters/persistence/description_advice.py",
+            "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
+            "src/mechanical_librarian/adapters/persistence/field_effects.py",
+            "src/mechanical_librarian/adapters/persistence/metadata_policy.py",
+            "src/mechanical_librarian/adapters/persistence/owner_settings.py",
+            "src/mechanical_librarian/adapters/persistence/proposal_sets.py",
+            "src/mechanical_librarian/adapters/persistence/recovery_outbox.py",
+            "src/mechanical_librarian/adapters/persistence/reports.py",
+            "src/mechanical_librarian/adapters/persistence/review_cases.py",
+            "src/mechanical_librarian/adapters/persistence/review_preparation.py",
+            "src/mechanical_librarian/adapters/persistence/review_scans.py",
             "src/mechanical_librarian/adapters/persistence/schema.py",
+            "src/mechanical_librarian/adapters/persistence/transactions.py",
         }
         for name, delta in continuity["changed_persistence_sources"].items():
             assert delta["current_sha256"] == document["source_closure"][name]
@@ -2919,6 +2950,15 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         for name, delta in continuity["changed_admission_sources"].items():
             assert delta["current_sha256"] == document["source_closure"][name]
             assert delta["measured_sha256"] != delta["current_sha256"]
+        assert set(continuity["introduced_sources"]) == {
+            "frontend/src/queryWork.ts",
+            "src/mechanical_librarian/application/operation_admission.py",
+        }
+        for name, introduced in continuity["introduced_sources"].items():
+            assert set(introduced) == {"current_sha256", "meaning"}
+            assert introduced["current_sha256"] == document["source_closure"][name]
+            assert introduced["meaning"]
+            assert name not in continuity["unchanged_source_paths"]
         unchanged = {
             name: document["source_closure"][name]
             for name in continuity["unchanged_source_paths"]

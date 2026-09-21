@@ -35,7 +35,10 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
 )
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
@@ -345,6 +348,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 ),
             )
 
+    @local_operation
     def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
         try:
             envelope = json.loads(self.get_review_case(review_case_id))
@@ -395,6 +399,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
 
+    @local_operation
     def find_human_decision(self, idempotency_digest: str) -> str | None:
         try:
             row = self._connection.execute(
@@ -430,6 +435,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         except (sqlite3.Error, HumanDecisionError, TypeError) as error:
             raise MetadataReportError("human decision is unavailable") from error
 
+    @local_operation
     def record_human_decision(
         self,
         decision: HumanDecision,
@@ -622,6 +628,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
             transaction.rollback()
             raise MetadataReportError("human decision persistence failed") from error
 
+    @local_operation
     def _record_automatic_decision(self, decision: AutomaticDecision) -> str:
         """Legacy internal single-row helper; projection admission owns policy classification.
 
@@ -776,6 +783,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "automatic decision persistence failed"
             ) from error
 
+    @local_operation
     def automatic_safety_state(self) -> AutomaticSafetyState:
         try:
             row = self._connection.execute(
@@ -798,6 +806,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "automatic safety state is unavailable"
             ) from error
 
+    @local_operation
     def set_automatic_safety_state(
         self, state: AutomaticSafetyState, updated_at: int
     ) -> None:
@@ -845,6 +854,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "automatic safety state is unavailable"
             ) from error
 
+    @local_operation
     def get_review_case_history(
         self, review_case_id: str, limit: int
     ) -> tuple[dict[str, object], ...]:

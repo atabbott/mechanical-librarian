@@ -54,7 +54,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
 )
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.cover_automatic_decision import CoverAutomaticDecision
@@ -108,6 +111,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         self._retire_stale_cover_consideration = retire_stale_cover_consideration
         self._current_cover_authority = current_cover_authority
 
+    @local_operation
     def record_current_field_effect_no_change(
         self,
         decision: AutomaticDecision | AuthoredDescriptionDecision,
@@ -241,6 +245,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise FieldEffectError("persistence") from error
             raise FieldEffectError("authority_binding") from error
 
+    @local_operation
     def grant_field_effect_consents(
         self,
         connection: str,
@@ -336,6 +341,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def grant_field_effect_consent_matrix(
         self,
         connection: str,
@@ -470,6 +476,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def current_field_effect_consent(
         self,
         connection: str,
@@ -507,6 +514,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         ) as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def field_effect_consent_is_current(self, consent: EffectConsent) -> bool:
         try:
             return self._consent_is_current(consent)
@@ -531,6 +539,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         except (FieldEffectError, MetadataReportError):
             return False
 
+    @local_operation
     def revoke_library_field_effect_consents(
         self,
         connection: str,
@@ -612,6 +621,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             (review_case_id, destination, changed_at, document),
         )
 
+    @local_operation
     def field_effect_manual_hold_context(
         self,
         review_case_id: str,
@@ -626,6 +636,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         ).fetchone()
         return None if row is None else (row[0], row[1])
 
+    @local_operation
     def field_effect_manual_hold_token(
         self,
         review_case_id: str,
@@ -645,6 +656,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             raise FieldEffectError("persistence") from error
         return token if type(token) is str else None
 
+    @local_operation
     def request_field_effect_manual_return(
         self,
         review_case_id: str,
@@ -736,6 +748,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             ).fetchone()[0]
         )
 
+    @local_operation
     def clear_field_effect_manual_hold(
         self,
         review_case_id: str,
@@ -811,6 +824,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             transaction.rollback()
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def next_field_effect_plan_id(
         self,
         last_library: str | None,
@@ -835,6 +849,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def pending_field_effect_action_plan_ids(self, limit: int) -> tuple[str, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
@@ -850,6 +865,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def record_field_effect(
         self, operation: FieldEffectOperation
     ) -> FieldEffectOperation:
@@ -1018,6 +1034,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def get_field_effect(self, plan_id: str) -> FieldEffectOperation:
         try:
             row = self._connection.execute(
@@ -1029,6 +1046,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def field_effect_event_documents(self, plan_id: str) -> tuple[str, ...]:
         """Return one bounded, canonical, gap-free persisted audit sequence."""
         try:
@@ -1127,6 +1145,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         except (sqlite3.Error, json.JSONDecodeError) as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def suspend_field_effect_capability(
         self,
         *,
@@ -1225,6 +1244,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             raise FieldEffectError("persistence")
         return tuple(row[0] for row in rows)
 
+    @local_operation
     def field_effect_capability_suspension(
         self, connection: str, destination: str
     ) -> str | None:
@@ -1240,6 +1260,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def clear_field_effect_capability_suspension(
         self,
         *,
@@ -1283,6 +1304,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             transaction.rollback()
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def transition_field_effect(
         self,
         plan_id: str,
@@ -1357,6 +1379,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             self._schedule_field_effect_cleanup(operation, changed_at)
         return len(rows)
 
+    @local_operation
     def revoke_field_effect_consent(self, consent_id: str, changed_at: int) -> int:
         transaction = self._transaction("revoke_field_effect_consent")
         try:
@@ -1393,6 +1416,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def schedule_field_effect_reconciliation(
         self,
         plan_id: str,
@@ -1424,6 +1448,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def complete_field_effect_reconciliation(
         self,
         plan_id: str,
@@ -1469,6 +1494,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def claim_next_field_effect_action(
         self, changed_at: int, plan_id: str | None = None
     ) -> dict[str, object] | None:
@@ -1505,6 +1531,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def complete_forward_reevaluation(self, action_id: str, changed_at: int) -> None:
         transaction = self._transaction("complete_forward_reevaluation")
         try:
@@ -1527,12 +1554,14 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def field_effect_cleanup_pending(self, plan_id: str) -> bool:
         row: tuple[object, ...] | None = self._connection.execute(
             "SELECT state FROM field_effect_cleanups WHERE plan_id=?", (plan_id,)
         ).fetchone()
         return row == ("pending",)
 
+    @local_operation
     def pending_field_effect_cleanups(self, limit: int) -> tuple[str, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
@@ -1545,6 +1574,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             ).fetchall()
         )
 
+    @local_operation
     def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise FieldEffectError("invalid_limit")
@@ -1558,6 +1588,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             ).fetchall()
         )
 
+    @local_operation
     def complete_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
         transaction = self._transaction("complete_field_effect_cleanup")
         try:
@@ -1577,6 +1608,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             transaction.rollback()
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def fail_field_effect_cleanup(self, plan_id: str, changed_at: int) -> None:
         transaction = self._transaction("fail_field_effect_cleanup")
         try:
@@ -1597,6 +1629,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def set_field_effect_paused(self, paused: bool, changed_at: int) -> None:
         if type(paused) is not bool or type(changed_at) is not int or changed_at < 0:
             raise FieldEffectError("invalid_control")
@@ -1612,6 +1645,7 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
             transaction.rollback()
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def field_effect_paused(self) -> bool:
         try:
             return cast(

@@ -8,10 +8,11 @@
 
 ## Unreleased
 
-- Library navigation and selected work open while collections load, with truthful
-  pending counts and retry. Separate browse reads avoid holding up owner choices
-  during preparation. Existing application databases require a clean rebuild;
-  decision, currentness and guarded-write protections remain unchanged. (#1072)
+- Owner navigation, choices and Settings take priority over background database
+  work; collections show truthful loading and retry states. Choices return their
+  actual recorded confirmation without a competing background read. Existing
+  application databases require a clean rebuild; currentness and guarded-write
+  protections remain unchanged. (#1072)
 
 - Reviewer settings now name the cover reviewer's configured model beside its
   engine, and say plainly when contained Codex reports none. The cover task
