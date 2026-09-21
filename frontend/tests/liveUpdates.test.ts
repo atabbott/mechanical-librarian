@@ -1,5 +1,5 @@
-import { QueryClient } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
+import { QueryClient, QueryObserver, onlineManager } from '@tanstack/react-query'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import {
   invalidationKeys,
@@ -8,8 +8,323 @@ import {
 } from '../src/liveInvalidation'
 import { createLiveUpdateStream, readLiveUpdate } from '../src/liveUpdates'
 import type { LiveUpdate } from '../src/liveUpdates'
+import { beginDecisionEcho, endDecisionEcho, settleDecisionEcho } from '../src/decisionEcho'
 
 const CASE = `review_case_${'a'.repeat(64)}`
+
+const collectionHarness = (warm = false, key: readonly string[] = ['library', 'all']) => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  client.mount()
+  const reads: {
+    resolve: (value: string) => void
+    reject: (error: Error) => void
+    signal: AbortSignal
+  }[] = []
+  const timers = new Map<number, () => void>()
+  let timerId = 0
+  let visible = true
+  let visibilityListener: () => void = () => undefined
+  const listeners = new Set<(update: LiveUpdate) => void>()
+  const stop = startLiveInvalidation(
+    {
+      state: 'live',
+      subscribe(listener) {
+        listeners.add(listener)
+        return () => listeners.delete(listener)
+      },
+      observeState: () => () => undefined,
+      close: () => undefined,
+    },
+    client,
+    {
+      schedule: (run) => {
+        timers.set(++timerId, run)
+        return timerId
+      },
+      cancel: (id) => {
+        timers.delete(id)
+      },
+      visible: () => visible,
+      observeVisibility: (listener) => {
+        visibilityListener = listener
+        return () => undefined
+      },
+      observeActivity: () => () => undefined,
+      now: () => 0,
+    },
+  )
+  const options = {
+    queryKey: key,
+    staleTime: Infinity,
+    ...(warm ? { initialData: 'old' } : {}),
+    queryFn: ({ signal }: { signal: AbortSignal }) =>
+      new Promise<string>((resolve, reject) => {
+        reads.push({ resolve, reject, signal })
+      }),
+  }
+  const observer = new QueryObserver(client, options)
+  let unsubscribe = observer.subscribe(() => undefined)
+  if (warm) void observer.refetch()
+  const query = client.getQueryCache().find({ queryKey: key, exact: true })
+  if (!query) throw new Error('collection query was not constructed')
+  const close = () => {
+    stop()
+    unsubscribe()
+    client.unmount()
+    client.clear()
+  }
+  onTestFinished(close)
+  return {
+    client,
+    reads,
+    timers,
+    query,
+    stop,
+    options,
+    emit: (topic: 'library' | 'resync' = 'library') => {
+      for (const listener of listeners) listener({ sequence: 1, subject: null, topic })
+    },
+    send: (update: LiveUpdate) => {
+      for (const listener of listeners) listener(update)
+    },
+    flush: () => {
+      const pending = [...timers.values()]
+      timers.clear()
+      for (const run of pending) run()
+    },
+    hide: () => {
+      visible = false
+      visibilityListener()
+    },
+    show: () => {
+      visible = true
+      visibilityListener()
+    },
+    unmount: () => {
+      unsubscribe()
+      unsubscribe = () => undefined
+    },
+    remount: () => {
+      unsubscribe = new QueryObserver(client, options).subscribe(() => undefined)
+    },
+  }
+}
+
+describe('live collection completion debt', () => {
+  it('does not spin a paused read and refreshes its completed snapshot once', async () => {
+    onlineManager.setOnline(false)
+    const h = collectionHarness()
+    try {
+      expect(h.query.state.fetchStatus).toBe('paused')
+      h.emit()
+      h.flush()
+      h.flush()
+      expect(h.reads).toHaveLength(0)
+      expect(h.timers.size).toBe(0)
+      onlineManager.setOnline(true)
+      await vi.waitFor(() => expect(h.reads).toHaveLength(1))
+      h.reads[0]?.resolve('before-frame')
+      await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+      expect(h.query.state.isInvalidated).toBe(true)
+      h.flush()
+      expect(h.reads).toHaveLength(2)
+    } finally {
+      onlineManager.setOnline(true)
+    }
+  })
+
+  it('marks an inactive page stale without fetching until remount', async () => {
+    const h = collectionHarness(true)
+    h.reads[0]?.resolve('old')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.unmount()
+    h.emit()
+    h.flush()
+    expect(h.query.state.isInvalidated).toBe(true)
+    expect(h.reads).toHaveLength(1)
+    h.remount()
+    expect(h.reads).toHaveLength(2)
+  })
+
+  it('preserves completion debt when an independent explicit refresh replaces the request', async () => {
+    const h = collectionHarness(true)
+    h.emit()
+    h.flush()
+    void h.client.invalidateQueries({ queryKey: h.query.queryKey, exact: true })
+    expect(h.reads[0]?.signal.aborted).toBe(true)
+    expect(h.reads).toHaveLength(2)
+    h.emit()
+    h.flush()
+    expect(h.reads[1]?.signal.aborted).toBe(false)
+    h.reads[0]?.resolve('obsolete')
+    h.reads[1]?.resolve('replacement')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('replacement'))
+    expect(h.query.state.isInvalidated).toBe(true)
+    h.flush()
+    expect(h.reads).toHaveLength(3)
+  })
+
+  it('transfers a deferred decision echo only after concrete refresh debt owns it', async () => {
+    const h = collectionHarness(true)
+    beginDecisionEcho(h.client, CASE)
+    endDecisionEcho(h.client, CASE, [8])
+    h.send({ sequence: 8, subject: CASE, topic: 'library' })
+    h.flush()
+    expect(h.reads).toHaveLength(1)
+    h.emit()
+    h.flush()
+    settleDecisionEcho(h.client)
+    expect(h.reads[0]?.signal.aborted).toBe(false)
+    expect(h.reads).toHaveLength(1)
+    h.reads[0]?.resolve('before-frame')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+  })
+
+  it.each([false, true])(
+    'retains a %s warm read and coalesces repeated frames into one follow-up',
+    async (warm) => {
+      const h = collectionHarness(warm)
+      expect(h.reads).toHaveLength(1)
+      for (let i = 0; i < 20; i += 1) {
+        h.emit()
+        h.flush()
+      }
+      expect(h.reads).toHaveLength(1)
+      expect(h.reads[0]?.signal.aborted).toBe(false)
+      h.reads[0]?.resolve('before-frame')
+      await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+      expect(h.query.state.isInvalidated).toBe(true)
+      h.flush()
+      expect(h.reads).toHaveLength(2)
+      h.reads[1]?.resolve('after-frame')
+      await vi.waitFor(() => expect(h.query.state.data).toBe('after-frame'))
+      expect(h.query.state.isInvalidated).toBe(false)
+      h.flush()
+      expect(h.reads).toHaveLength(2)
+    },
+  )
+
+  it('retains one new debt for frames received during the follow-up', async () => {
+    const h = collectionHarness(true)
+    h.emit()
+    h.flush()
+    h.reads[0]?.resolve('first')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    h.flush()
+    for (let i = 0; i < 10; i += 1) {
+      h.emit()
+      h.flush()
+    }
+    expect(h.reads).toHaveLength(2)
+    expect(h.reads[1]?.signal.aborted).toBe(false)
+    h.reads[1]?.resolve('second')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('second'))
+    expect(h.query.state.isInvalidated).toBe(true)
+    h.flush()
+    expect(h.reads).toHaveLength(3)
+    h.reads[2]?.resolve('third')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('third'))
+    expect(h.query.state.isInvalidated).toBe(false)
+  })
+
+  it('does not discharge an in-flight debt through a manual cache update', async () => {
+    const h = collectionHarness(true)
+    h.emit()
+    h.flush()
+    h.client.setQueryData(h.query.queryKey, 'manual')
+    h.flush()
+    expect(h.reads).toHaveLength(1)
+    h.reads[0]?.resolve('server')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('server'))
+    expect(h.query.state.isInvalidated).toBe(true)
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+  })
+
+  it('leaves failures stale without creating a retry loop', async () => {
+    const h = collectionHarness(true)
+    h.emit()
+    h.flush()
+    h.reads[0]?.reject(new Error('unavailable'))
+    await vi.waitFor(() => expect(h.query.state.status).toBe('error'))
+    expect(h.query.state.isInvalidated).toBe(true)
+    h.flush()
+    h.flush()
+    expect(h.reads).toHaveLength(1)
+    h.emit()
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+  })
+
+  it('holds completed debt while hidden and consumes foreground resync once', async () => {
+    const h = collectionHarness(true)
+    h.emit()
+    h.flush()
+    h.hide()
+    h.reads[0]?.resolve('before-frame')
+    await vi.waitFor(() => expect(h.query.state.fetchStatus).toBe('idle'))
+    expect(h.query.state.isInvalidated).toBe(true)
+    h.flush()
+    expect(h.reads).toHaveLength(1)
+    h.show()
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+    h.reads[1]?.resolve('fresh')
+    await vi.waitFor(() => expect(h.query.state.data).toBe('fresh'))
+    h.flush()
+    expect(h.reads).toHaveLength(2)
+  })
+
+  it('drops unmounted debt after rollback and fetches stale data on remount', async () => {
+    const h = collectionHarness(true)
+    h.emit()
+    h.flush()
+    h.unmount()
+    expect(h.reads[0]?.signal.aborted).toBe(true)
+    expect(h.query.state.isInvalidated).toBe(true)
+    h.reads[0]?.resolve('late')
+    await Promise.resolve()
+    h.flush()
+    expect(h.query.state.data).toBe('old')
+    expect(h.reads).toHaveLength(1)
+    h.remount()
+    expect(h.reads).toHaveLength(2)
+  })
+
+  it('never transfers a removed query debt to a replacement with the same key', async () => {
+    const h = collectionHarness(true)
+    h.emit()
+    h.flush()
+    h.client.removeQueries({ queryKey: h.query.queryKey, exact: true })
+    h.unmount()
+    h.remount()
+    const replacement = h.client.getQueryCache().find({ queryKey: h.query.queryKey, exact: true })
+    expect(replacement).not.toBe(h.query)
+    expect(h.reads).toHaveLength(1)
+    h.reads[0]?.resolve('late')
+    await Promise.resolve()
+    h.flush()
+    expect(replacement?.state.data).toBe('old')
+    expect(h.reads).toHaveLength(1)
+  })
+
+  it('cancels tracked debt at teardown and preserves stale state after a late result', async () => {
+    const h = collectionHarness(true)
+    h.emit()
+    h.flush()
+    h.stop()
+    expect(h.reads[0]?.signal.aborted).toBe(true)
+    expect(h.query.state.isInvalidated).toBe(true)
+    h.reads[0]?.resolve('late')
+    await Promise.resolve()
+    h.flush()
+    expect(h.query.state.data).toBe('old')
+    expect(h.query.state.isInvalidated).toBe(true)
+    expect(h.reads).toHaveLength(1)
+  })
+})
 
 class FakeEventSource {
   readyState = 0

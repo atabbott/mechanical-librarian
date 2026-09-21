@@ -444,6 +444,7 @@ def measure_owner_routes(
     }
     values: dict[str, list[float]] = {name: [] for name in routes}
     misses: list[dict[str, object]] = []
+    preparation_progress: list[dict[str, object]] = []
     with httpx.Client(
         base_url=origin, headers={"Origin": origin}, timeout=30
     ) as client:
@@ -462,6 +463,20 @@ def measure_owner_routes(
                 response = client.get(route)
                 elapsed = (time.perf_counter() - started) * 1000
                 values[name].append(elapsed)
+                if name == "preparation" and response.status_code == 200:
+                    state = response.json()
+                    preparation_progress.append(
+                        {
+                            "sample": sample,
+                            "active": state["active"],
+                            "checked": sum(
+                                library["checked"] for library in state["libraries"]
+                            ),
+                            "blocked": sum(
+                                library["blocked"] for library in state["libraries"]
+                            ),
+                        }
+                    )
                 if response.status_code != 200 or elapsed > 2000:
                     misses.append(
                         {
@@ -475,12 +490,14 @@ def measure_owner_routes(
         name: {
             "n": len(rows),
             "p50_ms": statistics.median(rows),
-            "p95_ms": sorted(rows)[
-                max(0, math.ceil(len(rows) * 0.95) - 1)
-            ],
+            "p95_ms": sorted(rows)[max(0, math.ceil(len(rows) * 0.95) - 1)],
             "max_ms": max(rows),
             "samples_ms": rows,
         }
         for name, rows in values.items()
     }
-    return {"routes": summary, "misses": misses}
+    return {
+        "routes": summary,
+        "misses": misses,
+        "preparation_progress": preparation_progress,
+    }

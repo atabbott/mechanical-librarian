@@ -23,6 +23,86 @@ import type {
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 
+it('keeps the active search caret through debounced Library URL changes', async () => {
+  const user = userEvent.setup()
+  const { router } = renderRoute('/library?lens=all', createHttp())
+  const search = await screen.findByRole('searchbox')
+  await user.click(search)
+  await user.keyboard('synthetic')
+  await waitFor(() => expect(router.state.location.search.q).toBe('synthetic'))
+  expect(search).toHaveFocus()
+  await user.keyboard('{ArrowLeft}{Backspace}')
+  await waitFor(() => expect(router.state.location.search.q).toBe('synthetc'))
+  expect(search).toHaveFocus()
+  expect(search).toHaveProperty('selectionStart', 7)
+  expect(search).toHaveProperty('selectionEnd', 7)
+})
+
+it('keeps resync debt with its exact collection while search and cursor replace old requests', async () => {
+  const user = userEvent.setup()
+  const reads: { resolve: (value: LibraryView) => void; signal: AbortSignal | undefined }[] = []
+  const http = createHttp()
+  let first = true
+  http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (_search, signal) => {
+    if (first) {
+      first = false
+      return library
+    }
+    return new Promise((resolve) => reads.push({ resolve, signal }))
+  })
+  const updates = createLiveStream()
+  const { router, queryClient } = renderRoute('/library?lens=all&preview=case-1', http, updates)
+  expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
+  await act(async () => {
+    void queryClient.invalidateQueries({ queryKey: ['library'] })
+  })
+  await waitFor(() => expect(reads).toHaveLength(1))
+  const resync = async () =>
+    act(async () => {
+      updates.announce({ sequence: 0, subject: null, topic: 'resync' })
+      await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+    })
+  await resync()
+  expect(reads).toHaveLength(1)
+  expect(reads[0]?.signal?.aborted).toBe(false)
+  const search = screen.getByRole('searchbox')
+  await user.click(search)
+  await user.keyboard('later')
+  await waitFor(() => expect(reads).toHaveLength(2))
+  expect(reads[0]?.signal?.aborted).toBe(true)
+  expect(search).toHaveFocus()
+  await resync()
+  expect(reads).toHaveLength(2)
+  expect(reads[1]?.signal?.aborted).toBe(false)
+  await act(async () =>
+    router.navigate({
+      to: '/library',
+      search: { lens: 'all', preview: 'case-1', q: 'later', cursor: 'second' },
+    }),
+  )
+  await waitFor(() => expect(reads).toHaveLength(3))
+  expect(reads[1]?.signal?.aborted).toBe(true)
+  await resync()
+  const work = library.works[0]
+  if (!work) throw new Error('public work fixture required')
+  const result = { ...library, works: [{ ...work, title: 'Current result' }] }
+  await act(async () => {
+    reads[0]?.resolve({ ...library, works: [{ ...work, title: 'Obsolete result' }] })
+    reads[1]?.resolve({ ...library, works: [{ ...work, title: 'Obsolete result' }] })
+    reads[2]?.resolve(result)
+  })
+  expect(await screen.findByRole('heading', { name: 'Current result' })).toBeVisible()
+  expect(screen.queryByText('Obsolete result')).toBeNull()
+  await waitFor(() => expect(reads).toHaveLength(4))
+  await act(async () => reads[3]?.resolve(result))
+  expect(router.state.location.search).toMatchObject({
+    q: 'later',
+    cursor: 'second',
+    preview: 'case-1',
+  })
+  expect(http.getLibrary).toHaveBeenCalledTimes(5)
+})
+
 it('retries unavailable Works while the Library shell remains usable', async () => {
   const user = userEvent.setup()
   const getLibrary = vi

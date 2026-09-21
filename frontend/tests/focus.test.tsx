@@ -3,12 +3,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useRouteReadyFocus } from '../src/focus'
 
-const Route = ({ identity }: { identity: string }) => {
-  useRouteReadyFocus(identity)
+const Route = ({
+  identity,
+  preserveFocusedSearch = false,
+}: {
+  identity: string
+  preserveFocusedSearch?: boolean
+}) => {
+  useRouteReadyFocus(identity, preserveFocusedSearch)
   return (
     <main id="main-content">
       <section data-route-focus tabIndex={-1}>
         <button type="button">Choose proposed value</button>
+        <input type="search" aria-label="Search works" />
       </section>
     </main>
   )
@@ -36,6 +43,25 @@ const runFrames = () => {
 }
 
 describe('useRouteReadyFocus', () => {
+  it('preserves an edited Library search caret across a debounced URL update', () => {
+    const view = render(<Route identity="library:q=" preserveFocusedSearch />)
+    runFrames()
+    const search = document.querySelector<HTMLInputElement>('input')
+    if (!search) throw new Error('search fixture required')
+    search.value = 'synthetic'
+    search.focus()
+    search.setSelectionRange(4, 4)
+    view.rerender(<Route identity="library:q=synthetic" preserveFocusedSearch />)
+    runFrames()
+    expect(search).toHaveFocus()
+    expect(search.selectionStart).toBe(4)
+    expect(search.selectionEnd).toBe(4)
+    document.querySelector('button')?.focus()
+    view.rerender(<Route identity="library:q=synthetic:page=2" preserveFocusedSearch />)
+    runFrames()
+    expect(document.querySelector('[data-route-focus]')).toHaveFocus()
+  })
+
   it('moves focus to the route target once the route is ready', () => {
     render(<Route identity="review:title" />)
     runFrames()

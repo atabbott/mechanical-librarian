@@ -135,6 +135,16 @@ throughput, terminal successful-transition totals, fairness positions, restart
 facts, and RSS; it never records routes, identifiers, paths, SQL, credentials,
 or request values.
 
+The owner-responsiveness fixture additionally exercises 2,300 works across five
+libraries with complete producer-validated covers, long provider evidence,
+owner-final and evidence-only cases, and failed preparation. HTTP and rendered
+owner journeys retain every sample, p50/p95/max and every budget miss. Five cold
+runtime/repository starts use fresh browser contexts; thirty warm samples reuse
+one runtime while real preparation actors advance. OS caches are uncontrolled.
+The focused integration fixture proves setup, ownership and teardown before
+this scale proof. These checks do not rescore historical qualification quality;
+exact-installed evidence and direct rendered inspection remain separate (#1072).
+
 The same source job runs the frontend on the exact pinned Node and npm
 toolchain; [what merging proves](../../CONTRIBUTING.md#what-merging-proves)
 lists those commands against the workflow that runs them.

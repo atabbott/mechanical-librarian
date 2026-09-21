@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore } from 'react'
 
-import type { QueryClient } from '@tanstack/react-query'
+import type { Query, QueryClient } from '@tanstack/react-query'
 import { classifyDecisionEcho, forgetSettledKeys } from './decisionEcho'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from './liveUpdates'
 
@@ -97,6 +97,11 @@ export const startLiveInvalidation = (
     })
   const now = options.now ?? Date.now
   const pending = new Map<string, readonly unknown[]>()
+  // Debt belongs to the actual cached query, never a search/cursor prefix. A
+  // retained response may predate a frame, so it owes one subsequent read.
+  const owedCollections = new Set<Query>()
+  const readyCollections = new Set<Query>()
+  let stopped = false
   let handle: number | null = null
   let idleHandle: number | null = null
   let deferredWhileIdle = false
@@ -106,6 +111,39 @@ export const startLiveInvalidation = (
   let confirmationBeganLive =
     queryClient.getQueryState(['review-preparation'])?.fetchStatus === 'fetching' &&
     stream.state === 'live'
+
+  const observeCollections = queryClient.getQueryCache().subscribe((event) => {
+    const query = [...owedCollections, ...readyCollections].find(
+      (tracked) => tracked === event.query,
+    )
+    if (!query) return
+    if (
+      event.type === 'removed' ||
+      ((event.type === 'observerRemoved' || event.type === 'observerOptionsUpdated') &&
+        !query.isActive())
+    ) {
+      owedCollections.delete(query)
+      readyCollections.delete(query)
+      // Observer removal can restore the pre-fetch state after cancellation.
+      if (event.type !== 'removed') query.invalidate()
+      return
+    }
+    if (stopped || event.type !== 'updated') return
+    if (event.action.type === 'error') {
+      owedCollections.delete(query)
+      readyCollections.delete(query)
+      return
+    }
+    if (
+      event.action.type === 'success' &&
+      event.action.manual !== true &&
+      owedCollections.delete(query)
+    ) {
+      readyCollections.add(query)
+      query.invalidate()
+      if (visible()) handle ??= schedule(flush, coalesceMilliseconds)
+    }
+  })
 
   const setPreparationDebt = (debt: boolean) =>
     queryClient.setQueryData(preparationInvalidationDebtKey, debt)
@@ -142,12 +180,9 @@ export const startLiveInvalidation = (
     // A hidden browser does no catch-up work.  Its next foreground transition
     // invalidates snapshot keys once, so frames cannot fabricate state or make
     // an old counter look current.
-    if (!visible()) return
+    if (stopped || !visible()) return
     const keys = [...pending.values()]
     pending.clear()
-    // A read taken now is a read this tab no longer owes itself for an echo it
-    // recognised earlier, so the debt is discharged rather than repeated.
-    forgetSettledKeys(queryClient, keys)
     for (const queryKey of keys) {
       if (
         queryKey[0] === 'review-preparation' &&
@@ -157,8 +192,37 @@ export const startLiveInvalidation = (
         setPreparationDebt(true)
         continue
       }
-      void queryClient.invalidateQueries({ queryKey })
+      if (queryKey[0] === 'library' || queryKey[0] === 'attention') {
+        const queries = queryClient.getQueryCache().findAll({ queryKey })
+        // Inactive pages are stale for their next mount, with no background work.
+        void queryClient.invalidateQueries({ queryKey, refetchType: 'none' })
+        for (const query of queries) refreshCollection(query)
+      } else void queryClient.invalidateQueries({ queryKey })
+      // Each collection obligation is now a fresh read, concrete completion
+      // debt, or an inactive stale page. Its decision echo can relinquish it.
+      forgetSettledKeys(queryClient, [queryKey])
     }
+    for (const query of [...readyCollections]) refreshCollection(query)
+  }
+
+  function refreshCollection(query: Query) {
+    if (stopped || !visible()) return
+    if (queryClient.getQueryCache().get(query.queryHash) !== query) {
+      owedCollections.delete(query)
+      readyCollections.delete(query)
+      return
+    }
+    readyCollections.delete(query)
+    if (!query.isActive()) {
+      owedCollections.delete(query)
+      query.invalidate()
+      return
+    }
+    if (query.state.fetchStatus !== 'idle') owedCollections.add(query)
+    void queryClient.invalidateQueries(
+      { queryKey: query.queryKey, exact: true, refetchType: 'active' },
+      { cancelRefetch: false },
+    )
   }
 
   const flushIdlePreparation = () => {
@@ -270,6 +334,20 @@ export const startLiveInvalidation = (
   })
 
   return () => {
+    stopped = true
+    for (const query of new Set([...owedCollections, ...readyCollections])) {
+      if (queryClient.getQueryCache().get(query.queryHash) !== query) continue
+      // Cancel before marking stale: cancellation can restore the old state,
+      // and an unobserved late success would otherwise erase the debt.
+      void queryClient.cancelQueries(
+        { queryKey: query.queryKey, exact: true, predicate: (cached) => cached === query },
+        { silent: true },
+      )
+      query.invalidate()
+    }
+    owedCollections.clear()
+    readyCollections.clear()
+    observeCollections()
     unsubscribe()
     stopObservingState()
     observePreparation()

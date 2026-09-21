@@ -46,6 +46,16 @@ identity for the same selected work; settled absence, errors and a changed
 selection end that retention. Detail documents do not supply otherwise absent
 public identity. Superseded requests remain abortable.
 
+Live Library and Attention invalidations preserve each active collection request
+and attach at most one completion debt to its concrete cached query. A response
+that may predate an announcement remains stale and receives one exact follow-up
+through the existing coalescer. Repeated announcements do not cancel and restart
+that read. Search/cursor changes still cancel their old requests; debt never
+transfers to another key or replacement cache object. Hidden or inactive queries
+do not start background refreshes, and failures retain the existing retry path.
+Teardown cancels outstanding debt reads before preserving their stale state.
+Frames remain invalidation notices, never authoritative cache data.
+
 ## Consequences
 
 Collection cost no longer includes full-report validation per SQL candidate.

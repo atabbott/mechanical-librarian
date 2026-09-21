@@ -19,3 +19,6 @@ def test_complete_cover_owner_routes_at_2300_works(tmp_path: Path) -> None:
         receipt = measure_owner_routes(fixture, origin, 30)
         print(json.dumps(receipt, sort_keys=True))
         assert receipt["misses"] == []
+        progress = receipt["preparation_progress"]
+        assert progress[-1]["checked"] > progress[0]["checked"]
+        assert any(row["active"] for row in progress)

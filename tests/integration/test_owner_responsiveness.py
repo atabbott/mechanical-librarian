@@ -177,6 +177,79 @@ def test_forged_currentness_facts_refuse_reopen_without_repair(tmp_path: Path) -
     assert database.read_bytes() == before
 
 
+def test_shutdown_drains_an_owned_browse_before_closing_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    entered, release, stopping, stopped = (threading.Event() for _ in range(4))
+    failures: list[BaseException] = []
+    closed: list[str] = []
+    original_read = fixture.browse.read_review_library
+    original_updates_close = fixture.application._updates.close
+    original_browse_close = fixture.application._close_browse
+    original_root_close = fixture.repository.close
+    assert original_browse_close is not None
+
+    def read(*args):
+        result = original_read(*args)
+        assert not fixture.browse._connection.in_transaction
+        entered.set()
+        assert release.wait(5)
+        return result
+
+    def updates_close():
+        original_updates_close()
+        stopping.set()
+
+    def browse_close():
+        assert release.is_set()
+        original_browse_close()
+        closed.append("browse")
+
+    def root_close():
+        assert closed == ["browse"]
+        original_root_close()
+        closed.append("root")
+
+    def browse():
+        try:
+            fixture.application.library(lens="all", search=None, limit=5, cursor=None)
+        except BaseException as error:
+            failures.append(error)
+
+    def stop():
+        try:
+            fixture.close()
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            stopped.set()
+
+    monkeypatch.setattr(fixture.browse, "read_review_library", read)
+    monkeypatch.setattr(fixture.application._updates, "close", updates_close)
+    fixture.application._close_browse = browse_close
+    monkeypatch.setattr(fixture.repository, "close", root_close)
+    reader = threading.Thread(target=browse)
+    closer = threading.Thread(target=stop)
+    reader.start()
+    try:
+        assert entered.wait(5)
+        closer.start()
+        assert stopping.wait(5)
+        assert not stopped.wait(0.05)
+        assert closed == []
+    finally:
+        release.set()
+        reader.join(5)
+        if closer.ident is not None:
+            closer.join(5)
+        else:
+            fixture.close()
+    assert not reader.is_alive() and not closer.is_alive()
+    assert failures == []
+    assert closed == ["browse", "root"]
+
+
 def test_complete_currentness_facts_survive_root_reopen(tmp_path: Path) -> None:
     from mechanical_librarian.adapters.persistence.metadata_reports import (
         open_repository,

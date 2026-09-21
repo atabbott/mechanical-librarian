@@ -2326,18 +2326,20 @@ export default function LibraryPage({
     })()
   }, [data, works, http, navigate, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
-  const pendingIdentity = useRef<typeof selectedIdentityRef.current>(null)
-  useLayoutEffect(() => {
-    if (selectedIdentity && search.preview)
-      pendingIdentity.current = { ...selectedIdentity, id: search.preview }
-    else if (!pending || failed || pendingIdentity.current?.id !== search.preview)
-      pendingIdentity.current = null
-  }, [failed, pending, search.preview, selectedIdentity])
+  const [pendingIdentity, setPendingIdentity] = useState<{
+    id: string
+    identity: NonNullable<typeof selectedIdentity>
+  } | null>(null)
+  if (selectedIdentity && search.preview) {
+    if (pendingIdentity?.id !== search.preview || pendingIdentity.identity !== selectedIdentity)
+      setPendingIdentity({ id: search.preview, identity: selectedIdentity })
+  } else if (pendingIdentity && (!pending || failed || pendingIdentity.id !== search.preview))
+    setPendingIdentity(null)
   const displayedIdentity =
     selectedIdentity ??
     completionIdentity ??
-    (pending && !failed && pendingIdentity.current?.id === search.preview
-      ? pendingIdentity.current
+    (pending && !failed && pendingIdentity !== null && pendingIdentity.id === search.preview
+      ? pendingIdentity.identity
       : undefined)
   const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
   const visibleFields = detail.data?.fields.filter(primaryField) ?? []
@@ -2515,7 +2517,7 @@ export default function LibraryPage({
   })
 
   const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
-  useRouteReadyFocus(routeIdentity)
+  useRouteReadyFocus(routeIdentity, true)
   useEffect(() => {
     if (!preparationSelected) return
     const frame = requestAnimationFrame(() => {

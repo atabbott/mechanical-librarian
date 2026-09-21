@@ -435,9 +435,10 @@ requests outer-server termination rather than serving mismatched authority.
 The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
 guarded effects, recovery, and support execute as named application operations
-behind the owner-operation serialization gate. Activity executes as a named
-application operation through its dedicated reader connection and reader-local
-request gate; SQLite remains the sole transaction owner. FastAPI retains only
+behind the owner-operation serialization gate. Library and Attention share one
+separately owned browse connection and request gate, borrowed from the existing
+root database authority. Activity retains its dedicated reader connection and
+reader-local request gate; SQLite remains the sole transaction owner. FastAPI retains only
 request bounds, exact Host/Origin enforcement, session/CSRF dependencies,
 response translation, and lifecycle delegation.
 
@@ -514,6 +515,16 @@ and Attention page with its field count is read from one authoritative SQLite
 snapshot. Concurrent supersession and decision commits therefore appear wholly
 before or wholly after a response; a failed snapshot yields only the existing
 bounded unavailable response.
+
+Cover membership uses immutable derived facts validated against the complete
+canonical consideration at publication and root open. This does not grant
+selection or effect authority: those boundaries still validate complete evidence.
+One browse operation captures live cover policy, replay identity and active
+provider fetch identities before its short application snapshot, then rechecks
+them after projection. Drift returns unavailable. It never holds the application
+and recovery locks together, and this observation does not promise cross-database
+atomicity or freshness after the response. Browse borrowers close before root
+authority during failed activation, handover and shutdown (#1072).
 
 The reachable assets are private case metadata and evidence plus session
 authority. Exact canonical Host and state-changing Origin checks prevent

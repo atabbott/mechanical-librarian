@@ -2773,11 +2773,11 @@ def test_consumer_correction_is_not_historical_rule_equivalence():
 
 
 DELIVERED_RICH_MANIFEST = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v39.json"
+    "f20-rich-metadata-qualification-candidate-v40.json"
 )
-DELIVERED_TITLE_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v25.json")
+DELIVERED_TITLE_MANIFEST = MANIFEST.with_name("f19a-qualification-manifest-v26.json")
 DELIVERED_AUDIOBOOK_MANIFEST = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v8.json"
+    "f46-audiobook-qualification-candidate-v9.json"
 )
 
 
@@ -2795,13 +2795,11 @@ def _predecessor_source_digest(name: str) -> str:
 
 
 def test_current_title_successors_bind_complete_consumer_source_inventory():
-    """The three current manifests re-pinned in place for #1012.
+    """Current successors bind responsive read/currentness behavior and its consumers.
 
-    No option, scoring or holdout moves, and no source changes classification:
-    the preparation panel, the application router and their styles, tests and
-    documentation were already read/UI sources. Every live pin is recomputed
-    from the file it names, so a source that moved without being classified
-    fails here rather than at review.
+    Historical measurements and manifests remain frozen. The new compact facts,
+    separate ownership and nonblocking UI are classified semantic read changes;
+    only named qualification assignments use cycle-breaking AST equivalence.
     """
 
     from mechanical_librarian.domain.audiobook_decision_qualification import (
@@ -2834,6 +2832,17 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         "frontend/src/routes/PolicyPage.tsx",
         "frontend/tests/router.activity.test.tsx",
         "frontend/tests/router.policy.test.tsx",
+        "tests/support/owner_responsiveness.py",
+        "tests/support/cover_producers.py",
+        "tests/integration/test_owner_responsiveness.py",
+        "tests/slow/test_owner_responsiveness.py",
+        "tests/slow/test_owner_browser_responsiveness.py",
+        "frontend/src/focus.ts",
+        "frontend/tests/focus.test.tsx",
+        "frontend/src/liveInvalidation.ts",
+        "frontend/tests/liveUpdates.test.ts",
+        "tests/support/continuous_review_scale.py",
+        "tests/integration/test_continuous_review_scale.py",
     }
     for path, digest in documents:
         document = json.loads(path.read_bytes())
@@ -2869,7 +2878,23 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "frontend/src/routes/DetailPage.tsx",
             "frontend/src/api/http.ts",
             "frontend/src/router.tsx",
+            "frontend/src/routes/AttentionPage.tsx",
+            "frontend/src/focus.ts",
+            "frontend/src/liveInvalidation.ts",
+            "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
+            "src/mechanical_librarian/adapters/persistence/provider_recovery.py",
+            "src/mechanical_librarian/adapters/persistence/review_sql.py",
+            "src/mechanical_librarian/application/cover_consideration.py",
+            "src/mechanical_librarian/application/review_application.py",
+            "src/mechanical_librarian/bootstrap/composition.py",
         }
+        assert set(continuity["changed_persistence_sources"]) == {
+            "src/mechanical_librarian/adapters/persistence/cover_considerations.py",
+            "src/mechanical_librarian/adapters/persistence/schema.py",
+        }
+        for name, delta in continuity["changed_persistence_sources"].items():
+            assert delta["current_sha256"] == document["source_closure"][name]
+            assert delta["measured_sha256"] != delta["current_sha256"]
         assert set(continuity["changed_admission_sources"]) == {
             "src/mechanical_librarian/domain/proposal_set.py",
             "src/mechanical_librarian/application/continuous_field_effects.py",

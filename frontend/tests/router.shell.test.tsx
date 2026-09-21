@@ -5,11 +5,11 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
-import type { PreparationView, ReviewHttp } from '../src/api/http'
+import type { LibraryView, PreparationView, ReviewHttp } from '../src/api/http'
 import type { LiveStreamState, LiveUpdate, LiveUpdateStream } from '../src/liveUpdates'
 import { coalesceMilliseconds } from '../src/liveInvalidation'
 import { createApplicationRouter, preparationQuery } from '../src/router'
-import { createHttp, createLiveStream, renderRoute } from './fixtures'
+import { createHttp, createLiveStream, library, renderRoute } from './fixtures'
 
 const reducedMotion = () => ({
   matches: true,
@@ -23,6 +23,32 @@ const reducedMotion = () => ({
 })
 
 afterEach(() => vi.unstubAllGlobals())
+
+it('keeps initial collection requests during shell resync and confirms with one follow-up', async () => {
+  const reads: { resolve: (value: LibraryView) => void; signal: AbortSignal | undefined }[] = []
+  const http = createHttp()
+  http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(
+    (_search, signal) =>
+      new Promise((resolve) => {
+        reads.push({ resolve, signal })
+      }),
+  )
+  const updates = createLiveStream()
+  renderRoute('/library?lens=all', http, updates)
+  expect(await screen.findByRole('heading', { name: 'Works' })).toBeVisible()
+  expect(screen.getByText('Loading works…')).toBeVisible()
+  await act(async () => {
+    updates.announce({ sequence: 0, subject: null, topic: 'resync' })
+    await new Promise((resolve) => setTimeout(resolve, coalesceMilliseconds + 20))
+  })
+  expect(reads).toHaveLength(1)
+  expect(reads[0]?.signal?.aborted).toBe(false)
+  await act(async () => reads[0]?.resolve(library))
+  await waitFor(() => expect(reads).toHaveLength(2))
+  expect(screen.queryByText('Loading works…')).toBeNull()
+  await act(async () => reads[1]?.resolve(library))
+  expect(http.getLibrary).toHaveBeenCalledTimes(2)
+})
 
 describe('Application shell', () => {
   it('mounts navigation and selected detail independently of a pending collection and cancels it on departure', async () => {
