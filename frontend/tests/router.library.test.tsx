@@ -23,21 +23,19 @@ import type {
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import { activity, createHttp, createLiveStream, detail, library, renderRoute } from './fixtures'
 
-it('retries a failed Library route loader through a new request', async () => {
+it('retries unavailable Works while the Library shell remains usable', async () => {
   const user = userEvent.setup()
   const getLibrary = vi
     .fn()
     .mockRejectedValueOnce(new Error('temporary Library failure'))
     .mockResolvedValue(library)
   renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
-  expect(
-    await screen.findByRole('heading', { name: 'This workspace could not be loaded.' }),
-  ).toBeVisible()
+  expect(await screen.findByText('Works are unavailable.')).toBeVisible()
   const failedReads = getLibrary.mock.calls.length
   await user.click(screen.getByRole('button', { name: 'Try again' }))
   expect(await screen.findByRole('heading', { name: 'Library' })).toBeVisible()
   expect(getLibrary.mock.calls.length).toBeGreaterThan(failedReads)
-  expect(screen.queryByRole('heading', { name: 'This workspace could not be loaded.' })).toBeNull()
+  await waitFor(() => expect(screen.queryByText('Works are unavailable.')).toBeNull())
 })
 
 const terminalPreparation = (
@@ -275,7 +273,7 @@ describe('Library route', () => {
     expect(document.querySelector('.preparation-run-state')).not.toHaveClass('reported-change')
     expect(http.getPreparation).toHaveBeenCalledTimes(4)
 
-    await user.click(screen.getByRole('button', { name: /^A Book\./u }))
+    await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Now preparing' })).toBeNull()
     await user.click(screen.getByRole('button', { name: /Preparing your library/u }))
@@ -741,7 +739,7 @@ describe('Library route', () => {
     expect(
       await screen.findByRole('heading', { name: 'Preparation completed with failures' }),
     ).toBeVisible()
-    await user.click(work)
+    await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { name: 'A Book' })).toBeVisible()
   })
 
@@ -1255,7 +1253,7 @@ describe('Library route', () => {
       { lens: 'all', q: 'title' },
       expect.any(AbortSignal),
     )
-    await user.click(screen.getByRole('button', { name: /^A Book\./u }))
+    await user.click(await screen.findByRole('button', { name: /^A Book\./u }))
     expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
     expect(screen.queryByText('item-1')).toBeNull()
     expect(screen.getByText('Author details unavailable · Books · ebook')).toBeVisible()
@@ -4097,7 +4095,9 @@ describe('Library route', () => {
     }
     renderRoute('/library?lens=all&preview=case-1&field=series', http)
 
-    expect(await screen.findByRole('button', { name: 'Attention queue' })).toHaveTextContent('1')
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Attention queue' })).toHaveTextContent('1'),
+    )
     expect(screen.getByRole('button', { name: /A Book.*1 field needs attention/u })).toBeVisible()
     await user.click(await screen.findByRole('button', { name: 'Choose proposed value: Mistborn' }))
 
@@ -7278,6 +7278,55 @@ describe('Library route', () => {
     )
     expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
   })
+
+  it.each(['absent', 'error'] as const)(
+    'retains public identity only during pending search and clears it after %s',
+    async (result) => {
+      let settle: ((value: LibraryView) => void) | undefined
+      let reject: ((error: Error) => void) | undefined
+      const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) => {
+        if (!search.q) return library
+        return new Promise<LibraryView>((resolve, refuse) => {
+          settle = resolve
+          reject = refuse
+        })
+      })
+      const { router } = renderRoute('/library?lens=all&preview=case-1', {
+        ...createHttp(),
+        getLibrary,
+      })
+      expect(await screen.findByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+      await act(async () => {
+        await router.navigate({
+          to: '/library',
+          search: { lens: 'all', preview: 'case-1', q: 'pending' },
+        })
+      })
+      expect(await screen.findByText('Loading works…')).toBeVisible()
+      expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+      await act(async () => {
+        if (result === 'absent')
+          settle?.({ ...library, works: [], counts: { attention: 0, all: 0, clear: 0 } })
+        else reject?.(new Error('Collection unavailable'))
+      })
+      expect(
+        await screen.findByText(
+          result === 'absent'
+            ? 'This work is not available in the current Library result.'
+            : 'Selected work could not be loaded.',
+        ),
+      ).toBeVisible()
+      expect(screen.queryByRole('heading', { level: 2, name: 'A Book' })).toBeNull()
+      await act(async () => {
+        await router.navigate({
+          to: '/library',
+          search: { lens: 'all', preview: 'case-1', q: 'later' },
+        })
+      })
+      expect(await screen.findByText('Loading selected work…')).toBeVisible()
+      expect(screen.queryByRole('heading', { level: 2, name: 'A Book' })).toBeNull()
+    },
+  )
 
   it('keeps the latest Library query when a prior replacement finishes late', async () => {
     const user = userEvent.setup()

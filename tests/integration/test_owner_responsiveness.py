@@ -110,6 +110,39 @@ def test_held_post_snapshot_browse_does_not_block_owner_detail(
         assert entered.wait(5)
         detail = fixture.application.case_detail(fixture.cases[0].review_case_id)
         assert detail is not None
+        case = fixture.cases[0]
+        proposal = next(
+            value for value in case.proposals if value["destination"] == "title"
+        )
+        proposal_id = proposal["proposal_id"]
+        assert type(proposal_id) is str
+        first, repeated = [
+            fixture.application.record_decision(
+                case.review_case_id,
+                proposal_id=proposal_id,
+                target_fingerprint=case.target_fingerprint,
+                destination="title",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="held-browse-owner-choice",
+            )
+            for _ in range(2)
+        ]
+        assert first["decision_id"] == repeated["decision_id"]
+        assert fixture.repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (1,)
+        assert fixture.repository._connection.execute(
+            "SELECT count(*) FROM human_decision_events WHERE decision_id=?",
+            (first["decision_id"],),
+        ).fetchone() == (1,)
+        readback = fixture.application.case_detail(case.review_case_id)
+        title = next(
+            field for field in readback.fields if field["destination"] == "title"
+        )
+        assert title["human_decision"]["decision_id"] == first["decision_id"]
+        assert title["needs_attention"] is False
         assert not release.is_set()
     finally:
         release.set()
@@ -164,3 +197,87 @@ def test_complete_currentness_facts_survive_root_reopen(tmp_path: Path) -> None:
         )
     finally:
         reopened.close()
+
+
+def test_exact_pre_currentness_schema_refuses_startup_without_mutation(
+    tmp_path: Path,
+) -> None:
+    import sqlite3
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from tests.support.metadata_report_schemas import create_pre_currentness_schema
+
+    database = tmp_path / "predecessor.sqlite"
+    connection = sqlite3.connect(database)
+    create_pre_currentness_schema(connection)
+    columns = {
+        row[1] for row in connection.execute("PRAGMA table_info(cover_considerations)")
+    }
+    assert "document" in columns and "currentness_document" not in columns
+    connection.close()
+    before = database.read_bytes()
+    with pytest.raises(MetadataReportError, match="unavailable or incompatible"):
+        open_repository(database, create=False)
+    assert database.read_bytes() == before
+
+
+@pytest.mark.parametrize("failed_capture", (1, 2))
+def test_external_authority_failure_is_truthfully_unavailable(
+    tmp_path: Path, failed_capture: int
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 1)
+    try:
+        capture = fixture.browse._capture_cover_read
+        assert capture is not None
+        observation = capture()
+        calls = 0
+
+        def unavailable():
+            nonlocal calls
+            calls += 1
+            if calls == failed_capture:
+                raise RuntimeError("private recovery storage detail")
+            return observation
+
+        fixture.browse.bind_cover_read_observation(unavailable)
+        with pytest.raises(
+            MetadataReportError, match="^review snapshot is unavailable$"
+        ):
+            fixture.application.library(lens="all", search=None, limit=5, cursor=None)
+        assert fixture.browse._cover_read_observation is None
+        assert not fixture.browse._connection.in_transaction
+    finally:
+        fixture.close()
+
+
+def test_browse_borrower_closes_before_root_and_refuses_later_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mechanical_librarian.application.review_application import (
+        ReviewApplicationError,
+    )
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 1)
+    closed: list[str] = []
+    close_browse = fixture.application._close_browse
+    close_root = fixture.repository.close
+    assert close_browse is not None
+
+    def browse_close():
+        close_browse()
+        closed.append("browse")
+
+    def root_close():
+        assert closed == ["browse"]
+        close_root()
+        closed.append("root")
+
+    fixture.application._close_browse = browse_close
+    monkeypatch.setattr(fixture.repository, "close", root_close)
+    fixture.close()
+    assert closed == ["browse", "root"]
+    with pytest.raises(ReviewApplicationError, match="unavailable"):
+        fixture.application.library(lens="all", search=None, limit=5, cursor=None)

@@ -18,7 +18,15 @@ const groupItems = (items: readonly AttentionItemView[]) => {
   return [...groups.values()]
 }
 
-export default function AttentionPage({ data }: { data: AttentionView }) {
+export default function AttentionPage({
+  data,
+  failed,
+  retry,
+}: {
+  data: AttentionView | undefined
+  failed: boolean
+  retry: () => void
+}) {
   const search = attentionRoute.useSearch()
   const navigate = useNavigate({ from: '/attention' })
   useRouteReadyFocus(`${search.q ?? ''}:${search.cursor ?? ''}`)
@@ -28,7 +36,7 @@ export default function AttentionPage({ data }: { data: AttentionView }) {
     const q = typeof value === 'string' ? value : ''
     void navigate({ search: q ? { q } : {} })
   }
-  const groups = groupItems(data.items)
+  const groups = groupItems(data?.items ?? [])
   return (
     <div className="attention-page">
       <header className="attention-header" tabIndex={-1} data-route-focus>
@@ -38,8 +46,14 @@ export default function AttentionPage({ data }: { data: AttentionView }) {
           <p>Only unresolved fields where your choice can improve the result.</p>
         </div>
         <div className="attention-total">
-          <strong>{data.total}</strong>
-          <span>{data.total === 1 ? 'field' : 'fields'} across current works</span>
+          <strong>{data ? data.total : '…'}</strong>
+          <span>
+            {data
+              ? `${data.total === 1 ? 'field' : 'fields'} across current works`
+              : failed
+                ? 'Count unavailable'
+                : 'Loading count…'}
+          </span>
         </div>
       </header>
       <form className="search attention-search" onSubmit={submit}>
@@ -57,7 +71,20 @@ export default function AttentionPage({ data }: { data: AttentionView }) {
         </div>
       </form>
       <section className="attention-groups" aria-label="Fields needing attention">
-        {groups.length ? (
+        {!data ? (
+          <div className="attention-empty" aria-busy={!failed}>
+            {failed ? (
+              <>
+                <p role="alert">Attention is unavailable.</p>
+                <button type="button" onClick={retry}>
+                  Try again
+                </button>
+              </>
+            ) : (
+              <p role="status">Loading attention…</p>
+            )}
+          </div>
+        ) : groups.length ? (
           groups.map((group) => {
             const work = group[0]
             if (!work) return null
@@ -117,15 +144,17 @@ export default function AttentionPage({ data }: { data: AttentionView }) {
             </Link>
           </div>
         )}
-        <footer className="attention-pager">
-          {data.nextCursor ? (
-            <Link to="/attention" search={{ ...search, cursor: data.nextCursor }}>
-              Next page →
-            </Link>
-          ) : (
-            <span>End of the bounded current result</span>
-          )}
-        </footer>
+        {data ? (
+          <footer className="attention-pager">
+            {data.nextCursor ? (
+              <Link to="/attention" search={{ ...search, cursor: data.nextCursor }}>
+                Next page →
+              </Link>
+            ) : (
+              <span>End of the bounded current result</span>
+            )}
+          </footer>
+        ) : null}
       </section>
     </div>
   )

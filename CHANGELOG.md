@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Library navigation and selected work open while collections load, with truthful
+  pending counts and retry. Separate browse reads avoid holding up owner choices
+  during preparation. Existing application databases require a clean rebuild;
+  decision, currentness and guarded-write protections remain unchanged. (#1072)
+
 - Reviewer settings now name the cover reviewer's configured model beside its
   engine, and say plainly when contained Codex reports none. The cover task
   states what a cover model must support and the largest request it can send,

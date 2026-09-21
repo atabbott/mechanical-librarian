@@ -937,18 +937,25 @@ const indexRoute = createRoute({
   component: () => <Navigate to="/library" search={{ lens: 'all' }} replace />,
 })
 const LibraryRouteComponent = () => {
-  const initial = libraryRoute.useLoaderData()
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
-  const query = useQuery({ ...libraryQuery(http, search), initialData: initial })
-  return <LibraryPage data={query.data} />
+  const query = useQuery(libraryQuery(http, search))
+  return (
+    <LibraryPage
+      data={query.data}
+      pending={query.isPending}
+      failed={query.isError}
+      retry={() => void query.refetch()}
+    />
+  )
 }
 const AttentionRouteComponent = () => {
-  const initial = attentionRoute.useLoaderData()
   const { http } = rootRoute.useRouteContext()
   const search = attentionRoute.useSearch()
-  const query = useQuery({ ...attentionQuery(http, search), initialData: initial })
-  return <AttentionPage data={query.data} />
+  const query = useQuery(attentionQuery(http, search))
+  return (
+    <AttentionPage data={query.data} failed={query.isError} retry={() => void query.refetch()} />
+  )
 }
 const DiagnosticRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
@@ -996,26 +1003,12 @@ export const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/library',
   validateSearch: normalizeLibrarySearch,
-  loaderDeps: ({ search }) => search,
-  loader: ({ context, deps, abortController }) =>
-    context.queryClient.query({
-      ...libraryQuery(context.http, deps),
-      queryFn: () => context.http.getLibrary(deps, abortController.signal),
-      staleTime: 'static',
-    }),
   component: LibraryRouteComponent,
 })
 export const attentionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/attention',
   validateSearch: normalizeAttentionSearch,
-  loaderDeps: ({ search }) => search,
-  loader: ({ context, deps, abortController }) =>
-    context.queryClient.query({
-      ...attentionQuery(context.http, deps),
-      queryFn: () => context.http.getAttention(deps, abortController.signal),
-      staleTime: 'static',
-    }),
   component: AttentionRouteComponent,
 })
 export const detailRoute = createRoute({
@@ -1030,50 +1023,30 @@ export interface PolicyCritical {
   safety: AutomaticSafetyView
 }
 const PolicyRouteComponent = () => {
-  const initial = policyRoute.useLoaderData()
-  return initial === null ? null : <LoadedPolicyRoute initial={initial} />
-}
-const LoadedPolicyRoute = ({ initial }: { initial: PolicyCritical }) => {
   const { http } = rootRoute.useRouteContext()
-  const state = useQuery({ ...policyStateQuery(http), initialData: initial.state })
-  const shadow = useQuery({ ...shadowQuery(http), initialData: initial.shadow })
-  const safety = useQuery({ ...safetyQuery(http), initialData: initial.safety })
+  const state = useQuery(policyStateQuery(http))
+  const shadow = useQuery(shadowQuery(http))
+  const safety = useQuery(safetyQuery(http))
+  const error = state.error ?? shadow.error ?? safety.error
+  if (error instanceof SessionExpiredError) return null
+  if (error)
+    return (
+      <RouteFailure
+        error={error}
+        reset={() => {
+          void state.refetch()
+          void shadow.refetch()
+          void safety.refetch()
+        }}
+      />
+    )
+  if (!state.data || !shadow.data || !safety.data) return <RoutePending title="Policy" />
   return <PolicyPage data={{ state: state.data, shadow: shadow.data, safety: safety.data }} />
 }
 export const policyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/policy',
   validateSearch: normalizePolicySearch,
-  loader: async ({ context, abortController }) => {
-    const [state, shadow, safety] = await Promise.allSettled([
-      context.queryClient.query({
-        ...policyStateQuery(context.http),
-        queryFn: () => context.http.getPolicyState(abortController.signal),
-        staleTime: 'static',
-      }),
-      context.queryClient.query({
-        ...shadowQuery(context.http),
-        queryFn: () => context.http.getShadowPosture(abortController.signal),
-        staleTime: 'static',
-      }),
-      context.queryClient.query({
-        ...safetyQuery(context.http),
-        queryFn: () => context.http.getAutomaticSafety(abortController.signal),
-        staleTime: 'static',
-      }),
-    ])
-    for (const result of [state, shadow, safety]) {
-      if (result.status === 'fulfilled') continue
-      // The client has scheduled document navigation. Keeping this loader
-      // fulfilled avoids an unhandled concurrent loader rejection during it.
-      if (result.reason instanceof SessionExpiredError) return null
-      throw result.reason
-    }
-    if (state.status !== 'fulfilled') throw state.reason
-    if (shadow.status !== 'fulfilled') throw shadow.reason
-    if (safety.status !== 'fulfilled') throw safety.reason
-    return { state: state.value, shadow: shadow.value, safety: safety.value }
-  },
   component: PolicyRouteComponent,
 })
 export const activityRoute = createRoute({

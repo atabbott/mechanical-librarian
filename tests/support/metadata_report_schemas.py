@@ -292,3 +292,12 @@ def leave_hot_journal(path: Path) -> Path:
     if not journal.is_file() or journal.stat().st_size <= 512:
         raise AssertionError("synthetic hot journal was not created")
     return journal
+
+
+def create_pre_currentness_schema(connection: sqlite3.Connection) -> None:
+    """Build the exact #1072 predecessor, with no derived cover facts column."""
+    persistence_schema._create_schema(connection)
+    connection.execute(
+        "ALTER TABLE cover_considerations DROP COLUMN currentness_document"
+    )
+    connection.commit()

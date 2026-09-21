@@ -17,9 +17,12 @@ replaced.
 
 Bootstrap composes one authenticated `ReviewApplication` before creating
 FastAPI. Named session, case, decision, Library, Attention, policy,
-preparation, Activity, field-effect, recovery, and support operations share one
-application serialization gate, while SQLite remains the only transaction
-owner. HTTP owns routing, bounded DTO translation, and the unchanged security
+preparation, field-effect, recovery, and support operations use the ordinary
+application serialization gate. Library and Attention own a persistent borrowed
+read connection and separate gate; Activity retains its independently owned
+projection. SQLite remains the only transaction owner. See
+[ADR-0076](decisions/0076-owned-responsive-review-reads.md) for compact cover
+currentness facts, snapshot boundaries and clean-rebuild compatibility. HTTP owns routing, bounded DTO translation, and the unchanged security
 boundary; it receives no repository and constructs no workflow. Critical
 top-level case, Library, Attention, and preparation reads cross the interface as
 bounded application view models, with evidence and history retained as separate

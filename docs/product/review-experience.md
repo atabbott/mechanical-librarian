@@ -227,7 +227,16 @@ and clearly more useful, as defined by the
 
 Evidence is stored once as an immutable bounded record and referenced by ID.
 List responses return summaries; detailed facts and bounded snippets are loaded
-only when requested. Raw production paths, unrestricted source payloads, and
+only when requested.
+The authenticated shell and navigation mount without waiting for Library,
+Attention or Policy collections. Appearance, preparation and URL-selected
+review detail load independently. Pending or unavailable counts are never zero;
+a failed collection keeps navigation and a manual retry usable. Superseded
+queries cancel, and an older response cannot replace a newer URL selection.
+The #1072 envelope is approximately 2,300 complete synthetic works across five
+libraries during preparation: useful shell/navigation within one second and
+requested initial list/detail/status within two seconds. Measurements retain
+sample counts, p50/p95/max and every miss, rather than substituting liveness. Raw production paths, unrestricted source payloads, and
 copyrighted content are never exposed through ordinary review endpoints.
 
 ## Notices

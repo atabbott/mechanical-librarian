@@ -47,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     provider_lane_candidate_reference,
 )
+from tests.support.cover_producers import _preview, _source
 
 ROOT = Path(__file__).parents[2]
 sys.path.insert(0, str(ROOT / "workbench"))
@@ -117,73 +118,6 @@ from tests.support.metadata_report_doubles import (  # noqa: E402
 )
 
 
-def _preview(
-    index: int,
-    *,
-    size: int | None = None,
-    width: int = 1,
-    height: int = 1,
-    mode: str = "RGBA",
-    icc_profile: bytes | None = None,
-) -> bytes:
-    output = io.BytesIO()
-    color = (
-        (index % 251, (index * 3) % 251, (index * 7) % 251, 255)
-        if mode == "RGBA"
-        else (index % 251, (index * 3) % 251, (index * 7) % 251)
-    )
-    save_options: dict[str, object] = {"optimize": False, "compress_level": 9}
-    if icc_profile is not None:
-        save_options["icc_profile"] = icc_profile
-    Image.new(mode, (width, height), color).save(output, "PNG", **save_options)
-    payload = output.getvalue()
-    if size is None:
-        return payload
-    raw = b"\x00" + bytes(color)
-    # Inflate the valid zlib stream with empty stored blocks, then divide that
-    # one stream across a small consecutive IDAT run. This reaches exact byte
-    # boundaries without ancillary chunks or bytes after the zlib stream.
-    extra_idat_chunks = next(
-        value for value in range(5) if (73 + 12 * value) % 5 == size % 5
-    )
-    fixed_bytes = 73 + 12 * extra_idat_chunks
-    empty_blocks, remainder = divmod(size - fixed_bytes, 5)
-    if empty_blocks < 0 or remainder:
-        raise ValueError("requested PNG size is too small")
-    compressed = (
-        b"\x78\x01"
-        + b"\x00\x00\x00\xff\xff" * empty_blocks
-        + b"\x01"
-        + len(raw).to_bytes(2, "little")
-        + (0xFFFF - len(raw)).to_bytes(2, "little")
-        + raw
-        + struct.pack(">I", zlib.adler32(raw))
-    )
-
-    def chunk(chunk_type: bytes, data: bytes) -> bytes:
-        return (
-            struct.pack(">I", len(data))
-            + chunk_type
-            + data
-            + struct.pack(">I", zlib.crc32(chunk_type + data))
-        )
-
-    idat_count = extra_idat_chunks + 1
-    boundaries = [
-        len(compressed) * value // idat_count for value in range(idat_count + 1)
-    ]
-    ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
-    result = b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", ihdr)
-    result += b"".join(
-        chunk(b"IDAT", compressed[boundaries[value] : boundaries[value + 1]])
-        for value in range(idat_count)
-    )
-    result += chunk(b"IEND", b"")
-    if len(result) != size:
-        raise AssertionError("exact PNG construction failed")
-    return result
-
-
 def _animated_preview() -> bytes:
     output = io.BytesIO()
     first = Image.new("RGBA", (4, 4), (20, 40, 60, 255))
@@ -201,38 +135,6 @@ def _animated_preview() -> bytes:
         if image.n_frames != 2:
             raise AssertionError("animated PNG construction failed")
     return payload
-
-
-def _source(
-    index: int, payload: bytes, *, incumbent: bool = False, embedded: bool = False
-) -> CoverSource:
-    artifact = CoverArtifact.create(
-        f"original-{index}".encode(), payload, "image/png", 300 + index, 450 + index
-    )
-    kind = (
-        CoverSourceKind.ABS
-        if incumbent
-        else CoverSourceKind.EPUB
-        if embedded
-        else (CoverSourceKind.HARDCOVER if index % 2 else CoverSourceKind.OPEN_LIBRARY)
-    )
-    provenance = (
-        None
-        if incumbent or embedded
-        else CoverProvenance(
-            kind.value,
-            CoverDesignation.EXACT_EDITION if index % 3 == 0 else CoverDesignation.WORK,
-            f"work-{index}",
-            f"edition-{index}" if index % 3 == 0 else None,
-        )
-    )
-    return CoverSource(
-        cover_source_id(kind, f"source-{index}"),
-        kind,
-        CoverSourceState.RETRIEVED,
-        artifact,
-        provenance=provenance,
-    )
 
 
 def _report(sources: tuple[CoverSource, ...]) -> MetadataReport:

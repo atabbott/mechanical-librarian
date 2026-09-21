@@ -528,10 +528,17 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             return
         capture = self._capture_cover_read
         try:
-            observation = capture()
+            try:
+                observation = capture()
+            except Exception:
+                raise MetadataReportError("review snapshot is unavailable") from None
             self._cover_read_observation = observation
             yield
-            if capture() != observation:
+            try:
+                current = capture()
+            except Exception:
+                raise MetadataReportError("review snapshot is unavailable") from None
+            if current != observation:
                 raise MetadataReportError("review snapshot is unavailable")
         finally:
             self._cover_read_observation = None

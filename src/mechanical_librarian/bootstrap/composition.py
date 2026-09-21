@@ -3306,10 +3306,14 @@ def compose_store_runtime_generation(
             reviewer_access,
             provider_recovery,
         )
-        browse_repository = open_review_browse_repository(
-            database_path, repository.authority, cover_considerations, provider_recovery
-        )
+        browse_repository = None
         try:
+            browse_repository = open_review_browse_repository(
+                database_path,
+                repository.authority,
+                cover_considerations,
+                provider_recovery,
+            )
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
                 state_owner=repository,
@@ -3349,7 +3353,8 @@ def compose_store_runtime_generation(
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
             )
         except BaseException:
-            browse_repository.close()
+            if browse_repository is not None:
+                browse_repository.close()
             if close_activity_projection is not None:
                 close_activity_projection()
             raise
@@ -3785,13 +3790,14 @@ def run_review_server(
                 reviewer_access,
                 provider_recovery,
             )
-            browse_repository = open_review_browse_repository(
-                database_path,
-                repository.authority,
-                cover_considerations,
-                provider_recovery,
-            )
+            browse_repository = None
             try:
+                browse_repository = open_review_browse_repository(
+                    database_path,
+                    repository.authority,
+                    cover_considerations,
+                    provider_recovery,
+                )
                 review_application = compose_review_application(
                     state_owner=repository,
                     session_store=session_store,
@@ -3825,7 +3831,8 @@ def run_review_server(
                     first_boot=first_boot,
                 )
             except BaseException:
-                browse_repository.close()
+                if browse_repository is not None:
+                    browse_repository.close()
                 if close_activity_projection is not None:
                     close_activity_projection()
                 raise

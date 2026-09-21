@@ -208,6 +208,18 @@ across the test tree, so a double bound into a port it does not satisfy fails
 the gate; the 48 modules carrying findings are named as the burn-down backlog
 (#693).
 
+### Current 0.22.0 preparation and owner-journey checkpoint
+
+The [expanded delivery checkpoint](delivery-slices.md#delivery-checkpoint-0220-responsive-trustworthy-preparation-and-review)
+starts with responsive owner interactions (#1072) and preparation recovery
+(#1085), then addresses the named evidence/decision corrections, Library/Policy
+trust, reviewer/Settings operation and manual retained-cover choice. #1008,
+#1012 and #1068 are delivered; the remaining issue outcomes are not implied.
+#1013 owns final integrated acceptance and continues to block #984, the first
+0.23.0 Series and structure unit. #877 is curtailed diagnostic evidence;
+#1086's reviewer-free joint measurement remains outstanding and separate from
+#1060's explicitly authorized reviewer collection.
+
 ## M0: Foundation
 
 - Enforce the recorded `AGPL-3.0-or-later` licence and notice policy.

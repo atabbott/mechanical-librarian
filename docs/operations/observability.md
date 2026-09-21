@@ -63,3 +63,11 @@ When a browse read maps a SQLite storage or resource failure to the owner's
 value-free `unavailable` response, this existing export retains only the bounded
 exception class. It does not retain the database error text, query, row, path,
 or a telemetry record.
+
+Library and Attention can also report unavailable when live cover policy or
+provider-recovery identities change during an otherwise consistent collection
+read. Retry uses a fresh observation. Pending or unavailable totals are not
+zero, and this state does not authorize a decision or target effect. Collection
+reads have their own persistent connection; a completed SQL snapshot is released
+before visible work is projected. [ADR-0076](../architecture/decisions/0076-owned-responsive-review-reads.md)
+states the ownership and clean-rebuild boundary.

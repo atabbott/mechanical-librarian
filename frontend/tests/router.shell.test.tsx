@@ -25,6 +25,54 @@ const reducedMotion = () => ({
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Application shell', () => {
+  it('mounts navigation and selected detail independently of a pending collection and cancels it on departure', async () => {
+    let librarySignal: AbortSignal | undefined
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAttention: vi.fn(async () => ({
+        total: 1,
+        items: [
+          {
+            id: 'case-1',
+            destination: 'title',
+            title: 'A Book',
+            authors: [],
+            library: 'Books',
+            mediaKind: 'ebook',
+            classificationReason: 'Title needs a decision',
+            notices: [],
+            provenance: [],
+            workAttentionCount: 1,
+          },
+        ],
+      })),
+      getLibrary: vi.fn<ReviewHttp['getLibrary']>((_search, signal) => {
+        librarySignal = signal
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')))
+        })
+      }),
+    }
+    const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    expect(await screen.findByRole('link', { name: 'Policy' })).toBeVisible()
+    expect(await screen.findByText('Loading works…')).toBeVisible()
+    expect(
+      await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+    ).toBeVisible()
+    expect(http.getPreparation).toHaveBeenCalled()
+    expect(http.getAttention).toHaveBeenCalled()
+    expect(http.getCaseDetail).toHaveBeenCalledWith('case-1', expect.any(AbortSignal))
+    expect(screen.queryByText('0 total')).toBeNull()
+    expect(screen.queryByText('No exact-current works match this search and lens.')).toBeNull()
+    await act(async () => {
+      await router.navigate({ to: '/policy', search: { section: 'identity' } })
+    })
+    await waitFor(() => expect(librarySignal?.aborted).toBe(true))
+    expect(http.getPolicyState).toHaveBeenCalled()
+    expect(http.getShadowPosture).toHaveBeenCalled()
+    expect(http.getAutomaticSafety).toHaveBeenCalled()
+  })
+
   it('hands the setup run into the selectable Library preparation summary', async () => {
     vi.stubGlobal('matchMedia', vi.fn(reducedMotion))
     HTMLElement.prototype.scrollIntoView = vi.fn()

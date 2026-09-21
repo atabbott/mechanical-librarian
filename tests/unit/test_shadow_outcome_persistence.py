@@ -174,6 +174,7 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
+from tests.support.cover_producers import _qualified_cover_report
 from tests.support.proposal_evidence import (
     _claim,
     _exact_edition_cover,
@@ -788,141 +789,6 @@ def _human_title_decision(repository, case_id: str, occurred_at: int) -> HumanDe
         idempotency_key="synthetic-human-title-key-0001",
         occurred_at=occurred_at,
     )
-
-
-def _qualified_cover_report(
-    root: Path,
-    *,
-    incumbent_index: int = 1,
-    candidate_index: int = 2,
-    incumbent_size: tuple[int, int] | None = None,
-    incumbent_duplicate_size: tuple[int, int] | None = None,
-    candidate_size: tuple[int, int] | None = None,
-    candidate_designation: CoverDesignation = CoverDesignation.EXACT_EDITION,
-    typed_timeout: bool = False,
-) -> tuple[MetadataReport, object]:
-    incumbent_payload = _cover_preview(incumbent_index)
-    candidate_payload = _cover_preview(candidate_index)
-    incumbent_dimensions = incumbent_size or (
-        300 + incumbent_index,
-        450 + incumbent_index,
-    )
-    candidate_dimensions = candidate_size or (
-        300 + candidate_index,
-        450 + candidate_index,
-    )
-    incumbent_artifact = CoverArtifact.create(
-        f"original-{incumbent_index}".encode(),
-        incumbent_payload,
-        "image/png",
-        *incumbent_dimensions,
-    )
-    incumbent_duplicate_artifact = (
-        CoverArtifact.create(
-            b"duplicate-original",
-            incumbent_payload,
-            "image/png",
-            *incumbent_duplicate_size,
-        )
-        if incumbent_duplicate_size is not None
-        else incumbent_artifact
-    )
-    candidate_artifact = CoverArtifact.create(
-        f"original-{candidate_index}".encode(),
-        candidate_payload,
-        "image/png",
-        *candidate_dimensions,
-    )
-    incumbent = replace(
-        _cover_source(1, incumbent_payload, incumbent=True),
-        artifact=incumbent_artifact,
-    )
-    incumbent_corroboration = replace(
-        _cover_source(1, incumbent_payload, embedded=True),
-        artifact=incumbent_duplicate_artifact,
-    )
-    candidate = replace(
-        _cover_source(3, candidate_payload),
-        artifact=candidate_artifact,
-        provenance=CoverProvenance(
-            "hardcover",
-            candidate_designation,
-            "work-3",
-            "edition-3"
-            if candidate_designation is CoverDesignation.EXACT_EDITION
-            else None,
-        ),
-    )
-    local = LocalClaim.create(
-        kind=ClaimKind.ISBN,
-        observed="9780306406157",
-        canonical="9780306406157",
-        excerpt="ISBN 9780306406157",
-        applicability="ebook",
-        basis="opening_matter",
-        checksum="valid_isbn_13",
-        applicability_basis="ebook",
-        scope=ClaimScope.EDITION,
-    )
-    bare = ProviderClaim.create(
-        provider="hardcover",
-        candidate="edition-3",
-        kind=ClaimKind.ISBN,
-        value="9780306406157",
-        state=FieldState.VALID,
-        scope=ClaimScope.EDITION,
-        applicability="ebook",
-    )
-    provider_claim = replace(bare, links=comparison_links(bare, (local,)))
-    fields = tuple(
-        TargetField(
-            value.destination,
-            TargetFieldState.VALUE,
-            incumbent_artifact.artifact_id,
-        )
-        if value.destination is TargetDestination.COVER
-        else value
-        for value in default_target_fields("Synthetic title")
-    )
-    sources = [incumbent, incumbent_corroboration, candidate]
-    if typed_timeout:
-        sources.append(
-            replace(
-                _cover_source(103, candidate_payload),
-                state=CoverSourceState.TIMEOUT,
-                artifact=None,
-                timeout_scope="attempted",
-            )
-        )
-    report = MetadataReport.create(
-        target=TargetFacts("primary", "ebooks", "item-1", fields),
-        file=FileFacts(0, "a" * 64, "b" * 64),
-        local_claims=(local,),
-        local_reasons=("opening_matter_isbn",),
-        providers=(
-            ProviderObservation(
-                "hardcover",
-                ProviderStatus.CANDIDATES,
-                candidates=(
-                    ProviderCandidate("edition-3", "work-3", (provider_claim,)),
-                ),
-            ),
-        ),
-        cover_sources=tuple(sorted(sources, key=lambda value: value.source_id)),
-    )
-    artifacts = CoverArtifactStore(root / "artifacts")
-    staged = [
-        (incumbent, incumbent_payload, f"original-{incumbent_index}".encode()),
-        (candidate, candidate_payload, f"original-{candidate_index}".encode()),
-    ]
-    if incumbent_duplicate_size is not None:
-        staged.append(
-            (incumbent_corroboration, incumbent_payload, b"duplicate-original")
-        )
-    for source, payload, original in staged:
-        assert source.artifact is not None
-        artifacts.stage(source.artifact, original, payload)
-    return report, evaluate_report(report)
 
 
 def _run_qualified_cover_pipeline(

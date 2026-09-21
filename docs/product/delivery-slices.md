@@ -164,11 +164,8 @@ Ready to admit reordered exact author sets in the WORK lane, measure-first;
 election-side normalization remains excluded. #898 is Ready to stop creator
 extraction admitting prose fragments as authorship claims, with an
 extraction-only boundary and no corroboration election. #890 and #891 are
-Ready to keep the fields rail and Library rail legible. #877 is Blocked by
-every other open milestone issue as the closing measurement, grading 0.18.0
-and 0.19.0 together against the #744 baselines (isolated 0.18.0 attribution is
-deliberately traded away; per-issue evidence and the preserved 2026-08-25
-volume carry the interim proof).
+Ready to keep the fields rail and Library rail legible. #877 closed as curtailed diagnostic work; #1086 owns the outstanding
+reviewer-free joint measurement under the expanded 0.22.0 prerequisites below.
 
 The tranche slices F35–F38, F40, and F42 use the #445 qualification route.
 F41 uses that route for its applicable tidy and subtitle tranches. The
@@ -198,7 +195,7 @@ shaped from the 0.20.0 production measurement recorded on #749.
 | F44 Multi-file audiobook evidence | #965 | Every multi-file item of a mounted audiobook library produces the F43 closed evidence set with per-file provenance, composed duration and chapters, and cross-file consistency evidence, then enters the same provider path. | Delivered. |
 | F45 Audiobook review cases | #966 | An audiobook with an admitted work identity produces proposals and, where policy leaves a choice, a review case; every prepared audiobook ends in a first-class completed state; decisions are recorded but not applied. | Delivered. |
 | F46 Qualified automatic audiobook decisions | #967 | Audiobook decision classes earn their own measured field/operation authority, independently of ebook qualification. | Delivered. The first expanded record registered 44 operations across six fields; its frozen source quality and software correspondence remain historical evidence. |
-| F46a Useful automatic audiobook metadata | #1047; #1046–#1056 | Supported work and recording facts reach useful automatic decisions and guarded effects, including complete narrator/tag sets, original dates, paired title/subtitle, positive-only explicit and bounded cover replacement. | Combined implementation and activation, preserving F46's prior authority and existing owner, consent and recovery boundaries. #877 remains a separate closing measurement. |
+| F46a Useful automatic audiobook metadata | #1047; #1046–#1056 | Supported work and recording facts reach useful automatic decisions and guarded effects, including complete narrator/tag sets, original dates, paired title/subtitle, positive-only explicit and bounded cover replacement. | Combined implementation and activation, preserving F46's prior authority and existing owner, consent and recovery boundaries. #877 is curtailed; #1086 owns the outstanding separate closing measurement. |
 | F47 Guarded audiobook application | #968 | Exact-current human and qualified automatic audiobook decisions apply through the existing guarded Audiobookshelf path, canary first. | Delivered. |
 | F51 Chapter-based recording corroboration | #1004 | Complete reliable local/provider chapters establish an attributed owner-reviewable recording match when overall runtime is unavailable, across local-ASIN, target-asserted, promoted-ASIN and WORK-derived acquisition. | Delivered. The first increment landed through #1042/#1043 under the ADR-0064/0069 amendment, and #1044 completed the qualified activation outcome: complete missing-runtime support with bounded lookup-only acquisition. |
 | F08 Audiobook media-health observations | #144 | The audiobook report states typed, cited media-health observations distinct from metadata evidence. | Delivered. Unit 1 states the derived media-health section over retained evidence, the six composed set observations, and the zero-byte reclassification; unit 2 adds the probe's container, codec and encryption facts, preparation-time truncation for the lanes publication demotes, and `metadata-report-v40`. |
@@ -207,38 +204,59 @@ Focused work remains outside the slice sequence, each using `Delivery slice:
 Not applicable`. #956 feeds gate-promoted and target-asserted ASINs into the
 per-ASIN lanes within one preparation pass, bounded and corroboration-gated,
 and is the checkpoint's first unit. #940 is delivered inside F45's lane and
-closes with it. #877 is the joint 0.19.0 and 0.21.0 closing measurement, and
-#969 closed as superseded by it.
+closes with it. #877 was the joint 0.19.0/0.21.0 measurement and closed curtailed; #1086 owns
+the outstanding measurement. #969 remains closed as superseded.
 
 No release, tag, deployment, chapter or cover or media write, transcription
 (#24), broader ebook-provider audio dispatch (#962) beyond qualified existing
 Open Library/Hardcover WORK projections, or ebook format-ladder work
 (#751 rungs 1–2) is included.
 
-## Delivery checkpoint 0.22.0: first-run and review usability
+## Delivery checkpoint 0.22.0: responsive, trustworthy preparation and review
 
-This checkpoint makes the existing first-run, preparation and review flows
-understandable, actionable and consistent before series and structure work
-begins. It is the 2026-09-07 fresh-install audit workstream, grouped by owner
-outcome rather than one issue per finding, and contains no new slice: every
-row is focused work using `Delivery slice: Not applicable`.
+The expanded milestone 34 checkpoint covers first-run usability, retained-library
+responsiveness, preparation reliability, metadata correctness and the complete
+owner journey before 0.23.0 Series and structure. Three outcomes are delivered:
+#1008 first-run setup, #1012 preparation progress/recovery, and #1068 cover
+model/cost-basis disclosure. Their recorded residual findings remain open.
 
-| Outcome | Issue | Demonstrable result | Planning state |
-| --- | --- | --- | --- |
-| Clear, recoverable first-run setup | #1008 | A new owner reads the seven-step sequence and its prerequisites, supplies values with field-associated validation, recovers from connection, origin and mount failures without losing nonsecret work or reading internal codes, and kicks off once from a short editable summary. | In delivery. Owns this checkpoint section and the 0.21.0 row reconciliation. |
-| Reviewer setup inside the wizard and Settings | #1009 | The optional cover reviewer is provisioned, tested and changed from the wizard and from Settings, with truthful unavailable states. | Triaged pending a bounded containment and authentication design. |
-| Readable, trustworthy Library choices | #1010 | Library rows, choices and source evidence state what they are based on and what a decision will do. | Ready. |
-| Clear policy impact, write permission and history | #1011 | Policy pages state their real effect, write permission is scoped, and history is truthful about what was applied. | Ready. |
-| Actionable preparation progress and recovery | #1012 | Preparation progress and each failed book state one supported owner action. | Delivered. |
-| Settings overhaul with shared controls | #1034 | Settings uses the accepted section editor, one global draft and a Policy-style save tray built from genuinely shared components. | Triaged pending the full-library measurement and a live Settings inventory. |
-| Responsive layout, spacing and copy pass | #1013 | One final pass aligns layout, spacing and everyday copy across the changed surfaces, with an integrated completion walkthrough. | Blocked by #1008-#1012 and #1034. |
+Delivery starts with #1072 responsive owner interactions, followed by #1085
+preparation claim, settlement and shutdown recovery. Subsequent focused work
+proceeds by useful outcome under the native issue dependencies:
 
-Closure requires all seven outcomes delivered and verified on the exact
-installed artifact, every audit finding reconciled to concrete evidence, and
-one fresh-setup-to-preparation-to-decision-to-policy walkthrough exercising
-real failure and recovery, long content, keyboard focus, both themes and
-desktop, 390 and 320 widths. #1013 gates the first 0.23.0 unit, #984, which
-creates the 0.23.0 checkpoint section.
+| Outcome | Remaining issues | Required boundary |
+| --- | --- | --- |
+| Correct retained evidence and title admission | #1080, #1083, #1084, #1073 | Multiline descriptions, author authority, malformed titles and preservation/admission recovery. |
+| Useful field decisions | #1071, #1074, #1075, #1070, #1076 | Language, genre, same-name series and synopsis behavior; #1080 precedes #1070/#1076. |
+| Bounded evidence investigations | #1077, #1079, #1082 | ISBN, full-work/prologue identity and throttling/overflow; an evidenced correction or precise retained boundary, without invented authority. |
+| Trustworthy Library and Policy | #1081, #1010, #1011 | Durable field-specific refusal explanations precede choices/evidence and true active-versus-draft impact, permission and history. Compact Policy summary/actions stay pinned; expanded results remain below choices in document flow. |
+| Reviewer and Settings operation | #1009, #1069, #1060, #1034 | In-container reviewer setup with deployment override; observed prices/tooling before separately authorized collection; protected Settings section editor with one configuration draft and separate Policy save. Authentication and test actions remain immediate. |
+| Retained cover choice | #1078 / F52 | One manual-only vertical activation, with explicit owner confirmation and no automatic-admission expansion. |
+| Integrated completion | #1013 | All other open outcomes receive their required disposition before final responsive/copy consistency and acceptance. |
+
+Only F52 is a new functional slice. Other corrections use focused ticket-level
+transactions; no horizontal constituent trackers are introduced. #1009, #1060
+and #1086 retain their blockers on #1034. #1060 cannot dispatch until its exact
+cohort, endpoints/models, data-use posture, retention and spend caps are approved.
+
+#877 closed as curtailed diagnostic work, not a passing full-library measurement.
+#1086 in 0.21.0 owns the outstanding reviewer-free joint 0.19.0/0.21.0 measurement
+after #1072/#1085/#1073/#1080/#1083/#1084. It is separate from #1060 reviewer
+collection; this checkpoint cannot retroactively pass #877.
+
+Exit requires each issue contract, actual collection and inspection for #1060,
+and evidenced dispositions for the bounded investigations. #1013 reconciles
+UX-001–UX-038: UX-030 belongs to #999/PR #1016 and #1017's regression follow-up;
+the other 37 retain their original usability owners. It continues to block #984,
+the first 0.23.0 unit.
+
+The exact installed walkthrough is setup → preparation → decision/revision →
+policy preview → scoped permission/history, with populated long content during
+preparation, loading/empty/unavailable/error/recovery, keyboard focus, both
+themes, reduced motion, desktop and 390/320 widths. #1072's complete-route latency
+envelope applies. Effects use isolated synthetic targets. A static empty view,
+health-route latency or green CI alone cannot satisfy this exit. No later-ticket
+completion, release, deployment or provider/reviewer spend is implied.
 
 ## Delivery checkpoint 1.0.0: guarded mutation and product operation
 

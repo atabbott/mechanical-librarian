@@ -12,6 +12,7 @@ from mechanical_librarian.adapters.persistence.provider_recovery import (
 from mechanical_librarian.adapters.persistence.review_sessions import (
     SQLiteReviewSessionRepository,
 )
+from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.review_application import (
     compose_review_application,
 )
@@ -26,11 +27,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
-from tests.unit.test_shadow_outcome_persistence import (
-    _pipeline_configuration,
-    _qualified_cover_report,
-    _test_reviewer_access,
-)
+from tests.support.cover_producers import _qualified_cover_report
 
 
 class OwnerResponsivenessFixture:
@@ -43,13 +40,14 @@ class OwnerResponsivenessFixture:
         self.recovery = SQLiteProviderRecoveryStore.open(root / "recovery.sqlite")
         self.sessions = SQLiteReviewSessionRepository.open(root / "sessions.sqlite")
         base, _ = _qualified_cover_report(root)
-        review = _pipeline_configuration().review
-        assert review is not None
+        review = ReviewWebConfiguration(
+            "http://127.0.0.1:18444", "/synthetic/owner.hash"
+        )
         self.covers = composition._compose_cover_considerations(
             self.repository,
             root / "artifacts",
             review,
-            _test_reviewer_access(self.repository),
+            composition._compose_reviewer_access(self.repository, review),
             self.recovery,
         )
         self.cases: list[ReviewCase] = []

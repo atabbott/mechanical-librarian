@@ -1792,7 +1792,18 @@ function LibraryCoverChoicesContent({
   )
 }
 
-export default function LibraryPage({ data }: { data: LibraryView }) {
+export default function LibraryPage({
+  data,
+  pending,
+  failed,
+  retry,
+}: {
+  data: LibraryView | undefined
+  pending: boolean
+  failed: boolean
+  retry: () => void
+}) {
+  const works = useMemo(() => data?.works ?? [], [data?.works])
   const search = libraryRoute.useSearch()
   const navigate = useNavigate({ from: '/library' })
   const router = useRouter()
@@ -2071,10 +2082,10 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   // owner opened is kept so the summary does not vanish mid-inspection and
   // send them back to the list; clearing the selection releases it.
   const selectedWork = search.work
-    ? (data.works.find((work) => work.workId === search.work) ??
+    ? (works.find((work) => work.workId === search.work) ??
       (openedWork?.workId === search.work ? openedWork : undefined))
     : undefined
-  const unresolvableWork = Boolean(search.work) && selectedWork === undefined
+  const unresolvableWork = data !== undefined && Boolean(search.work) && selectedWork === undefined
   // URL-owned selection has to stay truthful. A ?work= that resolves to nothing
   // on the bounded page in hand, and was not opened in this session, asserts a
   // selection the view cannot render, so it is normalised out of the URL. The
@@ -2105,7 +2116,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   }, [navigate, preparationSelected, preparationState.confirmed, search.preparation])
   const hasSelection = preparationSelected || Boolean(search.preview) || selectedWork !== undefined
   const selectedLibraryWork = search.preview
-    ? data.works.find((work) => work.reviewCaseId === search.preview)
+    ? works.find((work) => work.reviewCaseId === search.preview)
     : undefined
   const detail = useQuery({
     ...detailQuery(http, selectedReviewCaseId),
@@ -2156,7 +2167,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   const selectedIdentity = useMemo(
     () =>
       search.preview
-        ? (data.works.find((work) => work.reviewCaseId === search.preview) ??
+        ? (works.find((work) => work.reviewCaseId === search.preview) ??
           attentionItems.find((item) => item.id === search.preview) ??
           (detail.data && reconciledSuccessorIdentity === search.preview
             ? {
@@ -2168,7 +2179,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               }
             : undefined))
         : undefined,
-    [attentionItems, data.works, detail.data, reconciledSuccessorIdentity, search.preview],
+    [attentionItems, works, detail.data, reconciledSuccessorIdentity, search.preview],
   )
   useEffect(() => {
     if (selectedIdentity && search.preview)
@@ -2266,10 +2277,11 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     const selectedTarget = selectedTargetRef.current
     const successorIds = [...pendingSuccessorRef.current]
     if (
+      !data ||
       !selectedTarget ||
       !successorIds.length ||
       selectedTarget.caseId !== search.preview ||
-      data.works.some((work) => work.reviewCaseId === search.preview)
+      works.some((work) => work.reviewCaseId === search.preview)
     )
       return
     pendingSuccessorRef.current.clear()
@@ -2312,9 +2324,21 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         }
       }
     })()
-  }, [data.works, http, navigate, search.preview, successorGeneration])
+  }, [data, works, http, navigate, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
-  const displayedIdentity = selectedIdentity ?? completionIdentity
+  const pendingIdentity = useRef<typeof selectedIdentityRef.current>(null)
+  useLayoutEffect(() => {
+    if (selectedIdentity && search.preview)
+      pendingIdentity.current = { ...selectedIdentity, id: search.preview }
+    else if (!pending || failed || pendingIdentity.current?.id !== search.preview)
+      pendingIdentity.current = null
+  }, [failed, pending, search.preview, selectedIdentity])
+  const displayedIdentity =
+    selectedIdentity ??
+    completionIdentity ??
+    (pending && !failed && pendingIdentity.current?.id === search.preview
+      ? pendingIdentity.current
+      : undefined)
   const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
   const visibleFields = detail.data?.fields.filter(primaryField) ?? []
   const currentActionableDestinations = visibleFields.map((field) => field.destination)
@@ -2501,8 +2525,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     })
     return () => cancelAnimationFrame(frame)
   }, [preparationSelected, presentation?.run_id])
-  const identityPending = !displayedIdentity && attention.isPending
-  const identityError = !displayedIdentity && attention.isError
+  const identityPending = !displayedIdentity && (pending || attention.isPending)
+  const identityError = !displayedIdentity && (failed || attention.isError)
   const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
   const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
   const selectedDetailReady =
@@ -2558,7 +2582,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
   useEffect(() => {
     const rail = fieldRail.current
     const active = activeFieldButton.current
-    if (!rail || !active) return
+    if (!selectedDetailReady || !rail || !active) return
     centreFieldRail(rail, active)
     if (!advanceFocus.current) return
     advanceFocus.current = false
@@ -2575,7 +2599,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
         ? bounds.top - visibleTop
         : Math.max(0, bounds.bottom - window.innerHeight)
     if (reveal) window.scrollBy({ top: reveal })
-  }, [centreFieldRail, selected?.destination])
+  }, [centreFieldRail, selected?.destination, selectedDetailReady])
   useLayoutEffect(() => {
     if (advanceScroll.current === null) return
     const top = advanceScroll.current
@@ -2625,8 +2649,8 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
       )
         return
       const first =
-        data.works.find((work) => work.reviewCaseId && work.attentionCount > 0) ??
-        data.works.find((work) => work.reviewCaseId)
+        works.find((work) => work.reviewCaseId && work.attentionCount > 0) ??
+        works.find((work) => work.reviewCaseId)
       const reviewCaseId = first?.reviewCaseId
       if (reviewCaseId)
         void navigate({
@@ -2640,7 +2664,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
     selectWideDefault()
     media.addEventListener('change', selectWideDefault)
     return () => media.removeEventListener('change', selectWideDefault)
-  }, [data.works, navigate])
+  }, [works, navigate])
 
   const selectCase = (
     reviewCaseId: string,
@@ -2918,7 +2942,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               })
             }
           >
-            Attention <strong>{data.counts.attention}</strong>
+            Attention <strong>{data ? data.counts.attention : '…'}</strong>
           </button>
         </header>
       ) : null}
@@ -2934,7 +2958,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               void navigate({ search: (current) => ({ ...current, attention: 'open' }) })
             }
           >
-            Attention queue <strong aria-hidden="true">{data.counts.attention}</strong>
+            Attention queue <strong aria-hidden="true">{data ? data.counts.attention : '…'}</strong>
           </button>
         </div>
       ) : null}
@@ -2962,7 +2986,13 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
           ) : null}
           <div className="library-works-heading">
             <h2 id="library-works-title">Works</h2>
-            <span>{data.counts.all} total</span>
+            <span>
+              {data
+                ? `${String(data.counts.all)} total`
+                : failed
+                  ? 'Count unavailable'
+                  : 'Loading count…'}
+            </span>
           </div>
           <nav className="lenses" aria-label="Library lenses">
             {(['all', 'needs_attention', 'no_attention_needed'] as const).map((lens) => (
@@ -3004,7 +3034,20 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
             </div>
           </form>
           <div className="library-work-list">
-            {data.works.length === 0 ? (
+            {!data ? (
+              <div className="empty-copy" aria-busy={!failed}>
+                {failed ? (
+                  <>
+                    <p role="alert">Works are unavailable.</p>
+                    <button type="button" onClick={retry}>
+                      Try again
+                    </button>
+                  </>
+                ) : (
+                  <p role="status">Loading works…</p>
+                )}
+              </div>
+            ) : works.length === 0 ? (
               <div className="empty-copy">
                 <p>No exact-current works match this search and lens.</p>
                 {search.q ? (
@@ -3014,7 +3057,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                 ) : null}
               </div>
             ) : (
-              data.works.map((work, index) => {
+              works.map((work, index) => {
                 const selectedWorkRow =
                   !preparationSelected &&
                   (selectedWork
@@ -3043,7 +3086,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                       : 'No attention needed'
                 const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
                 const group = providerGroup(work)
-                const previousWork = data.works[index - 1]
+                const previousWork = works[index - 1]
                 const showGroup =
                   search.lens !== 'no_attention_needed' &&
                   (!previousWork || providerGroup(previousWork) !== group)
@@ -3145,26 +3188,28 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
               })
             )}
           </div>
-          <div className="library-pager">
-            <button
-              type="button"
-              disabled={!data.previousCursor}
-              onClick={() => movePage(data.previousCursor)}
-            >
-              ← Previous
-            </button>
-            <span>
-              Page {String(data.page)}
-              {data.nextCursor ? '' : ' · end of the bounded current result'}
-            </span>
-            <button
-              type="button"
-              disabled={!data.nextCursor}
-              onClick={() => movePage(data.nextCursor)}
-            >
-              Next →
-            </button>
-          </div>
+          {data ? (
+            <div className="library-pager">
+              <button
+                type="button"
+                disabled={!data.previousCursor}
+                onClick={() => movePage(data.previousCursor)}
+              >
+                ← Previous
+              </button>
+              <span>
+                Page {String(data.page)}
+                {data.nextCursor ? '' : ' · end of the bounded current result'}
+              </span>
+              <button
+                type="button"
+                disabled={!data.nextCursor}
+                onClick={() => movePage(data.nextCursor)}
+              >
+                Next →
+              </button>
+            </div>
+          ) : null}
         </section>
         <section
           className="workspace-detail"
@@ -3211,6 +3256,7 @@ export default function LibraryPage({ data }: { data: LibraryView }) {
                   ref={selectedDetailRetryButton}
                   onClick={() => {
                     selectedDetailRetry.current = search.preview ?? null
+                    retry()
                     void attention.refetch()
                   }}
                 >
