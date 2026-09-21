@@ -167,7 +167,7 @@ fails there. That build reads no `compose.yaml`, and running the built image
 remains maintainer-manual through the commands above. Image publication
 remains a separate release authority and is not part of this support contract.
 
-The image build has an exact pinned Node 24.19.0/npm 11.17.0 stage that
+The image build has an exact pinned Node 24.21.0/npm 11.19.0 stage that
 regenerates browser DTOs from the committed OpenAPI document and emits the
 validated React asset bundle. The Python build admits only that bundle, and the
 final image contains neither Node/npm nor frontend source, generated DTOs,

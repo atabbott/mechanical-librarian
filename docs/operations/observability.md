@@ -74,5 +74,5 @@ admission, so a waiting owner interaction enters at the next safe boundary.
 Preparation and external reviewer/target work cannot retain that admission across
 network calls. Timing investigations distinguish admission wait, SQLite transaction
 wait, local computation and rendered confirmation; a health response is not owner
-interaction evidence. [ADR-0076](../architecture/decisions/0076-owned-responsive-review-reads.md)
+interaction evidence. [ADR-0077](../architecture/decisions/0077-owned-responsive-review-reads.md)
 states the ownership and clean-rebuild boundary.

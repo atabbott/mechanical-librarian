@@ -229,8 +229,8 @@ describe('Policy route', () => {
     let validationCalls = 0
     let draftSaves = 0
     let activePolicyId = 'opaque-policy-identity'
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Vitest retains the body in mock.calls assertions.
     const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
-      void body
       if (path === 'validate' && ++validationCalls === 1) throw new ApiError(422, 'invalid_policy')
       if (path === 'drafts' && ++draftSaves > 1) throw new AmbiguousMutationError()
       if (path === 'drafts')

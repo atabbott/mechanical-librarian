@@ -1,4 +1,4 @@
-# ADR-0076: Admit foreground owner work and validate compact currentness facts
+# ADR-0077: Admit foreground owner work and validate compact currentness facts
 
 - Status: accepted
 - Date: 2026-09-21

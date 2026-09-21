@@ -1349,8 +1349,8 @@ on every pull request and every push to `main`, and fails on any known advisory
 affecting the locked closure. `uv.lock` is the complete resolved closure, so
 the runtime dependencies and the development group are audited together: CI
 installs both, and a compromised test-time dependency executes on the same
-machine as a compromised runtime one. The scanner is pinned by image digest
-rather than by tag or third-party action, and fetches advisory data from OSV at
+machine as a compromised runtime one. The scanner uses a readable version tag plus an exact image digest,
+with execution bound to that digest, and fetches advisory data from OSV at
 run time, so a fixed scanner still sees current advisories. The pin, the exact
 arguments, and the reason for that pinning choice are in
 `.github/workflows/public-gate.yml`; the same command reproduces the check on a
@@ -1386,16 +1386,15 @@ version comment, and sets `persist-credentials: false` on every checkout.
 `tests/unit/test_security_scanning_contract.py` sweeps `.github/workflows` and
 fails the gate if a workflow added later breaks any of those.
 
+The default-branch ruleset requires `dependency-audit` alongside all four
+artifact/source jobs, with strict currentness and no bypass. The narrow OSV
+Renovate manager updates only the scanner tag and digest in this workflow.
+A failing audit prevents native auto-merge; the acceptance register retains its
+existing expiry and review requirements.
+
 These remain maintainer-manual and are deliberately outside the scanning
 boundary:
 
-- Making the audit merge-blocking. The default-branch ruleset names the checks
-  it requires, and `dependency-audit` is not among them: it runs and reports on
-  every pull request and every push to `main`, but a red result is advisory
-  until a maintainer adds that check name to the ruleset.
-- Upgrading the pinned scanner image. Renovate observes manifests, lockfiles,
-  Dockerfiles, and action references, not an image named inside a workflow
-  command, so the digest is raised deliberately rather than automatically.
 - Triaging and fixing what the audit reports. An advisory is not remediated by
   this boundary; each is tracked and fixed as its own work, and accepting one
   through the register is the exception rather than the route.

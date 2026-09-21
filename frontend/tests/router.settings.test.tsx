@@ -388,7 +388,7 @@ describe('owner settings route', () => {
         ...document,
         libraries: document.libraries.map((library) => {
           const { display_name: omittedDisplayName, ...legacyLibrary } = library
-          void omittedDisplayName
+          expect(omittedDisplayName).toBeTruthy()
           return legacyLibrary
         }),
       },

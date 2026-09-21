@@ -166,7 +166,8 @@ The helper refuses dirty tracked or untracked files and a mismatched SHA. It
 creates a disposable standalone clone, verifies the source import and exact
 revision, and runs only `fast` as the host's non-root UID/GID in native Linux.
 The image reuses the candidate Dockerfile's digest-pinned Python, Node and uv;
-its content identity includes the recipe and UID/GID. A real passwd home and
+it explicitly installs the npm pin from `frontend/package.json`, and its content
+identity includes that pin, the recipe and UID/GID. A real passwd home and
 writable workspace parent support the distribution test's frontend build.
 Setup can download pinned images and locked packages. Only the disposable
 workspace and the selected package cache are mounted; never select a home,
@@ -257,7 +258,10 @@ origin or payload mismatch, a stale test install, or a non-installed import or
 command stops the qualification. The script is the authority for each check and
 the order it runs in.
 
-Public CI is necessary but is not merge authority. The maintainer-owned
+All five jobs, including `dependency-audit`, are required by the strict default-
+branch ruleset. Managed Renovate version updates use the bounded
+[platform auto-merge exception](exact-head-merging.md#renovate-platform-auto-merge-exception).
+Other public CI results are necessary but are not merge authority. The maintainer-owned
 exact-head controller and its tracking reconciliation remain authoritative, and
 neither is a GitHub workflow: `public-gate.yml` is the only workflow this
 repository has, and the controller's closing-reference, `tracking-exempt`, and

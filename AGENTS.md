@@ -243,7 +243,7 @@ Renovate-authored dependency pull requests are the sole automation exception
 to that tracking rule. They require neither an issue nor the
 `tracking-exempt` label because `.github/renovate.json` is their maintainer-
 reviewed authority boundary. They remain subject to the documented dependency
-update policy and exact-head qualification. Only the low-risk classes explicitly
+update policy and exact-head qualification. Only the managed version updates explicitly
 enabled there may use GitHub-native pull-request auto-merge after all required
 checks pass. Every other Renovate pull request requires the ordinary connector
 review and maintainer-owned merge controller; no other bot or human-authored

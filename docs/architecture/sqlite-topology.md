@@ -15,7 +15,7 @@ application database no longer contains them.
 
 ## Current runtime admission and connection ownership
 
-[ADR-0076](decisions/0076-owned-responsive-review-reads.md) adds one local-operation
+[ADR-0077](decisions/0077-owned-responsive-review-reads.md) adds one local-operation
 admission coordinator per persistent application-database authority. Root settings
 controls and overlapping runtime generations share it explicitly. Main review,
 Library, Attention and report detail use the existing application owner. Activity,

@@ -42,21 +42,23 @@ RUN ./configure \
     && strip ffprobe \
     && install -m 0755 ffprobe /usr/local/bin/ffprobe
 
-FROM node:24.19.0-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS frontend-build
+FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS frontend-build
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./frontend/
-RUN cd frontend && npm ci --ignore-scripts --no-audit --no-fund
+RUN cd frontend \
+    && npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./package.json").engines.npm')" \
+    && npm ci --ignore-scripts --no-audit --no-fund
 COPY frontend ./frontend
 COPY docs/reference/review-openapi-v1.json ./docs/reference/review-openapi-v1.json
 COPY src/mechanical_librarian/interfaces/web/settings_vocabulary.json ./src/mechanical_librarian/interfaces/web/settings_vocabulary.json
 RUN cd frontend \
-    && test "$(node --version)" = "v24.19.0" \
-    && test "$(npm --version)" = "11.17.0" \
+    && test "$(node --version)" = "v$(node -p 'require("./package.json").engines.node')" \
+    && test "$(npm --version)" = "$(node -p 'require("./package.json").engines.npm')" \
     && npm run generate \
     && npm run typecheck \
     && npm run build
 
-FROM node:24.19.0-bookworm-slim@sha256:3638d9a6fe4030bd716be989438248074489337ba3275657f93595428be4fc03 AS reviewer-build
+FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS reviewer-build
 ARG TARGETARCH
 RUN set -eu; \
     case "$TARGETARCH" in \
@@ -112,7 +114,7 @@ RUN set -eu; \
       > metadata/SHA256SUMS
 
 FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63 AS build
-COPY --from=ghcr.io/astral-sh/uv:0.12.7@sha256:95f2aa1fe59274951cfe9b0cbc7972e879ff1004bc8945d130a32eb0dbd85945 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.12.13@sha256:b485bd65cc2cf1c9a93b3554012c9c3778cf7b1b5fd3d3096ce9e1226c97e1e6 /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml setup.py uv.lock README.md LICENSE ./
 COPY scripts/build_frontend.py ./scripts/build_frontend.py

@@ -809,6 +809,19 @@ def test_preplan_cover_authority_drift_retires_the_selected_consideration() -> N
 
 
 def _prior_qualification_decision(prior_digest: str) -> AutomaticDecision:
+    if prior_digest.startswith("captured:"):
+        from pathlib import Path
+
+        document = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "support/automatic_decision_predecessors/before-dependency-provenance.json"
+            ).read_bytes()
+        )
+        return AutomaticDecision.from_json(
+            document["AutomaticDecision"][int(prior_digest.split(":")[1])]
+        )
+
     def digest(value: object) -> str:
         return hashlib.sha256(
             json.dumps(
@@ -949,6 +962,7 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
 @pytest.mark.parametrize(
     "prior_digest",
     (
+        *(f"captured:{index}" for index in range(8)),
         "6535df8f7c4cebefa62f9c38ab01823a377c0c7048fca20b81aaf250b498b7ff",
         "7aeaca9b020022b9ab385a9baf249d1b63dc7ffcfcc4a20735d6f6480b5b68e7",
         "12607559ec04da639e36fe0afe8e9e01eefb59c6851555a43175fe3c07323dc5",

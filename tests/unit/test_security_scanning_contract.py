@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import tempfile
 import tomllib
 from collections.abc import Callable, Mapping, Sequence
@@ -174,9 +175,12 @@ def test_the_public_gate_audits_the_lockfile_through_the_register(
 
 def test_the_scanner_is_pinned_by_image_digest() -> None:
     workflow = PUBLIC_GATE.read_text(encoding="utf-8")
-    marker = "ghcr.io/google/osv-scanner@sha256:"
-    assert marker in workflow
-    digest = workflow.split(marker, 1)[1].split()[0]
+    match = re.search(
+        r"ghcr\.io/google/osv-scanner:v[0-9]+\.[0-9]+\.[0-9]+@sha256:([0-9a-f]{64})",
+        workflow,
+    )
+    assert match is not None
+    digest = match[1]
     assert len(digest) == 64
     assert all(value in "0123456789abcdef" for value in digest)
 

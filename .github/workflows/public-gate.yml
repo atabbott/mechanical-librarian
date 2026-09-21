@@ -37,15 +37,18 @@ jobs:
       - name: Install the exact frontend toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.19.0"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the manifest-pinned npm
+        run: npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./frontend/package.json").engines.npm')"
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
-          version: "0.12.7"
+          version: "0.12.13"
 
       - name: Verify the lockfile is current
         run: uv lock --check
@@ -71,8 +74,8 @@ jobs:
       - name: Qualify the frontend source
         working-directory: frontend
         run: |
-          test "$(node --version)" = "v24.19.0"
-          test "$(npm --version)" = "11.17.0"
+          test "$(node --version)" = "v$(node -p 'require("./package.json").engines.node')"
+          test "$(npm --version)" = "$(node -p 'require("./package.json").engines.npm')"
           npm ci --ignore-scripts --no-audit --no-fund
           npm run generate -- --output "$RUNNER_TEMP/review-api-a.d.ts"
           npm run generate -- --output "$RUNNER_TEMP/review-api-b.d.ts"
@@ -109,15 +112,18 @@ jobs:
       - name: Install the exact frontend toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.19.0"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the manifest-pinned npm
+        run: npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./frontend/package.json").engines.npm')"
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
-          version: "0.12.7"
+          version: "0.12.13"
 
       - name: Verify the lockfile is current
         run: uv lock --check
@@ -147,15 +153,18 @@ jobs:
       - name: Install the exact frontend toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.19.0"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the manifest-pinned npm
+        run: npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./frontend/package.json").engines.npm')"
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
-          version: "0.12.7"
+          version: "0.12.13"
 
       - name: Verify the lockfile is current
         run: uv lock --check
@@ -221,8 +230,8 @@ jobs:
       - name: Build the exact React browser artifact
         working-directory: frontend
         run: |
-          test "$(node --version)" = "v24.19.0"
-          test "$(npm --version)" = "11.17.0"
+          test "$(node --version)" = "v$(node -p 'require("./package.json").engines.node')"
+          test "$(npm --version)" = "$(node -p 'require("./package.json").engines.npm')"
           npm ci --ignore-scripts --no-audit --no-fund
           npm run generate
           ML_FRONTEND_OUT_DIR="$RUNNER_TEMP/react-assets" npm run build
@@ -250,15 +259,18 @@ jobs:
       - name: Install the exact frontend toolchain
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24.19.0"
+          node-version: "24.21.0"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the manifest-pinned npm
+        run: npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./frontend/package.json").engines.npm')"
 
       - name: Install uv
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
-          version: "0.12.7"
+          version: "0.12.13"
 
       - name: Verify the lockfile is current
         run: uv lock --check
@@ -328,7 +340,7 @@ jobs:
       # scanner is pinned by image digest rather than through
       # `google/osv-scanner-action`, which resolves a mutable image tag
       # internally and documents that its behaviour may change in a patch
-      # release; the digest below is `ghcr.io/google/osv-scanner:v2.5.0`.
+      # release; the tag identifies the release and the digest binds its bytes.
       # Advisory data is fetched from OSV at run time, so a pinned scanner
       # still sees current advisories. `--config` is explicit so a deleted or
       # renamed acceptance register fails the job instead of silently
@@ -338,7 +350,7 @@ jobs:
           docker run --rm
           --volume "$PWD:/src:ro"
           --workdir /src
-          ghcr.io/google/osv-scanner@sha256:5b8b38e45bb2c5c4976f0f1f07860551ea6e1f235f642cf215f74d266fec2c1b
+          ghcr.io/google/osv-scanner:v2.5.0@sha256:5b8b38e45bb2c5c4976f0f1f07860551ea6e1f235f642cf215f74d266fec2c1b
           scan source
           --lockfile=uv.lock
           --config=osv-scanner.toml

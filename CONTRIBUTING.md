@@ -116,11 +116,13 @@ rather than left behind.
 
 ## Frontend bootstrap
 
-The authenticated-browser source under `frontend/` uses Node 24.19.0 and npm
-11.17.0. A clean checkout needs no manual generation step:
+The authenticated-browser source uses the exact Node and npm versions in
+`frontend/package.json`. Install its npm pin explicitly; the Node-bundled npm
+is not the toolchain authority. A clean checkout needs no manual generation step:
 
 ```text
 cd frontend
+npm install --global --ignore-scripts "npm@$(node -p 'require("./package.json").engines.npm')"
 npm ci --ignore-scripts
 npm run typecheck
 npm run lint
