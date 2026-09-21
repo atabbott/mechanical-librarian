@@ -1,9 +1,9 @@
 {
   "audiobook_activation": {
     "clean_rebuild_required": true,
-    "frozen_candidate_sha": "0616695c0fd5e9ba49f0ab984dcfe116aab69f20",
+    "frozen_candidate_sha": "58914267c92d4eff43c99dd1d885828285a3dcfc",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v9.json",
-    "manifest_sha256": "d5a4cbc3914116567454b38ec0b2b41fa1541e40723e4cabd6d8765a539cd15e",
+    "manifest_sha256": "ce2342dbd919a274d67928320649ba0d78f5c46c1e6bee53b320088e6c5799aa",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -83,7 +83,7 @@
       "title_layout:title_and_subtitle:audiobook_title_subtitle_pair"
     ]
   },
-  "automatic_decision_after_f19_sha256": "5ea7dcdde3b8b53a2988ed2bdbecb78fec042840eccfb72c9918f6242f81d34c",
+  "automatic_decision_after_f19_sha256": "fb708adf3ae1998d68120bb5526b1c34b624e9e46e12e76f0b55906c8492722b",
   "base_sha": "b89576a8c6d0f7f4d3d2108ce0855da3447f9750",
   "binding_only_source_equivalence": {
     "ast_sha256": {
@@ -99,7 +99,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "0616695c0fd5e9ba49f0ab984dcfe116aab69f20"
+    "source_sha": "58914267c92d4eff43c99dd1d885828285a3dcfc"
   },
   "classification": "Responsive owner interaction, bounded local database admission and currentness semantic successor (#1072). Validated complete-cover facts, explicit foreground/background work, combined durable decision confirmation and truthful nonblocking UI have current consumer proof. Historical quality measurements remain inherited and are neither rerun nor rescored; passing and paired option sets and decision policy remain unchanged.",
   "clean_rebuild_required": true,
@@ -111,7 +111,7 @@
     "retained_controls": 2,
     "source_reconstructions": 2
   },
-  "frozen_candidate_sha": "0616695c0fd5e9ba49f0ab984dcfe116aab69f20",
+  "frozen_candidate_sha": "58914267c92d4eff43c99dd1d885828285a3dcfc",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f20-rich-metadata-qualification-candidate-v38.json",
@@ -351,7 +351,7 @@
         "measured_sha256": "c0fbbac4714a187ebf6a5df5d7e07b7a9d79152b498d25b67ea07b1fe02f9eb4"
       },
       "frontend/src/routes/LibraryPage.tsx": {
-        "current_sha256": "89a520f9d405ec3c371f569c73b8bebd0547c4da86d53af742bd0faf7678ea04",
+        "current_sha256": "36af582bc727045b6e6239cf7252cad14c8b0202699d78297e267414cc1a87d8",
         "measured_sha256": "8131f03ee35a88e7ea6720d6075e35522db6e9041419e09e8af74d766eea9f72"
       },
       "frontend/src/routes/PolicyPage.tsx": {
@@ -419,10 +419,10 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "0616695c0fd5e9ba49f0ab984dcfe116aab69f20",
+    "current_source_sha": "58914267c92d4eff43c99dd1d885828285a3dcfc",
     "introduced_sources": {
       "frontend/src/queryWork.ts": {
-        "current_sha256": "a3eb91e8b404d8070878d33548eb6ca268cf339a19ca9c0770f91a7ddae9c38e",
+        "current_sha256": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
         "meaning": "QueryClient-owned actual-fetch scheduling classification, exact-query completion debt, decision holds and sampling cadence."
       },
       "src/mechanical_librarian/application/operation_admission.py": {
@@ -720,31 +720,31 @@
     "frontend/src/decisionEcho.ts": "0095829be6a73808dc380cbbf380069219566ee44b2c27dd02da1e96be925253",
     "frontend/src/focus.ts": "c0fda35d7550ac3a1f1cdc92e8712f8746956ae5e570b6911a17d3242424d948",
     "frontend/src/liveInvalidation.ts": "edefcb7eab6ece582894caf9810d47139e1dc824710e65e1b519bfde4bb8d3dd",
-    "frontend/src/queryWork.ts": "a3eb91e8b404d8070878d33548eb6ca268cf339a19ca9c0770f91a7ddae9c38e",
+    "frontend/src/queryWork.ts": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
     "frontend/src/reviewDecisionController.ts": "167581af6a87e38347560b1896e8f8071f4f8361d89bd70dbd0c24c6e9f9e533",
     "frontend/src/router.tsx": "197c6bf6d673a8b52f3a8d6ed7ebfdf25e79ef4ca9babf064d839a807aaf1fc6",
     "frontend/src/routes/ActivityPage.tsx": "c840e6bdcf8abd1b952bfb12d6d2d307b9f013ae544bc889526972d335e8e2dc",
     "frontend/src/routes/AttentionPage.tsx": "1bcd37f01d111c68c105bfd55f7c3f15cf5e5e80ae6411b4975662f781505652",
     "frontend/src/routes/DetailPage.tsx": "2dcfcc91eeaf338ffa2bd99acc6963898613332b9d723feb05ca7dc27cab586b",
-    "frontend/src/routes/LibraryPage.tsx": "89a520f9d405ec3c371f569c73b8bebd0547c4da86d53af742bd0faf7678ea04",
+    "frontend/src/routes/LibraryPage.tsx": "36af582bc727045b6e6239cf7252cad14c8b0202699d78297e267414cc1a87d8",
     "frontend/src/routes/PolicyPage.tsx": "24f04d687595fdbb900193fce1c29350235ebeeefbb8ee34cfc8593d653fe12a",
     "frontend/src/routes/SettingsPage.tsx": "20c5bc4d175d60b3095f9589294bb9400619ea13603ce2b23c436fc8369ae82a",
     "frontend/src/styles.css": "b4182ddb9912875186db40978e4c5517683415561d592305759ea662b9d3c1ad",
     "frontend/tests/decisionCaseOwnership.test.ts": "b287a134927c341fe9f47b6a616d9be3c3e3119af1b86ea9a4d9227c56a20f07",
     "frontend/tests/decisionConfirmation.test.ts": "9b3f2d13b8efbd37da3114ec3faaa6753cd7a68c3fcc1fd6156facce92fce3c3",
-    "frontend/tests/fixtures.tsx": "6c9b4e1f9ae9bb6378f03ea97d689a60f89985a35db3a5e1d4565d8f3ff46690",
+    "frontend/tests/fixtures.tsx": "3d6b5b35d37f35abe4c648c734c381db04859c7be17c266912d8b89f813b39cd",
     "frontend/tests/focus.test.tsx": "5b394a2bdd76266f82d1f27069235647da1ab57842dd738b8b36f84fc0d55c6f",
     "frontend/tests/http.test.ts": "50dad53c626966c568c87ad761294b95b661875ae178970717f2995c1ca17942",
     "frontend/tests/identifierEvidenceFixture.json": "80e5a728a37c0c9e2a99cafb287b81655cfab10db243cab4f1bf9495681f1e92",
     "frontend/tests/liveUpdates.test.ts": "d1dd1e4880f4eae5dce0fd14c1713e6bcface9133ce5d95fb0773272c988dd2e",
     "frontend/tests/ownerConfirmation.test.tsx": "4b8b42cc84c91c5c58f88eef7b01d742c5d8208f057f39b74367379514fa2941",
     "frontend/tests/policyImpact.test.ts": "44dc17d36e5292075b042ed7c1ba12a259ec93759decb8d2375b43ea1c625cc3",
-    "frontend/tests/queryWork.test.ts": "940b37f63d2d083d5f9db91c5d2e75286cff626c3841ad91c83b4b538a9b3502",
-    "frontend/tests/router.activity.test.tsx": "0efa880ea46c755b449b6830d8bfb75a20b4b40de514c92285eeead714b4ee9e",
+    "frontend/tests/queryWork.test.ts": "0a1bc3ff3d4406da3eb68ecdb9840024b685a31a8fc4fa90eb6b9790c4bec6ac",
+    "frontend/tests/router.activity.test.tsx": "449c7042ed88e1c57b55ded8ea525321337af3ec73b1b83ed00fa0fa9821c740",
     "frontend/tests/router.detail.test.tsx": "5c169261479ffe895bbc0a3bf27b2ba88ce4c10d93a9565498846a718d3dbf7a",
-    "frontend/tests/router.library.test.tsx": "a78a5a1111a33d95eb64868c5acef44a37cba58f80f37bd03375856a2b580aef",
+    "frontend/tests/router.library.test.tsx": "6e637b56978f7fd02a59daba4839df6ea71665c2f8aa3f09342dea33011bc11d",
     "frontend/tests/router.policy.test.tsx": "20de1e9e29969db530134f598e99c9ed9933c6d4ca5378908d7519b9be6e75fc",
-    "frontend/tests/router.settings.test.tsx": "9c76415b5ae182d4948b425efbff5907d5b0c5ab438e111fc918308219740506",
+    "frontend/tests/router.settings.test.tsx": "594a3f75df539fa576e8d2669ae5bb80108a7c5fa41622e2800b880411dec0ae",
     "frontend/tests/router.shell.test.tsx": "aea07a46b8a5aed6cfd8bbe1956b28c756de690b5798b307c1b9829753269b87",
     "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
     "scripts/qualify_provider_evidence_replay.py": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129",
@@ -882,8 +882,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "49f7682b9319b0ccc972946a5dacc02337e9d54e3e7c925b001d95e98125f652",
-    "src/mechanical_librarian/domain/automatic_decision.py": "53fded4ee3cbac6237ecb76997c0a52029ff606476f6a8c3ffc35898723ed223",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "94659fea34efb53329af10b8be52d3cbc49d68a9d7eadd6ed7b37147c10bffe9",
+    "src/mechanical_librarian/domain/automatic_decision.py": "5ea7dcdde3b8b53a2988ed2bdbecb78fec042840eccfb72c9918f6242f81d34c",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -914,7 +914,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "d738b9c3dd4220a20b89d70e7b49f0414502793cec405c11035a208bbaa78402",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "4c3ab3e2b1778819b4f3397bdb1d1f73e849c7bb57bfa5e9984e6ded69f89020",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "8d6fcff5b4af8a71d76a46efb3e6131caeb7cd7d06a03a027f95447f0850502f",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
@@ -946,8 +946,8 @@
     "tests/browser/test_review_browser.py": "89220788669eb41f137ef793248055eca8e11f584c7b7b2f87ccb96a229162da",
     "tests/integration/test_audiobook_provider_activation.py": "bd0c15de0c9b385b5155882835780415fe42bb6e6ad35a9c7764a2d360b90a44",
     "tests/integration/test_continuous_review_scale.py": "a3700a28f38289a898ea75b9693efd304974ba6a41dcc1ad3ee9ce80ff757e23",
-    "tests/integration/test_owner_responsiveness.py": "68bb84856401b50300566b9c0370b4564c01b26175935ef6928e46c05ee85257",
-    "tests/slow/test_owner_browser_responsiveness.py": "7eeec7faba7a2294fc2c171f3ae86dc89f28297fbbe0bf2173d077819f766c40",
+    "tests/integration/test_owner_responsiveness.py": "694c96146a8027b007a9672c9a25201110f07c00548fa3d6582c8cbcf2fd5f58",
+    "tests/slow/test_owner_browser_responsiveness.py": "69e68df24c18bd1d601ea3a08b7c9ec70bcd15a81552717956b1eff895c8d3b7",
     "tests/slow/test_owner_responsiveness.py": "6edeee7f7d1336232ac3590e7f08574872d56ba2e071948094e22b86542e314c",
     "tests/support/audiobook_covers.py": "c2df1ff212ef459f966da8d6be5b484a55d190c85aac2dc0c3077c01fe5e1d50",
     "tests/support/audiobook_predecessors/README.md": "bdb1ed8a2e74345bfc827a12cdb34b9df6180570c60c6a182eb7ec23c918fa28",
@@ -964,7 +964,7 @@
     "tests/support/cover_images.py": "c2de1c554de8b008bc9d0ccbf62dd2a8321f4977cd4e244f3ad86f9dee206ee7",
     "tests/support/cover_producers.py": "d3d4766fd62b642220ba1d1635692a02962fbc81d9faafa23fecd349c5cc8adc",
     "tests/support/metadata_report_schemas.py": "0bd45bdfbabccdbd6c48b37df778874a54540037acdfbc9c2197d1196c67fffa",
-    "tests/support/owner_responsiveness.py": "2ef514a5b016ba5c51e298a04ed674802e5d0adc2179478212d31556275cb9f9",
+    "tests/support/owner_responsiveness.py": "352459ec593baec0f7de95eae4526765276632400676f9595fb2431474d130ea",
     "tests/support/review_web_doubles.py": "f9ef2038230a81b1c1f2837ca4682a3ba5a58001cce1657e2ed61b012d5a564e",
     "tests/unit/shadow_packet_fixtures.py": "8ee51ad8464b2ca50412a2b3c8c1ec69f9287270c627db1e66980d5e60b41f19",
     "tests/unit/test_activity_end_to_end.py": "0af67769e66e9327ba4009ff7d8db5038efeb238f3c174763ecf9469def1c9f3",
@@ -1006,7 +1006,7 @@
     "tests/unit/test_review_read_indexes.py": "9619ca45985f15e69019e43064724d544a2bd7c7a13e1dd334f710fe9faa0456",
     "tests/unit/test_review_session_persistence.py": "c5d7bfeda1d0d045b86c24a42cb5ba959c0b0ecfb9e53feaa2ce60009196177e",
     "tests/unit/test_review_web_read_models.py": "d365d78da40b7bb7d222c9eed39be1dabe1f3ca70ad7772b7570d2504ce509a4",
-    "tests/unit/test_review_web_transport.py": "74ca0bf3163537ed65c38a276a51d89b9cfe0eba7fe97803ca305bf782b302b8",
+    "tests/unit/test_review_web_transport.py": "535f63554df14e6eda972debf4a9c16d593edffcc33eb2699b8f0b47248d84f9",
     "tests/unit/test_reviewer_access_application.py": "2de0a8b58c585f9fcb4b4374d967d8f69c1dfb7688050c1d62454ffb94382f0d",
     "tests/unit/test_rich_metadata_preview.py": "1450abb8d097d10e4600f696715828a5dc0b66e003c86965ac057b14f46ed1f5",
     "tests/unit/test_rich_metadata_qualification_manifest.py": "99724b46537dcafd00751617148e4c9cbbb804bae51221b27d38cc1426c031db",
@@ -1018,7 +1018,7 @@
     "tests/unit/test_transaction_scope.py": "f6a1d14f4baf6293a469478b3804ad66aa42b3973eaaf4a1ef8fddc36493475d",
     "tests/unit/test_work_identity.py": "561906ba2447c972ba5dc24bda35de965075a15860663935f1a8d990195dee87"
   },
-  "title_manifest_sha256": "94751eff4d2a8134bb9eae2a0d974b9a559404da237ffd3442859165d7c31df9",
+  "title_manifest_sha256": "7cb53708252c7deaccff54bb4b7063beb638d6393e785b47b67b5a372d15838e",
   "versions": {
     "action_policy": "shadow-review-action-policy-v4",
     "decision_policy": "deterministic-shadow-decision-policy-v14",
