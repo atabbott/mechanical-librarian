@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import sqlite3
 import threading
 from pathlib import Path
 
@@ -645,3 +647,39 @@ def test_disconnected_active_browse_finishes_before_next_reader(
             assert not fixture.browse._connection.in_transaction
             assert client.get("/api/v1/library?lens=invalid").status_code == 400
             assert client.get(path).status_code == 200
+
+
+def test_nonattentive_retained_title_still_receives_read_time_validation(
+    tmp_path: Path,
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    try:
+        fixture.repository.suspend_field_effect_capability(
+            scope="connection",
+            connection="primary",
+            destination="title",
+            reason="connection_unavailable",
+            changed_at=100,
+        )
+        assert fixture.browse.list_current_attention_documents(None, 25, 0) == ()
+        connection = fixture.repository._connection
+        report_id, document = connection.execute(
+            "SELECT report_id,document FROM metadata_reports ORDER BY report_id LIMIT 1"
+        ).fetchone()
+        payload = json.loads(document)
+        payload["target"]["fields"][0]["value"] = 42
+        malformed = json.dumps(payload, separators=(",", ":"), sort_keys=True)
+        connection.execute("DROP TRIGGER metadata_reports_no_update")
+        connection.execute(
+            "UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?",
+            (malformed, hashlib.sha256(malformed.encode()).hexdigest(), report_id),
+        )
+        connection.commit()
+        with pytest.raises(
+            MetadataReportError, match="^review attention is unavailable$"
+        ) as failure:
+            fixture.browse.list_current_attention_documents(None, 25, 0)
+        assert isinstance(failure.value.__cause__, sqlite3.OperationalError)
+        assert str(failure.value.__cause__) == "user-defined function raised exception"
+    finally:
+        fixture.close()
