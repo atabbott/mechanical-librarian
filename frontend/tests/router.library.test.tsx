@@ -8573,3 +8573,165 @@ it('shows retained automatic advice during preservation-only retry without addin
     'Activity shows any recorded application progress.',
   )
 })
+
+it.each([
+  ['header-open', '', false],
+  ['compact-open', '&preview=case-1', false],
+  ['header-close', '&attention=open', true],
+  ['rail-close', '&preview=case-1&attention=open', true],
+] as const)(
+  'composes the latest Library draft with explicit Attention %s',
+  async (kind, extra, closing) => {
+    const { router } = renderRoute(
+      '/library?lens=all&q=before&cursor=library-page&attentionCursor=attention-page' + extra,
+    )
+    const query = await screen.findByRole('searchbox')
+    await screen.findByRole('heading', { name: extra.includes('preview') ? 'A Book' : 'Works' })
+    const user = userEvent.setup()
+    if (closing)
+      await waitFor(() =>
+        expect(screen.getByRole('complementary', { name: 'Attention queue' })).toHaveFocus(),
+      )
+    await user.clear(query)
+    await user.type(query, 'after ')
+    const button =
+      kind === 'rail-close'
+        ? within(screen.getByRole('complementary', { name: 'Attention queue' })).getByRole(
+            'button',
+            { name: 'Close' },
+          )
+        : screen.getByRole('button', {
+            name: kind === 'compact-open' ? 'Attention queue' : /^Attention /,
+          })
+    await user.click(button)
+    await waitFor(() => {
+      expect(router.state.location.search.q).toBe('after')
+      expect(router.state.location.search.attention).toBe(closing ? undefined : 'open')
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    })
+    expect(query).toHaveValue('after ')
+    expect(router.state.location.search.cursor).toBeUndefined()
+    expect(router.state.location.search.attentionCursor).toBeUndefined()
+  },
+)
+
+it('retains independent Library and Attention cursors for a drawer-only intent', async () => {
+  const { router } = renderRoute(
+    '/library?lens=all&q=before&cursor=library-page&attentionCursor=attention-page',
+  )
+  await screen.findByRole('heading', { name: 'Works' })
+  await userEvent.setup().click(screen.getByRole('button', { name: /^Attention / }))
+  await waitFor(() => expect(router.state.location.search.attention).toBe('open'))
+  expect(router.state.location.search).toEqual({
+    lens: 'all',
+    q: 'before',
+    cursor: 'library-page',
+    attentionCursor: 'attention-page',
+    attention: 'open',
+  })
+})
+
+it('composes Attention after an already submitted search and retains newer rapid typing', async () => {
+  const { router } = renderRoute('/library?lens=all&q=before&preview=case-1')
+  await screen.findByRole('heading', { name: 'A Book' })
+  const query = screen.getByRole('searchbox')
+  const original = router.navigate.bind(router)
+  let release!: () => void
+  let replacements = 0
+  const delayed = vi.spyOn(router, 'navigate').mockImplementation((options) => {
+    if (options.from !== '/library' || ++replacements !== 1) return original(options)
+    return new Promise((resolve, reject) => {
+      release = () => {
+        void original(options).then(resolve, reject)
+      }
+    })
+  })
+  fireEvent.change(query, { target: { value: 'submitted' } })
+  await waitFor(() => expect(replacements).toBe(1))
+  fireEvent.change(query, { target: { value: 'latest' } })
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Attention queue' }))
+  fireEvent.change(query, { target: { value: 'newest' } })
+  act(() => release())
+  await waitFor(() =>
+    expect(router.state.location.search).toEqual({
+      lens: 'all',
+      preview: 'case-1',
+      q: 'newest',
+      attention: 'open',
+    }),
+  )
+  expect(query).toHaveValue('newest')
+  delayed.mockRestore()
+})
+
+it('restores the combined search and drawer through real Back and Forward', async () => {
+  const { router } = renderRoute('/library?lens=all&q=before')
+  await screen.findByRole('heading', { name: 'Works' })
+  const query = screen.getByRole('searchbox')
+  fireEvent.change(query, { target: { value: 'after' } })
+  await userEvent.setup().click(screen.getByRole('button', { name: /^Attention / }))
+  await waitFor(() =>
+    expect(router.state.location.search).toEqual({ lens: 'all', q: 'after', attention: 'open' }),
+  )
+  act(() => router.history.back())
+  await waitFor(() => expect(router.state.location.search).toEqual({ lens: 'all', q: 'before' }))
+  expect(query).toHaveValue('before')
+  act(() => router.history.forward())
+  await waitFor(() =>
+    expect(router.state.location.search).toEqual({ lens: 'all', q: 'after', attention: 'open' }),
+  )
+  expect(query).toHaveValue('after')
+})
+
+it('abandons composed Attention and search when external same-route navigation wins', async () => {
+  const { router } = renderRoute('/library?lens=all&q=before&preview=case-1')
+  await screen.findByRole('heading', { name: 'A Book' })
+  const query = screen.getByRole('searchbox')
+  const original = router.navigate.bind(router)
+  let release!: () => void
+  let replacements = 0
+  const delayed = vi.spyOn(router, 'navigate').mockImplementation((options) => {
+    if (options.from !== '/library' || ++replacements !== 1) return original(options)
+    return new Promise((resolve, reject) => {
+      release = () => {
+        void original(options).then(resolve, reject)
+      }
+    })
+  })
+  fireEvent.change(query, { target: { value: 'obsolete' } })
+  await waitFor(() => expect(replacements).toBe(1))
+  fireEvent.change(query, { target: { value: 'queued' } })
+  await userEvent.setup().click(screen.getByRole('button', { name: 'Attention queue' }))
+  await act(async () => {
+    await original({
+      to: '/library',
+      search: { lens: 'needs_attention', q: 'external', preview: 'case-1' },
+    })
+  })
+  await waitFor(() => expect(query).toHaveValue('external'))
+  act(() => release())
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 200))
+  })
+  expect(router.state.location.search).toEqual({
+    lens: 'needs_attention',
+    q: 'external',
+    preview: 'case-1',
+  })
+  expect(query).toHaveValue('external')
+  delayed.mockRestore()
+})
+
+it('commits an explicitly cleared search together with Attention', async () => {
+  const { router } = renderRoute('/library?lens=all&q=before&cursor=old&attentionCursor=older')
+  await screen.findByRole('heading', { name: 'Works' })
+  const query = screen.getByRole('searchbox')
+  fireEvent.change(query, { target: { value: '' } })
+  await userEvent.setup().click(screen.getByRole('button', { name: /^Attention / }))
+  await waitFor(() =>
+    expect(router.state.location.search).toEqual({ lens: 'all', attention: 'open' }),
+  )
+  expect(query).toHaveValue('')
+})

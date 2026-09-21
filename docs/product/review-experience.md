@@ -340,7 +340,9 @@ unresolved ordinary fields that can benefit from an owner decision, groups them
 by readable work identity, and keeps the current work, active field, and queue
 position visible beside the decision canvas. Its rows use the same bounded search
 as the Library attention count; its cursor is independent of the work-list cursor
-and resets when the search changes. At narrower regular widths the
+and resets when the search changes. Opening or closing Attention commits any
+pending typed search with that action; Back/Forward retains authority over obsolete
+pending edits. At narrower regular widths the
 work index and selected detail remain concurrent while attention opens as a
 contextual drawer. At phone widths the queue may become a separate
 single-column step while preserving Back/Forward state and task continuity.

@@ -1926,7 +1926,7 @@ export default function LibraryPage({
         dismissalCleanupSuppression.current = null
     },
   })
-  const pendingSearchQuery = useRef<string | null>(null)
+  const pendingSearchQuery = useRef<{ q: string | null; attention?: boolean } | null>(null)
   const searchNavigation = useRef<Promise<void> | null>(null)
   const searchCommitTimer = useRef<number | null>(null)
   const searchGeneration = useRef(0)
@@ -2763,7 +2763,7 @@ export default function LibraryPage({
   // Progressive filtering keeps the typed text local so each keystroke paints.
   // A short bounded delay avoids loading an obsolete clear before the next
   // typed value; the URL remains the owner after the committed replacement.
-  const scheduleSearchNavigation = () => {
+  const scheduleSearchNavigation = (delay = searchNavigationDelay) => {
     if (searchCommitTimer.current !== null) window.clearTimeout(searchCommitTimer.current)
     searchCommitTimer.current = window.setTimeout(() => {
       searchCommitTimer.current = null
@@ -2775,13 +2775,18 @@ export default function LibraryPage({
             const pending = pendingSearchQuery.current
             pendingSearchQuery.current = null
             await navigate({
-              replace: true,
+              replace: pending.attention === undefined,
               search: (current) => {
+                if (generation !== searchGeneration.current) return current
                 const next = { ...current }
-                delete next.cursor
-                delete next.attentionCursor
-                if (pending) next.q = pending
-                else delete next.q
+                if (pending.q !== null) {
+                  delete next.cursor
+                  delete next.attentionCursor
+                  if (pending.q) next.q = pending.q
+                  else delete next.q
+                }
+                if (pending.attention === true) next.attention = 'open'
+                else if (pending.attention === false) delete next.attention
                 expectedSearchIdentity.current = librarySearchIdentity(next)
                 return next
               },
@@ -2802,14 +2807,21 @@ export default function LibraryPage({
         }
       }
       searchNavigation.current = drain()
-    }, searchNavigationDelay)
+    }, delay)
   }
   const runSearch = (value: string) => {
     const q = value.trim()
     setTypedQuery({ echo: q, text: value })
     setSearchPending(true)
-    pendingSearchQuery.current = q
+    pendingSearchQuery.current = { ...pendingSearchQuery.current, q }
     scheduleSearchNavigation()
+  }
+  const changeAttention = (open: boolean) => {
+    pendingSearchQuery.current = {
+      q: searchPending ? queryText.trim() : null,
+      attention: open,
+    }
+    scheduleSearchNavigation(0)
   }
   const submitSearch = (event: SyntheticEvent<HTMLFormElement, SubmitEvent>) => {
     event.preventDefault()
@@ -2978,16 +2990,7 @@ export default function LibraryPage({
             className="attention-toggle"
             type="button"
             aria-expanded={search.attention === 'open'}
-            onClick={() =>
-              void navigate({
-                search: (current) => {
-                  const next = { ...current }
-                  if (next.attention === 'open') delete next.attention
-                  else next.attention = 'open'
-                  return next
-                },
-              })
-            }
+            onClick={() => changeAttention(search.attention !== 'open')}
           >
             Attention <strong>{data ? data.counts.attention : '…'}</strong>
           </button>
@@ -2998,13 +3001,7 @@ export default function LibraryPage({
           <button className="compact-workspace-back" type="button" onClick={clearSelection}>
             Back to works
           </button>
-          <button
-            type="button"
-            aria-label="Attention queue"
-            onClick={() =>
-              void navigate({ search: (current) => ({ ...current, attention: 'open' }) })
-            }
-          >
+          <button type="button" aria-label="Attention queue" onClick={() => changeAttention(true)}>
             Attention queue <strong aria-hidden="true">{data ? data.counts.attention : '…'}</strong>
           </button>
         </div>
@@ -4047,19 +4044,7 @@ export default function LibraryPage({
                 <h2>Attention</h2>
                 <p>{String(attentionItems.length)} visible fields</p>
               </div>
-              <button
-                onClick={() =>
-                  void navigate({
-                    search: (current) => {
-                      const next = { ...current }
-                      delete next.attention
-                      return next
-                    },
-                  })
-                }
-              >
-                Close
-              </button>
+              <button onClick={() => changeAttention(false)}>Close</button>
             </header>
             {attention.data === undefined ? (
               <p role={attention.isError ? 'alert' : 'status'}>
