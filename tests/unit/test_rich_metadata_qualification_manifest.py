@@ -2794,9 +2794,15 @@ def _predecessor_source_digest(name: str) -> str:
     return document["sha256"][name]
 
 
-DEPENDENCY_AUDIOBOOK_DIGEST = "8e43f608421f18bdcca447eb0b99c2b676648f8a156a9e4ac0e57a2e093eec7a"
-DEPENDENCY_TITLE_DIGEST = "ede07974f94886aef832e30fe11fbcb8af7f82aa10049e301729c66738bf03c4"
-DEPENDENCY_RICH_DIGEST = "20a0321ce87d7f22dae749f0ee2162c5521ad7dcf386a98cf7b550d377c5fc5e"
+DEPENDENCY_AUDIOBOOK_DIGEST = (
+    "8e43f608421f18bdcca447eb0b99c2b676648f8a156a9e4ac0e57a2e093eec7a"
+)
+DEPENDENCY_TITLE_DIGEST = (
+    "ede07974f94886aef832e30fe11fbcb8af7f82aa10049e301729c66738bf03c4"
+)
+DEPENDENCY_RICH_DIGEST = (
+    "20a0321ce87d7f22dae749f0ee2162c5521ad7dcf386a98cf7b550d377c5fc5e"
+)
 DEPENDENCY_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
     "f46-audiobook-qualification-candidate-v9.json"
 )
@@ -2850,10 +2856,7 @@ def _dependency_qualification_documents():
                     MANIFEST.parents[2]
                 ).as_posix()
             )
-            assert (
-                successor["shared_amendment_sha256"]
-                == DEPENDENCY_AUDIOBOOK_DIGEST
-            )
+            assert successor["shared_amendment_sha256"] == DEPENDENCY_AUDIOBOOK_DIGEST
         if path == DEPENDENCY_RICH_SUCCESSOR:
             allowed |= {"automatic_decision_after_f19_sha256"}
             assert (
@@ -2904,14 +2907,22 @@ def _dependency_qualification_documents():
     return documents
 
 
-CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name("f46-audiobook-qualification-candidate-v10.json")
+CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
+    "f46-audiobook-qualification-candidate-v10.json"
+)
 CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v27.json")
-CURRENT_RICH_SUCCESSOR = MANIFEST.with_name("f20-rich-metadata-qualification-candidate-v41.json")
+CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
+    "f20-rich-metadata-qualification-candidate-v41.json"
+)
 
 
 def _current_qualification_documents():
     documents = []
-    for path, digest in ((CURRENT_AUDIOBOOK_SUCCESSOR, F46_QUALIFICATION_MANIFEST_SHA256), (CURRENT_TITLE_SUCCESSOR, F19A_QUALIFICATION_MANIFEST_SHA256), (CURRENT_RICH_SUCCESSOR, F20_QUALIFICATION_CANDIDATE_SHA256)):
+    for path, digest in (
+        (CURRENT_AUDIOBOOK_SUCCESSOR, F46_QUALIFICATION_MANIFEST_SHA256),
+        (CURRENT_TITLE_SUCCESSOR, F19A_QUALIFICATION_MANIFEST_SHA256),
+        (CURRENT_RICH_SUCCESSOR, F20_QUALIFICATION_CANDIDATE_SHA256),
+    ):
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
         document = json.loads(path.read_bytes())
         assert document["build_provenance_paths"] == sorted(_BUILD_PROVENANCE_PATHS)
@@ -2921,9 +2932,8 @@ def _current_qualification_documents():
 
 def _assert_live_source_closure(document, overrides=None):
     overrides = overrides or {}
-    assert (
-        set(document["source_closure"])
-        == set(json.loads(CURRENT_AUDIOBOOK_SUCCESSOR.read_bytes())["source_closure"])
+    assert set(document["source_closure"]) == set(
+        json.loads(CURRENT_AUDIOBOOK_SUCCESSOR.read_bytes())["source_closure"]
     )
     binding = document["binding_only_source_equivalence"]
     exclusions = binding["excluded_binding_assignments"]
@@ -3016,7 +3026,9 @@ def test_current_source_partition_and_amendment_fail_closed(monkeypatch, mutatio
     monkeypatch.setattr(
         Path,
         "read_bytes",
-        lambda path: content if path == DEPENDENCY_AUDIOBOOK_SUCCESSOR else original(path),
+        lambda path: (
+            content if path == DEPENDENCY_AUDIOBOOK_SUCCESSOR else original(path)
+        ),
     )
     monkeypatch.setitem(
         globals(),
@@ -3125,7 +3137,9 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         assert document["proposal_policy_version"] == "fixed-conservative-v27"
         assert re.fullmatch(r"[0-9a-f]{40}", document["frozen_candidate_sha"])
         assert required <= set(document["source_closure"])
-        assert set(predecessor["source_closure"]) - _BUILD_PROVENANCE_PATHS <= set(document["source_closure"])
+        assert set(predecessor["source_closure"]) - _BUILD_PROVENANCE_PATHS <= set(
+            document["source_closure"]
+        )
         assert not _BUILD_PROVENANCE_PATHS & set(document["source_closure"])
         binding = document["binding_only_source_equivalence"]
         assert binding["excluded_binding_assignments"] == exclusions
@@ -3296,13 +3310,30 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         )
 
 
-
 @pytest.mark.parametrize(
     "family,digests",
     [
-        ("title", (DEPENDENCY_TITLE_DIGEST, "7fbe2ea38f06b0ad0bd3a6941ec1bc7dc08079bdf1a38202898201a3720f9f00")),
-        ("rich", (DEPENDENCY_RICH_DIGEST, "8135de356454590a708bbf57af25c488f87933b5c8315a78688f000e29d643ad")),
-        ("audio", (DEPENDENCY_AUDIOBOOK_DIGEST, "3bc740723d81d15cac137aa92e3731c4cf5da848a03ff88016e36db9553acd63")),
+        (
+            "title",
+            (
+                DEPENDENCY_TITLE_DIGEST,
+                "7fbe2ea38f06b0ad0bd3a6941ec1bc7dc08079bdf1a38202898201a3720f9f00",
+            ),
+        ),
+        (
+            "rich",
+            (
+                DEPENDENCY_RICH_DIGEST,
+                "8135de356454590a708bbf57af25c488f87933b5c8315a78688f000e29d643ad",
+            ),
+        ),
+        (
+            "audio",
+            (
+                DEPENDENCY_AUDIOBOOK_DIGEST,
+                "3bc740723d81d15cac137aa92e3731c4cf5da848a03ff88016e36db9553acd63",
+            ),
+        ),
     ],
 )
 def test_dependency_and_responsiveness_origins_remain_historical_only(family, digests):
@@ -3312,9 +3343,21 @@ def test_dependency_and_responsiveness_origins_remain_historical_only(family, di
     )
 
     history, options, current = {
-        "title": (_PRIOR_F19A_QUALIFICATION_MANIFESTS, F19A_QUALIFIED_POLICY_OPTIONS, F19A_QUALIFICATION_MANIFEST_SHA256),
-        "rich": (_PRIOR_F20_QUALIFICATION_MANIFESTS, F20_PASSING_AUTOMATIC_OPTIONS, F20_QUALIFICATION_CANDIDATE_SHA256),
-        "audio": (_PRIOR_F46_QUALIFICATION_MANIFESTS, F46_PASSING_AUTOMATIC_OPTIONS, F46_QUALIFICATION_MANIFEST_SHA256),
+        "title": (
+            _PRIOR_F19A_QUALIFICATION_MANIFESTS,
+            F19A_QUALIFIED_POLICY_OPTIONS,
+            F19A_QUALIFICATION_MANIFEST_SHA256,
+        ),
+        "rich": (
+            _PRIOR_F20_QUALIFICATION_MANIFESTS,
+            F20_PASSING_AUTOMATIC_OPTIONS,
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+        ),
+        "audio": (
+            _PRIOR_F46_QUALIFICATION_MANIFESTS,
+            F46_PASSING_AUTOMATIC_OPTIONS,
+            F46_QUALIFICATION_MANIFEST_SHA256,
+        ),
     }[family]
     for digest in digests:
         assert digest != current
