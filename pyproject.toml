@@ -25,7 +25,7 @@ dependencies = [
   "httpcore==1.0.9",
   "httpx==0.28.1",
   "pillow==12.3.0",
-  "pydantic==2.13.4",
+  "pydantic==2.13.5",
   # `interfaces/web/app.py` imports `starlette.types` directly, so Starlette is
   # a direct dependency and is pinned here rather than floating under FastAPI's
   # open `starlette>=0.46.0`. The floor is what clears the last advisory
@@ -58,7 +58,7 @@ dev = [
   "mypy==2.3.1",
   "playwright==1.62.0",
   "pytest==9.1.1",
-  "ruff==0.16.4",
+  "ruff==0.16.7",
   "setuptools==83.0.0",
 ]
 
