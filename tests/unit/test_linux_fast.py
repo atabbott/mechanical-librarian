@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import subprocess
 from pathlib import Path
 from unittest.mock import patch
@@ -54,8 +55,16 @@ def test_pin_parser_fails_closed(change: str) -> None:
         image_recipe(text.replace(line, replacement), 501, 20, "11.19.0")
 
 
-def test_recipe_identity_and_nonroot_home() -> None:
+@pytest.mark.parametrize("python_patch_offset", [0, 1])
+def test_recipe_identity_and_nonroot_home(python_patch_offset: int) -> None:
     text = (Path(__file__).resolve().parents[2] / "Dockerfile").read_text()
+    match = re.search(r"python:(\d+)\.(\d+)\.(\d+)", text)
+    assert match is not None
+    major, minor, patch_version = map(int, match.groups())
+    patch_version += python_patch_offset
+    python_pin = f"python:{major}.{minor}.{patch_version}"
+    text = text.replace(match[0], python_pin)
+    next_python_pin = f"python:{major}.{minor}.{patch_version + 1}"
     recipe = image_recipe(text, 501, 20, "11.19.0")
     assert "USER 501:20" in recipe
     assert "--create-home" in recipe
@@ -68,7 +77,7 @@ def test_recipe_identity_and_nonroot_home() -> None:
                 image_recipe(text, 502, 20, "11.19.0"),
                 image_recipe(text, 501, 21, "11.19.0"),
                 image_recipe(
-                    text.replace("python:3.14.7", "python:3.14.8"), 501, 20, "11.19.0"
+                    text.replace(python_pin, next_python_pin), 501, 20, "11.19.0"
                 ),
             }
         )
