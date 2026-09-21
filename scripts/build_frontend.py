@@ -12,8 +12,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-NODE_VERSION = "v24.19.0"
-NPM_VERSION = "11.17.0"
+NODE_VERSION = "v24.21.0"
+NPM_VERSION = "11.19.0"
 
 
 class FrontendBuildError(RuntimeError):

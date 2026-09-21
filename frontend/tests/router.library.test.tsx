@@ -4857,8 +4857,8 @@ describe('Library route', () => {
       ...createHttp(),
       getCaseDetail: vi.fn(async () => current),
       recordDecision: vi.fn(
+        // eslint-disable-next-line @typescript-eslint/no-unused-vars -- ReviewHttp includes cancellation unused by this scenario.
         async (_reviewCaseId: string, command: DecisionCommand, _signal?: AbortSignal) => {
-          void _signal
           if (command.outcome === 'accept' && command.selectedValue === undefined) {
             throw new Error('accept command requires its selected value')
           }

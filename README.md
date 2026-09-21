@@ -78,7 +78,7 @@ See the [catalogue guide](docs/operations/catalogue.md),
 [documentation index](docs/README.md).
 
 The active authenticated-browser source is maintained under `frontend/`. Its
-exact source checks require Node 24.19.0 and npm 11.17.0: run
+exact source checks require Node 24.21.0 and npm 11.19.0: run
 `npm ci --ignore-scripts`, then `npm run typecheck`, `npm run lint`, `npm test`,
 and `npm run build` from that directory. Each of those four commands
 regenerates the DTOs first, so `npm run generate` is needed only when you want
