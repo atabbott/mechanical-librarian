@@ -87,9 +87,23 @@ def test_application_manifests_remain_exact() -> None:
     python = tomllib.loads((ROOT / "pyproject.toml").read_text())
     assert python["project"]["requires-python"] == ">=3.13,<3.15"
     for requirement in (
-        python["project"]["dependencies"] + python["dependency-groups"]["dev"]
+        python["project"]["dependencies"]
+        + python["dependency-groups"]["dev"]
+        + python["build-system"]["requires"]
     ):
         assert "==" in requirement
+    setuptools_pins = [
+        requirement
+        for requirements in (
+            python["build-system"]["requires"],
+            python["dependency-groups"]["dev"],
+        )
+        for requirement in requirements
+        if requirement.startswith("setuptools")
+    ]
+    assert len(setuptools_pins) == 2
+    assert len(set(setuptools_pins)) == 1
+    assert re.fullmatch(r"setuptools==[0-9]+\.[0-9]+\.[0-9]+", setuptools_pins[0])
     frontend = json.loads((ROOT / "frontend/package.json").read_bytes())
     for section in ("dependencies", "devDependencies", "overrides", "engines"):
         assert all(
