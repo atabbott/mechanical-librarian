@@ -127,6 +127,7 @@ def test_native_managed_toolchain_declarations_agree(
 
 
 def test_osv_custom_manager_is_narrow_and_digest_bound() -> None:
+    assert CONFIG["ignorePresets"] == ["customManagers:tsconfigNodeVersions"]
     (manager,) = CONFIG["customManagers"]
     assert manager["managerFilePatterns"] == [
         r"/^\.github/workflows/public-gate\.yml$/"
