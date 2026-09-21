@@ -16,6 +16,11 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from scripts.build_frontend import toolchain_versions
+
 
 def verify_source(root: Path, sha: str, deadline: float | None = None) -> None:
     if deadline is None:
@@ -36,8 +41,10 @@ def verify_source(root: Path, sha: str, deadline: float | None = None) -> None:
         raise RuntimeError("source_identity_mismatch_or_dirty")
 
 
-def image_recipe(dockerfile: str, uid: int, gid: int) -> str:
+def image_recipe(dockerfile: str, uid: int, gid: int, npm_version: str) -> str:
     """Accept only the three literal digest-bound forms this helper consumes."""
+    if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", npm_version) is None:
+        raise RuntimeError("unsupported_linux_toolchain_pin")
     pins: list[str] = []
     for stage, prefix in (("build", "python"), ("frontend-build", "node")):
         lines = [
@@ -67,6 +74,7 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 COPY --from=node /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from={match[1]} /uv /usr/local/bin/uv
 RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && apt-get update && apt-get install -y --no-install-recommends git openssl && rm -rf /var/lib/apt/lists/*
+RUN npm install --global --ignore-scripts --no-audit --no-fund npm@{npm_version}
 RUN groupadd --non-unique --gid {gid} qualifier && \
     if account="$(getent passwd {uid})"; then \
         usermod --home /home/qualifier --gid qualifier "${{account%%:*}}" && \
@@ -109,7 +117,10 @@ def run(root: Path, sha: str, cache: Path, timeout: int, job_timeout: int) -> No
         raise RuntimeError("linux_fast_requires_nonroot_host")
     deadline = time.monotonic() + job_timeout
     verify_source(root, sha, deadline)
-    recipe = image_recipe((root / "Dockerfile").read_text(), os.getuid(), os.getgid())
+    _, npm_version = toolchain_versions(root)
+    recipe = image_recipe(
+        (root / "Dockerfile").read_text(), os.getuid(), os.getgid(), npm_version
+    )
     image = (
         "mechanical-librarian-linux-fast:" + hashlib.sha256(recipe.encode()).hexdigest()
     )

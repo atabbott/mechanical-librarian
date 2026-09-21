@@ -30,6 +30,9 @@ SETUP_COMMANDS = frozenset(
         'print("version=" + version("playwright"))\' >> "$GITHUB_OUTPUT"',
         # Fetches the payload that the next command is what actually verifies.
         "uv run playwright install chromium",
+        # Installs the manifest-pinned package manager before frontend checks.
+        "npm install --global --ignore-scripts --no-audit --no-fund "
+        '"npm@$(node -p \'require("./frontend/package.json").engines.npm\')"',
         # Installs the frontend closure, in both jobs that build the frontend.
         "npm ci --ignore-scripts --no-audit --no-fund",
         # The two documents `cmp` then compares, and the regeneration in place

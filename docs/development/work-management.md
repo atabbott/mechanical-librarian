@@ -394,7 +394,7 @@ GitHub identifies the pull-request author as `renovate[bot]`; it is not
 transferable through a title, label, branch name, commit author, or human
 account. Renovate pull requests follow the bounded update, qualification,
 review, merge-classification, and recovery rules in
-[dependencies](dependencies.md). Only its named low-risk classes
+[dependencies](dependencies.md). Only its admitted managed version updates
 may use GitHub-native auto-merge after strict required checks; all other classes
 retain maintainer merge control. Human-authored dependency changes remain
 material tracked work.

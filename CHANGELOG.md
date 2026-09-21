@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Managed dependency upgrades, including majors, request automatic merge after
+  all five required checks. npm and OSV join managed scope; frontend dependency
+  bytes retain build provenance without rotating semantic policy qualification.
+  New dependencies and compatibility-policy changes remain manual. (#1089)
+
 - Reviewer settings now name the cover reviewer's configured model beside its
   engine, and say plainly when contained Codex reports none. The cover task
   states what a cover model must support and the largest request it can send,
