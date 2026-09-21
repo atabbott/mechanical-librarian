@@ -429,6 +429,98 @@ _UNNAMED_COVER_EVIDENCE_STATEMENT: Final = (
 )
 
 
+def cover_consideration_currentness_document(document: str) -> str:
+    """Derive immutable collection facts through the complete producer validator.
+
+    An inactive projection is canonical even for earlier or malformed producers;
+    it grants no collection authority. Detail and effects still read full evidence.
+    """
+    try:
+        value, report = _validated_cover_consideration(document)
+        replay = value.get("replay_reference")
+        fetching = value.get("provider_fetching")
+        if (
+            type(replay) is not str
+            or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay) is None
+            or type(fetching) is not bool
+            or value.get("replay_digest")
+            != cover_consideration_replay_digest(
+                cast(str, value["review_case_id"]),
+                report.report_id,
+                provider_fetching=fetching,
+                replay_reference=replay,
+            )
+        ):
+            return "null"
+        return canonical_packet_json(
+            {
+                "connection": report.target.connection,
+                "library": report.target.library,
+                "item": report.target.item,
+                "report_id": report.report_id,
+                "provider_fetching": fetching,
+                "replay_reference": replay,
+            }
+        )
+    except (KeyError, TypeError, ValueError):
+        return "null"
+
+
+def cover_currentness_from_facts(
+    document: str,
+    replay_reference: str,
+    provider_fetching: Callable[[str, str, str, str], bool],
+) -> CoverConsiderationCurrentness:
+    """Read only validated immutable facts at the collection boundary."""
+    if (
+        type(document) is not str
+        or type(replay_reference) is not str
+        or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None
+    ):
+        return "inactive"
+    try:
+        value = json.loads(document)
+        if (
+            type(value) is not dict
+            or set(value)
+            != {
+                "connection",
+                "library",
+                "item",
+                "report_id",
+                "provider_fetching",
+                "replay_reference",
+            }
+            or any(
+                type(value[key]) is not str or not value[key]
+                for key in (
+                    "connection",
+                    "library",
+                    "item",
+                    "report_id",
+                    "replay_reference",
+                )
+            )
+            or type(value["provider_fetching"]) is not bool
+            or re.fullmatch(r"cover_replay_[0-9a-f]{64}", value["replay_reference"])
+            is None
+            or canonical_packet_json(value) != document
+        ):
+            return "inactive"
+        fetching = provider_fetching(
+            value["connection"], value["library"], value["item"], value["report_id"]
+        )
+        if type(fetching) is not bool or fetching != value["provider_fetching"]:
+            return "inactive"
+        return (
+            "current"
+            if value["replay_reference"] == replay_reference
+            else "refresh_required"
+        )
+    except Exception:
+        return "inactive"
+
+
 def cover_consideration_currentness(
     document: str,
     replay_reference: str,
@@ -645,6 +737,10 @@ class CoverConsiderationService:
         except BaseException:
             self.update_policy(previous)
             raise
+
+    def current_authority(self) -> tuple[str, str]:
+        """Capture the policy and live reviewer replay identity for one read."""
+        return self._policy.reference, self.replay_reference
 
     @property
     def replay_reference(self) -> str:

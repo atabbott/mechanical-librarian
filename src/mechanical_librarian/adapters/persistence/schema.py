@@ -42,6 +42,9 @@ from mechanical_librarian.adapters.persistence.owner_settings import (
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     validate_preparation_presentation,
 )
+from mechanical_librarian.application.cover_consideration import (
+    cover_consideration_currentness_document,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
 from mechanical_librarian.domain.cover_automatic_decision import (
@@ -420,6 +423,7 @@ _COVER_CONSIDERATIONS_SQL = (
     "document_digest TEXT NOT NULL CHECK(length(document_digest)=64 AND document_digest NOT GLOB '*[^0-9a-f]*'), "
     "supersedes_id TEXT REFERENCES cover_considerations(consideration_id), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
+    "currentness_document TEXT NOT NULL CHECK(typeof(currentness_document)='text' AND length(CAST(currentness_document AS BLOB)) BETWEEN 4 AND 4096), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 12582912))"
 )
 _CURRENT_COVER_CONSIDERATIONS_SQL = (
@@ -1225,6 +1229,11 @@ def _validate_schema_against(
 def _validate_schema_contents(connection: sqlite3.Connection) -> None:
     _validate_schema_contents_without_review_field_facts(connection)
     _validate_review_field_facts(connection)
+    for document, facts in connection.execute(
+        "SELECT document,currentness_document FROM cover_considerations"
+    ):
+        if cover_consideration_currentness_document(document) != facts:
+            raise MetadataReportError("database is unavailable or incompatible")
 
 
 def _validate_schema_contents_without_review_field_facts(

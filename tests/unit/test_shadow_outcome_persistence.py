@@ -53,7 +53,7 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
-    cover_consideration_currentness,
+    cover_currentness_from_facts,
 )
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
@@ -1379,7 +1379,7 @@ def test_activity_projects_cover_reviewer_terminal_state_without_private_payload
                 sort_keys=True,
             )
             repository._connection.execute(
-                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,'null')",
                 (
                     consideration_id,
                     review_case_id,
@@ -1505,7 +1505,7 @@ def test_activity_fails_closed_for_malformed_cover_consideration_projection() ->
         ]
         consideration_id = "cover_consideration_" + "f" * 64
         repository._connection.execute(
-            "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,'null')",
             (
                 consideration_id,
                 review_case_id,
@@ -1575,7 +1575,7 @@ def test_activity_accepts_the_cover_document_cap_and_rejects_larger_or_malformed
                 sort_keys=True,
             )
             repository._connection.execute(
-                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,'null')",
                 (
                     consideration_id,
                     review_case_id,
@@ -1641,7 +1641,7 @@ def test_activity_page_does_not_materialize_repeated_near_limit_cover_documents(
         suffix = '","profile":"private-profile","recommendation":"private-recommendation","reviewer_status":"completed"}'
         document = prefix + "x" * (12_582_912 - len(prefix) - len(suffix)) + suffix
         repository._connection.execute(
-            "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+            "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,'null')",
             (
                 consideration_id,
                 review_case_id,
@@ -4612,8 +4612,8 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                 repository._connection.execute(
                     "INSERT INTO cover_considerations("
                     "consideration_id,review_case_id,report_id,replay_digest,"
-                    "document_digest,supersedes_id,occurred_at,document"
-                    ") VALUES(?,?,?,?,?,?,?,?)",
+                    "document_digest,supersedes_id,occurred_at,document,currentness_document"
+                    ") VALUES(?,?,?,?,?,?,?,?,'null')",
                     (
                         persisted["consideration_id"],
                         current_work["review_case_id"],
@@ -4641,8 +4641,8 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
 
                 cover_considerations._provider_fetching = provider_fetching
                 repository.bind_cover_consideration_currentness(
-                    lambda document, replay_reference: cover_consideration_currentness(
-                        document, replay_reference, provider_fetching
+                    lambda document, replay_reference: cover_currentness_from_facts(
+                        document, replay_reference, lambda *_identity: False
                     )
                 )
 
@@ -4707,10 +4707,17 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                     )
 
                 repository.bind_cover_consideration_currentness(
-                    lambda document, replay_reference: cover_consideration_currentness(
+                    lambda document, replay_reference: cover_currentness_from_facts(
                         document,
                         replay_reference,
-                        provider_fetching,
+                        lambda connection, library, item, report_id: (
+                            recovery.cover_fetching(
+                                target_connection=connection,
+                                library=library,
+                                item=item,
+                                source_report_id=report_id,
+                            )
+                        ),
                     )
                 )
 
@@ -4901,19 +4908,21 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
         finished: list[str] = []
         errors: list[BaseException] = []
 
-        def coordinated_provider_fetching(value: MetadataReport) -> bool:
+        def coordinated_provider_fetching(
+            connection: str, library: str, item: str, report_id: str
+        ) -> bool:
             inside_sql.set()
             if not setup_locked.wait(2):
                 raise AssertionError("setup lock was not acquired")
             return recovery.cover_fetching(
-                target_connection=value.target.connection,
-                library=value.target.library,
-                item=value.target.item,
-                source_report_id=value.report_id,
+                target_connection=connection,
+                library=library,
+                item=item,
+                source_report_id=report_id,
             )
 
         repository.bind_cover_consideration_currentness(
-            lambda document, replay_reference: cover_consideration_currentness(
+            lambda document, replay_reference: cover_currentness_from_facts(
                 document,
                 replay_reference,
                 coordinated_provider_fetching,

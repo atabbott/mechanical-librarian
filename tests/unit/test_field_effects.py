@@ -1919,7 +1919,7 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         sort_keys=True,
     )
     effects.repository._connection.execute(
-        "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+        "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,'null')",
         (
             consideration_id,
             case.review_case_id,

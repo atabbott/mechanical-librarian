@@ -62,6 +62,7 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     session_store = Mock()
     reviewer_access = Mock()
     cover_considerations = Mock()
+    cover_considerations.current_authority.return_value = ("policy", "replay")
     review_application = Mock()
     preparation = Mock()
     preparation.libraries = (

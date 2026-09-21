@@ -78,6 +78,7 @@ from mechanical_librarian.bootstrap.composition import (
     _load_batch_credentials,
     compose_continuous_guarded_application,
     compose_field_effect_activity_projection,
+    open_review_browse_repository,
 )
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
@@ -699,6 +700,12 @@ def _start_deterministic_installed_server(
     settings_projection = file_settings_projection(configuration, credentials)
     activity_repository = topology.open_activity_projection()
     reviewer_access = _compose_reviewer_access(web_state_owner, review)
+    cover_considerations = _compose_cover_considerations(
+        web_state_owner, artifacts, review, reviewer_access, recovery
+    )
+    browse_repository = open_review_browse_repository(
+        database, web_state_owner.authority, cover_considerations, recovery
+    )
     try:
         activity_projection = compose_field_effect_activity_projection(
             configuration, activity_repository, recovery
@@ -709,7 +716,10 @@ def _start_deterministic_installed_server(
             session_store=session_store,
             case_store=web_state_owner,
             decision_store=web_state_owner,
-            library_store=web_state_owner,
+            library_store=browse_repository,
+            report_store=web_state_owner,
+            browse_observation=browse_repository.browse_observation,
+            close_browse=browse_repository.close,
             policy_store=web_state_owner,
             verify_password=owner_binding[0],
             session_digest=owner_binding[1],
@@ -739,9 +749,7 @@ def _start_deterministic_installed_server(
             ),
             activity_projection=activity_projection,
             close_activity_projection=activity_repository.close,
-            cover_considerations=_compose_cover_considerations(
-                web_state_owner, artifacts, review, reviewer_access
-            ),
+            cover_considerations=cover_considerations,
             reviewer_access=reviewer_access,
             settings=OwnerSettingsOperations(
                 FileOwnerSettingsRepository(
@@ -750,6 +758,7 @@ def _start_deterministic_installed_server(
             ),
         )
     except BaseException:
+        browse_repository.close()
         activity_repository.close()
         raise
     server = uvicorn.Server(

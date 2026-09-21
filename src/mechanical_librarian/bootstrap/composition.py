@@ -157,7 +157,7 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
-    cover_consideration_currentness,
+    cover_currentness_from_facts,
 )
 from mechanical_librarian.application.cover_policy import CoverPolicy
 from mechanical_librarian.application.decision_preview import preview_shadow_decision
@@ -3306,6 +3306,9 @@ def compose_store_runtime_generation(
             reviewer_access,
             provider_recovery,
         )
+        browse_repository = open_review_browse_repository(
+            database_path, repository.authority, cover_considerations, provider_recovery
+        )
         try:
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
@@ -3313,7 +3316,10 @@ def compose_store_runtime_generation(
                 session_store=session_store,
                 case_store=repository,
                 decision_store=repository,
-                library_store=repository,
+                library_store=browse_repository,
+                report_store=repository,
+                browse_observation=browse_repository.browse_observation,
+                close_browse=browse_repository.close,
                 policy_store=repository,
                 verify_password=owner_binding[0],
                 session_digest=owner_binding[1],
@@ -3343,6 +3349,7 @@ def compose_store_runtime_generation(
                 acknowledge_first_boot=repository.acknowledge_first_boot_preparation,
             )
         except BaseException:
+            browse_repository.close()
             if close_activity_projection is not None:
                 close_activity_projection()
             raise
@@ -3778,13 +3785,22 @@ def run_review_server(
                 reviewer_access,
                 provider_recovery,
             )
+            browse_repository = open_review_browse_repository(
+                database_path,
+                repository.authority,
+                cover_considerations,
+                provider_recovery,
+            )
             try:
                 review_application = compose_review_application(
                     state_owner=repository,
                     session_store=session_store,
                     case_store=repository,
                     decision_store=repository,
-                    library_store=repository,
+                    library_store=browse_repository,
+                    report_store=repository,
+                    browse_observation=browse_repository.browse_observation,
+                    close_browse=browse_repository.close,
                     policy_store=repository,
                     verify_password=password_binding[0],
                     session_digest=password_binding[1],
@@ -3809,6 +3825,7 @@ def run_review_server(
                     first_boot=first_boot,
                 )
             except BaseException:
+                browse_repository.close()
                 if close_activity_projection is not None:
                     close_activity_projection()
                 raise
@@ -4297,14 +4314,67 @@ def _compose_cover_considerations(
         provider_fetching=provider_fetching,
     )
     repository.bind_cover_consideration_currentness(
-        lambda document, replay_reference: cover_consideration_currentness(
+        lambda document, replay_reference: cover_currentness_from_facts(
             document,
             replay_reference,
-            provider_fetching,
+            lambda connection, library, item, report: (
+                False
+                if provider_recovery is None
+                else provider_recovery.cover_fetching(
+                    target_connection=connection,
+                    library=library,
+                    item=item,
+                    source_report_id=report,
+                )
+            ),
         )
     )
     service.update_policy(policy)
     return service
+
+
+def open_review_browse_repository(
+    database_path: Path,
+    authority: object,
+    cover_considerations: CoverConsiderationService,
+    provider_recovery: SQLiteProviderRecoveryStore | None,
+) -> SQLiteMetadataReportRepository:
+    """Own one persistent borrower for complete Library/Attention operations."""
+    repository = open_repository(
+        database_path, create=False, authority=authority, cross_thread=True
+    )
+    try:
+        repository.bind_current_cover_authority(
+            *cover_considerations.current_authority()
+        )
+        repository.bind_cover_consideration_currentness(
+            lambda document, replay: cover_currentness_from_facts(
+                document,
+                replay,
+                lambda connection, library, item, report: (
+                    False
+                    if provider_recovery is None
+                    else provider_recovery.cover_fetching(
+                        target_connection=connection,
+                        library=library,
+                        item=item,
+                        source_report_id=report,
+                    )
+                ),
+            )
+        )
+        repository.bind_cover_read_observation(
+            lambda: (
+                cover_considerations.current_authority(),
+                frozenset()
+                if provider_recovery is None
+                else provider_recovery.cover_fetching_identities(),
+            )
+        )
+        return repository
+    except BaseException:
+        repository.close()
+        raise
 
 
 class _OfflineSessionStore:

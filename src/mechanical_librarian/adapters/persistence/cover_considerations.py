@@ -18,6 +18,9 @@ from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.application.cover_consideration import (
+    cover_consideration_currentness_document,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_cover_replacement import (
     material_audiobook_cover_reference,
@@ -520,6 +523,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             raise MetadataReportError("cover consideration is invalid") from error
         if preparation_kind not in {"automatic_prepared", "owner_retry_prepared"}:
             raise MetadataReportError("cover preparation kind is invalid")
+        currentness_document = cover_consideration_currentness_document(document)
         transaction = self._transaction("record_cover_consideration")
         try:
             transaction.begin()
@@ -548,7 +552,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             if actual_supersedes != supersedes_id:
                 raise MetadataReportError("cover consideration changed")
             self._connection.execute(
-                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     consideration_id,
                     review_case_id,
@@ -558,6 +562,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                     supersedes_id,
                     occurred_at,
                     document,
+                    currentness_document,
                 ),
             )
             if supersedes_id is not None:

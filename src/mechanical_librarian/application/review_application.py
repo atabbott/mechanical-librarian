@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from threading import RLock
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
@@ -400,6 +401,9 @@ class ReviewApplication:
         updates: LiveUpdateChannel,
         activity_projection: ContinuousGuardedApplication | None = None,
         close_activity_projection: Callable[[], None] | None = None,
+        browse_observation: Callable[[], AbstractContextManager[None]] | None = None,
+        close_browse: Callable[[], None] | None = None,
+        report_browse: BrowseReviewLibrary | None = None,
         cover_considerations: CoverConsiderationService | None = None,
         settings: OwnerSettingsOperations | None = None,
         reviewer_access: ReviewerAccessOperations | None = None,
@@ -424,6 +428,11 @@ class ReviewApplication:
         self._cases = cases
         self._decisions = decisions
         self._browse = browse
+        self._report_browse = report_browse or browse
+        self._browse_gate = gate if browse_observation is None else RLock()
+        self._browse_observation = browse_observation or nullcontext
+        self._close_browse = close_browse
+        self._browse_closed = False
         self._gate = gate
         self._policy = PolicyOperations(policy, self.serialized)
         self._automatic_safety = AutomaticSafetyOperations(
@@ -651,6 +660,13 @@ class ReviewApplication:
                 self._preparation.stop(deadline)
             except Exception as error:
                 failures.append(error)
+        if self._close_browse is not None:
+            try:
+                with self._browse_gate:
+                    self._browse_closed = True
+                    self._close_browse()
+            except Exception as error:
+                failures.append(error)
         if self._close_activity_projection is not None:
             try:
                 self._close_activity_projection()
@@ -770,10 +786,17 @@ class ReviewApplication:
     def history(self, review_case_id: str) -> dict[str, object]:
         return self.serialized(lambda: self._cases.history(review_case_id))
 
+    def _browse_serialized(self, call: Callable[[], _Result]) -> _Result:
+        with self._browse_gate:
+            if self._browse_closed:
+                raise ReviewApplicationError("unavailable")
+            with self._browse_observation():
+                return call()
+
     def library(
         self, *, lens: str, search: str | None, limit: int, cursor: str | None
     ) -> LibraryView:
-        return self.serialized(
+        return self._browse_serialized(
             lambda: LibraryView.from_data(
                 self._browse.library(
                     lens=lens, search=search, limit=limit, cursor=cursor
@@ -784,7 +807,7 @@ class ReviewApplication:
     def attention(
         self, *, search: str | None, limit: int, cursor: str | None
     ) -> AttentionView:
-        return self.serialized(
+        return self._browse_serialized(
             lambda: AttentionView.from_data(
                 self._browse.attention(search=search, limit=limit, cursor=cursor)
             )
@@ -795,7 +818,7 @@ class ReviewApplication:
     ) -> dict[str, object]:
         """Read one item's recorded evidence where no review case exists."""
         return self.serialized(
-            lambda: self._browse.report_detail(connection, library, item)
+            lambda: self._report_browse.report_detail(connection, library, item)
         )
 
     def record_decision(
@@ -1361,6 +1384,9 @@ def compose_review_application(
     | None = None,
     activity_projection: ContinuousGuardedApplication | None = None,
     close_activity_projection: Callable[[], None] | None = None,
+    browse_observation: Callable[[], AbstractContextManager[None]] | None = None,
+    close_browse: Callable[[], None] | None = None,
+    report_store: ReviewLibraryStore | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
@@ -1444,6 +1470,11 @@ def compose_review_application(
         updates=updates,
         activity_projection=activity_projection,
         close_activity_projection=close_activity_projection,
+        browse_observation=browse_observation,
+        close_browse=close_browse,
+        report_browse=None
+        if report_store is None
+        else BrowseReviewLibrary(report_store),
         cover_considerations=cover_considerations,
         settings=settings,
         reviewer_access=reviewer_access,

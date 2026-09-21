@@ -9,7 +9,8 @@ import sqlite3
 import stat
 import sys
 from _thread import RLock
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 from urllib.parse import quote
@@ -88,6 +89,9 @@ from mechanical_librarian.adapters.persistence.transactions import (
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
 )
+from mechanical_librarian.application.cover_consideration import (
+    cover_currentness_from_facts,
+)
 from mechanical_librarian.application.metadata_policy import PolicyTransition
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
@@ -155,6 +159,8 @@ from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
     ShadowReviewValueError,
 )
+
+CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
 
 if sys.platform.startswith("linux"):
     import fcntl
@@ -246,6 +252,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
         self._review_scans = SQLiteReviewScanRepository(connection)
         self._current_cover_authority: tuple[str | None, str | None] = (None, None)
+        self._capture_cover_read: Callable[[], CoverReadObservation] | None = None
+        self._cover_read_observation: CoverReadObservation | None = None
         self._field_effects = SQLiteFieldEffectRepository(
             connection,
             binding,
@@ -267,7 +275,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     )
                 )
             ),
-            current_cover_authority=(lambda: self._current_cover_authority),
+            current_cover_authority=(lambda: self._cover_read_authority()),
         )
         # Every injected callable resolves its target through this repository at
         # call time rather than capturing a bound method here.  Three review
@@ -313,7 +321,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     report, proposal
                 )
             ),
-            current_cover_authority=(lambda: self._current_cover_authority),
+            current_cover_authority=(lambda: self._cover_read_authority()),
             record_browse_unavailable_exception=(
                 lambda error: self._record_browse_unavailable_exception(error)
             ),
@@ -460,7 +468,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             count_current_attention_fields=(
                 lambda search: self.count_current_attention_fields(search)
             ),
-            current_cover_authority=(lambda: self._current_cover_authority),
+            current_cover_authority=(lambda: self._cover_read_authority()),
         )
 
     def _record_browse_unavailable_exception(self, error: sqlite3.Error) -> None:
@@ -499,6 +507,35 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             raise ValueError("cover replay reference is invalid")
         self._current_cover_authority = (policy_reference, replay_reference)
 
+    def _cover_read_authority(self) -> tuple[str | None, str | None]:
+        return (
+            self._current_cover_authority
+            if self._cover_read_observation is None
+            else self._cover_read_observation[0]
+        )
+
+    def bind_cover_read_observation(
+        self, capture: Callable[[], CoverReadObservation]
+    ) -> None:
+        """Bind external authority capture for this separately owned browse reader."""
+        self._capture_cover_read = capture
+
+    @contextmanager
+    def browse_observation(self) -> Iterator[None]:
+        """Capture external facts outside SQL and reject drift after projection."""
+        if self._capture_cover_read is None or self._cover_read_observation is not None:
+            yield
+            return
+        capture = self._capture_cover_read
+        try:
+            observation = capture()
+            self._cover_read_observation = observation
+            yield
+            if capture() != observation:
+                raise MetadataReportError("review snapshot is unavailable")
+        finally:
+            self._cover_read_observation = None
+
     def bind_cover_consideration_currentness(
         self, predicate: Callable[[str, str], str]
     ) -> None:
@@ -508,11 +545,23 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             if type(document) is not str or type(replay_reference) is not str:
                 return 0
             try:
+                observation = self._cover_read_observation
+                result = (
+                    predicate(document, replay_reference)
+                    if observation is None
+                    else cover_currentness_from_facts(
+                        document,
+                        replay_reference,
+                        lambda connection, library, item, report: (
+                            (connection, library, item, report) in observation[1]
+                        ),
+                    )
+                )
                 return {
                     "inactive": 0,
                     "current": 1,
                     "refresh_required": 2,
-                }.get(predicate(document, replay_reference), 0)
+                }.get(result, 0)
             except Exception:
                 return 0
 
@@ -1288,14 +1337,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         offset: int,
         attention: bool | None,
     ) -> ReviewLibrarySnapshot:
-        return self._review_projections.read_review_library(
-            search, limit, offset, attention
-        )
+        with self.browse_observation():
+            return self._review_projections.read_review_library(
+                search, limit, offset, attention
+            )
 
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
     ) -> ReviewAttentionSnapshot:
-        return self._review_projections.read_review_attention(search, limit, offset)
+        with self.browse_observation():
+            return self._review_projections.read_review_attention(search, limit, offset)
 
     def read_current_report_document(
         self, connection: str, library: str, item: str
@@ -1311,24 +1362,28 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         offset: int,
         attention: bool | None,
     ) -> tuple[tuple[str | None, str], ...]:
-        return self._review_cases.list_current_review_case_documents(
-            search, limit, offset, attention
-        )
+        with self.browse_observation():
+            return self._review_cases.list_current_review_case_documents(
+                search, limit, offset, attention
+            )
 
     def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
-        return self._review_cases.count_current_review_cases(search)
+        with self.browse_observation():
+            return self._review_cases.count_current_review_cases(search)
 
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
     ) -> tuple[
         tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
     ]:
-        return self._review_cases.list_current_attention_documents(
-            search, limit, offset
-        )
+        with self.browse_observation():
+            return self._review_cases.list_current_attention_documents(
+                search, limit, offset
+            )
 
     def count_current_attention_fields(self, search: str | None) -> int:
-        return self._review_cases.count_current_attention_fields(search)
+        with self.browse_observation():
+            return self._review_cases.count_current_attention_fields(search)
 
     def shadow_posture(self) -> str:
         return self._metadata_policy.shadow_posture()
