@@ -862,11 +862,13 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 self._requeue_title_projections(updated_at)
             transaction.commit()
             return result
-        except (sqlite3.Error, MetadataReportError) as error:
+        except BaseException as error:
             transaction.rollback()
-            raise MetadataReportError(
-                "automatic safety state is unavailable"
-            ) from error
+            if isinstance(error, (sqlite3.Error, MetadataReportError)):
+                raise MetadataReportError(
+                    "automatic safety state is unavailable"
+                ) from error
+            raise
 
     def _set_automatic_safety_state(
         self, state: AutomaticSafetyState, updated_at: int

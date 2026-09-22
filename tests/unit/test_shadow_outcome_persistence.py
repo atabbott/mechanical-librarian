@@ -8979,3 +8979,35 @@ def test_two_supported_current_titles_and_replay_do_not_disable_the_category(tmp
         "SELECT count(*) FROM automatic_decisions WHERE destination='title'"
     ).fetchone() == (2,)
     repository.close()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+def test_title_recovery_rolls_back_an_interrupted_preparation_callback(
+    tmp_path, monkeypatch, failure
+):
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    repository = open_repository(tmp_path / "state.sqlite")
+    safety = AutomaticSafetyState(
+        False, None, (("title_layout", "automatic_admission_failed"),)
+    )
+    complete_title_work(
+        repository, isbn_title_report(current="Example Title"), safety=safety
+    )
+    original = repository._decisions._requeue_title_projections
+
+    def fail_after_requeue(updated_at):
+        original(updated_at)
+        raise failure("synthetic interruption")
+
+    monkeypatch.setattr(
+        repository._decisions, "_requeue_title_projections", fail_after_requeue
+    )
+    with pytest.raises(failure):
+        repository.recover_automatic_safety(30, "title_layout")
+    assert not repository._connection.in_transaction
+    assert repository.automatic_safety_state() == safety
+    assert repository._connection.execute(
+        "SELECT stage,state FROM review_preparation_work"
+    ).fetchone() == ("complete", "complete")
+    repository.close()

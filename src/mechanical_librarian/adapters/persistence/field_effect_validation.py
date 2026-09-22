@@ -23,8 +23,8 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
-    title_preservation_bundle,
     audiobook_title_subtitle_bundle,
+    title_preservation_bundle,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
