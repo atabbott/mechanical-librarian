@@ -38,6 +38,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetNotFoundError,
     UnsupportedMediaError,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.proposal_sets import (
     ProposalCurrentnessError,
     ProposalEvaluationError,
@@ -164,10 +165,15 @@ class ReviewPipelineStages:
         self._clock = clock
 
     def pipeline(
-        self, timing: StageTimer | None = None, *, first_boot: bool = False
+        self,
+        timing: StageTimer | None = None,
+        *,
+        first_boot: bool = False,
+        admission: OperationAdmission | None = None,
     ) -> ReviewPreparationPipeline:
         """Assemble the one pipeline these stages advance."""
         return ReviewPreparationPipeline(
+            admission=admission,
             repository_factory=self._repository_factory,
             observation_repository_factory=self._observation_repository_factory,
             libraries=tuple(

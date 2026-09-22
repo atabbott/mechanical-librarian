@@ -1289,6 +1289,25 @@ class SQLiteProviderRecoveryStore:
                 "provider recovery persistence is unavailable"
             ) from error
 
+    def cover_fetching_identities(self) -> frozenset[tuple[str, str, str, str]]:
+        """Capture exact active report identities in one recovery-store read."""
+        try:
+            with self._lock:
+                rows = self._connection.execute(
+                    "SELECT DISTINCT j.target_connection,j.library,j.item,j.source_report_id "
+                    "FROM provider_recovery_jobs j "
+                    "JOIN provider_recovery_health h ON h.connection=j.connection "
+                    "AND h.adapter=j.adapter AND h.scope=j.scope "
+                    "AND h.generation=j.generation "
+                    "WHERE j.state IN ('queued','running') "
+                    "AND (h.state='checking' OR j.state='running')"
+                ).fetchall()
+            return frozenset(rows)
+        except sqlite3.Error as error:
+            raise ProviderRecoveryStoreError(
+                "provider recovery persistence is unavailable"
+            ) from error
+
     def cover_fetching(
         self,
         *,

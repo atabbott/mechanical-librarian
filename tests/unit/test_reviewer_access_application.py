@@ -16,6 +16,7 @@ from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterAccount
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
+    ReviewerAccessView,
 )
 from mechanical_librarian.application.reviewer_contracts import (
     DeviceAuthStatus,
@@ -627,3 +628,215 @@ def test_description_pending_cancellation_preserves_configured_cover_task(tmp_pa
     assert access.read().mapping == cover.mapping
     assert len(calls) == 1
     repository.close()
+
+
+@pytest.mark.parametrize("task", ("cover_observation", "description_rewrite"))
+def test_held_reviewer_observation_allows_foreground_and_refuses_obsolete_result(
+    tmp_path, task
+):
+    import threading
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.adapters.persistence.reviewer_access import (
+        ReviewerAccessStoreError,
+    )
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+
+    admission = OperationAdmission()
+    repository = open_repository(
+        tmp_path / "review.sqlite", cross_thread=True, admission=admission
+    )
+    operations, _auth, calls, _codex = _operations()
+    operations._repository._connection.close()
+    operations._repository = repository.reviewer_access_store()
+
+    def local(call):
+        with admission.enter(), repository.operation_lock:
+            return call()
+
+    operations.attach_serialization(local)
+    entered = threading.Event()
+    release = threading.Event()
+    failures = []
+    results = []
+    thread = None
+    try:
+        original = operations._openrouter_factory
+        assert (
+            operations.configure_openrouter(
+                expected_revision=1,
+                api_key="synthetic-old",
+                model="example/old",
+                task=task,
+            ).revision
+            == 2
+        )
+
+        class Held(_OpenRouter):
+            def probe(self):
+                assert not admission.held
+                assert not repository._connection.in_transaction
+                entered.set()
+                assert release.wait(5)
+                return super().probe()
+
+        operations._openrouter_factory = lambda key, model: (
+            Held(key, model, calls) if model == "example/old" else original(key, model)
+        )
+
+        def refresh():
+            try:
+                with admission.classify("background"):
+                    results.append(operations.refresh_openrouter(task))
+            except BaseException as error:
+                failures.append(error)
+
+        thread = threading.Thread(target=refresh)
+        thread.start()
+        assert entered.wait(5)
+        changed = operations.configure_openrouter(
+            expected_revision=2, api_key="synthetic-new", model="example/new", task=task
+        )
+        assert changed.revision == 3
+        repository.set_review_pipeline_paused(True, 100)
+        assert repository.review_pipeline_paused()
+        assert not release.is_set()
+        release.set()
+        thread.join(5)
+        assert not thread.is_alive()
+        assert results == [] and len(failures) == 1
+        if task == "description_rewrite":
+            assert isinstance(failures[0], ReviewerAccessStoreError)
+            assert str(failures[0]) == "reviewer access is stale"
+        else:
+            assert isinstance(failures[0], ReviewerAccessApplicationError)
+            assert failures[0].code == "access_changed"
+        document, key = repository.reviewer_access_store().snapshot()
+        assert document.revision == 3 and key == "synthetic-new"
+        assert getattr(document, task).model == "example/new"
+    finally:
+        release.set()
+        if thread is not None:
+            thread.join(5)
+        repository.close()
+
+
+@pytest.mark.parametrize("separate_generation", (False, True))
+def test_credential_clear_serializes_same_generation_but_preserves_lost_cas(
+    tmp_path, separate_generation, monkeypatch
+):
+    import threading
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.adapters.persistence.reviewer_access import (
+        ReviewerAccessStoreError,
+    )
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+
+    admission = OperationAdmission()
+    repository = open_repository(
+        tmp_path / "review.sqlite", cross_thread=True, admission=admission
+    )
+    operations, auth, _calls, _codex = _operations(auth_state="usable")
+    operations._repository._connection.close()
+    operations._repository = repository.reviewer_access_store()
+    assert operations.select_codex(expected_revision=1).revision == 2
+    successor_repository = None
+    competing = operations
+    if separate_generation:
+        successor_repository = open_repository(
+            tmp_path / "review.sqlite",
+            create=False,
+            cross_thread=True,
+            authority=repository.authority,
+            admission=admission,
+        )
+        competing, _auth, _calls, _codex = _operations()
+        competing._repository._connection.close()
+        competing._repository = successor_repository.reviewer_access_store()
+    entered = threading.Event()
+    release = threading.Event()
+    competing_started = threading.Event()
+    outcomes: dict[str, ReviewerAccessView | BaseException] = {}
+    threads = []
+    clear_calls = 0
+    original_clear = auth.clear
+
+    def held_clear():
+        nonlocal clear_calls
+        assert not admission.held
+        clear_calls += 1
+        result = original_clear()
+        entered.set()
+        assert release.wait(5)
+        return result
+
+    monkeypatch.setattr(auth, "clear", held_clear)
+
+    def clear():
+        try:
+            outcomes["clear"] = operations.clear_codex(expected_revision=2)
+        except BaseException as error:
+            outcomes["clear"] = error
+
+    def replace_mapping():
+        competing_started.set()
+        try:
+            outcomes["mapping"] = competing.configure_openrouter(
+                expected_revision=2, api_key="synthetic-new", model="example/new"
+            )
+        except BaseException as error:
+            outcomes["mapping"] = error
+
+    try:
+        first = threading.Thread(target=clear)
+        threads.append(first)
+        first.start()
+        assert entered.wait(5)
+        second = threading.Thread(target=replace_mapping)
+        threads.append(second)
+        second.start()
+        assert competing_started.wait(5)
+        # An unrelated owner operation still enters while credential I/O is held.
+        repository.set_review_pipeline_paused(True, 100)
+        assert repository.review_pipeline_paused()
+        if separate_generation:
+            second.join(5)
+            assert not second.is_alive()
+            mapping = outcomes["mapping"]
+            assert isinstance(mapping, ReviewerAccessView)
+            assert mapping.revision == 3
+        else:
+            assert not operations._command_lock.acquire(blocking=False)
+        assert not release.is_set()
+        release.set()
+        for thread in threads:
+            thread.join(5)
+            assert not thread.is_alive()
+        rejected = outcomes["clear" if separate_generation else "mapping"]
+        assert isinstance(rejected, ReviewerAccessStoreError)
+        assert str(rejected) == "reviewer access is stale"
+        accepted = outcomes["mapping" if separate_generation else "clear"]
+        assert isinstance(accepted, ReviewerAccessView)
+        assert accepted.revision == 3
+        document, key = repository.reviewer_access_store().snapshot()
+        assert document.revision == 3 and auth.state == "ready" and clear_calls == 1
+        if separate_generation:
+            assert isinstance(document.cover_observation, OpenRouterTaskSelection)
+            assert document.cover_observation.model == "example/new"
+            assert key == "synthetic-new"
+        else:
+            assert document.cover_observation is None and key is None
+        assert operations._command_lock.acquire(blocking=False)
+        operations._command_lock.release()
+    finally:
+        release.set()
+        for thread in threads:
+            thread.join(5)
+        if successor_repository is not None:
+            successor_repository.close()
+        repository.close()

@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_pipeline import pipeline_scan_id
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain.owner_settings import (
@@ -50,7 +51,10 @@ async def _runtime_app(scope: object, receive: object, send: object) -> None:
     return None
 
 
-def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() -> None:
+@pytest.mark.parametrize("failure", (None, "composition", "http"))
+def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
+    failure: str | None,
+) -> None:
     repository = Mock()
     settings = repository.owner_settings_store.return_value
     settings.activate_runtime.return_value = (
@@ -62,7 +66,10 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
     session_store = Mock()
     reviewer_access = Mock()
     cover_considerations = Mock()
+    cover_considerations.current_authority.return_value = ("policy", "replay")
     review_application = Mock()
+    close_order: list[str] = []
+    repository.close.side_effect = lambda: close_order.append("root")
     preparation = Mock()
     preparation.libraries = (
         ("primary", "fiction", "library-1"),
@@ -113,9 +120,36 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
             composition,
             "compose_review_application",
             return_value=review_application,
+            side_effect=RuntimeError("activation failed")
+            if failure == "composition"
+            else None,
         ) as compose_application,
-        patch.object(composition, "create_review_app", return_value=_runtime_app),
+        patch.object(
+            composition,
+            "create_review_app",
+            return_value=_runtime_app,
+            side_effect=RuntimeError("activation failed")
+            if failure == "http"
+            else None,
+        ),
     ):
+        if failure is not None:
+            with pytest.raises(RuntimeError, match="activation failed"):
+                composition.compose_store_runtime_generation(
+                    ReviewBootstrap(
+                        schema_version="review-bootstrap-v2",
+                        canonical_origin="https://library.invalid",
+                        tls_certificate_file="/synthetic/certificate",
+                        tls_private_key_file="/synthetic/private-key",
+                    ),
+                    Path("application.sqlite3"),
+                    Path("catalogue.sqlite3"),
+                    Path("artifacts"),
+                    repository_authority=object(),
+                    operation_admission=OperationAdmission(),
+                )
+            assert close_order == ["root"]
+            return
         runtime, _configuration = composition.compose_store_runtime_generation(
             ReviewBootstrap(
                 schema_version="review-bootstrap-v2",
@@ -127,9 +161,12 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover() ->
             Path("catalogue.sqlite3"),
             Path("artifacts"),
             repository_authority=object(),
+            operation_admission=OperationAdmission(),
         )
 
     assert create_pipeline.call_args.args[4] is reviewer_access
+    assert compose_application.call_args.kwargs["library_store"] is repository
+    assert compose_application.call_args.kwargs["browse_observation"] is repository
     assert compose_cover.call_args.args[3] is reviewer_access
     assert compose_application.call_args.kwargs["reviewer_access"] is reviewer_access
     assert (
@@ -263,6 +300,7 @@ def test_store_runtime_activation_reuses_outer_control_authority_for_successors(
         Path("artifacts"),
         settings,
         authority,
+        operation_admission=OperationAdmission(),
     )
     candidate = RuntimeGeneration(_runtime_app)
     with patch.object(
@@ -306,6 +344,7 @@ def test_settings_activation_keeps_addition_intent_out_of_candidate_closure() ->
         Path("artifacts"),
         settings,
         object(),
+        operation_admission=OperationAdmission(),
     )
     original = RuntimeGeneration(_runtime_app)
     dispatcher = MutableRuntimeDispatcher(original)
@@ -380,6 +419,7 @@ def test_setup_and_settings_successors_open_through_live_outer_control(
         tmp_path / "artifacts",
         settings,
         control.authority,
+        operation_admission=OperationAdmission(),
     )
 
     class ReachedRuntimeComposition(RuntimeError):

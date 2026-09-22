@@ -10,7 +10,10 @@ import uuid
 from collections.abc import Callable
 from typing import Literal
 
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.domain.description_advice import (
     DESCRIPTION_INSTRUCTION,
     DESCRIPTION_OUTPUT_SCHEMA,
@@ -48,6 +51,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
     def bind_settings(self, settings: DescriptionAdviceSettings) -> None:
         self._settings = settings
 
+    @local_operation
     def current_settings(self) -> DescriptionAdviceSettings:
         row = self._connection.execute(
             "SELECT document FROM owner_settings WHERE singleton=1"
@@ -60,6 +64,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             )
         )
 
+    @local_operation
     def binding_is_current(self, binding: DescriptionAdviceBinding) -> bool:
         from mechanical_librarian.domain.review_case import ReviewCase
         from mechanical_librarian.domain.reviewer_access import ReviewerAccessDocument
@@ -225,6 +230,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             == hashlib.sha256(DESCRIPTION_OUTPUT_SCHEMA.encode()).hexdigest()
         )
 
+    @local_operation
     def admit(
         self,
         candidate_id: str,
@@ -387,6 +393,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             transaction.rollback()
             raise
 
+    @local_operation
     def authority_value(self, decision: AuthoredDescriptionDecision) -> object:
         from mechanical_librarian.domain.field_effect import FieldEffectError
 
@@ -438,6 +445,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 raise FieldEffectError("authority_binding")
         return {"kind": "text", "value": candidate.output.description}
 
+    @local_operation
     def begin_attempt(
         self,
         request_identity: str,
@@ -526,6 +534,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             ),
         )
 
+    @local_operation
     def start(
         self, attempt_id: str, now: int, case_current: Callable[[], bool]
     ) -> bool:
@@ -559,6 +568,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             transaction.rollback()
             raise
 
+    @local_operation
     def finish(
         self,
         attempt_id: str,
@@ -646,6 +656,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             transaction.rollback()
             raise
 
+    @local_operation
     def request_retry(self, review_case_id: str, now: int) -> tuple[str, str]:
         transaction = self._transaction("retry_description_advice")
         try:
@@ -681,6 +692,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             is not None
         )
 
+    @local_operation
     def consume_pending_if_unconfigured(self, review_case_id: str) -> None:
         transaction = self._transaction("cancel_description_preparation")
         try:
@@ -692,6 +704,7 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
             transaction.rollback()
             raise
 
+    @local_operation
     def pending_retry(self, review_case_id: str) -> bool:
         row = self._connection.execute(
             "SELECT retry FROM description_preparation_pending WHERE review_case_id=?",
@@ -699,19 +712,22 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
         ).fetchone()
         return bool(row == (1,))
 
+    @local_operation
     def consume_pending(self, review_case_id: str) -> None:
         self._connection.execute(
             "DELETE FROM description_preparation_pending WHERE review_case_id=?",
             (review_case_id,),
         )
 
+    @local_operation
     def interrupt_recovered(self, now: int) -> None:
-        """Called once by startup recovery before preparation workers start."""
+        """Interrupt retained attempts at the runtime artifact-recovery boundary."""
         self._connection.execute(
             "UPDATE description_advice_attempts SET state='interrupted',failure='interrupted',updated_at=max(updated_at,?) WHERE state IN ('requested','running')",
             (now,),
         )
 
+    @local_operation
     def read(self, review_case_id: str) -> dict[str, object] | None:
         row = self._connection.execute(
             "SELECT a.state,a.failure,a.engine,a.model,a.attempt_id,c.document,p.binding_document,p.candidate_id "

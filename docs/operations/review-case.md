@@ -136,8 +136,15 @@ history, one individual field-decision operation, and authenticated OpenAPI.
 The mutation requires the displayed proposal ID and target fingerprint, an
 explicit `accept`, `keep_current`, or `reject` outcome, a 16–128 character
 `Idempotency-Key`, the session CSRF token, and an exact proposed value for
-`accept`. Same-key/same-payload retries return the original acknowledgement;
-conflicts and stale state fail without a partial decision or event.
+`accept`. Same-key/same-payload retries return the original decision identity;
+conflicts and stale state fail without a partial decision or event. The response
+also carries `confirmation`: either `confirmed` with the actual case detail or
+`unavailable` if its post-commit readback failed. An unavailable confirmation is
+still a recorded decision. The browser keeps it unconfirmed and offers an explicit
+current-case reload; it never submits an automatic replacement decision. A same-key
+retry may obtain a new confirmation without creating another decision. Recording
+and readback share one foreground local-operation lifetime; background activity
+cannot enter between them.
 The generated OpenAPI marks the owner session cookie and required mutation
 headers explicitly. Decision attempts for absent case IDs return `404`, while
 invalid sessions return `401`, CSRF mismatches return `403`, and persistence

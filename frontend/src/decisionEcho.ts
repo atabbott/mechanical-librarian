@@ -1,4 +1,7 @@
-import type { QueryClient } from '@tanstack/react-query'
+import type { CaseDetailView, ReviewHttp } from './api/http'
+import { invalidateBackgroundQueries, holdBackgroundQuery } from './queryWork'
+import { QueryObserver } from '@tanstack/react-query'
+import type { Query, QueryClient } from '@tanstack/react-query'
 
 import { invalidationKeys } from './liveInvalidation'
 import type { LiveUpdate } from './liveUpdates'
@@ -68,8 +71,17 @@ export type EchoDisposition =
   /** Might be this tab's echo; the decision that would say so is still in flight. */
   | 'hold'
 
+interface ConfirmationRead {
+  readonly query: Query
+  tail: Promise<void>
+  outstanding: number
+  readonly release: () => void
+  readonly releaseBackground: (succeeded: boolean) => void
+}
+
 interface EchoState {
   /** One entry per decision in flight, by case. A burst leaves several. */
+  readonly confirmations?: Map<string, ConfirmationRead>
   readonly inFlight: readonly string[]
   /** Frames withheld until the decision that could explain them settles. */
   readonly held: readonly LiveUpdate[]
@@ -127,6 +139,7 @@ export const endDecisionEcho = (
     else release.push(update)
   }
   states.set(queryClient, {
+    ...state,
     inFlight: outstanding,
     held: stillHeld,
     caused: [...remaining],
@@ -134,7 +147,7 @@ export const endDecisionEcho = (
   })
   for (const update of release)
     for (const queryKey of invalidationKeys(update))
-      void queryClient.invalidateQueries({ queryKey })
+      void invalidateBackgroundQueries(queryClient, { queryKey })
 }
 
 /** What the bridge should do with this frame. */
@@ -185,9 +198,118 @@ export const forgetSettledKeys = (
  */
 export const settleDecisionEcho = (queryClient: QueryClient): void => {
   const state = read(queryClient)
-  states.set(queryClient, empty)
+  states.set(queryClient, { ...state, ...empty })
   const keys = [...state.deferred]
   for (const update of state.held) keys.push(...invalidationKeys(update))
   for (const queryKey of new Map(keys.map((key) => [serialised(key), key])).values())
-    void queryClient.invalidateQueries({ queryKey })
+    void invalidateBackgroundQueries(queryClient, { queryKey })
 }
+
+/** Serialize post-acknowledgement reads without borrowing a pre-decision fetch. */
+const ownDecisionCase = <T>(
+  queryClient: QueryClient,
+  caseId: string,
+  execute: (query: Query, current: () => boolean) => Promise<T>,
+  successful: (value: T) => boolean,
+): Promise<T> => {
+  const query = queryClient.getQueryCache().find({ queryKey: ['review-case', caseId], exact: true })
+  if (!query) return Promise.reject(new Error('Decision case query is unavailable'))
+  const state = read(queryClient)
+  const confirmations = state.confirmations ?? new Map<string, ConfirmationRead>()
+  let entry = confirmations.get(caseId)
+  if (entry && entry.query !== query)
+    return Promise.reject(new Error('Decision case query was replaced'))
+  if (!entry) {
+    const observer = new QueryObserver(queryClient, {
+      ...query.options,
+      queryKey: query.queryKey,
+      enabled: false,
+    })
+    entry = {
+      query,
+      tail: Promise.resolve(),
+      outstanding: 0,
+      release: observer.subscribe(() => undefined),
+      releaseBackground: holdBackgroundQuery(queryClient, query),
+    }
+    confirmations.set(caseId, entry)
+    states.set(queryClient, { ...state, confirmations })
+  }
+  const owned = entry
+  owned.outstanding += 1
+  const result = owned.tail.then(async () => {
+    const current = () => queryClient.getQueryCache().get(query.queryHash) === query
+    if (!current()) throw new Error('Decision case query was removed')
+    await queryClient.cancelQueries(
+      { queryKey: query.queryKey, exact: true, predicate: (cached) => cached === query },
+      { silent: true },
+    )
+    if (!current()) throw new Error('Decision case query was removed')
+    return execute(query, current)
+  })
+  owned.tail = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  const finish = (succeeded: boolean) => {
+    owned.outstanding -= 1
+    if (owned.outstanding !== 0) return
+    confirmations.delete(caseId)
+    owned.release()
+    owned.releaseBackground(succeeded)
+  }
+  return result.then(
+    (value) => {
+      finish(successful(value))
+      return value
+    },
+    (error: unknown) => {
+      finish(false)
+      throw error
+    },
+  )
+}
+
+/** Reconciliation still requires a fresh native read of the exact retained case. */
+export const confirmDecisionCase = <T>(
+  queryClient: QueryClient,
+  caseId: string,
+  refresh: () => Promise<T>,
+): Promise<T> =>
+  ownDecisionCase(
+    queryClient,
+    caseId,
+    async (query, current) => {
+      const priorUpdates = query.state.dataUpdateCount
+      const value = await refresh()
+      if (!current() || query.state.dataUpdateCount <= priorUpdates)
+        throw new Error('Decision case refresh did not complete')
+      return value
+    },
+    () => true,
+  )
+
+type DecisionAcknowledgement = Awaited<ReturnType<ReviewHttp['recordDecision']>>
+/** Own the exact query from command submission through server-confirmed adoption. */
+export const submitDecisionCase = (
+  queryClient: QueryClient,
+  caseId: string,
+  submit: () => Promise<DecisionAcknowledgement>,
+): Promise<{ acknowledgement: DecisionAcknowledgement; confirmed: CaseDetailView | undefined }> =>
+  ownDecisionCase(
+    queryClient,
+    caseId,
+    async (query, current) => {
+      const acknowledgement = await submit()
+      let confirmed: CaseDetailView | undefined
+      if (acknowledgement.confirmation.status === 'confirmed') {
+        const detail = acknowledgement.confirmation.case
+        if (detail.id === caseId && current()) {
+          query.setData(detail, { manual: true })
+          confirmed = detail
+        }
+      }
+      return { acknowledgement, confirmed }
+    },
+    (value) => value.confirmed !== undefined,
+  )

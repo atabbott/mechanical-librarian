@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Owner navigation, choices and Settings take priority over background database
+  work; collections show truthful loading and retry states. Choices return their
+  actual recorded confirmation without a competing background read. Existing
+  application databases require a clean rebuild; currentness and guarded-write
+  protections remain unchanged. (#1072)
+
 - Managed dependency upgrades, including majors, request automatic merge after
   all five required checks. npm and OSV join managed scope; frontend dependency
   bytes retain build provenance without rotating semantic policy qualification.

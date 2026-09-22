@@ -1,4 +1,6 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { invalidateForegroundQueries } from '../queryWork'
+import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useMutation } from '@tanstack/react-query'
 import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../api/http'
@@ -172,7 +174,13 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
   const [hasMore, setHasMore] = useState(false)
   const query = useQuery({
     queryKey: ['activity-transitions', eventId],
-    queryFn: ({ signal }) => http.getActivityTransitions(eventId, undefined, signal),
+    queryFn: (queryContext) =>
+      http.getActivityTransitions(
+        eventId,
+        undefined,
+        queryContext.signal,
+        queryWorkClass(queryContext),
+      ),
     retry: false,
   })
   const more = useMutation({
@@ -359,7 +367,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       search.page,
       search.pageSize,
     ],
-    queryFn: ({ signal }) => http.getActivity(search, signal),
+    queryFn: (queryContext) =>
+      http.getActivity(search, queryContext.signal, queryWorkClass(queryContext)),
     initialData: initial,
     staleTime: 4_000,
     retry: false,
@@ -411,7 +420,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     onSuccess: async () => {
       setSelection({ source: data, names: new Set() })
       setStatus('Activity state refreshed from the authoritative server.')
-      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+      await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
     onError: async (error, command) => {
       if (
@@ -433,7 +442,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         return
       }
       setStatus('The requested activity change failed safely. Try again.')
-      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+      await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
   })
   const selectedGrants = selectable.flatMap((library) => {

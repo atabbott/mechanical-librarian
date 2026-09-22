@@ -17,7 +17,13 @@ import sqlite3
 from collections.abc import Callable
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
+from mechanical_librarian.application.cover_consideration import (
+    cover_consideration_currentness_document,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_cover_replacement import (
     material_audiobook_cover_reference,
@@ -375,6 +381,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             operation.plan.authority.decision_id,
         )
 
+    @local_operation
     def retire_stale_cover_decision(self, decision_id: str, changed_at: int) -> bool:
         """Retire a selected cover whose case ceased to be current before planning."""
         with self._connection:
@@ -397,6 +404,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             )
         return True
 
+    @local_operation
     def current_cover_consideration(
         self, review_case_id: str, replay_digest: str
     ) -> str | None:
@@ -412,6 +420,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ).fetchone()
         return None if row is None else str(row[0])
 
+    @local_operation
     def current_cover_consideration_document(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
             "SELECT consideration.document FROM current_cover_considerations current "
@@ -425,6 +434,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ).fetchone()
         return None if row is None else str(row[0])
 
+    @local_operation
     def latest_cover_consideration_document(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
             "SELECT consideration.document FROM current_cover_considerations current "
@@ -491,6 +501,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             transaction.rollback()
             raise
 
+    @local_operation
     def record_cover_consideration(
         self,
         document: str,
@@ -520,6 +531,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             raise MetadataReportError("cover consideration is invalid") from error
         if preparation_kind not in {"automatic_prepared", "owner_retry_prepared"}:
             raise MetadataReportError("cover preparation kind is invalid")
+        currentness_document = cover_consideration_currentness_document(document)
         transaction = self._transaction("record_cover_consideration")
         try:
             transaction.begin()
@@ -548,7 +560,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             if actual_supersedes != supersedes_id:
                 raise MetadataReportError("cover consideration changed")
             self._connection.execute(
-                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     consideration_id,
                     review_case_id,
@@ -558,6 +570,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                     supersedes_id,
                     occurred_at,
                     document,
+                    currentness_document,
                 ),
             )
             if supersedes_id is not None:
@@ -582,6 +595,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             raise
         return document
 
+    @local_operation
     def record_cover_consideration_outcome(
         self,
         consideration_id: str,
@@ -600,6 +614,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 consideration_id, str(row[0]), kind, occurred_at, decision_id
             )
 
+    @local_operation
     def cover_consideration_history(
         self, review_case_id: str, limit: int = 50
     ) -> tuple[dict[str, object], ...]:

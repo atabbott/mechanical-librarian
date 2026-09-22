@@ -1,4 +1,6 @@
-import { useMutation, useQuery } from '@tanstack/react-query'
+import { invalidateBackgroundQueries } from '../queryWork'
+import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useMutation } from '@tanstack/react-query'
 import { useNavigate } from '@tanstack/react-router'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 
@@ -768,22 +770,24 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const safety = data.safety
   const sample = useQuery({
     queryKey: ['policy', 'shadow', 'sample'],
-    queryFn: ({ signal }) => http.getShadowSample(signal),
+    queryFn: (queryContext) =>
+      http.getShadowSample(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 30_000,
     retry: false,
   })
   const transition = useQuery({
     queryKey: ['policy', 'transition'],
-    queryFn: ({ signal }) => http.getPolicyTransition(signal),
+    queryFn: (queryContext) =>
+      http.getPolicyTransition(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 1_000,
     retry: false,
     refetchInterval: (query) => (query.state.data?.state === 'processing' ? 1_500 : false),
   })
   const refresh = async () => {
     await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['policy'] }),
-      queryClient.invalidateQueries({ queryKey: ['library'] }),
-      queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['policy'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
     ])
   }
   const command = useMutation({

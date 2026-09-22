@@ -59,7 +59,10 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _validate_automatic_decision_authority,
 )
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
@@ -343,6 +346,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         """Read the composing repository's currently bound cover replay."""
         return self._cover_replay_reference()
 
+    @local_operation
     def field_effect_authority_source(
         self,
         decision: HumanDecision
@@ -674,6 +678,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             raise FieldEffectError("authority_binding")
         return {"kind": decision_value_kind(destination), "value": value}
 
+    @local_operation
     def field_effect_authority_is_current(self, authority: EffectAuthority) -> bool:
         try:
             return self._authority_is_current(authority)
@@ -802,6 +807,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except MetadataReportError:
             return False
 
+    @local_operation
     def field_effect_consent_envelope_identity(self, library: str) -> str:
         """Bind consent to the exact current automatic policy semantics."""
         if type(library) is not str or not library:
@@ -826,6 +832,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         )
         return hashlib.sha256(document.encode("utf-8")).hexdigest()
 
+    @local_operation
     def pending_field_effect_decision_documents(
         self,
         limit: int,
@@ -833,6 +840,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     ) -> tuple[str, ...]:
         return self._pending_field_effect_decision_documents(limit, after, ordered=True)
 
+    @local_operation
     def pending_field_effect_activity_example_document(self) -> str | None:
         """Select one exact-current pending decision for illustration."""
         documents = self._pending_field_effect_decision_documents(
@@ -937,6 +945,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]:
         """Return exact prepared counts grouped by library, origin and destination.
 
@@ -1020,6 +1029,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def pending_field_effect_manual_returns(
         self,
         limit: int,
@@ -1097,6 +1107,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except (json.JSONDecodeError, KeyError, sqlite3.Error, TypeError) as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def field_effect_dependencies_current(self, digests: tuple[str, ...]) -> bool:
         if (
             type(digests) is not tuple
@@ -1163,33 +1174,35 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     def _field_effect_backup_ready_once(self, *, fresh: bool) -> bool:
         try:
             with self._activity_page_cache_lock:
-                data_version = self._connection.execute(
-                    "PRAGMA data_version"
-                ).fetchone()
-                if (
-                    data_version is None
-                    or len(data_version) != 1
-                    or type(data_version[0]) is not int
-                    or data_version[0] < 0
-                ):
-                    return False
-                revision = (data_version[0], self._connection.total_changes)
-                if (
-                    not fresh
-                    and self._backup_ready_cache is not None
-                    and self._backup_ready_cache[0] == revision
-                ):
-                    return self._backup_ready_cache[1]
-                row = (
-                    self._fresh_database_quick_check()
-                    if fresh
-                    else self._connection.execute("PRAGMA quick_check").fetchone()
-                )
-                ready = row == ("ok",) and not self._connection.in_transaction
-                self._backup_ready_cache = (revision, ready)
-                return ready
+                return self._serialized(lambda: self._backup_ready_local(fresh=fresh))
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
+
+    def _backup_ready_local(self, *, fresh: bool) -> bool:
+        """Read under the cache lock, admission and physical connection owner."""
+        data_version = self._connection.execute("PRAGMA data_version").fetchone()
+        if (
+            data_version is None
+            or len(data_version) != 1
+            or type(data_version[0]) is not int
+            or data_version[0] < 0
+        ):
+            return False
+        revision = (data_version[0], self._connection.total_changes)
+        if (
+            not fresh
+            and self._backup_ready_cache is not None
+            and self._backup_ready_cache[0] == revision
+        ):
+            return self._backup_ready_cache[1]
+        row = (
+            self._fresh_database_quick_check()
+            if fresh
+            else self._connection.execute("PRAGMA quick_check").fetchone()
+        )
+        ready = row == ("ok",) and not self._connection.in_transaction
+        self._backup_ready_cache = (revision, ready)
+        return ready
 
     def field_effect_backup_ready(self, *, fresh: bool = False) -> bool:
         """Prove the exact-current durable store can form a consistent checkpoint."""
@@ -1200,10 +1213,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except FieldEffectError:
             return False
 
+    @local_operation
     def field_effect_activity_summary(self) -> dict[str, object]:
         """Project Activity status without reading legacy event/report payloads."""
         return self.field_effect_activity_data(1, include_events=False)
 
+    @local_operation
     def field_effect_activity_data(
         self, limit: int = 50, *, include_events: bool = True
     ) -> dict[str, object]:
@@ -2228,6 +2243,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         return projected_events, report_documents, reports
 
+    @local_operation
     def _activity_projection_revision(self) -> tuple[int, int]:
         """Return the complete local and cross-connection SQLite revision."""
         try:
@@ -2241,6 +2257,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def _activity_database_identity(self) -> _ActivityDatabaseIdentity:
         """Return a fresh kernel identity for the database bytes."""
         try:
@@ -2301,24 +2318,27 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     ) -> dict[str, object]:
         """Run one Activity projection in a bounded exact read snapshot."""
 
-        transaction = self._transaction("field_effect_activity_snapshot", deferred=True)
+        with self._activity_page_cache_lock:
+            transaction = self._transaction(
+                "field_effect_activity_snapshot", deferred=True
+            )
 
-        def begin() -> None:
+            def begin() -> None:
+                try:
+                    transaction.begin()
+                    self._activity_projection_revision()
+                except sqlite3.Error as error:
+                    transaction.rollback()
+                    raise FieldEffectError("persistence") from error
+                except Exception:
+                    transaction.rollback()
+                    raise
+
+            self._retry_activity_busy(begin)
             try:
-                transaction.begin()
-                self._activity_projection_revision()
-            except sqlite3.Error as error:
+                return call()
+            finally:
                 transaction.rollback()
-                raise FieldEffectError("persistence") from error
-            except Exception:
-                transaction.rollback()
-                raise
-
-        self._retry_activity_busy(begin)
-        try:
-            return call()
-        finally:
-            transaction.rollback()
 
     def field_effect_activity_page(
         self,
@@ -2411,6 +2431,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 self._activity_page_cache_bytes += retained_bytes
             return result
 
+    @local_operation
     def _field_effect_activity_page_uncached(
         self,
         *,
@@ -2881,6 +2902,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         )
 
+    @local_operation
     def _field_effect_activity_transitions_once(
         self, event_id: str, after_sequence: int | None, limit: int
     ) -> tuple[dict[str, object], ...]:
@@ -2931,6 +2953,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             transaction.rollback()
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def claim_field_effect(
         self, plan_id: str, expected_state: str, claim_token: str, claimed_at: int
     ) -> FieldEffectOperation:
@@ -3127,6 +3150,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise
             raise FieldEffectError("persistence") from error
 
+    @local_operation
     def operational_snapshot(self) -> dict[str, object]:
         """Return only bounded codes and scopes; never persisted effect values."""
         try:

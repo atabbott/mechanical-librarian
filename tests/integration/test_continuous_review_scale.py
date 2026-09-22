@@ -236,13 +236,36 @@ def test_exited_installed_server_reports_its_exit_code() -> None:
 def test_installed_repository_topology_keeps_web_and_pipeline_owners_independent() -> (
     None
 ):
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from mechanical_librarian.bootstrap import composition
+
     with tempfile.TemporaryDirectory() as directory:
         topology = _InstalledRepositoryTopology.open(Path(directory) / "state.sqlite3")
+        review = ReviewWebConfiguration(
+            "http://127.0.0.1:18444", "/synthetic/owner.hash"
+        )
+        composition._compose_cover_considerations(
+            topology.web_state_owner,
+            Path(directory) / "artifacts",
+            review,
+            composition._compose_reviewer_access(topology.web_state_owner, review),
+        )
+        assert topology.web_state_owner._capture_cover_read is not None
         observation = topology.open_foreground_observation()
         first_action = topology.open_action()
         second_action = topology.open_action()
-        handles = (topology.web_state_owner, observation, first_action, second_action)
+        handles = (
+            topology.web_state_owner,
+            observation,
+            first_action,
+            second_action,
+        )
         assert len({id(handle) for handle in handles}) == 4
+        assert len({id(handle._connection) for handle in handles}) == 4
+        assert all(
+            handle.operation_admission is topology.web_state_owner.operation_admission
+            for handle in handles
+        )
         if sys.platform.startswith("linux"):
             assert len({id(handle.authority) for handle in handles}) == 4
         try:
@@ -299,7 +322,10 @@ def test_route_failure_diagnostic_keeps_only_the_stable_error_category() -> None
     }
 
 
-def test_installed_preparation_closes_browser_observer_before_server() -> None:
+@pytest.mark.parametrize("drain_fails", [False, True])
+def test_installed_preparation_closes_browser_observer_before_server(
+    drain_fails: bool,
+) -> None:
     """The private lifecycle boundary owns this ordering across callback failure."""
 
     events: list[str] = []
@@ -318,9 +344,20 @@ def test_installed_preparation_closes_browser_observer_before_server() -> None:
         "Sessions", (), {"close": lambda _: events.append("sessions")}
     )()
 
-    run.close()
+    def close_application():
+        events.append("application")
+        if drain_fails:
+            raise RuntimeError("browse drain deadline")
 
-    assert events == ["observer", "join:30", "recovery", "sessions"]
+    run._close_application = close_application
+    if drain_fails:
+        with pytest.raises(RuntimeError, match="browse drain deadline"):
+            run.close()
+        assert events == ["observer", "join:30", "application"]
+    else:
+        run.close()
+        assert events == ["observer", "join:30", "application", "recovery", "sessions"]
+
     assert run._fixture_case_release.is_set()
 
 

@@ -16,12 +16,11 @@ nowhere in this encoding to put a count, a work record, a status string, a path,
 a credential, or a provider payload, which is how #641's "no state on the wire"
 acceptance is kept structurally rather than by review.
 
-The stream is the one asynchronous handler in this adapter, and deliberately so.
-Every other route is a synchronous ``def`` served from a bounded worker
-threadpool; a stream written the same way would hold one of those threads for
-its whole life, so a few idle tabs would starve the pool that serves every
-request. This handler instead parks on an ``asyncio.Event`` that the publishing
-threads set through the running loop, and touches nothing that blocks.
+The stream parks on an ``asyncio.Event`` that publishing threads set through
+the running loop, and touches nothing that blocks. Holding a bounded worker
+thread for its whole life would let a few idle tabs starve ordinary requests.
+Library and Attention also use asynchronous transport handlers to observe
+disconnects, while their bounded reads still execute in worker threads.
 """
 
 from __future__ import annotations

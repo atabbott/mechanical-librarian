@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import time
+from _thread import RLock
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-from threading import RLock
+from threading import Condition
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
 
 from mechanical_librarian.application.continuous_field_effects import (
@@ -27,6 +29,11 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyPreview,
     PolicyTransition,
 )
+from mechanical_librarian.application.operation_admission import (
+    AdmissionClosedError,
+    OperationAdmission,
+    WorkClass,
+)
 from mechanical_librarian.application.operations import (
     OperationalStatus,
     StageTimer,
@@ -39,6 +46,7 @@ from mechanical_librarian.application.review_pipeline import (
     is_first_boot_scan_id,
 )
 from mechanical_librarian.application.review_web import (
+    BrowseObservationOwner,
     BrowseReviewLibrary,
     CurrentReviewCaseStore,
     HumanDecisionStore,
@@ -400,6 +408,9 @@ class ReviewApplication:
         updates: LiveUpdateChannel,
         activity_projection: ContinuousGuardedApplication | None = None,
         close_activity_projection: Callable[[], None] | None = None,
+        browse_observation: BrowseObservationOwner | None = None,
+        admission: OperationAdmission | None = None,
+        operation_lock: RLock | None = None,
         cover_considerations: CoverConsiderationService | None = None,
         settings: OwnerSettingsOperations | None = None,
         reviewer_access: ReviewerAccessOperations | None = None,
@@ -424,7 +435,12 @@ class ReviewApplication:
         self._cases = cases
         self._decisions = decisions
         self._browse = browse
-        self._gate = gate
+        self._browse_observation = browse_observation
+        self._admission = admission or OperationAdmission()
+        self._browse_closed = False
+        self._browse_lifetime = Condition()
+        self._active_browses = 0
+        self._gate = operation_lock or gate
         self._policy = PolicyOperations(policy, self.serialized)
         self._automatic_safety = AutomaticSafetyOperations(
             automatic_safety, self.serialized
@@ -471,9 +487,16 @@ class ReviewApplication:
     def now(self) -> int:
         return self._clock()
 
+    def classify_request(self, work_class: WorkClass) -> AbstractContextManager[None]:
+        """Carry request purpose to local operations without granting authority."""
+        return self._admission.classify(work_class)
+
     def serialized(self, call: Callable[[], _Result]) -> _Result:
-        with self._gate:
-            return call()
+        try:
+            with self._admission.enter(), self._gate:
+                return call()
+        except AdmissionClosedError:
+            raise ReviewApplicationError("unavailable") from None
 
     @property
     def settings_available(self) -> bool:
@@ -516,12 +539,14 @@ class ReviewApplication:
                 )
 
                 def commit() -> object:
-                    return settings.write(
-                        validated,
-                        revision,
-                        secret_writes,
-                        cover_update,
-                        accepted_at=self._clock(),
+                    return self.serialized(
+                        lambda: settings.write(
+                            validated,
+                            revision,
+                            secret_writes,
+                            cover_update,
+                            accepted_at=self._clock(),
+                        )
                     )
 
                 if self._settings_activation is not None:
@@ -530,7 +555,7 @@ class ReviewApplication:
                     )
                 return commit()
 
-            return self.serialized(write)
+            return write()
         except OwnerSettingsError as error:
             code = (
                 "settings_stale"
@@ -593,6 +618,8 @@ class ReviewApplication:
 
     def begin_drain(self) -> None:
         """Stop admitting successor work while captured requests finish."""
+        with self._browse_lifetime:
+            self._browse_closed = True
         self._updates.close()
         if isinstance(self._field_application, ContinuousGuardedApplication):
             self._field_application.close_admission()
@@ -607,6 +634,8 @@ class ReviewApplication:
 
     def stop(self) -> None:
         deadline = time.monotonic() + self._graceful_shutdown_seconds
+        with self._browse_lifetime:
+            self._browse_closed = True
         # Every shutdown step below must be attempted even after an earlier one
         # fails, or a background lane keeps running past the point the owner
         # asked it to stop. The five collectors are broad because the steps are
@@ -651,12 +680,19 @@ class ReviewApplication:
                 self._preparation.stop(deadline)
             except Exception as error:
                 failures.append(error)
-        if self._close_activity_projection is not None:
+        with self._browse_lifetime:
+            browse_drained = self._browse_lifetime.wait_for(
+                lambda: self._active_browses == 0,
+                timeout=max(0.0, deadline - time.monotonic()),
+            )
+        if not browse_drained:
+            failures.append(ReviewApplicationError("unavailable"))
+        if browse_drained and self._close_activity_projection is not None:
             try:
                 self._close_activity_projection()
             except Exception as error:
                 failures.append(error)
-        if self._reviewer_access is not None:
+        if browse_drained and self._reviewer_access is not None:
             try:
                 self._reviewer_access.close()
             except Exception as error:
@@ -770,24 +806,71 @@ class ReviewApplication:
     def history(self, review_case_id: str) -> dict[str, object]:
         return self.serialized(lambda: self._cases.history(review_case_id))
 
+    def _browse_serialized(
+        self,
+        call: Callable[[], _Result],
+        check_active: Callable[[], None] | None = None,
+    ) -> _Result:
+        with self._browse_lifetime:
+            if self._browse_closed:
+                raise ReviewApplicationError("unavailable")
+            self._active_browses += 1
+        try:
+            if check_active is not None:
+                check_active()
+            owner = self._browse_observation
+            observation = None if owner is None else owner.capture_browse_observation()
+            try:
+                with self._admission.enter(check_active=check_active), self._gate:
+                    if check_active is not None:
+                        check_active()
+                    with (
+                        nullcontext()
+                        if owner is None
+                        else owner.install_browse_observation(observation)
+                    ):
+                        result = call()
+            except AdmissionClosedError:
+                raise ReviewApplicationError("unavailable") from None
+            if owner is not None:
+                owner.recheck_browse_observation(observation)
+            return result
+        finally:
+            with self._browse_lifetime:
+                self._active_browses -= 1
+                self._browse_lifetime.notify_all()
+
     def library(
-        self, *, lens: str, search: str | None, limit: int, cursor: str | None
+        self,
+        *,
+        lens: str,
+        search: str | None,
+        limit: int,
+        cursor: str | None,
+        check_active: Callable[[], None] | None = None,
     ) -> LibraryView:
-        return self.serialized(
+        return self._browse_serialized(
             lambda: LibraryView.from_data(
                 self._browse.library(
                     lens=lens, search=search, limit=limit, cursor=cursor
                 )
-            )
+            ),
+            check_active,
         )
 
     def attention(
-        self, *, search: str | None, limit: int, cursor: str | None
+        self,
+        *,
+        search: str | None,
+        limit: int,
+        cursor: str | None,
+        check_active: Callable[[], None] | None = None,
     ) -> AttentionView:
-        return self.serialized(
+        return self._browse_serialized(
             lambda: AttentionView.from_data(
                 self._browse.attention(search=search, limit=limit, cursor=cursor)
-            )
+            ),
+            check_active,
         )
 
     def report_detail(
@@ -826,7 +909,7 @@ class ReviewApplication:
                     outcome,
                     selected_value,
                 )
-            return self._decisions.run(
+            result = self._decisions.run(
                 review_case_id,
                 proposal_id=proposal_id,
                 target_fingerprint=target_fingerprint,
@@ -837,6 +920,10 @@ class ReviewApplication:
                 idempotency_key=idempotency_key,
                 consideration_id=consideration_id,
             )
+            return {
+                **result,
+                "confirmation": self._decision_confirmation(review_case_id),
+            }
 
         try:
             result = self.serialized(record)
@@ -865,6 +952,14 @@ class ReviewApplication:
             ],
         }
 
+    def _decision_confirmation(self, review_case_id: str) -> dict[str, object]:
+        """Read committed authority without turning a read failure into write failure."""
+        try:
+            detail = self.case_detail(review_case_id)
+        except Exception:
+            return {"status": "unavailable"}
+        return {"status": "confirmed", "case": detail.to_data()}
+
     def retry_description_advice(self, review_case_id: str) -> dict[str, object]:
         connection, library = self.serialized(
             lambda: self._decisions.retry_description(review_case_id)
@@ -881,11 +976,16 @@ class ReviewApplication:
         binding: DescriptionAdviceBinding,
         idempotency_key: str,
     ) -> dict[str, object]:
-        result = self.serialized(
-            lambda: self._decisions.select_description(
+        def record() -> dict[str, object]:
+            result = self._decisions.select_description(
                 review_case_id, candidate_id, binding, idempotency_key
             )
-        )
+            return {
+                **result,
+                "confirmation": self._decision_confirmation(review_case_id),
+            }
+
+        result = self.serialized(record)
         if isinstance(self._field_application, ContinuousGuardedApplication):
             self._field_application.wake()
         return {
@@ -964,7 +1064,7 @@ class ReviewApplication:
 
         if self._activity_projection is not None:
             return project(self._activity_projection)
-        return self.serialized(lambda: project(self._continuous_application()))
+        return project(self._continuous_application())
 
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None
@@ -973,23 +1073,21 @@ class ReviewApplication:
             return self._activity_projection.activity_transitions(
                 event_id, after_sequence
             )
-        return self.serialized(
-            lambda: self._continuous_application().activity_transitions(
-                event_id, after_sequence
-            )
+        return self._continuous_application().activity_transitions(
+            event_id, after_sequence
         )
 
     def enable_activity(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
     ) -> dict[str, object]:
         application = self._continuous_application()
-        result = self.serialized(lambda: application.enable(grants))
+        result = application.enable(grants)
         self._updates.publish("activity")
         return result
 
     def revoke_activity(self, connection: str, library: str) -> dict[str, object]:
         application = self._continuous_application()
-        result = self.serialized(lambda: application.revoke(connection, library))
+        result = application.revoke(connection, library)
         self._updates.publish("activity")
         return result
 
@@ -997,9 +1095,7 @@ class ReviewApplication:
         if destination not in SUPPORTED_DESTINATIONS:
             raise KeyError("not_found")
         application = self._continuous_application()
-        self.serialized(
-            lambda: application.return_to_automatic(review_case_id, destination)
-        )
+        application.return_to_automatic(review_case_id, destination)
         self._updates.publish("case", review_case_id)
         self._updates.publish("activity")
 
@@ -1023,8 +1119,12 @@ class ReviewApplication:
     ) -> dict[str, object]:
         if self._field_application is None:
             raise ReviewApplicationError("unavailable")
-        selected = getattr(self._field_application, operation)
-        return self.serialized(lambda: selected(plan_id).to_data())
+        application = self._field_application
+        if operation == "status":
+            return self.serialized(lambda: application.status(plan_id).to_data())
+        if operation == "apply":
+            return application.apply(plan_id).to_data()
+        return application.reconcile(plan_id).to_data()
 
     def _set_field_effect_paused(self, paused: bool) -> None:
         if self._field_application is None:
@@ -1048,7 +1148,7 @@ class ReviewApplication:
                 False,
                 presentation=None if presentation is None else presentation.to_data(),
             )
-        progress_values, paused = self.serialized(self._preparation.status)
+        progress_values, paused = self._preparation.status()
         if len(progress_values) != len(self._preparation.libraries):
             raise ReviewApplicationError("persistence")
         first_boot = self._first_boot and all(
@@ -1058,7 +1158,7 @@ class ReviewApplication:
                 self._preparation.libraries, progress_values, strict=True
             )
         )
-        conditions = self.serialized(self._preparation.connection_conditions)
+        conditions = self._preparation.connection_conditions()
         libraries: tuple[dict[str, object], ...] = tuple(
             {
                 "scan_id": None if progress is None else progress.scan_id,
@@ -1168,16 +1268,10 @@ class ReviewApplication:
         if self._preparation is None:
             raise ReviewApplicationError("unavailable")
         selected = getattr(self._preparation, action)
-        progress = self.serialized(
-            lambda: (
-                selected(connection, library)
-                if action == "retry"
-                else selected(
-                    connection,
-                    library,
-                    trigger=PreparationTrigger.MANUAL_SCAN,
-                )
-            )
+        progress = (
+            selected(connection, library)
+            if action == "retry"
+            else selected(connection, library, trigger=PreparationTrigger.MANUAL_SCAN)
         )
         library_id = next(
             item[2]
@@ -1204,11 +1298,7 @@ class ReviewApplication:
     def _set_preparation_paused(self, paused: bool) -> PreparationView:
         if self._preparation is None:
             raise ReviewApplicationError("unavailable")
-        self.serialized(
-            lambda: cast(ReviewPreparationSupervisor, self._preparation).set_paused(
-                paused
-            )
-        )
+        self._preparation.set_paused(paused)
         return self.preparation()
 
     def _continuous_application(self) -> ContinuousGuardedApplication:
@@ -1361,6 +1451,9 @@ def compose_review_application(
     | None = None,
     activity_projection: ContinuousGuardedApplication | None = None,
     close_activity_projection: Callable[[], None] | None = None,
+    browse_observation: BrowseObservationOwner | None = None,
+    admission: OperationAdmission | None = None,
+    operation_lock: RLock | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
@@ -1383,10 +1476,11 @@ def compose_review_application(
     acknowledge_first_boot: Callable[[], None] | None = None,
 ) -> ReviewApplication:
     """Compose every operation before the HTTP adapter is created."""
-    gate = RLock()
+    gate = operation_lock or RLock()
+    admission = admission or OperationAdmission()
 
     def serialized(call: Callable[[], _Result]) -> _Result:
-        with gate:
+        with admission.enter(), gate:
             return call()
 
     timing = operational_timer or StageTimer(operational_timings, clock=clock)
@@ -1444,6 +1538,9 @@ def compose_review_application(
         updates=updates,
         activity_projection=activity_projection,
         close_activity_projection=close_activity_projection,
+        browse_observation=browse_observation,
+        admission=admission,
+        operation_lock=gate,
         cover_considerations=cover_considerations,
         settings=settings,
         reviewer_access=reviewer_access,

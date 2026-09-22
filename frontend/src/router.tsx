@@ -1,4 +1,7 @@
-import { QueryClient, queryOptions, useMutation, useQuery } from '@tanstack/react-query'
+import { invalidateForegroundQueries } from './queryWork'
+import { invalidateBackgroundQueries } from './queryWork'
+import { queryWorkClass, useRequiredQuery as useQuery } from './queryWork'
+import { QueryClient, queryOptions, useMutation } from '@tanstack/react-query'
 import {
   Link,
   Navigate,
@@ -156,42 +159,48 @@ export const normalizeSettingsSearch = (search: Record<string, unknown>): Settin
 export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) =>
   queryOptions({
     queryKey: ['library', search.lens, search.q ?? null, search.cursor ?? null] as const,
-    queryFn: ({ signal }) => http.getLibrary(search, signal),
+    queryFn: (queryContext) =>
+      http.getLibrary(search, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 export const attentionQuery = (http: ReviewHttp, search: AttentionSearch) =>
   queryOptions({
     queryKey: ['attention', search.q ?? null, search.cursor ?? null] as const,
-    queryFn: ({ signal }) => http.getAttention(search, signal),
+    queryFn: (queryContext) =>
+      http.getAttention(search, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 export const detailQuery = (http: ReviewHttp, id: string) =>
   queryOptions({
     queryKey: ['review-case', id] as const,
-    queryFn: ({ signal }) => http.getCaseDetail(id, signal),
+    queryFn: (queryContext) =>
+      http.getCaseDetail(id, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 const policyStateQuery = (http: ReviewHttp) =>
   queryOptions({
     queryKey: ['policy', 'state'] as const,
-    queryFn: ({ signal }) => http.getPolicyState(signal),
+    queryFn: (queryContext) =>
+      http.getPolicyState(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 const shadowQuery = (http: ReviewHttp) =>
   queryOptions({
     queryKey: ['policy', 'shadow'] as const,
-    queryFn: ({ signal }) => http.getShadowPosture(signal),
+    queryFn: (queryContext) =>
+      http.getShadowPosture(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
 const safetyQuery = (http: ReviewHttp) =>
   queryOptions({
     queryKey: ['policy', 'safety'] as const,
-    queryFn: ({ signal }) => http.getAutomaticSafety(signal),
+    queryFn: (queryContext) =>
+      http.getAutomaticSafety(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
@@ -205,7 +214,8 @@ const activityQuery = (http: ReviewHttp, search: ActivitySearch) =>
       search.page,
       search.pageSize,
     ] as const,
-    queryFn: ({ signal }) => http.getActivity(search, signal),
+    queryFn: (queryContext) =>
+      http.getActivity(search, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 4_000,
     retry: false,
   })
@@ -215,7 +225,8 @@ export const preparationQuery = (
 ) =>
   queryOptions({
     queryKey: ['review-preparation'] as const,
-    queryFn: ({ signal }) => http.getPreparation(signal),
+    queryFn: (queryContext) =>
+      http.getPreparation(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 1_000,
     retry: false,
     structuralSharing: false,
@@ -287,8 +298,8 @@ export const usePreparation = () => {
     // coarser copy of an invalidation that already arrived (#641).
     if (live) return
     void Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['library'] }),
-      queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
     ])
   }, [data?.presentation?.state, live, queryClient, snapshot])
   const adoptDismissal = useCallback(
@@ -302,13 +313,13 @@ export const usePreparation = () => {
       queryClient.setQueryData(['review-preparation'], value)
       const preparationDebt = queryClient.getQueryData(preparationInvalidationDebtKey) === true
       void Promise.all([
-        queryClient.invalidateQueries({
+        invalidateForegroundQueries(queryClient, {
           queryKey: ['review-preparation'],
           exact: true,
           refetchType: preparationDebt ? 'none' : 'active',
         }),
-        queryClient.invalidateQueries({ queryKey: ['library'] }),
-        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
       ])
       return true
     },
@@ -482,10 +493,10 @@ export const PreparationNotice = ({ routeIdentity }: { routeIdentity: string }) 
       if (context?.previous) queryClient.setQueryData(['review-preparation'], context.previous)
     },
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      await invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['library'] }),
-        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
       ])
     },
   })
@@ -553,10 +564,10 @@ export const PreparationActivity = () => {
     mutationFn: (path: string) => http.preparationAction(path),
     retry: false,
     onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['review-preparation'] })
+      await invalidateForegroundQueries(queryClient, { queryKey: ['review-preparation'] })
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['library'] }),
-        queryClient.invalidateQueries({ queryKey: ['attention'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+        invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
       ])
     },
   })
@@ -735,7 +746,8 @@ const Shell = () => {
   const streamState = useLiveStreamState(updates)
   const appearance = useQuery({
     queryKey: ['appearance'] as const,
-    queryFn: ({ signal }) => http.getAppearance(signal),
+    queryFn: (queryContext) =>
+      http.getAppearance(queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 15_000,
     retry: false,
   })
@@ -897,7 +909,15 @@ const RoutePending = ({ title = 'workspace' }: { title?: string }) => (
     <h1>Loading {title.toLowerCase()}…</h1>
   </section>
 )
-const RouteFailure = ({ error, reset }: { error: unknown; reset: () => void }) => {
+const RouteFailure = ({
+  error,
+  reset,
+  title = 'This workspace',
+}: {
+  error: unknown
+  reset: () => void
+  title?: string
+}) => {
   const router = useRouter()
   return error instanceof ChunkRecoveryError && error.exhausted ? (
     <section className="route-state">
@@ -909,7 +929,7 @@ const RouteFailure = ({ error, reset }: { error: unknown; reset: () => void }) =
   ) : (
     <section className="route-state">
       <p className="eyebrow">Review unavailable</p>
-      <h1>This workspace could not be loaded.</h1>
+      <h1>{title} could not be loaded.</h1>
       <p role="alert">{error instanceof Error ? error.message : String(error)}</p>
       <button onClick={() => void router.invalidate().then(reset)}>Try again</button>
     </section>
@@ -937,18 +957,25 @@ const indexRoute = createRoute({
   component: () => <Navigate to="/library" search={{ lens: 'all' }} replace />,
 })
 const LibraryRouteComponent = () => {
-  const initial = libraryRoute.useLoaderData()
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
-  const query = useQuery({ ...libraryQuery(http, search), initialData: initial })
-  return <LibraryPage data={query.data} />
+  const query = useQuery(libraryQuery(http, search))
+  return (
+    <LibraryPage
+      data={query.data}
+      pending={query.isPending}
+      failed={query.isError}
+      retry={() => void query.refetch()}
+    />
+  )
 }
 const AttentionRouteComponent = () => {
-  const initial = attentionRoute.useLoaderData()
   const { http } = rootRoute.useRouteContext()
   const search = attentionRoute.useSearch()
-  const query = useQuery({ ...attentionQuery(http, search), initialData: initial })
-  return <AttentionPage data={query.data} />
+  const query = useQuery(attentionQuery(http, search))
+  return (
+    <AttentionPage data={query.data} failed={query.isError} retry={() => void query.refetch()} />
+  )
 }
 const DiagnosticRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
@@ -996,26 +1023,12 @@ export const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/library',
   validateSearch: normalizeLibrarySearch,
-  loaderDeps: ({ search }) => search,
-  loader: ({ context, deps, abortController }) =>
-    context.queryClient.query({
-      ...libraryQuery(context.http, deps),
-      queryFn: () => context.http.getLibrary(deps, abortController.signal),
-      staleTime: 'static',
-    }),
   component: LibraryRouteComponent,
 })
 export const attentionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/attention',
   validateSearch: normalizeAttentionSearch,
-  loaderDeps: ({ search }) => search,
-  loader: ({ context, deps, abortController }) =>
-    context.queryClient.query({
-      ...attentionQuery(context.http, deps),
-      queryFn: () => context.http.getAttention(deps, abortController.signal),
-      staleTime: 'static',
-    }),
   component: AttentionRouteComponent,
 })
 export const detailRoute = createRoute({
@@ -1030,65 +1043,62 @@ export interface PolicyCritical {
   safety: AutomaticSafetyView
 }
 const PolicyRouteComponent = () => {
-  const initial = policyRoute.useLoaderData()
-  return initial === null ? null : <LoadedPolicyRoute initial={initial} />
-}
-const LoadedPolicyRoute = ({ initial }: { initial: PolicyCritical }) => {
   const { http } = rootRoute.useRouteContext()
-  const state = useQuery({ ...policyStateQuery(http), initialData: initial.state })
-  const shadow = useQuery({ ...shadowQuery(http), initialData: initial.shadow })
-  const safety = useQuery({ ...safetyQuery(http), initialData: initial.safety })
+  const state = useQuery(policyStateQuery(http))
+  const shadow = useQuery(shadowQuery(http))
+  const safety = useQuery(safetyQuery(http))
+  const error = state.error ?? shadow.error ?? safety.error
+  if (error instanceof SessionExpiredError) return null
+  if (error)
+    return (
+      <RouteFailure
+        error={error}
+        reset={() => {
+          void state.refetch()
+          void shadow.refetch()
+          void safety.refetch()
+        }}
+      />
+    )
+  if (!state.data || !shadow.data || !safety.data) return <RoutePending title="Policy" />
   return <PolicyPage data={{ state: state.data, shadow: shadow.data, safety: safety.data }} />
 }
 export const policyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/policy',
   validateSearch: normalizePolicySearch,
-  loader: async ({ context, abortController }) => {
-    const [state, shadow, safety] = await Promise.allSettled([
-      context.queryClient.query({
-        ...policyStateQuery(context.http),
-        queryFn: () => context.http.getPolicyState(abortController.signal),
-        staleTime: 'static',
-      }),
-      context.queryClient.query({
-        ...shadowQuery(context.http),
-        queryFn: () => context.http.getShadowPosture(abortController.signal),
-        staleTime: 'static',
-      }),
-      context.queryClient.query({
-        ...safetyQuery(context.http),
-        queryFn: () => context.http.getAutomaticSafety(abortController.signal),
-        staleTime: 'static',
-      }),
-    ])
-    for (const result of [state, shadow, safety]) {
-      if (result.status === 'fulfilled') continue
-      // The client has scheduled document navigation. Keeping this loader
-      // fulfilled avoids an unhandled concurrent loader rejection during it.
-      if (result.reason instanceof SessionExpiredError) return null
-      throw result.reason
-    }
-    if (state.status !== 'fulfilled') throw state.reason
-    if (shadow.status !== 'fulfilled') throw shadow.reason
-    if (safety.status !== 'fulfilled') throw safety.reason
-    return { state: state.value, shadow: shadow.value, safety: safety.value }
-  },
   component: PolicyRouteComponent,
 })
+const ActivityRouteComponent = () => {
+  const { http } = rootRoute.useRouteContext()
+  const search = activityRoute.useSearch()
+  const query = useQuery(activityQuery(http, search))
+  if (!query.data) {
+    if (query.isError)
+      return <RouteFailure error={query.error} reset={() => undefined} title="Activity" />
+    return <RoutePending title="Activity" />
+  }
+  return <ActivityPage initial={query.data} />
+}
 export const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/activity',
   validateSearch: normalizeActivitySearch,
   loaderDeps: ({ search }) => search,
-  loader: ({ context, deps, abortController }) =>
-    context.queryClient.query({
-      ...activityQuery(context.http, deps),
-      queryFn: () => context.http.getActivity(deps, abortController.signal),
-      staleTime: 'static',
-    }),
+  preload: false,
+  loader: ({ context, deps, abortController, cause }) =>
+    cause === 'enter'
+      ? undefined
+      : context.queryClient.query({
+          ...activityQuery(context.http, deps),
+          queryFn: (queryContext) =>
+            context.http.getActivity(deps, abortController.signal, queryWorkClass(queryContext)),
+          staleTime: 'static',
+        }),
   pendingMs: Infinity,
-  component: () => <ActivityPage initial={activityRoute.useLoaderData()} />,
+  pendingComponent: () => <RoutePending title="Activity" />,
+  errorComponent: (props) => <RouteFailure {...props} title="Activity" />,
+  component: ActivityRouteComponent,
 })
 export const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -1111,7 +1121,10 @@ export const useReviewContext = () => rootRoute.useRouteContext()
 export const createApplicationRouter = (
   http: ReviewHttp,
   queryClient = new QueryClient({
-    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    defaultOptions: {
+      queries: { retry: false, refetchOnWindowFocus: false, refetchOnReconnect: false },
+      mutations: { retry: false },
+    },
   }),
   history?: ReturnType<typeof createMemoryHistory>,
   updates?: LiveUpdateStream,

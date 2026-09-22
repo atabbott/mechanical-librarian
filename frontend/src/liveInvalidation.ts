@@ -1,3 +1,9 @@
+import {
+  invalidateBackgroundQueries,
+  mountBackgroundWork,
+  hasBackgroundDebt,
+  drainBackgroundWork,
+} from './queryWork'
 import { useEffect, useSyncExternalStore } from 'react'
 
 import type { QueryClient } from '@tanstack/react-query'
@@ -97,6 +103,7 @@ export const startLiveInvalidation = (
     })
   const now = options.now ?? Date.now
   const pending = new Map<string, readonly unknown[]>()
+  let stopped = false
   let handle: number | null = null
   let idleHandle: number | null = null
   let deferredWhileIdle = false
@@ -114,7 +121,9 @@ export const startLiveInvalidation = (
 
   const observePreparation = queryClient.getQueryCache().subscribe((event) => {
     if (event.query.queryHash !== '["review-preparation"]' || event.type !== 'updated') return
-    if (event.query.state.fetchStatus === 'fetching') {
+    const observedQuery = queryClient.getQueryCache().get(event.query.queryHash)
+    if (!observedQuery || observedQuery !== event.query) return
+    if (event.action.type === 'fetch') {
       confirmationBeganLive = stream.state === 'live'
       return
     }
@@ -123,7 +132,8 @@ export const startLiveInvalidation = (
       event.action.type === 'success' &&
       event.action.manual !== true &&
       confirmationBeganLive &&
-      stream.state === 'live'
+      stream.state === 'live' &&
+      !hasBackgroundDebt(queryClient, observedQuery)
     )
       setPreparationDebt(false)
     confirmationBeganLive = false
@@ -142,12 +152,9 @@ export const startLiveInvalidation = (
     // A hidden browser does no catch-up work.  Its next foreground transition
     // invalidates snapshot keys once, so frames cannot fabricate state or make
     // an old counter look current.
-    if (!visible()) return
+    if (stopped || !visible()) return
     const keys = [...pending.values()]
     pending.clear()
-    // A read taken now is a read this tab no longer owes itself for an echo it
-    // recognised earlier, so the debt is discharged rather than repeated.
-    forgetSettledKeys(queryClient, keys)
     for (const queryKey of keys) {
       if (
         queryKey[0] === 'review-preparation' &&
@@ -157,8 +164,12 @@ export const startLiveInvalidation = (
         setPreparationDebt(true)
         continue
       }
-      void queryClient.invalidateQueries({ queryKey })
+      void invalidateBackgroundQueries(queryClient, { queryKey })
+      // Each collection obligation is now a fresh read, concrete completion
+      // debt, or an inactive stale page. Its decision echo can relinquish it.
+      forgetSettledKeys(queryClient, [queryKey])
     }
+    drainBackgroundWork(queryClient)
   }
 
   const flushIdlePreparation = () => {
@@ -226,7 +237,7 @@ export const startLiveInvalidation = (
               stream.state === 'live' &&
               queryClient.getQueryData(preparationInvalidationDebtKey) === true
             )
-              void queryClient.invalidateQueries({
+              void invalidateBackgroundQueries(queryClient, {
                 queryKey: ['review-preparation'],
                 exact: true,
               })
@@ -234,7 +245,10 @@ export const startLiveInvalidation = (
         return
       }
       if (queryClient.getQueryData(preparationInvalidationDebtKey) === true)
-        void queryClient.invalidateQueries({ queryKey: ['review-preparation'], exact: true })
+        void invalidateBackgroundQueries(queryClient, {
+          queryKey: ['review-preparation'],
+          exact: true,
+        })
     }
   }
   const stopObservingState = stream.observeState(handleStreamState)
@@ -270,15 +284,12 @@ export const startLiveInvalidation = (
   })
 
   return () => {
+    stopped = true
     unsubscribe()
     stopObservingState()
     observePreparation()
     stopObservingActivity()
     stopObservingVisibility()
-    void queryClient.cancelQueries(
-      { queryKey: ['review-preparation'], exact: true },
-      { silent: true },
-    )
     if (handle !== null) cancel(handle)
     if (idleHandle !== null) cancel(idleHandle)
     handle = null
@@ -305,6 +316,7 @@ export const useLiveInvalidation = (
   stream: LiveUpdateStream | undefined,
   queryClient: QueryClient,
 ): void => {
+  useEffect(() => mountBackgroundWork(queryClient), [queryClient])
   useEffect(() => {
     if (!stream) return
     return startLiveInvalidation(stream, queryClient)

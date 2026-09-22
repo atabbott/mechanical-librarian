@@ -38,6 +38,7 @@ from mechanical_librarian.application.field_effects import (
     CapabilityObservation,
     GuardedFieldApplication,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_application import (
     ReviewApplication,
     ReviewApplicationError,
@@ -852,6 +853,7 @@ def test_cover_retry_stops_after_an_owner_outcome() -> None:
 def test_cover_observer_runs_outside_the_global_application_gate() -> None:
     application = object.__new__(ReviewApplication)
     application._gate = threading.RLock()
+    application._admission = OperationAdmission()
     # A deliberate patch of the bound method on a bare instance.
     application.serialized = ReviewApplication.serialized.__get__(application)  # type: ignore[method-assign]  # reason: deliberate per-test monkeypatch of a bound method
     application._cases = Mock()

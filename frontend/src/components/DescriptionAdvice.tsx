@@ -1,3 +1,4 @@
+import { invalidateForegroundQueries } from '../queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import type { DescriptionAdviceView } from '../api/http'
 import { useReviewContext } from '../router'
@@ -18,7 +19,7 @@ export const DescriptionAdvicePreparation = ({
     mutationFn: () => http.retryDescriptionAdvice(reviewCaseId),
     retry: false,
     onSuccess: () => {
-      void cache.invalidateQueries({ queryKey: ['review-case', reviewCaseId] })
+      void invalidateForegroundQueries(cache, { queryKey: ['review-case', reviewCaseId] })
     },
   })
   const busy = advice.state === 'requested' || advice.state === 'running'

@@ -89,7 +89,7 @@ _CURRENT_COVER_ATTENTION_AUTHORITY_SQL = (
     "AND json_extract(authority_consideration.document,'$.policy_reference')=? "
     "AND json_extract(json_extract(authority_consideration.document,"
     "'$.policy_report_document'),'$.owner_ready')=1 "
-    "AND CASE ml_cover_consideration_current(authority_consideration.document,?) "
+    "AND CASE ml_cover_consideration_current(authority_consideration.currentness_document,?) "
     "WHEN 1 THEN 1 WHEN 2 THEN result.unresolved_choice ELSE 0 END=1))"
 )
 _REVIEW_FIELD_ATTENTION_SQL = (

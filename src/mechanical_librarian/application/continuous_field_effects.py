@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Callable, Protocol, cast
 
@@ -14,6 +15,7 @@ from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
@@ -237,6 +239,7 @@ class ContinuousGuardedApplication:
         request_scan: Callable[[str, str], object],
         *,
         polling_seconds: float = 2.0,
+        operation_admission: OperationAdmission | None = None,
         graceful_shutdown_seconds: int = 30,
         scan_progress: Callable[[str, str], object] | None = None,
         activity_only: bool = False,
@@ -267,6 +270,7 @@ class ContinuousGuardedApplication:
         connections = {connection for connection, _ in configured_libraries}
         if len(connections) != 1:
             raise GuardedApplicationError("configuration")
+        self._operation_admission = operation_admission
         self._repository = repository
         self._applications = dict(applications)
         self._capabilities = dict(capabilities)
@@ -966,13 +970,17 @@ class ContinuousGuardedApplication:
 
     def run_cycle(self) -> bool:
         """Report bounded selection progress or an applied plan, not plan count."""
-        # A timed recovery poll shares the owner-operation serialization gate.
-        # Admit one undecided candidate per cycle so a large permission-waiting
-        # library cannot hold that gate for a whole page of report parsing.
+        # Each repository operation owns its local database boundary. Selection
+        # stays bounded while target observation and application run outside it.
         with self._schedule_lock:
             before = (self._schedule_generation, self._schedule_cursor)
         self.schedule(1)
-        selected = self._repository.next_field_effect_plan_id(self._last_library)
+        selected = cast(
+            "tuple[str, str] | None",
+            self._serialize(
+                lambda: self._repository.next_field_effect_plan_id(self._last_library)
+            ),
+        )
         if selected is None:
             with self._schedule_lock:
                 return before != (self._schedule_generation, self._schedule_cursor)
@@ -1558,37 +1566,43 @@ class ContinuousGuardedApplication:
         return results
 
     def _run(self) -> None:
-        self._admission.wait()
-        if self._stop.is_set():
-            return
-        if self._dormant_start:
-            self._dormant_start = False
-            try:
-                self._recover_startup()
-            except Exception as error:
-                self._set_last_failure(getattr(error, "code", "unavailable"))
-        while not self._stop.is_set():
-            self._wake.wait(self._polling_seconds)
-            self._wake.clear()
-            try:
-                self._run_until_idle()
-            except (FieldEffectError, GuardedApplicationError, ValueError) as error:
-                self._set_last_failure(getattr(error, "code", "unavailable"))
-            else:
-                # A completed poll recovers a transient worker/storage fault,
-                # not a rejected decision still pending behind the cursor.
-                self._set_last_failure(
-                    self._failed_decision[1] if self._failed_decision else None
-                )
+        with (
+            nullcontext()
+            if self._operation_admission is None
+            else self._operation_admission.classify("background")
+        ):
+            self._admission.wait()
+            if self._stop.is_set():
+                return
+            if self._dormant_start:
+                self._dormant_start = False
+                try:
+                    self._recover_startup()
+                except Exception as error:
+                    self._set_last_failure(getattr(error, "code", "unavailable"))
+            while not self._stop.is_set():
+                self._wake.wait(self._polling_seconds)
+                self._wake.clear()
+                try:
+                    self._run_until_idle()
+                except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+                    self._set_last_failure(getattr(error, "code", "unavailable"))
+                else:
+                    # A completed poll recovers a transient worker/storage fault,
+                    # not a rejected decision still pending behind the cursor.
+                    self._set_last_failure(
+                        self._failed_decision[1] if self._failed_decision else None
+                    )
 
     def _run_until_idle(self) -> None:
-        self._serialize(
-            lambda: next(iter(self._applications.values())).run_pending_cleanups(
-                limit=100
-            )
-        )
-        while not self._stop.is_set() and self._serialize(self.run_cycle):
-            pass
+        with (
+            nullcontext()
+            if self._operation_admission is None
+            else self._operation_admission.classify("background")
+        ):
+            next(iter(self._applications.values())).run_pending_cleanups(limit=100)
+            while not self._stop.is_set() and self.run_cycle():
+                pass
 
     def _release_completed_manual_returns(self) -> None:
         if self._scan_progress is None:

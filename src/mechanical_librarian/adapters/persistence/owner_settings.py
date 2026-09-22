@@ -14,7 +14,10 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     reconcile_preparation_library_additions,
 )
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     OwnerSettingsError,
@@ -117,6 +120,7 @@ class OwnerSettingsStore(ConnectionScoped):
             transaction.rollback()
             raise error from None
 
+    @local_operation
     def write(
         self,
         document: OwnerSettingsDocument,

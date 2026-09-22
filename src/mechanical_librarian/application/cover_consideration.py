@@ -6,7 +6,7 @@ import hashlib
 import json
 import re
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Final, Literal, Mapping, Protocol, cast
@@ -429,6 +429,98 @@ _UNNAMED_COVER_EVIDENCE_STATEMENT: Final = (
 )
 
 
+def cover_consideration_currentness_document(document: str) -> str:
+    """Derive immutable collection facts through the complete producer validator.
+
+    An inactive projection is canonical even for earlier or malformed producers;
+    it grants no collection authority. Detail and effects still read full evidence.
+    """
+    try:
+        value, report = _validated_cover_consideration(document)
+        replay = value.get("replay_reference")
+        fetching = value.get("provider_fetching")
+        if (
+            type(replay) is not str
+            or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay) is None
+            or type(fetching) is not bool
+            or value.get("replay_digest")
+            != cover_consideration_replay_digest(
+                cast(str, value["review_case_id"]),
+                report.report_id,
+                provider_fetching=fetching,
+                replay_reference=replay,
+            )
+        ):
+            return "null"
+        return canonical_packet_json(
+            {
+                "connection": report.target.connection,
+                "library": report.target.library,
+                "item": report.target.item,
+                "report_id": report.report_id,
+                "provider_fetching": fetching,
+                "replay_reference": replay,
+            }
+        )
+    except (KeyError, TypeError, ValueError):
+        return "null"
+
+
+def cover_currentness_from_facts(
+    document: str,
+    replay_reference: str,
+    provider_fetching: Callable[[str, str, str, str], bool],
+) -> CoverConsiderationCurrentness:
+    """Read only validated immutable facts at the collection boundary."""
+    if (
+        type(document) is not str
+        or type(replay_reference) is not str
+        or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None
+    ):
+        return "inactive"
+    try:
+        value = json.loads(document)
+        if (
+            type(value) is not dict
+            or set(value)
+            != {
+                "connection",
+                "library",
+                "item",
+                "report_id",
+                "provider_fetching",
+                "replay_reference",
+            }
+            or any(
+                type(value[key]) is not str or not value[key]
+                for key in (
+                    "connection",
+                    "library",
+                    "item",
+                    "report_id",
+                    "replay_reference",
+                )
+            )
+            or type(value["provider_fetching"]) is not bool
+            or re.fullmatch(r"cover_replay_[0-9a-f]{64}", value["replay_reference"])
+            is None
+            or canonical_packet_json(value) != document
+        ):
+            return "inactive"
+        fetching = provider_fetching(
+            value["connection"], value["library"], value["item"], value["report_id"]
+        )
+        if type(fetching) is not bool or fetching != value["provider_fetching"]:
+            return "inactive"
+        return (
+            "current"
+            if value["replay_reference"] == replay_reference
+            else "refresh_required"
+        )
+    except Exception:
+        return "inactive"
+
+
 def cover_consideration_currentness(
     document: str,
     replay_reference: str,
@@ -624,40 +716,63 @@ class CoverConsiderationService:
         self._provider_fetching = provider_fetching or (lambda _report: False)
 
     def update_policy(self, policy: CoverPolicy) -> None:
-        """Replace the live preference snapshot and its authority references."""
+        """Bind a validated policy before publishing its immutable snapshot."""
+        if type(policy) is not CoverPolicy:
+            raise CoverConsiderationError("policy")
+        identity = (
+            None if self._reviewer_identity is None else self._reviewer_identity()
+        )
+        self._bind_policy(policy.reference, self._replay_reference(identity, policy))
+        self._policy = policy
+
+    def policy_update(self, policy: CoverPolicy) -> AbstractContextManager[None]:
+        """Prepare externally, then publish only after the admitted store commit."""
         if type(policy) is not CoverPolicy:
             raise CoverConsiderationError("policy")
         previous = self._policy
-        self._policy = policy
-        try:
-            self._bind_policy(policy.reference, self.replay_reference)
-        except Exception:
-            self._policy = previous
-            raise
+        identity = (
+            None if self._reviewer_identity is None else self._reviewer_identity()
+        )
+        previous_replay = self._replay_reference(identity, previous)
+        candidate_replay = self._replay_reference(identity, policy)
+        if self._policy is not previous:
+            raise CoverConsiderationError("stale")
 
-    @contextmanager
-    def policy_update(self, policy: CoverPolicy) -> Iterator[None]:
-        """Keep one live policy change only when its enclosing store commit succeeds."""
-        previous = self._policy
-        self.update_policy(policy)
-        try:
-            yield
-        except BaseException:
-            self.update_policy(previous)
-            raise
+        @contextmanager
+        def publish() -> Iterator[None]:
+            if self._policy is not previous:
+                raise CoverConsiderationError("stale")
+            self._bind_policy(policy.reference, candidate_replay)
+            try:
+                yield
+            except BaseException:
+                self._bind_policy(previous.reference, previous_replay)
+                raise
+            else:
+                self._policy = policy
+
+        return publish()
+
+    def current_authority(self) -> tuple[str, str]:
+        """Capture one published policy with its externally observed reviewer identity."""
+        policy = self._policy
+        identity = (
+            None if self._reviewer_identity is None else self._reviewer_identity()
+        )
+        result = policy.reference, self._replay_reference(identity, policy)
+        if self._policy is not policy:
+            raise CoverConsiderationError("stale")
+        return result
 
     @property
     def replay_reference(self) -> str:
-        dynamic_identity = (
-            None if self._reviewer_identity is None else self._reviewer_identity()
-        )
-        return self._replay_reference(dynamic_identity)
+        return self.current_authority()[1]
 
     def _replay_reference(
-        self, dynamic_identity: tuple[int, str, str, bytes] | None
+        self, dynamic_identity: tuple[int, str, str, bytes] | None, policy: CoverPolicy
     ) -> str:
         value: dict[str, object] = {
-            "policy": self._policy.document,
+            "policy": policy.document,
             "contracts": {
                 "classifier_reference": CLASSIFIER_REFERENCE,
                 "identity_schema": IDENTITY_SCHEMA_VERSION,
@@ -782,7 +897,7 @@ class CoverConsiderationService:
                     binding.profile,
                 )
             )
-        replay_reference = self._replay_reference(dynamic_identity)
+        replay_reference = self._replay_reference(dynamic_identity, self._policy)
         replay_digest = self._replay_digest(
             review_case_id,
             report.report_id,
@@ -890,7 +1005,7 @@ class CoverConsiderationService:
                     (
                         replay_reference
                         if identity is None
-                        else self._replay_reference(identity)
+                        else self._replay_reference(identity, self._policy)
                     ),
                 )
         if profile is None or reviewer is None:

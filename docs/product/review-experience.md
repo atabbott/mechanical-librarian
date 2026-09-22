@@ -227,7 +227,23 @@ and clearly more useful, as defined by the
 
 Evidence is stored once as an immutable bounded record and referenced by ID.
 List responses return summaries; detailed facts and bounded snippets are loaded
-only when requested. Raw production paths, unrestricted source payloads, and
+only when requested.
+The authenticated shell and navigation mount without waiting for Library,
+Attention or Policy collections. Appearance, preparation and URL-selected
+review detail load independently. Pending or unavailable counts are never zero;
+a failed collection keeps navigation and a manual retry usable. Superseded
+queries cancel, and an older response cannot replace a newer URL selection.
+Owner navigation, typing, paging, retries and command results take priority over
+background refreshes at the next safe local-operation boundary. Recurring polls
+join ongoing work without accumulating redundant requests. A recorded choice is
+confirmed from the server's actual post-commit case before the interface advances;
+failed confirmation stays visibly unconfirmed with an explicit reload. A partially
+completed reviewer sign-in change retains its explanation after state is reloaded,
+so the owner is not told that an external change was undone.
+The #1072 envelope is approximately 2,300 complete synthetic works across five
+libraries during preparation: useful shell/navigation within one second and
+requested initial list/detail/status within two seconds. Measurements retain
+sample counts, p50/p95/max and every miss, rather than substituting liveness. Raw production paths, unrestricted source payloads, and
 copyrighted content are never exposed through ordinary review endpoints.
 
 ## Notices
@@ -322,7 +338,11 @@ Attention is a contextual, URL-owned field queue inside the regular-width
 Library workspace, not a peer navigation destination. It contains only
 unresolved ordinary fields that can benefit from an owner decision, groups them
 by readable work identity, and keeps the current work, active field, and queue
-position visible beside the decision canvas. At narrower regular widths the
+position visible beside the decision canvas. Its rows use the same bounded search
+as the Library attention count; its cursor is independent of the work-list cursor
+and resets when the search changes. Opening or closing Attention commits any
+pending typed search with that action; Back/Forward retains authority over obsolete
+pending edits. At narrower regular widths the
 work index and selected detail remain concurrent while attention opens as a
 contextual drawer. At phone widths the queue may become a separate
 single-column step while preserving Back/Forward state and task continuity.
@@ -643,7 +663,10 @@ widths in both themes without document-level horizontal overflow. The selected
 theme is non-authoritative presentation state and cannot affect review data or
 decision authority.
 
-Activity preserves the Library workspace and Policy hierarchy. Once durable
+Activity preserves the Library workspace and Policy hierarchy. Initial entry
+mounts navigation and a useful loading state without waiting for its ledger. An
+unavailable initial read keeps navigation and an explicit retry available;
+pending filter changes preserve the mounted page and its editing focus. Once durable
 activity exists, its current guarded state, shared recovery, and recent outcomes
 lead the page; write-permission inventory remains reachable from that state and
 collapses to a concise summary for returning owners. Before any activity or

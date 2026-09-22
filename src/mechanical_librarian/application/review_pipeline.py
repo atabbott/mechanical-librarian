@@ -4,6 +4,7 @@ import hashlib
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
@@ -12,6 +13,7 @@ from mechanical_librarian.application.catalogue import (
     TargetConnectionError,
 )
 from mechanical_librarian.application.metadata_report import CredentialError
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
@@ -446,9 +448,11 @@ class ReviewPreparationPipeline:
         timing: StageTimer | None = None,
         announce: Callable[[str, str | None], object] = lambda *_args: None,
         first_boot: bool = False,
+        admission: OperationAdmission | None = None,
     ) -> None:
         if not libraries or len(libraries) != len(set(libraries)):
             raise ReviewPipelineError("configuration")
+        self._operation_admission = admission
         self._repository_factory = repository_factory
         self._observation_repository_factory = (
             repository_factory
@@ -755,33 +759,38 @@ class ReviewPreparationPipeline:
     def run_next(self, maximum_actions: int = 64) -> bool:
         if type(maximum_actions) is not int or not 1 <= maximum_actions <= 64:
             raise ReviewPipelineError("configuration")
-        repository = self._open_repository()
-        try:
-            with self._claim_lock:
-                if self._draining.is_set():
+        with (
+            nullcontext()
+            if self._operation_admission is None
+            else self._operation_admission.classify("background")
+        ):
+            repository = self._open_repository()
+            try:
+                with self._claim_lock:
+                    if self._draining.is_set():
+                        return False
+                    try:
+                        action = repository.claim_review_pipeline_action(self._clock())
+                    except ReviewPipelineError:
+                        raise
+                    except Exception as error:
+                        raise ReviewPipelineError("persistence") from error
+                if action is None:
                     return False
-                try:
-                    action = repository.claim_review_pipeline_action(self._clock())
-                except ReviewPipelineError:
-                    raise
-                except Exception as error:
-                    raise ReviewPipelineError("persistence") from error
-            if action is None:
-                return False
-            for index in range(maximum_actions):
-                next_action = self._run_claimed_action(
-                    repository,
-                    action,
-                    claim_next=(
-                        index + 1 < maximum_actions and not self._draining.is_set()
-                    ),
-                )
-                if next_action is None:
-                    return True
-                action = next_action
-            return True
-        finally:
-            repository.close()
+                for index in range(maximum_actions):
+                    next_action = self._run_claimed_action(
+                        repository,
+                        action,
+                        claim_next=(
+                            index + 1 < maximum_actions and not self._draining.is_set()
+                        ),
+                    )
+                    if next_action is None:
+                        return True
+                    action = next_action
+                return True
+            finally:
+                repository.close()
 
     def run_recovery_successor(
         self, report_id: str, heartbeat: Callable[[], None] = lambda: None
@@ -1012,13 +1021,20 @@ class ReviewPreparationPipeline:
     ) -> PipelineAction | None:
         try:
             if claim_next:
-                with self._claim_lock:
+                # An output transaction may already own SQLite's writer lock.
+                # A competing initial claim can hold this gate while waiting
+                # for that writer, so publish without taking another claim.
+                acquired = self._claim_lock.acquire(blocking=False)
+                try:
                     advanced = repository.advance_review_pipeline_action(
                         action,
                         output_id,
                         self._clock(),
-                        not self._draining.is_set(),
+                        acquired and not self._draining.is_set(),
                     )
+                finally:
+                    if acquired:
+                        self._claim_lock.release()
             elif exact_next:
                 advanced = repository.advance_review_pipeline_action(
                     action,
@@ -1414,56 +1430,61 @@ class ReviewPreparationSupervisor:
             self._schedule_waiting_for_action = only_actionable_failures
 
     def _run(self, lane: int) -> None:
-        self._admission.wait()
-        if self._stop.is_set():
-            return
-        if self._dormant_start:
-            with self._startup_lock:
-                if self._dormant_start:
-                    try:
-                        self.resume_admission()
-                        self._pipeline.recover()
-                        self._schedule_due()
-                    except ReviewPipelineError:
-                        pass
-                    finally:
-                        self._dormant_start = False
-                        self._startup_ready.set()
-            self._startup_ready.wait()
-        while not self._stop.is_set():
-            self._wake.wait(timeout=1)
-            self._wake.clear()
-            try:
-                if lane == 0:
-                    # Recovery has no scheduler of its own.  It shares the
-                    # supervisor's clock, wake, drain and shutdown lifecycle.
-                    # A failed recovery observation is already persisted by
-                    # its runner, so it must not prevent ordinary preparation.
-                    if self._recovery_wake is not None:
+        with (
+            nullcontext()
+            if self._pipeline._operation_admission is None
+            else self._pipeline._operation_admission.classify("background")
+        ):
+            self._admission.wait()
+            if self._stop.is_set():
+                return
+            if self._dormant_start:
+                with self._startup_lock:
+                    if self._dormant_start:
                         try:
-                            self._recovery_wake(self._clock())
-                        except Exception:
-                            # Explicit owner recovery reports its closed
-                            # failure. The background lane instead preserves
-                            # preparation capacity until the next normal wake,
-                            # and contains any failure and not only a closed
-                            # one: the supervisor does not own the injected
-                            # wake's vocabulary, and losing this lane would
-                            # stop `_schedule_due` below for the process's
-                            # remaining life. The runner has already persisted
-                            # every observation it reached, and a failure
-                            # before it retries within the second, so nothing
-                            # here needs a channel of its own.
+                            self.resume_admission()
+                            self._pipeline.recover()
+                            self._schedule_due()
+                        except ReviewPipelineError:
                             pass
-                    self._schedule_due()
-                while not self._stop.is_set():
-                    advanced = self._pipeline.run_next()
+                        finally:
+                            self._dormant_start = False
+                            self._startup_ready.set()
+                self._startup_ready.wait()
+            while not self._stop.is_set():
+                self._wake.wait(timeout=1)
+                self._wake.clear()
+                try:
                     if lane == 0:
+                        # Recovery has no scheduler of its own.  It shares the
+                        # supervisor's clock, wake, drain and shutdown lifecycle.
+                        # A failed recovery observation is already persisted by
+                        # its runner, so it must not prevent ordinary preparation.
+                        if self._recovery_wake is not None:
+                            try:
+                                self._recovery_wake(self._clock())
+                            except Exception:
+                                # Explicit owner recovery reports its closed
+                                # failure. The background lane instead preserves
+                                # preparation capacity until the next normal wake,
+                                # and contains any failure and not only a closed
+                                # one: the supervisor does not own the injected
+                                # wake's vocabulary, and losing this lane would
+                                # stop `_schedule_due` below for the process's
+                                # remaining life. The runner has already persisted
+                                # every observation it reached, and a failure
+                                # before it retries within the second, so nothing
+                                # here needs a channel of its own.
+                                pass
                         self._schedule_due()
-                    if not advanced:
-                        break
-            except ReviewPipelineError:
-                continue
+                    while not self._stop.is_set():
+                        advanced = self._pipeline.run_next()
+                        if lane == 0:
+                            self._schedule_due()
+                        if not advanced:
+                            break
+                except ReviewPipelineError:
+                    continue
 
 
 def pipeline_scan_id(connection: str, library: str, *, first_boot: bool = False) -> str:

@@ -15,8 +15,10 @@ from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
     ReviewRunner,
     cover_consideration_currentness,
+    cover_consideration_currentness_document,
     cover_consideration_is_current,
     cover_consideration_replay_digest,
+    cover_currentness_from_facts,
 )
 from mechanical_librarian.application.cover_packet_semantics import (
     canonical_packet_json,
@@ -505,6 +507,51 @@ def test_shared_consideration_currentness_fails_closed_when_recovery_is_unavaila
     )
 
 
+def test_currentness_facts_derive_from_complete_producer(case: _Case) -> None:
+    case_id = "review_case_" + "r" * 64
+    case.service.ensure(case_id, case.report.to_json(), case.proposal)
+    document = case.store.current[case_id]
+    assert json.loads(cover_consideration_currentness_document(document)) == {
+        "connection": case.report.target.connection,
+        "library": case.report.target.library,
+        "item": case.report.target.item,
+        "report_id": case.report.report_id,
+        "provider_fetching": False,
+        "replay_reference": case.service.replay_reference,
+    }
+    facts = cover_consideration_currentness_document(document)
+    observed: list[tuple[str, str, str, str]] = []
+
+    def fetching(connection: str, library: str, item: str, report: str) -> bool:
+        observed.append((connection, library, item, report))
+        return False
+
+    assert (
+        cover_currentness_from_facts(facts, case.service.replay_reference, fetching)
+        == "current"
+    )
+    assert observed == [
+        (
+            case.report.target.connection,
+            case.report.target.library,
+            case.report.target.item,
+            case.report.report_id,
+        )
+    ]
+    assert (
+        cover_currentness_from_facts(facts, "cover_replay_" + "0" * 64, fetching)
+        == "refresh_required"
+    )
+    assert (
+        cover_currentness_from_facts(
+            facts, case.service.replay_reference, lambda *_: True
+        )
+        == "inactive"
+    )
+    for invalid in ("{}", "[]", "null", "not-json"):
+        assert cover_consideration_currentness_document(invalid) == "null"
+
+
 def test_shared_consideration_currentness_distinguishes_current_and_refresh(
     case: _Case,
 ) -> None:
@@ -565,6 +612,10 @@ def test_shared_consideration_currentness_rejects_malformed_authenticated_shapes
     persisted["consideration_id"] = (
         "cover_consideration_"
         + hashlib.sha256(canonical_packet_json(identity).encode()).hexdigest()
+    )
+    assert (
+        cover_consideration_currentness_document(canonical_packet_json(persisted))
+        == "null"
     )
     calls: list[MetadataReport] = []
 

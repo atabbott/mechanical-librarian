@@ -1,5 +1,6 @@
+import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { RecordingIdentityBasis } from '../components/RecordingIdentityBasis'
-import { useInfiniteQuery, useQuery } from '@tanstack/react-query'
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
 import { MediaHealth } from '../components/MediaHealth'
@@ -169,7 +170,13 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const evidence = useInfiniteQuery({
     queryKey: ['review-case', reviewCaseId, 'evidence'],
     initialPageParam: undefined as string | undefined,
-    queryFn: ({ pageParam, signal }) => http.getEvidence(reviewCaseId, pageParam, signal),
+    queryFn: (queryContext) =>
+      http.getEvidence(
+        reviewCaseId,
+        queryContext.pageParam,
+        queryContext.signal,
+        queryWorkClass(queryContext),
+      ),
     getNextPageParam: (page: EvidenceView) => page.nextCursor,
     staleTime: 30_000,
     retry: false,
@@ -177,7 +184,8 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   })
   const history = useQuery({
     queryKey: ['review-case', reviewCaseId, 'history'],
-    queryFn: ({ signal }) => http.getHistory(reviewCaseId, signal),
+    queryFn: (queryContext) =>
+      http.getHistory(reviewCaseId, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 30_000,
     retry: false,
     enabled: data.current && search.subview === 'history',

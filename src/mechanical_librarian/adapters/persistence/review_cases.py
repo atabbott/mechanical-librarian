@@ -60,7 +60,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REVIEW_SEARCH_SQL,
 )
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
@@ -122,6 +125,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         self._current_cover_authority = current_cover_authority
         self._record_browse_unavailable_exception = record_browse_unavailable_exception
 
+    @local_operation
     def admit_review_case(self, proposal_set: ProposalSet) -> str:
         """Atomically bind one exact current ProposalSet to its target lineage."""
         if type(proposal_set) is not ProposalSet:
@@ -370,6 +374,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             transaction.rollback()
             raise MetadataReportError("review admission failed") from error
 
+    @local_operation
     def review_case_exists(self, review_case_id: str) -> bool:
         try:
             return (
@@ -384,6 +389,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "review case availability is unavailable"
             ) from error
 
+    @local_operation
     def current_review_case_successor(self, review_case_id: str) -> str | None:
         """Read the current case for this exact persisted target lineage."""
         try:
@@ -422,6 +428,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
+    @local_operation
     def get_review_case(self, review_case_id: str) -> str:
         try:
             row = self._connection.execute(
@@ -493,12 +500,14 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         except (sqlite3.Error, ReviewCaseValueError, KeyError, TypeError) as error:
             raise MetadataReportError("review case is unavailable") from error
 
+    @local_operation
     def get_review_case_report(self, review_case_id: str) -> str:
         try:
             return self._source_report_for_review_case(review_case_id).to_json()
         except (sqlite3.Error, ReviewCaseValueError, ReportValueError) as error:
             raise MetadataReportError("review case evidence is unavailable") from error
 
+    @local_operation
     def list_current_review_case_documents(
         self,
         search: str | None,
@@ -656,6 +665,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 self._record_browse_unavailable_exception(error)
             raise MetadataReportError("review library is unavailable") from error
 
+    @local_operation
     def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
         try:
             query, pattern = _review_search_pattern(search)
@@ -686,6 +696,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 self._record_browse_unavailable_exception(error)
             raise MetadataReportError("review library is unavailable") from error
 
+    @local_operation
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
     ) -> tuple[
@@ -794,6 +805,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 self._record_browse_unavailable_exception(error)
             raise MetadataReportError("review attention is unavailable") from error
 
+    @local_operation
     def count_current_attention_fields(self, search: str | None) -> int:
         try:
             query, pattern = _review_search_pattern(search)
@@ -933,6 +945,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             raise MetadataReportError("review pointer is invalid")
         return pointer
 
+    @local_operation
     def current_review_package(
         self, connection: str, library: str, item: str
     ) -> tuple[str | None, str, str | None, int | None, str] | None:
@@ -999,6 +1012,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         # The five per-column type tests above prove the declared shape.
         return cast("tuple[str | None, str, str | None, int | None, str]", row)
 
+    @local_operation
     def current_review_package_report(
         self, connection: str, library: str, item: str
     ) -> str | None:

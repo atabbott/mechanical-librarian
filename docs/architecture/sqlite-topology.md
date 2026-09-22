@@ -13,6 +13,37 @@ scan's write transaction. Rows and counts below that name those two tables
 are retained August 2026 audit evidence of the pre-#912 schema; the current
 application database no longer contains them.
 
+## Current runtime admission and connection ownership
+
+[ADR-0077](decisions/0077-owned-responsive-review-reads.md) adds one local-operation
+admission coordinator per persistent application-database authority. Root settings
+controls and overlapping runtime generations share it explicitly. Main review,
+Library, Attention and report detail use the existing application owner. Activity,
+preparation observation, preparation workers and shadow owners retain their
+existing separately owned connections. They acquire local admission before their
+connection locks; no network or device operation holds it.
+The finite foreground cohort yields to one oldest background waiter before a new
+cohort. Session, catalogue and provider-recovery databases keep their independent
+authority; recovery calls that enter the application repository use its coordinator.
+Worker startup, recovery and scheduling retain background classification. Artifact
+recovery borrows that same coordinator for its retained-attempt update and reference
+reads, releasing admission for filesystem inspection and cleanup.
+
+Library and Attention need no additional browse borrower. Membership, counts and
+row facts share a short deferred transaction; visible projection remains inside
+the bounded local operation after that transaction ends. External policy/replay
+and fetching identities are captured and rechecked outside admission. Generation
+shutdown closes its own borrowers before the root; only final root shutdown closes
+the shared coordinator. Accepted browse lifetimes include external capture and
+recheck; a drain timeout retains their dependencies for a later completed stop.
+No connection pool or journal-mode change is introduced.
+
+`cover_considerations.currentness_document` is an additional immutable derived
+column, validated from complete canonical evidence at publication and root open.
+It reduces repeated collection parsing without replacing selection/effect checks.
+This exact schema requires a clean rebuild; historical audit figures below are
+unchanged and do not describe the new column's measured extent.
+
 ## Audit boundary and evidence
 
 The map was checked against the exact-current schema, production persistence

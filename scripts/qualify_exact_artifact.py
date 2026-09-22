@@ -441,12 +441,25 @@ def qualify_exact_artifact(
         )
 
         if test_args is not None:
-            _run(
-                (str(environment_python), "-I", *test_args),
-                cwd=build_source,
-                env=runtime_environment,
-                reason="installed_test_suite_failed",
-            )
+            invocations: tuple[tuple[str, ...], ...] = (test_args,)
+            if test_args in {_SLOW_TEST_ARGS, _COMPLETE_INSTALLED_TEST_ARGS}:
+                invocations = (
+                    (*_SLOW_TEST_ARGS, "--slow-part", "remaining"),
+                    (*_SLOW_TEST_ARGS, "--slow-part", "owner-browser"),
+                )
+                if test_args == _COMPLETE_INSTALLED_TEST_ARGS:
+                    invocations = (_REQUIRED_INSTALLED_TEST_ARGS, *invocations)
+            for invocation in invocations:
+                _run(
+                    (str(environment_python), "-I", *invocation),
+                    cwd=build_source,
+                    env=runtime_environment,
+                    reason=(
+                        f"installed_slow_{invocation[-1].replace('-', '_')}_failed"
+                        if "--slow-part" in invocation
+                        else "installed_test_suite_failed"
+                    ),
+                )
         if (
             not console.is_file()
             or console.is_symlink()

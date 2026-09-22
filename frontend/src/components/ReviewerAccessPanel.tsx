@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
@@ -74,7 +75,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const queryClient = useQueryClient()
   const query = useQuery({
     queryKey: ['reviewer-access'] as const,
-    queryFn: ({ signal }) => http.getReviewerAccess(signal),
+    queryFn: (queryContext) =>
+      http.getReviewerAccess(queryContext.signal, queryWorkClass(queryContext)),
     retry: false,
   })
   const [model, setModel] = useState('')
@@ -130,6 +132,18 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         model: action.model,
       })
     },
+    onError: async (_error, action) => {
+      if (action.kind !== 'codex-clear' && action.kind !== 'codex-start') return
+      // A credential side effect may have completed before mapping publication failed.
+      // Reconcile read-only state before another owner command can be submitted.
+      await Promise.allSettled([
+        query.refetch(),
+        http.getCodexDevice().then((device) => {
+          queryClient.setQueryData(['reviewer-access', 'codex-device'], device)
+          setDeviceActive(['starting', 'issued', 'waiting', 'validating'].includes(device.state))
+        }),
+      ])
+    },
     onSuccess: (result, action) => {
       setKey('')
       setConfirmClear(null)
@@ -151,7 +165,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
       ['starting', 'issued', 'waiting', 'validating'].includes(query.data.codex.state))
   const deviceQuery = useQuery({
     queryKey: ['reviewer-access', 'codex-device'] as const,
-    queryFn: ({ signal }) => http.getCodexDevice(signal),
+    queryFn: (queryContext) =>
+      http.getCodexDevice(queryContext.signal, queryWorkClass(queryContext)),
     enabled: waiting,
     retry: false,
     refetchInterval: (result) =>
@@ -215,10 +230,12 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   // selection, so it never describes a model the page is no longer offering.
   const disclosedCoverModel = effectiveModel || (view.openrouter.model ?? '')
   const mutationFailure =
-    mutation.error instanceof ApiError
-      ? (failureCopy[mutation.error.code] ??
-        'The reviewer change was refused. Reload and try again.')
-      : 'The reviewer change was not applied. Reload and try again.'
+    mutation.variables?.kind === 'codex-clear' || mutation.variables?.kind === 'codex-start'
+      ? 'The change could not be fully confirmed. Your prior sign-in or reviewer selection may have changed. Reload reviewer access before trying again.'
+      : mutation.error instanceof ApiError
+        ? (failureCopy[mutation.error.code] ??
+          'The reviewer change was refused. Reload and try again.')
+        : 'The reviewer change was not applied. Reload and try again.'
   return (
     <div className="settings-reviewer">
       <div className="settings-field-row">
@@ -329,9 +346,6 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                   Clear Codex sign-in
                 </button>
               )}
-              {mutation.isError && mutation.variables.kind.startsWith('codex') ? (
-                <p role="alert">{mutationFailure}</p>
-              ) : null}
             </>
           ) : (
             <>
@@ -353,6 +367,9 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               </button>
             </>
           )}
+          {mutation.isError && mutation.variables.kind.startsWith('codex') ? (
+            <p role="alert">{mutationFailure}</p>
+          ) : null}
         </div>
       </div>
 

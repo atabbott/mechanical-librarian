@@ -18,7 +18,10 @@ from mechanical_librarian.adapters.persistence.schema import (
     _provider_recovery_outbox_id,
     _validate_provider_recovery_outbox_row,
 )
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.provider_recovery import MAX_TIMESTAMP
 from mechanical_librarian.domain.validation import bounded_integer
@@ -60,6 +63,7 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
             (outbox_id, connection, library, item, *pointer, created_at),
         )
 
+    @local_operation
     def pending_provider_recovery_outbox(
         self,
         *,
@@ -100,6 +104,7 @@ class SQLiteRecoveryOutboxRepository(ConnectionScoped):
                 "provider recovery outbox is unavailable"
             ) from error
 
+    @local_operation
     def complete_provider_recovery_outbox(
         self,
         outbox_id: str,

@@ -2794,35 +2794,44 @@ def _predecessor_source_digest(name: str) -> str:
     return document["sha256"][name]
 
 
-CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
+DEPENDENCY_AUDIOBOOK_DIGEST = (
+    "8e43f608421f18bdcca447eb0b99c2b676648f8a156a9e4ac0e57a2e093eec7a"
+)
+DEPENDENCY_TITLE_DIGEST = (
+    "ede07974f94886aef832e30fe11fbcb8af7f82aa10049e301729c66738bf03c4"
+)
+DEPENDENCY_RICH_DIGEST = (
+    "20a0321ce87d7f22dae749f0ee2162c5521ad7dcf386a98cf7b550d377c5fc5e"
+)
+DEPENDENCY_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
     "f46-audiobook-qualification-candidate-v9.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v26.json")
-CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
+DEPENDENCY_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v26.json")
+DEPENDENCY_RICH_SUCCESSOR = MANIFEST.with_name(
     "f20-rich-metadata-qualification-candidate-v40.json"
 )
 _BUILD_PROVENANCE_PATHS = {"frontend/package.json", "frontend/package-lock.json"}
 
 
-def _current_qualification_documents():
+def _dependency_qualification_documents():
     """Interpret only these three fixed one-hop successors, never a chain."""
     documents = []
-    amendment = json.loads(CURRENT_AUDIOBOOK_SUCCESSOR.read_bytes())
+    amendment = json.loads(DEPENDENCY_AUDIOBOOK_SUCCESSOR.read_bytes())
     for path, prior_path, digest in (
         (
-            CURRENT_AUDIOBOOK_SUCCESSOR,
+            DEPENDENCY_AUDIOBOOK_SUCCESSOR,
             DELIVERED_AUDIOBOOK_MANIFEST,
-            F46_QUALIFICATION_MANIFEST_SHA256,
+            DEPENDENCY_AUDIOBOOK_DIGEST,
         ),
         (
-            CURRENT_TITLE_SUCCESSOR,
+            DEPENDENCY_TITLE_SUCCESSOR,
             DELIVERED_TITLE_MANIFEST,
-            F19A_QUALIFICATION_MANIFEST_SHA256,
+            DEPENDENCY_TITLE_DIGEST,
         ),
         (
-            CURRENT_RICH_SUCCESSOR,
+            DEPENDENCY_RICH_SUCCESSOR,
             DELIVERED_RICH_MANIFEST,
-            F20_QUALIFICATION_CANDIDATE_SHA256,
+            DEPENDENCY_RICH_DIGEST,
         ),
     ):
         successor = json.loads(path.read_bytes())
@@ -2837,30 +2846,22 @@ def _current_qualification_documents():
         )
         assert successor["schema"] == "dependency-provenance-successor-v1"
         allowed = {"schema", "prior_manifest_path", "prior_manifest_sha256"}
-        if path == CURRENT_AUDIOBOOK_SUCCESSOR:
+        if path == DEPENDENCY_AUDIOBOOK_SUCCESSOR:
             allowed |= {"source_amendment"}
         else:
             allowed |= {"shared_amendment_path", "shared_amendment_sha256"}
             assert (
                 successor["shared_amendment_path"]
-                == CURRENT_AUDIOBOOK_SUCCESSOR.relative_to(
+                == DEPENDENCY_AUDIOBOOK_SUCCESSOR.relative_to(
                     MANIFEST.parents[2]
                 ).as_posix()
             )
-            assert (
-                successor["shared_amendment_sha256"]
-                == F46_QUALIFICATION_MANIFEST_SHA256
-            )
-        if path == CURRENT_RICH_SUCCESSOR:
+            assert successor["shared_amendment_sha256"] == DEPENDENCY_AUDIOBOOK_DIGEST
+        if path == DEPENDENCY_RICH_SUCCESSOR:
             allowed |= {"automatic_decision_after_f19_sha256"}
             assert (
                 successor["automatic_decision_after_f19_sha256"]
-                == hashlib.sha256(
-                    (
-                        MANIFEST.parents[2]
-                        / "src/mechanical_librarian/domain/automatic_decision.py"
-                    ).read_bytes()
-                ).hexdigest()
+                == "b7c2a3d6f3ddea1b1c19ef16a2923dfd8bbbc3f1bc1c527011571dbad2d9ed35"
             )
         assert set(successor) == allowed
         prior = json.loads(prior_path.read_bytes())
@@ -2906,12 +2907,33 @@ def _current_qualification_documents():
     return documents
 
 
+CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
+    "f46-audiobook-qualification-candidate-v10.json"
+)
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v27.json")
+CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
+    "f20-rich-metadata-qualification-candidate-v41.json"
+)
+
+
+def _current_qualification_documents():
+    documents = []
+    for path, digest in (
+        (CURRENT_AUDIOBOOK_SUCCESSOR, F46_QUALIFICATION_MANIFEST_SHA256),
+        (CURRENT_TITLE_SUCCESSOR, F19A_QUALIFICATION_MANIFEST_SHA256),
+        (CURRENT_RICH_SUCCESSOR, F20_QUALIFICATION_CANDIDATE_SHA256),
+    ):
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        document = json.loads(path.read_bytes())
+        assert document["build_provenance_paths"] == sorted(_BUILD_PROVENANCE_PATHS)
+        documents.append(document)
+    return documents
+
+
 def _assert_live_source_closure(document, overrides=None):
     overrides = overrides or {}
-    assert (
-        set(document["source_closure"])
-        == set(json.loads(DELIVERED_AUDIOBOOK_MANIFEST.read_bytes())["source_closure"])
-        - _BUILD_PROVENANCE_PATHS
+    assert set(document["source_closure"]) == set(
+        json.loads(CURRENT_AUDIOBOOK_SUCCESSOR.read_bytes())["source_closure"]
     )
     binding = document["binding_only_source_equivalence"]
     exclusions = binding["excluded_binding_assignments"]
@@ -2946,10 +2968,8 @@ def _assert_live_source_closure(document, overrides=None):
             assert hashlib.sha256(content).hexdigest() == digest
 
 
-def test_current_title_successors_bind_complete_consumer_source_inventory():
-    for document in _current_qualification_documents():
-        _assert_live_source_closure(document)
-    audio, title, rich = _current_qualification_documents()
+def test_dependency_predecessors_preserve_measurement_and_options():
+    audio, title, rich = _dependency_qualification_documents()
     assert set(audio["passing_automatic_options"]) == F46_PASSING_AUTOMATIC_OPTIONS
     assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 73
     assert set(rich["passing_automatic_options"]) == F20_PASSING_AUTOMATIC_OPTIONS
@@ -2994,7 +3014,7 @@ def test_current_source_partition_and_amendment_fail_closed(monkeypatch, mutatio
         with pytest.raises(AssertionError):
             _assert_live_source_closure(document)
         return
-    raw = json.loads(CURRENT_AUDIOBOOK_SUCCESSOR.read_bytes())
+    raw = json.loads(DEPENDENCY_AUDIOBOOK_SUCCESSOR.read_bytes())
     if mutation == "extra_exclusion":
         raw["source_amendment"]["build_provenance_paths"].append(
             "src/mechanical_librarian/domain/proposal_set.py"
@@ -3006,15 +3026,17 @@ def test_current_source_partition_and_amendment_fail_closed(monkeypatch, mutatio
     monkeypatch.setattr(
         Path,
         "read_bytes",
-        lambda path: content if path == CURRENT_AUDIOBOOK_SUCCESSOR else original(path),
+        lambda path: (
+            content if path == DEPENDENCY_AUDIOBOOK_SUCCESSOR else original(path)
+        ),
     )
     monkeypatch.setitem(
         globals(),
-        "F46_QUALIFICATION_MANIFEST_SHA256",
+        "DEPENDENCY_AUDIOBOOK_DIGEST",
         hashlib.sha256(content).hexdigest(),
     )
     with pytest.raises(AssertionError):
-        _current_qualification_documents()
+        _dependency_qualification_documents()
 
 
 def _predecessor_source_text(name: str) -> str:
@@ -3031,3 +3053,312 @@ def _predecessor_source_text(name: str) -> str:
     text = json.loads(gzip.decompress(path.read_bytes()))[name]
     assert hashlib.sha256(text.encode()).hexdigest() == _predecessor_source_digest(name)
     return text
+
+
+def test_current_title_successors_bind_complete_consumer_source_inventory():
+    """Current successors bind responsive read/currentness behavior and its consumers.
+
+    Historical measurements and manifests remain frozen. The new compact facts,
+    local admission, confirmed decisions and nonblocking UI are semantic changes;
+    only named qualification assignments use cycle-breaking AST equivalence.
+    """
+
+    from mechanical_librarian.domain.audiobook_decision_qualification import (
+        F46_PASSING_PAIRED_OPTIONS,
+        F46_TITLE_SUBTITLE_PAIR_IDENTITY,
+    )
+
+    documents = [
+        (CURRENT_AUDIOBOOK_SUCCESSOR, F46_QUALIFICATION_MANIFEST_SHA256),
+        (CURRENT_TITLE_SUCCESSOR, F19A_QUALIFICATION_MANIFEST_SHA256),
+        (CURRENT_RICH_SUCCESSOR, F20_QUALIFICATION_CANDIDATE_SHA256),
+    ]
+    predecessor = json.loads(
+        MANIFEST.with_name("f46-audiobook-qualification-candidate-v7.json").read_bytes()
+    )
+    exclusions = predecessor["binding_only_source_equivalence"][
+        "excluded_binding_assignments"
+    ]
+    required = {
+        "src/mechanical_librarian/domain/audiobook_cover_replacement.py",
+        "src/mechanical_librarian/adapters/library_services/audiobookshelf_cover_path.py",
+        "src/mechanical_librarian/adapters/persistence/field_effect_validation.py",
+        "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
+        "src/mechanical_librarian/interfaces/web/app.py",
+        "tests/unit/test_rich_metadata_qualification_manifest.py",
+        "tests/unit/test_shadow_outcome_persistence.py",
+        "tests/unit/test_field_effects.py",
+        "tests/support/audiobook_reports.py",
+        "tests/support/audiobook_covers.py",
+        "frontend/src/routes/PolicyPage.tsx",
+        "frontend/tests/router.activity.test.tsx",
+        "frontend/tests/router.policy.test.tsx",
+        "tests/support/owner_responsiveness.py",
+        "tests/support/cover_producers.py",
+        "tests/integration/test_owner_responsiveness.py",
+        "tests/slow/test_owner_responsiveness.py",
+        "tests/slow/test_owner_browser_responsiveness.py",
+        "frontend/src/focus.ts",
+        "frontend/tests/focus.test.tsx",
+        "frontend/src/liveInvalidation.ts",
+        "frontend/src/decisionEcho.ts",
+        "frontend/src/reviewDecisionController.ts",
+        "frontend/tests/liveUpdates.test.ts",
+        "frontend/tests/decisionConfirmation.test.ts",
+        "frontend/tests/ownerConfirmation.test.tsx",
+        "tests/unit/test_browse_request_lifecycle.py",
+        "tests/unit/test_review_web_transport.py",
+        "src/mechanical_librarian/application/review_pipeline.py",
+        "tests/unit/test_review_pipeline.py",
+        "tests/support/continuous_review_scale.py",
+        "tests/integration/test_continuous_review_scale.py",
+    }
+    required.update(
+        {
+            "frontend/src/queryWork.ts",
+            "tests/unit/test_dependency_qualification_history.py",
+            "tests/support/automatic_decision_predecessors/before-dependency-provenance.json",
+            "tests/unit/test_build_frontend.py",
+            "scripts/build_frontend.py",
+            "tests/unit/test_owner_settings_store.py",
+            "src/mechanical_librarian/application/operation_admission.py",
+            "tests/unit/test_transaction_scope.py",
+            "tests/unit/test_operation_admission.py",
+            "tests/unit/test_composition_reopen.py",
+            "tests/unit/test_reviewer_access_application.py",
+            "frontend/tests/queryWork.test.ts",
+            "frontend/tests/decisionCaseOwnership.test.ts",
+        }
+    )
+    for path, digest in documents:
+        document = json.loads(path.read_bytes())
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+        assert document["clean_rebuild_required"] is True
+        assert document["proposal_policy_version"] == "fixed-conservative-v27"
+        assert re.fullmatch(r"[0-9a-f]{40}", document["frozen_candidate_sha"])
+        assert required <= set(document["source_closure"])
+        assert set(predecessor["source_closure"]) - _BUILD_PROVENANCE_PATHS <= set(
+            document["source_closure"]
+        )
+        assert not _BUILD_PROVENANCE_PATHS & set(document["source_closure"])
+        binding = document["binding_only_source_equivalence"]
+        assert binding["excluded_binding_assignments"] == exclusions
+        continuity = document["measurement_source_continuity"]
+        assert continuity["authority_source_sha"] == (
+            "ead56d7fdc9cef2860e4c15e01de0ae87e35cc73"
+        )
+        assert continuity["current_source_sha"] == document["frozen_candidate_sha"]
+        assert set(continuity["changed_read_sources"]) == {
+            "frontend/src/api/http.ts",
+            "frontend/src/components/DescriptionAdvice.tsx",
+            "frontend/src/components/DescriptionAdviceSettings.tsx",
+            "frontend/src/components/MediaHealth.tsx",
+            "frontend/src/components/ReviewerAccessPanel.tsx",
+            "frontend/src/components/WriteReadyNotice.tsx",
+            "frontend/src/coverChoices.ts",
+            "frontend/src/decisionEcho.ts",
+            "frontend/src/focus.ts",
+            "frontend/src/liveInvalidation.ts",
+            "frontend/src/reviewDecisionController.ts",
+            "frontend/src/router.tsx",
+            "frontend/src/routes/ActivityPage.tsx",
+            "frontend/src/routes/AttentionPage.tsx",
+            "frontend/src/routes/DetailPage.tsx",
+            "frontend/src/routes/LibraryPage.tsx",
+            "frontend/src/routes/PolicyPage.tsx",
+            "frontend/src/routes/SettingsPage.tsx",
+            "src/mechanical_librarian/adapters/library_services/audiobookshelf_setup.py",
+            "src/mechanical_librarian/adapters/persistence/metadata_reports.py",
+            "src/mechanical_librarian/adapters/persistence/provider_recovery.py",
+            "src/mechanical_librarian/adapters/persistence/review_projections.py",
+            "src/mechanical_librarian/adapters/persistence/review_sql.py",
+            "src/mechanical_librarian/application/cover_consideration.py",
+            "src/mechanical_librarian/application/review_application.py",
+            "src/mechanical_librarian/application/review_web.py",
+            "src/mechanical_librarian/bootstrap/composition.py",
+            "src/mechanical_librarian/domain/activity_records.py",
+            "src/mechanical_librarian/interfaces/web/app.py",
+            "src/mechanical_librarian/interfaces/web/live_stream.py",
+            "src/mechanical_librarian/interfaces/web/setup.py",
+            "src/mechanical_librarian/interfaces/web/setup_frontend.py",
+        }
+        assert set(continuity["changed_coordination_sources"]) == {
+            "src/mechanical_librarian/application/review_pipeline.py",
+            "src/mechanical_librarian/application/review_pipeline_stages.py",
+            "src/mechanical_librarian/application/reviewer_access.py",
+        }
+        for name, delta in continuity["changed_coordination_sources"].items():
+            assert delta["current_sha256"] == document["source_closure"][name]
+            assert delta["measured_sha256"] != delta["current_sha256"]
+        assert set(continuity["changed_persistence_sources"]) == {
+            "src/mechanical_librarian/adapters/persistence/cover_considerations.py",
+            "src/mechanical_librarian/adapters/persistence/decisions.py",
+            "src/mechanical_librarian/adapters/persistence/description_advice.py",
+            "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
+            "src/mechanical_librarian/adapters/persistence/field_effects.py",
+            "src/mechanical_librarian/adapters/persistence/metadata_policy.py",
+            "src/mechanical_librarian/adapters/persistence/owner_settings.py",
+            "src/mechanical_librarian/adapters/persistence/proposal_sets.py",
+            "src/mechanical_librarian/adapters/persistence/recovery_outbox.py",
+            "src/mechanical_librarian/adapters/persistence/reports.py",
+            "src/mechanical_librarian/adapters/persistence/review_cases.py",
+            "src/mechanical_librarian/adapters/persistence/review_preparation.py",
+            "src/mechanical_librarian/adapters/persistence/review_scans.py",
+            "src/mechanical_librarian/adapters/persistence/schema.py",
+            "src/mechanical_librarian/adapters/persistence/transactions.py",
+        }
+        for name, delta in continuity["changed_persistence_sources"].items():
+            assert delta["current_sha256"] == document["source_closure"][name]
+            assert delta["measured_sha256"] != delta["current_sha256"]
+        assert set(continuity["changed_admission_sources"]) == {
+            "src/mechanical_librarian/domain/proposal_set.py",
+            "src/mechanical_librarian/application/continuous_field_effects.py",
+            "src/mechanical_librarian/application/metadata_report.py",
+        }
+        for name, delta in continuity["changed_admission_sources"].items():
+            assert delta["current_sha256"] == document["source_closure"][name]
+            assert delta["measured_sha256"] != delta["current_sha256"]
+        assert set(continuity["introduced_sources"]) == {
+            "frontend/src/queryWork.ts",
+            "src/mechanical_librarian/application/operation_admission.py",
+        }
+        for name, introduced in continuity["introduced_sources"].items():
+            assert set(introduced) == {"current_sha256", "meaning"}
+            assert introduced["current_sha256"] == document["source_closure"][name]
+            assert introduced["meaning"]
+            assert name not in continuity["unchanged_source_paths"]
+        unchanged = {
+            name: document["source_closure"][name]
+            for name in continuity["unchanged_source_paths"]
+        }
+        assert (
+            hashlib.sha256(
+                json.dumps(
+                    unchanged, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+            ).hexdigest()
+            == continuity["unchanged_source_inventory_sha256"]
+        )
+        assert continuity["binding_module_ast_sha256"] == binding["ast_sha256"]
+        for name, delta in continuity["changed_read_sources"].items():
+            assert delta["current_sha256"] == document["source_closure"][name]
+            assert delta["measured_sha256"] != delta["current_sha256"]
+        for name, source_digest in document["source_closure"].items():
+            source = MANIFEST.parents[2] / name
+            if name in binding["ast_sha256"]:
+                tree = ast.parse(source.read_bytes())
+                tree.body = [
+                    node
+                    for node in tree.body
+                    if not (
+                        isinstance(node, (ast.Assign, ast.AnnAssign))
+                        and any(
+                            isinstance(target, ast.Name) and target.id in exclusions
+                            for target in (
+                                node.targets
+                                if isinstance(node, ast.Assign)
+                                else [node.target]
+                            )
+                        )
+                    )
+                ]
+                assert (
+                    hashlib.sha256(
+                        ast.dump(tree, include_attributes=False).encode()
+                    ).hexdigest()
+                    == binding["ast_sha256"][name]
+                )
+            else:
+                assert hashlib.sha256(source.read_bytes()).hexdigest() == source_digest
+        prior_path = MANIFEST.parents[2] / document["prior_manifest_path"]
+        assert (
+            hashlib.sha256(prior_path.read_bytes()).hexdigest()
+            == document["prior_manifest_sha256"]
+        )
+    audio = json.loads(CURRENT_AUDIOBOOK_SUCCESSOR.read_bytes())
+    assert set(audio["passing_automatic_options"]) == F46_PASSING_AUTOMATIC_OPTIONS
+    assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 73
+    assert set(predecessor["passing_automatic_options"]) < F46_PASSING_AUTOMATIC_OPTIONS
+    assert (
+        set(audio["passing_paired_options"])
+        == F46_PASSING_PAIRED_OPTIONS
+        == {F46_TITLE_SUBTITLE_PAIR_IDENTITY}
+    )
+    assert audio["current_measurement"]["inherited"]["verified_effects"] == 1126
+    assert audio["current_measurement"]["inherited"]["no_change"] == 158
+    assert audio["current_measurement"]["accepted_series_deltas"] == 24
+    assert audio["current_measurement"]["new_holdout_families"] == 0
+    assert audio["current_measurement"]["production_writes"] == 0
+    rich = json.loads(CURRENT_RICH_SUCCESSOR.read_bytes())
+    assert (
+        hashlib.sha256(
+            (
+                MANIFEST.parents[2]
+                / "src/mechanical_librarian/domain/automatic_decision.py"
+            ).read_bytes()
+        ).hexdigest()
+        == rich["automatic_decision_after_f19_sha256"]
+    )
+    for path in (CURRENT_TITLE_SUCCESSOR, CURRENT_RICH_SUCCESSOR):
+        current = json.loads(path.read_bytes())
+        assert (
+            current["audiobook_activation"]["manifest_sha256"]
+            == F46_QUALIFICATION_MANIFEST_SHA256
+        )
+        assert current["audiobook_activation"]["passing_options"] == sorted(
+            F46_PASSING_AUTOMATIC_OPTIONS
+        )
+
+
+@pytest.mark.parametrize(
+    "family,digests",
+    [
+        (
+            "title",
+            (
+                DEPENDENCY_TITLE_DIGEST,
+                "7fbe2ea38f06b0ad0bd3a6941ec1bc7dc08079bdf1a38202898201a3720f9f00",
+            ),
+        ),
+        (
+            "rich",
+            (
+                DEPENDENCY_RICH_DIGEST,
+                "8135de356454590a708bbf57af25c488f87933b5c8315a78688f000e29d643ad",
+            ),
+        ),
+        (
+            "audio",
+            (
+                DEPENDENCY_AUDIOBOOK_DIGEST,
+                "3bc740723d81d15cac137aa92e3731c4cf5da848a03ff88016e36db9553acd63",
+            ),
+        ),
+    ],
+)
+def test_dependency_and_responsiveness_origins_remain_historical_only(family, digests):
+    from mechanical_librarian.domain.automatic_decision import (
+        _PRIOR_F19A_QUALIFICATION_MANIFESTS,
+        _PRIOR_F20_QUALIFICATION_MANIFESTS,
+    )
+
+    history, options, current = {
+        "title": (
+            _PRIOR_F19A_QUALIFICATION_MANIFESTS,
+            F19A_QUALIFIED_POLICY_OPTIONS,
+            F19A_QUALIFICATION_MANIFEST_SHA256,
+        ),
+        "rich": (
+            _PRIOR_F20_QUALIFICATION_MANIFESTS,
+            F20_PASSING_AUTOMATIC_OPTIONS,
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+        ),
+        "audio": (
+            _PRIOR_F46_QUALIFICATION_MANIFESTS,
+            F46_PASSING_AUTOMATIC_OPTIONS,
+            F46_QUALIFICATION_MANIFEST_SHA256,
+        ),
+    }[family]
+    for digest in digests:
+        assert digest != current
+        assert dict(history)[digest] == options

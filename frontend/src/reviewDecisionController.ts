@@ -1,10 +1,17 @@
+import { invalidateBackgroundQueries } from './queryWork'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { AmbiguousMutationError, ApiError } from './api/http'
 import type { CaseDetailView, DecisionCommand } from './api/http'
 import { labelWords } from './labels'
-import { beginDecisionEcho, endDecisionEcho, settleDecisionEcho } from './decisionEcho'
+import {
+  beginDecisionEcho,
+  confirmDecisionCase,
+  endDecisionEcho,
+  settleDecisionEcho,
+  submitDecisionCase,
+} from './decisionEcho'
 import { detailQuery, useReviewContext } from './router'
 
 export const actionable = (field: CaseDetailView['fields'][number]) =>
@@ -137,7 +144,9 @@ export const useReviewDecisionController = ({
   // here; Library counts and the case's own history converge behind it.
   const refreshCase = async () => {
     try {
-      return await queryClient.query({ ...detailQuery(http, reviewCaseId), staleTime: 0 })
+      return await confirmDecisionCase(queryClient, reviewCaseId, () =>
+        queryClient.query({ ...detailQuery(http, reviewCaseId), staleTime: 0 }),
+      )
     } catch {
       return undefined
     }
@@ -146,15 +155,15 @@ export const useReviewDecisionController = ({
   // aggregates must then immediately agree with that authoritative case,
   // rather than retaining an outdated badge until the owner leaves the page.
   const converge = () => {
-    void queryClient.invalidateQueries({
+    void invalidateBackgroundQueries(queryClient, {
       queryKey: ['review-case', reviewCaseId, 'history'],
       exact: true,
     })
   }
   const refreshAggregates = () =>
     Promise.all([
-      queryClient.invalidateQueries({ queryKey: ['library'] }),
-      queryClient.invalidateQueries({ queryKey: ['attention'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['library'] }),
+      invalidateBackgroundQueries(queryClient, { queryKey: ['attention'] }),
     ])
   const refreshAggregatesInBackground = () => {
     void refreshAggregates().catch(() => undefined)
@@ -205,9 +214,12 @@ export const useReviewDecisionController = ({
     if (decided.current.caseId === reviewCaseId) decided.current.destinations.delete(destination)
   }
   const decision = useMutation({
-    mutationFn: (command: DecisionCommand) => http.recordDecision(reviewCaseId, command),
+    mutationFn: (command: DecisionCommand) =>
+      submitDecisionCase(queryClient, reviewCaseId, () =>
+        http.recordDecision(reviewCaseId, command),
+      ),
     retry: false,
-    onSuccess: async (acknowledgement, command) => {
+    onSuccess: async ({ acknowledgement, confirmed: refreshed }, command) => {
       // What this decision caused, straight from its own response, before
       // anything waits. The echo is published before this response is written,
       // so it may already have arrived and be waiting on exactly this token
@@ -215,7 +227,6 @@ export const useReviewDecisionController = ({
       endDecisionEcho(queryClient, reviewCaseId, acknowledgement.invalidation_sequences)
       converge()
       await onRecorded?.(reviewCaseId, command.destination)
-      const refreshed = await refreshCase()
       if (!refreshed) {
         halt()
         forget(command)
@@ -230,6 +241,12 @@ export const useReviewDecisionController = ({
         return
       }
       release(command.destination)
+      if (!refreshed.current) {
+        forget(command)
+        announce(reviewCaseId, command.destination, '')
+        if (isMounted()) await onStale()
+        return
+      }
       if (!isMounted()) {
         queryClient.setQueryData(decisionStatusKey(reviewCaseId), {
           destination: command.destination,

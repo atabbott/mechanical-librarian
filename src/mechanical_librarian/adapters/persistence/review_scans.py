@@ -29,7 +29,10 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_presentation,
     refresh_preparation_run_state,
 )
-from mechanical_librarian.adapters.persistence.transactions import ConnectionScoped
+from mechanical_librarian.adapters.persistence.transactions import (
+    ConnectionScoped,
+    local_operation,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     PipelineAction,
@@ -101,6 +104,7 @@ def _stages(row: tuple[object, ...], offset: int) -> tuple[tuple[str, int], ...]
 class SQLiteReviewScanRepository(ConnectionScoped):
     """Admit, pause, recover and gate the scans review preparation may run."""
 
+    @local_operation
     def request_review_scan(
         self,
         connection: str,
@@ -126,6 +130,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             raise MetadataReportError("review preparation state is invalid")
         return progress
 
+    @local_operation
     def request_library_addition(
         self,
         connection: str,
@@ -145,6 +150,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             defer_when_paused=True,
         )
 
+    @local_operation
     def deferred_library_additions(self) -> tuple[tuple[str, str], ...]:
         try:
             return tuple(
@@ -381,6 +387,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             _EMPTY_STAGES,
         )
 
+    @local_operation
     def review_pipeline_progress(
         self, connection: str, library: str
     ) -> PipelineProgress | None:
@@ -422,6 +429,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "review preparation persistence failed"
             ) from error
 
+    @local_operation
     def review_pipeline_status(
         self, libraries: tuple[tuple[str, str], ...]
     ) -> tuple[tuple[PipelineProgress | None, ...], bool]:
@@ -500,6 +508,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "review preparation persistence failed"
             ) from error
 
+    @local_operation
     def review_pipeline_paused(self) -> bool:
         try:
             row = self._connection.execute(
@@ -513,6 +522,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "review preparation persistence failed"
             ) from error
 
+    @local_operation
     def set_review_pipeline_paused(self, paused: bool, updated_at: int) -> None:
         if type(paused) is not bool or type(updated_at) is not int or updated_at < 0:
             raise MetadataReportError("review preparation control is invalid")
@@ -534,6 +544,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         if failure is not None:
             raise failure from None
 
+    @local_operation
     def resume_review_pipeline(
         self,
         libraries: tuple[tuple[str, str, str, str], ...],
@@ -556,6 +567,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         if failure is not None:
             raise failure from None
 
+    @local_operation
     def drain_library_additions(
         self,
         libraries: tuple[tuple[str, str, str, str], ...],
@@ -687,6 +699,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             )
         refresh_preparation_run_state(self._connection, updated_at)
 
+    @local_operation
     def recover_review_pipeline(
         self, producers: tuple[tuple[str, str, str, str], ...]
     ) -> None:
@@ -790,6 +803,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
         if sqlite_failure:
             raise MetadataReportError("review preparation recovery failed") from None
 
+    @local_operation
     def target_connection_conditions(self) -> tuple[TargetConnectionCondition, ...]:
         try:
             rows = self._connection.execute(
@@ -803,6 +817,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "target connection condition is unavailable"
             ) from error
 
+    @local_operation
     def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool:
         """Return a claimed action to queue when its connection is held."""
         transaction = self._transaction("guard_target_connection")
@@ -846,6 +861,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 raise
         raise interruption from None
 
+    @local_operation
     def discovery_requires_qualification(self, action: PipelineAction) -> bool:
         if action.stage != "discovery":
             raise MetadataReportError("review preparation state changed")
@@ -863,6 +879,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "target connection condition is unavailable"
             ) from error
 
+    @local_operation
     def qualify_review_discovery(
         self, action: PipelineAction, qualified_at: int
     ) -> bool:
@@ -911,6 +928,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 raise
         raise interruption from None
 
+    @local_operation
     def defer_for_target_connection(
         self, action: PipelineAction, code: str, updated_at: int
     ) -> None:
@@ -968,6 +986,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 raise
         raise interruption from None
 
+    @local_operation
     def hold_target_connection(
         self, connection: str, code: str, updated_at: int
     ) -> None:
@@ -1034,6 +1053,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             (self._target_connection_affected(connection), connection),
         )
 
+    @local_operation
     def begin_target_connection_check(
         self, connection: str, checked_at: int
     ) -> TargetConnectionCondition | None:
@@ -1076,6 +1096,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 raise
         raise interruption from None
 
+    @local_operation
     def finish_target_connection_check(
         self, connection: str, epoch: int, code: str | None, checked_at: int
     ) -> bool:

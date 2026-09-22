@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import os
 import re
 import stat
+import threading
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Annotated, Literal, Self, TypeAlias, TypedDict, TypeVar, cast
 from urllib.parse import urlsplit
@@ -46,6 +48,7 @@ from pydantic import (
     TypeAdapter,
     model_validator,
 )
+from starlette.concurrency import run_in_threadpool
 from starlette.types import Message, Receive, Scope, Send
 
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
@@ -472,15 +475,6 @@ class _DescriptionRetryAcknowledgement(_ClosedModel):
     queued: Literal[True]
 
 
-class _DescriptionSelectionAcknowledgement(_ClosedModel):
-    schema_version: Literal["description-selection-ack-v1"] = (
-        "description-selection-ack-v1"
-    )
-    decision_id: str
-    advised: Literal[True]
-    invalidation_sequences: list[int]
-
-
 class _ReviewField(_ClosedModel):
     classification: Literal[
         "needs_attention",
@@ -576,6 +570,30 @@ class _CaseDetailResponse(_ClosedModel):
     schema_version: Literal["review-case-detail-v4"]
     target: _TargetIdentity
     writes_consented: bool
+
+
+class _ConfirmedDecision(_ClosedModel):
+    status: Literal["confirmed"]
+    case: _CaseDetailResponse
+
+
+class _UnavailableDecisionConfirmation(_ClosedModel):
+    status: Literal["unavailable"]
+
+
+_DecisionConfirmation: TypeAlias = Annotated[
+    _ConfirmedDecision | _UnavailableDecisionConfirmation, Field(discriminator="status")
+]
+
+
+class _DescriptionSelectionAcknowledgement(_ClosedModel):
+    schema_version: Literal["description-selection-ack-v1"] = (
+        "description-selection-ack-v1"
+    )
+    confirmation: _DecisionConfirmation
+    decision_id: str
+    advised: Literal[True]
+    invalidation_sequences: list[int]
 
 
 class _CaseSuccessorResponse(_ClosedModel):
@@ -1201,6 +1219,7 @@ class _DecisionRequest(_ClosedModel):
 
 
 class _DecisionAcknowledgement(_DecisionProjection):
+    confirmation: _DecisionConfirmation
     # The stream positions this decision's own announcements were given, so the
     # tab that recorded it can recognise its echo. Three: the case, its Library
     # row, and the write queue. Bounded because it is a fixed set of
@@ -1914,7 +1933,16 @@ def create_review_app(
                 and request.headers.get("origin") != configuration.canonical_origin
             ):
                 return _secured_error(403, "origin", hsts=origin.scheme == "https")
-        response = await call_next(request)
+        # This hint changes scheduling only. Route authentication and CSRF still
+        # run before application admission; mutations always remain foreground.
+        with application.classify_request(
+            "background"
+            if request.method == "GET"
+            and request.scope["path"].startswith("/api/v1/")
+            and request.headers.get("x-ml-work-class") == "background"
+            else "foreground"
+        ):
+            response = await call_next(request)
         _set_security_headers(response, hsts=origin.scheme == "https")
         return response
 
@@ -3376,6 +3404,44 @@ def _register_case_and_effect_routes(
         return JSONResponse(app.openapi())
 
 
+class _BrowseDisconnected(Exception):
+    """The caller left before its queued collection read acquired ownership."""
+
+
+async def _browse_response(
+    request: Request, read: Callable[[Callable[[], None]], _Result]
+) -> _Result | Response:
+    disconnected = threading.Event()
+
+    def check_active() -> None:
+        if disconnected.is_set():
+            raise _BrowseDisconnected
+
+    async def watch_disconnect() -> None:
+        while True:
+            message = await request.receive()
+            if message["type"] == "http.disconnect":
+                disconnected.set()
+                return
+
+    watcher = asyncio.create_task(watch_disconnect())
+    worker = asyncio.create_task(run_in_threadpool(read, check_active))
+    try:
+        try:
+            # Cancellation never releases a connection still used by its worker.
+            return await asyncio.shield(worker)
+        except _BrowseDisconnected:
+            return Response(status_code=204)
+        except asyncio.CancelledError:
+            disconnected.set()
+            await asyncio.gather(worker, return_exceptions=True)
+            raise
+    finally:
+        watcher.cancel()
+        with suppress(asyncio.CancelledError):
+            await watcher
+
+
 def _register_browse_and_preparation_routes(
     app: FastAPI,
     application: ReviewApplication,
@@ -3391,24 +3457,29 @@ def _register_browse_and_preparation_routes(
             status: {"model": _ErrorResponse} for status in (400, 401, 422, 503)
         },
     )
-    def library(
+    async def library(
+        request: Request,
         lens: str = Query(default="needs_attention", max_length=32),
         q: str | None = Query(default=None, max_length=128),
         limit: int = Query(default=25, ge=1, le=50),
         cursor: str | None = Query(default=None, max_length=128),
         ml_session: str | None = Security(session_cookie),
-    ) -> _LibraryResponse:
-        _require_session(sessions, ml_session)
-        return _LibraryResponse.model_validate(
-            _query_call(
-                lambda: application.library(
-                    lens=lens,
-                    search=q,
-                    limit=limit,
-                    cursor=cursor,
-                )
-            ).to_data()
-        )
+    ) -> _LibraryResponse | Response:
+        def read(check_active: Callable[[], None]) -> _LibraryResponse:
+            _require_session(sessions, ml_session)
+            return _LibraryResponse.model_validate(
+                _query_call(
+                    lambda: application.library(
+                        lens=lens,
+                        search=q,
+                        limit=limit,
+                        cursor=cursor,
+                        check_active=check_active,
+                    )
+                ).to_data()
+            )
+
+        return await _browse_response(request, read)
 
     @app.get(
         "/api/v1/library/report",
@@ -3441,22 +3512,27 @@ def _register_browse_and_preparation_routes(
             status: {"model": _ErrorResponse} for status in (400, 401, 422, 503)
         },
     )
-    def attention(
+    async def attention(
+        request: Request,
         q: str | None = Query(default=None, max_length=128),
         limit: int = Query(default=25, ge=1, le=50),
         cursor: str | None = Query(default=None, max_length=128),
         ml_session: str | None = Security(session_cookie),
-    ) -> _AttentionResponse:
-        _require_session(sessions, ml_session)
-        return _AttentionResponse.model_validate(
-            _query_call(
-                lambda: application.attention(
-                    search=q,
-                    limit=limit,
-                    cursor=cursor,
-                )
-            ).to_data()
-        )
+    ) -> _AttentionResponse | Response:
+        def read(check_active: Callable[[], None]) -> _AttentionResponse:
+            _require_session(sessions, ml_session)
+            return _AttentionResponse.model_validate(
+                _query_call(
+                    lambda: application.attention(
+                        search=q,
+                        limit=limit,
+                        cursor=cursor,
+                        check_active=check_active,
+                    )
+                ).to_data()
+            )
+
+        return await _browse_response(request, read)
 
     @app.get(
         "/api/v1/review-preparation",

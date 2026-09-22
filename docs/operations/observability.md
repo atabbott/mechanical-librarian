@@ -63,3 +63,16 @@ When a browse read maps a SQLite storage or resource failure to the owner's
 value-free `unavailable` response, this existing export retains only the bounded
 exception class. It does not retain the database error text, query, row, path,
 or a telemetry record.
+
+Library and Attention can also report unavailable when live cover policy or
+provider-recovery identities change during an otherwise consistent collection
+read. Retry uses a fresh observation. Pending or unavailable totals are not
+zero, and this state does not authorize a decision or target effect. Collection
+reads have their own persistent connection; a completed SQL snapshot is released
+before visible work is projected. The bounded projection still owns local
+admission, so a waiting owner interaction enters at the next safe boundary.
+Preparation and external reviewer/target work cannot retain that admission across
+network calls. Timing investigations distinguish admission wait, SQLite transaction
+wait, local computation and rendered confirmation; a health response is not owner
+interaction evidence. [ADR-0077](../architecture/decisions/0077-owned-responsive-review-reads.md)
+states the ownership and clean-rebuild boundary.

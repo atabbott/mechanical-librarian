@@ -135,6 +135,16 @@ throughput, terminal successful-transition totals, fairness positions, restart
 facts, and RSS; it never records routes, identifiers, paths, SQL, credentials,
 or request values.
 
+The owner-responsiveness fixture additionally exercises 2,300 works across five
+libraries with complete producer-validated covers, long provider evidence,
+owner-final and evidence-only cases, and failed preparation. HTTP and rendered
+owner journeys retain every sample, p50/p95/max and every budget miss. Five cold
+runtime/repository starts use fresh browser contexts; thirty warm samples reuse
+one runtime while real preparation actors advance. OS caches are uncontrolled.
+The focused integration fixture proves setup, ownership and teardown before
+this scale proof. These checks do not rescore historical qualification quality;
+exact-installed evidence and direct rendered inspection remain separate (#1072).
+
 The same source job runs the frontend on the exact pinned Node and npm
 toolchain; [what merging proves](../../CONTRIBUTING.md#what-merging-proves)
 lists those commands against the workflow that runs them.
@@ -193,6 +203,18 @@ Current `open_repository` uses `LOCK_EX | LOCK_NB` and promptly refuses a second
 same-parent repository. Use separate directories or close the first repository
 before opening another. The watchdog regression deliberately takes a real
 blocking lock; it does not reproduce a current production locking defect.
+
+Exact-artifact `--test-tier slow` runs the complete slow inventory as two
+sequential commands in the same freshly built wheel environment: the remaining
+slow files, then `test_owner_browser_responsiveness.py`. Each command retains
+the 825-second deadline. Before execution, both subsets must be nonempty,
+disjoint, and together equal the full current slow test IDs; omission or overlap
+refuses qualification. `--test-tier complete` first runs `required-installed`
+in that same environment, then both slow commands. Completion evidence is issued
+only after every command succeeds; a constituent failure or timeout stops the
+sequence with its own reason. The five-cold/30-warm owner envelope and all other
+slow tests remain unchanged. The routine public exact-installed gate continues
+to select `--test-tier required`; protected-browser scheduling is unchanged.
 
 ## What the gate proves
 

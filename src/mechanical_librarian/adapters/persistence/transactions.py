@@ -19,7 +19,10 @@ import sqlite3
 import sys
 from _thread import RLock
 from collections.abc import Callable
-from typing import TYPE_CHECKING, Protocol, TypeVar, cast
+from functools import wraps
+from typing import TYPE_CHECKING, Concatenate, ParamSpec, Protocol, TypeVar, cast
+
+from mechanical_librarian.application.operation_admission import OperationAdmission
 
 if TYPE_CHECKING:
     from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -184,11 +187,62 @@ def _unwind_savepoint(
     return False, failure
 
 
+class LocalOperationLease:
+    """Retain one admission and physical-owner increment across raw transactions."""
+
+    def __init__(
+        self, admission: OperationAdmission | None, lock: _SerializationLock | None
+    ) -> None:
+        self._admission = admission
+        self._lock = lock
+        self._depth = 0
+        self._held = False
+
+    def acquire(self) -> None:
+        if self._admission is not None:
+            self._admission.acquire()
+        depth_known = self._lock is None
+        try:
+            if self._lock is not None:
+                self._depth = self._lock.depth()
+                depth_known = True
+                _acquire_lock_increment(self._lock)
+        except BaseException:
+            balanced = self._lock is None
+            if self._lock is not None and depth_known:
+                try:
+                    balanced = self._lock.depth() == self._depth
+                except BaseException:
+                    pass
+            if balanced and self._admission is not None:
+                self._admission.release()
+            raise
+        self._held = True
+
+    def release(self) -> None:
+        if not self._held:
+            return
+        failure = None
+        if self._lock is not None:
+            balanced, failure = _release_lock_increment(self._lock, self._depth)
+            if not balanced:
+                if failure is not None:
+                    raise failure from None
+                raise RuntimeError("transaction serialization release failed")
+        self._held = False
+        if self._admission is not None:
+            self._admission.release()
+        if failure is not None:
+            raise failure from None
+
+
 class TransactionScope:
     """Own one transaction or savepoint over a shared connection."""
 
     __slots__ = (
         "_connection",
+        "_admission",
+        "_admitted",
         "_savepoint",
         "_deferred",
         "_lock",
@@ -206,7 +260,10 @@ class TransactionScope:
         deferred: bool = False,
         savepoint_only: bool = False,
         serialization_lock: RLock | _SerializationLock | None = None,
+        admission: OperationAdmission | None = None,
     ) -> None:
+        self._admission = admission
+        self._admitted = False
         self._connection = connection
         self._savepoint = f"{savepoint}_{id(self):x}"
         self._deferred = deferred
@@ -234,12 +291,17 @@ class TransactionScope:
     def begin(self) -> None:
         """Start this scope, using a savepoint when nested or explicitly required."""
         lock_depth = 0
-        if self._lock is not None:
-            lock_depth = _acquire_lock_increment(self._lock)
-            self._lock_depth = lock_depth
+        lock_acquired = False
         boundary_issued = False
         failure: BaseException | None = None
         try:
+            if self._admission is not None:
+                self._admission.acquire()
+                self._admitted = True
+            if self._lock is not None:
+                lock_depth = _acquire_lock_increment(self._lock)
+                self._lock_depth = lock_depth
+                lock_acquired = True
             self._nested = self._savepoint_only or self._connection.in_transaction
             boundary_issued = True
             if self._nested:
@@ -266,8 +328,13 @@ class TransactionScope:
             authority_releasable = cleanup_proven or _revoke_connection(
                 self._connection
             )
-            if self._lock is not None and authority_releasable:
-                _release_lock_increment(self._lock, lock_depth)
+            if self._lock is not None and lock_acquired and authority_releasable:
+                balanced, _release_error = _release_lock_increment(
+                    self._lock, lock_depth
+                )
+                authority_releasable = balanced
+            if authority_releasable:
+                self._release_admission()
         if failure is not None:
             raise failure from None
         self._started = True
@@ -297,6 +364,7 @@ class TransactionScope:
                 raise release_error from None
             raise RuntimeError("transaction serialization release failed") from None
         self._started = False
+        self._release_admission()
         if release_error is not None and not isinstance(release_error, Exception):
             raise release_error from None
 
@@ -325,6 +393,7 @@ class TransactionScope:
                     authority_releasable = False
             if authority_releasable:
                 self._started = False
+                self._release_admission()
         if original is not None:
             return
         if cleanup_error is not None and not isinstance(cleanup_error, Exception):
@@ -335,6 +404,12 @@ class TransactionScope:
             raise cleanup_error from None
         if not authority_releasable:
             raise RuntimeError("transaction serialization release failed") from None
+
+    def _release_admission(self) -> None:
+        if self._admitted:
+            assert self._admission is not None
+            self._admitted = False
+            self._admission.release()
 
 
 class ConnectionScoped:
@@ -351,7 +426,9 @@ class ConnectionScoped:
         connection: sqlite3.Connection,
         binding: _LinuxDatabaseBinding | None = None,
         serialization_lock: RLock | _SerializationLock | None = None,
+        admission: OperationAdmission | None = None,
     ) -> None:
+        self._admission = admission
         self._connection = connection
         self._binding = binding
         self._serialization_lock = (
@@ -360,6 +437,15 @@ class ConnectionScoped:
             or isinstance(serialization_lock, _SerializationLock)
             else _SerializationLock(serialization_lock)
         )
+
+    def bind_operation_admission(
+        self, admission: OperationAdmission | None, serialization_lock: RLock
+    ) -> None:
+        """Bind the runtime coordinator and this physical connection's owner lock."""
+        if self._connection.in_transaction:
+            raise RuntimeError("cannot bind an active database transaction")
+        self._admission = admission
+        self._serialization_lock = _SerializationLock(serialization_lock)
 
     def _transaction(
         self, savepoint: str, *, deferred: bool = False
@@ -370,24 +456,41 @@ class ConnectionScoped:
             savepoint,
             deferred=deferred,
             serialization_lock=self._serialization_lock,
+            admission=self._admission,
         )
 
+    def _operation_lease(self) -> LocalOperationLease:
+        return LocalOperationLease(self._admission, self._serialization_lock)
+
     def _serialized(self, operation: Callable[[], _T]) -> _T:
-        """Run one non-transactional operation under the shared depth authority."""
-        lock = self._serialization_lock
-        if lock is None:
-            return operation()
-        prior_depth = _acquire_lock_increment(lock)
+        """Run one local operation with admission preceding physical ownership."""
+        lease = self._operation_lease()
+        lease.acquire()
         try:
             result = operation()
-        except BaseException as error:
-            _release_lock_increment(lock, prior_depth)
-            raise error from None
-        balanced, release_error = _release_lock_increment(lock, prior_depth)
-        if not balanced:
-            if release_error is not None:
-                raise release_error from None
-            raise RuntimeError("transaction serialization release failed") from None
-        if release_error is not None:
-            raise release_error from None
+        except BaseException:
+            try:
+                lease.release()
+            except BaseException:
+                pass
+            raise
+        lease.release()
         return result
+
+
+_Owner = TypeVar("_Owner", bound=ConnectionScoped)
+_Parameters = ParamSpec("_Parameters")
+
+
+def local_operation(
+    operation: Callable[Concatenate[_Owner, _Parameters], _T],
+) -> Callable[Concatenate[_Owner, _Parameters], _T]:
+    """Declare a local-only operation whose admission precedes its connection lock."""
+
+    @wraps(operation)
+    def admitted(
+        owner: _Owner, /, *args: _Parameters.args, **kwargs: _Parameters.kwargs
+    ) -> _T:
+        return owner._serialized(lambda: operation(owner, *args, **kwargs))
+
+    return admitted

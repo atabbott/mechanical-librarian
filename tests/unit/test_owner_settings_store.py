@@ -1340,3 +1340,138 @@ def test_file_authority_is_fully_locked_without_store_state() -> None:
     assert all(item.managed_by_file for item in repository.read().fields)
     with pytest.raises(OwnerSettingsError, match="locked"):
         repository.write(_document(2), 1, ())
+
+
+@pytest.mark.parametrize("fail_commit", [False, True])
+def test_policy_publication_stays_old_until_admitted_settings_commit_finishes(
+    tmp_path: Path,
+    fail_commit: bool,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+
+    entered = threading.Event()
+    release = threading.Event()
+
+    class HeldCommit(sqlite3.Connection):
+        armed = False
+
+        def commit(self) -> None:
+            if self.armed:
+                entered.set()
+                assert release.wait(5)
+                if fail_commit:
+                    raise sqlite3.OperationalError("synthetic commit fault")
+            super().commit()
+
+    path = tmp_path / "settings.sqlite"
+    connection = sqlite3.connect(path, check_same_thread=False, factory=HeldCommit)
+    store = _store(connection)
+    admission = OperationAdmission()
+    store.bind_operation_admission(admission, RLock())
+    previous, changed = CoverPolicy(), CoverPolicy(True, True, True)
+    bound: list[tuple[str, str]] = []
+
+    def identity():
+        assert not admission.held
+        return None
+
+    service = CoverConsiderationService(
+        cast("CoverConsiderationStore", object()),
+        read_preview=lambda *_: b"",
+        read_preview_digest=lambda _: b"",
+        clock=lambda: 0,
+        policy=previous,
+        reviewer_identity=identity,
+        bind_policy=lambda *value: bound.append(value),
+    )
+    service.update_policy(previous)
+    before = service.current_authority()
+    context = service.policy_update(changed)
+    assert service.current_authority() == before
+    connection.armed = True
+    try:
+        with ThreadPoolExecutor(2) as pool:
+            pending = pool.submit(store.write, _cover_document(2), 1, (), context)
+            try:
+                assert entered.wait(5)
+                assert service.current_authority() == before
+                with sqlite3.connect(path) as observer:
+                    assert observer.execute(
+                        "SELECT revision FROM owner_settings"
+                    ).fetchone() == (1,)
+                queued = pool.submit(store.read)
+                with admission._condition:
+                    assert admission._condition.wait_for(
+                        lambda: len(admission._waiting) == 1, timeout=5
+                    )
+                assert not queued.done()
+            finally:
+                release.set()
+            if fail_commit:
+                with pytest.raises(OwnerSettingsError, match="unavailable"):
+                    pending.result(5)
+            else:
+                assert pending.result(5).document.revision == 2
+            assert queued.result(5).document.revision == (1 if fail_commit else 2)
+        assert service._policy is (previous if fail_commit else changed)
+        assert service.current_authority() == bound[-1]
+        assert not admission.held
+    finally:
+        release.set()
+        connection.close()
+
+
+def test_stale_prepared_policy_context_cannot_restore_a_later_publication() -> None:
+    from mechanical_librarian.application.cover_consideration import (
+        CoverConsiderationError,
+    )
+
+    service = CoverConsiderationService(
+        cast("CoverConsiderationStore", object()),
+        read_preview=lambda *_: b"",
+        read_preview_digest=lambda _: b"",
+        clock=lambda: 0,
+    )
+    abandoned = service.policy_update(CoverPolicy(True, False, False))
+    later = CoverPolicy(False, True, False)
+    with service.policy_update(later):
+        pass
+    authority = service.current_authority()
+    with pytest.raises(CoverConsiderationError, match="stale"), abandoned:
+        pytest.fail("stale context entered")
+    assert service._policy is later
+    assert service.current_authority() == authority
+
+
+def test_cover_authority_pair_refuses_policy_change_during_external_identity_capture() -> (
+    None
+):
+    from mechanical_librarian.application.cover_consideration import (
+        CoverConsiderationError,
+    )
+
+    armed = False
+    previous, changed = CoverPolicy(), CoverPolicy(True, True, True)
+
+    def identity():
+        if armed:
+            service._policy = changed
+        return None
+
+    service = CoverConsiderationService(
+        cast("CoverConsiderationStore", object()),
+        read_preview=lambda *_: b"",
+        read_preview_digest=lambda _: b"",
+        clock=lambda: 0,
+        policy=previous,
+        reviewer_identity=identity,
+    )
+    before = service.current_authority()
+    armed = True
+    with pytest.raises(CoverConsiderationError, match="stale"):
+        service.current_authority()
+    armed = False
+    after = service.current_authority()
+    assert before[0] != after[0] and before[1] != after[1]

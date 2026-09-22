@@ -53,6 +53,7 @@ from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     ReviewWebConfiguration,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.operations import (
     StageTimer,
     support_preparation_incidents,
@@ -309,7 +310,7 @@ class _InstalledRepositoryTopology:
         instance = cls()
         instance._database = database
         instance.web_state_owner = open_repository(
-            database, create=True, cross_thread=True
+            database, create=True, cross_thread=True, admission=OperationAdmission()
         )
         return instance
 
@@ -318,6 +319,7 @@ class _InstalledRepositoryTopology:
             self._database,
             create=False,
             authority=self.web_state_owner.authority,
+            admission=self.web_state_owner.operation_admission,
             cross_thread=True,
         )
 
@@ -326,6 +328,7 @@ class _InstalledRepositoryTopology:
             self._database,
             create=False,
             authority=self.web_state_owner.authority,
+            admission=self.web_state_owner.operation_admission,
             cross_thread=True,
         )
         repository.configure_activity_page_reader()
@@ -333,7 +336,10 @@ class _InstalledRepositoryTopology:
 
     def open_action(self):
         return open_repository(
-            self._database, create=False, authority=self.web_state_owner.authority
+            self._database,
+            create=False,
+            authority=self.web_state_owner.authority,
+            admission=self.web_state_owner.operation_admission,
         )
 
 
@@ -547,6 +553,7 @@ def _start_deterministic_installed_server(
     threading.Thread,
     SQLiteProviderRecoveryStore,
     SQLiteReviewSessionRepository,
+    Callable[[], None],
 ]:
     """Run installed-wheel HTTP over the production persisted pipeline boundary.
 
@@ -658,6 +665,7 @@ def _start_deterministic_installed_server(
         return result["status"], result.get("review_case_id")
 
     pipeline = ReviewPreparationPipeline(
+        admission=web_state_owner.operation_admission,
         repository_factory=workers,
         observation_repository_factory=foreground_observation,
         libraries=tuple(
@@ -699,17 +707,23 @@ def _start_deterministic_installed_server(
     settings_projection = file_settings_projection(configuration, credentials)
     activity_repository = topology.open_activity_projection()
     reviewer_access = _compose_reviewer_access(web_state_owner, review)
+    cover_considerations = _compose_cover_considerations(
+        web_state_owner, artifacts, review, reviewer_access, recovery
+    )
     try:
         activity_projection = compose_field_effect_activity_projection(
             configuration, activity_repository, recovery
         )
         owner_binding = load_owner_password_binding(owner_hash)
         application = compose_review_application(
+            admission=web_state_owner.operation_admission,
+            operation_lock=web_state_owner.operation_lock,
             state_owner=web_state_owner,
             session_store=session_store,
             case_store=web_state_owner,
             decision_store=web_state_owner,
             library_store=web_state_owner,
+            browse_observation=web_state_owner,
             policy_store=web_state_owner,
             verify_password=owner_binding[0],
             session_digest=owner_binding[1],
@@ -739,9 +753,7 @@ def _start_deterministic_installed_server(
             ),
             activity_projection=activity_projection,
             close_activity_projection=activity_repository.close,
-            cover_considerations=_compose_cover_considerations(
-                web_state_owner, artifacts, review, reviewer_access
-            ),
+            cover_considerations=cover_considerations,
             reviewer_access=reviewer_access,
             settings=OwnerSettingsOperations(
                 FileOwnerSettingsRepository(
@@ -770,7 +782,7 @@ def _start_deterministic_installed_server(
     while not server.started and thread.is_alive() and time.monotonic() < deadline:
         time.sleep(0.01)
     assert server.started is True
-    return server, thread, recovery, session_store
+    return server, thread, recovery, session_store, application.stop
 
 
 class _InstalledPhaseObserver(Protocol):
@@ -860,26 +872,31 @@ class _InstalledPreparationRun:
         self._server_thread: threading.Thread | None = None
         self._recovery: SQLiteProviderRecoveryStore | None = None
         self._session_store: SQLiteReviewSessionRepository | None = None
+        self._close_application: Callable[[], None] | None = None
 
     def __enter__(self) -> _InstalledPreparationRun:
         self._fixture.hold_discovery()
-        self._server, self._server_thread, self._recovery, self._session_store = (
-            _start_deterministic_installed_server(
-                database=self._database,
-                configuration=self._configuration,
-                artifacts=self._artifacts,
-                fixture=self._fixture,
-                entries=self._entries,
-                producers=self._producers,
-                owner_hash=self._owner_hash,
-                certificate=self._certificate,
-                private_key=self._private_key,
-                reservation=self._reservation,
-                origin=self._origin,
-                admit_case=self._capture_fixture_case,
-                after_advance=self._hold_fixture_case_after_advance,
-                report_factory=self._report_factory,
-            )
+        (
+            self._server,
+            self._server_thread,
+            self._recovery,
+            self._session_store,
+            self._close_application,
+        ) = _start_deterministic_installed_server(
+            database=self._database,
+            configuration=self._configuration,
+            artifacts=self._artifacts,
+            fixture=self._fixture,
+            entries=self._entries,
+            producers=self._producers,
+            owner_hash=self._owner_hash,
+            certificate=self._certificate,
+            private_key=self._private_key,
+            reservation=self._reservation,
+            origin=self._origin,
+            admit_case=self._capture_fixture_case,
+            after_advance=self._hold_fixture_case_after_advance,
+            report_factory=self._report_factory,
         )
         with _review_client() as client:
             login = client.post(
@@ -1490,6 +1507,8 @@ class _InstalledPreparationRun:
                 self._server.force_exit = True
                 self._server_thread.join(timeout=10)
             assert self._server_thread.is_alive() is False
+        if self._close_application is not None:
+            self._close_application()
         if self._recovery is not None:
             self._recovery.close()
         if self._session_store is not None:

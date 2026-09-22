@@ -3171,6 +3171,25 @@
         "title": "_CodexDeviceStartResponse",
         "type": "object"
       },
+      "_ConfirmedDecision": {
+        "additionalProperties": false,
+        "properties": {
+          "case": {
+            "$ref": "#/components/schemas/_CaseDetailResponse"
+          },
+          "status": {
+            "const": "confirmed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "case"
+        ],
+        "title": "_ConfirmedDecision",
+        "type": "object"
+      },
       "_CoverAutomaticDecisionProjection": {
         "additionalProperties": false,
         "properties": {
@@ -4016,6 +4035,24 @@
             ],
             "title": "Application Reason"
           },
+          "confirmation": {
+            "discriminator": {
+              "mapping": {
+                "confirmed": "#/components/schemas/_ConfirmedDecision",
+                "unavailable": "#/components/schemas/_UnavailableDecisionConfirmation"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/_ConfirmedDecision"
+              },
+              {
+                "$ref": "#/components/schemas/_UnavailableDecisionConfirmation"
+              }
+            ],
+            "title": "Confirmation"
+          },
           "decision_id": {
             "title": "Decision Id",
             "type": "string"
@@ -4078,6 +4115,7 @@
           "review_case_id",
           "selected_value",
           "target_fingerprint",
+          "confirmation",
           "invalidation_sequences",
           "schema_version"
         ],
@@ -4402,6 +4440,24 @@
             "title": "Advised",
             "type": "boolean"
           },
+          "confirmation": {
+            "discriminator": {
+              "mapping": {
+                "confirmed": "#/components/schemas/_ConfirmedDecision",
+                "unavailable": "#/components/schemas/_UnavailableDecisionConfirmation"
+              },
+              "propertyName": "status"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/_ConfirmedDecision"
+              },
+              {
+                "$ref": "#/components/schemas/_UnavailableDecisionConfirmation"
+              }
+            ],
+            "title": "Confirmation"
+          },
           "decision_id": {
             "title": "Decision Id",
             "type": "string"
@@ -4421,6 +4477,7 @@
           }
         },
         "required": [
+          "confirmation",
           "decision_id",
           "advised",
           "invalidation_sequences"
@@ -8490,6 +8547,21 @@
           "title"
         ],
         "title": "_TargetIdentity",
+        "type": "object"
+      },
+      "_UnavailableDecisionConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "unavailable",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "_UnavailableDecisionConfirmation",
         "type": "object"
       }
     },

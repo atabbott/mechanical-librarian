@@ -140,6 +140,13 @@ parser. A clean rebuild may be required and old state may be retained offline.
 Exact-ID and current-scope replay apply only within the exact current schema;
 current-schema restart, replay, and crash safety remain mandatory.
 
+The #1072 browse-read increment requires a **clean rebuild** of the application
+database. `cover_considerations.currentness_document` is a required immutable
+derivation of the complete canonical consideration. Root-open admission
+recomputes it and rejects disagreement; the exact predecessor without this
+column is refused without mutation. There is no adoption or migration command.
+The dedicated session database and public API shapes are unchanged.
+
 The F45 audiobook-decision increment declares a clean rebuild. It admits only
 `proposal-set-v6`, `human-decision-v2`, and a `review_preparation_work` table
 whose completion is recorded in an `outcome` column: a prepared item completes

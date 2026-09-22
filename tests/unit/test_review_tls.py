@@ -25,6 +25,7 @@ from mechanical_librarian.application.configuration import (
     ConfigurationError,
     ReviewWebConfiguration,
 )
+from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.bootstrap.composition import run_review_server
 from mechanical_librarian.infrastructure.security.review_protocol import (
     MAX_REVIEW_CONNECTIONS,
@@ -392,6 +393,13 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
             assert tls12
             assert all("GCM" in name or "CHACHA20" in name for name in tls12)
 
+        def open_review_repository(*args: object, **kwargs: object) -> Mock:
+            assert identity.call_count == (1 if mode == "direct" else 0)
+            admission = kwargs["admission"]
+            assert isinstance(admission, OperationAdmission)
+            repository.operation_admission = admission
+            return repository
+
         with (
             patch(
                 "mechanical_librarian.bootstrap.composition.open_review_tls_identity",
@@ -405,7 +413,7 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
             ),
             patch(
                 "mechanical_librarian.bootstrap.composition.open_repository",
-                return_value=repository,
+                side_effect=open_review_repository,
             ) as opened,
             patch(
                 "mechanical_librarian.bootstrap.composition.create_review_app",
@@ -418,7 +426,7 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
             patch(
                 "mechanical_librarian.bootstrap.composition.compose_review_application",
                 return_value=review_application,
-            ),
+            ) as composed,
             patch(
                 "mechanical_librarian.bootstrap.composition.load_owner_password_binding",
                 return_value=(lambda _: False, lambda _: "d" * 64),
@@ -426,7 +434,7 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
             patch(
                 "mechanical_librarian.bootstrap.composition.create_review_pipeline",
                 return_value=Mock(),
-            ),
+            ) as pipeline,
             patch(
                 "mechanical_librarian.bootstrap.composition.uvicorn.run",
                 side_effect=qualified_run,
@@ -449,7 +457,14 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
                 8443,
             )
         assert identity.call_count == (1 if mode == "direct" else 0)
-        opened.assert_called_once_with(database, create=True, cross_thread=True)
+        opened.assert_called_once_with(
+            database,
+            create=True,
+            cross_thread=True,
+            admission=repository.operation_admission,
+        )
+        assert pipeline.call_args.kwargs["admission"] is repository.operation_admission
+        assert composed.call_args.kwargs["admission"] is repository.operation_admission
         assert catalogue.is_file()
         assert artifacts.is_dir()
         review_application.start_dormant.assert_called_once_with()
