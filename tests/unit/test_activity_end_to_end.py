@@ -927,5 +927,60 @@ def test_a_write_the_library_refused_never_claims_a_before_and_after(
         "Prepared value": "Paper Moons over Larkspur Station",
         "Why it stopped": "Audiobookshelf did not offer this field",
         "Chosen by": "Library owner",
-        "Confirmed in Audiobookshelf": "No write was applied",
+        "Confirmed in Audiobookshelf": "The selected change was not confirmed",
     }
+
+
+@pytest.mark.parametrize("failure", ("readback", "target_failure"))
+def test_unconfirmed_write_projects_checking_without_claiming_no_write(
+    effects: _EffectEnvironment,  # noqa: F811
+    failure: str,
+) -> None:
+    planned = _plan(
+        effects,
+        destination="description",
+        pre="First\nparagraph.",
+        desired="Replacement description.",
+    )
+    if failure == "readback":
+        effects.target.after_apply = lambda plan: effects.target.drift(
+            plan, "Unexpected description."
+        )
+    else:
+        effects.target.fail_read_after_apply_for.add(planned.plan.plan_id)
+    result = effects.service.apply(planned.plan.plan_id)
+    assert (result.state, result.failure) == ("reconciling", failure)
+    event = next(event for event in _ledger(effects) if event["state"] == "reconciling")
+    assert event["change"] == "Change not confirmed yet"
+    facts = _facts(event)
+    assert facts["Confirmed in Audiobookshelf"] == "Not confirmed yet"
+    assert (
+        facts["What happens next"]
+        == "Mechanical Librarian checks the current value again"
+    )
+    assert "No write was applied" not in str(event)
+    assert "Why it stopped" not in facts
+
+
+def test_post_write_third_value_closes_without_claiming_no_write(
+    effects: _EffectEnvironment,  # noqa: F811
+) -> None:
+    planned = _plan(
+        effects,
+        destination="description",
+        pre="First\nparagraph.",
+        desired="Replacement description.",
+    )
+    effects.target.after_apply = lambda plan: effects.target.drift(
+        plan, "Unexpected description."
+    )
+    assert effects.service.apply(planned.plan.plan_id).state == "reconciling"
+    result = effects.service.reconcile(planned.plan.plan_id)
+    assert (result.state, result.failure) == ("stale", "third_value")
+    event = next(event for event in _ledger(effects) if event["state"] == "stale")
+    assert event["change"] == "Prepared change closed"
+    assert (
+        _facts(event)["Confirmed in Audiobookshelf"]
+        == "The selected change was not confirmed"
+    )
+    assert "No write was applied" not in str(event)

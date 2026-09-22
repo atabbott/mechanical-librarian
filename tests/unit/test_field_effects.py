@@ -5513,6 +5513,8 @@ def test_audiobook_pair_paired_activity_words(
     }
     readable_activity_event(event, audiobook_pair.report)
     assert event["field_label"] == "Title and subtitle"
+    if state == "reconciling":
+        assert event["change"] == "Paired title and subtitle change unconfirmed"
     assert (event["change"] == "Split title and subtitle") == confirmed
     assert ("Both title and subtitle confirmed" in str(event["evidence"])) == confirmed
     assert "No write was applied" not in str(event["evidence"])
@@ -7037,3 +7039,18 @@ def test_admitted_effect_releases_database_owner_during_target_io(effects):
         if thread is not None:
             thread.join(5)
             assert not thread.is_alive()
+
+
+def test_paired_post_write_readback_projects_unconfirmed(audiobook_pair):
+    op = audiobook_pair.plan()
+    audiobook_pair.case.paired_mode = "partial"
+    result = audiobook_pair.service.apply(op.plan.plan_id)
+    assert (result.state, result.failure) == ("reconciling", "readback")
+    page = audiobook_pair.repo.field_effect_activity_page(
+        search=None, event_type="all", occurred_after=0, page=1, page_size=25
+    )
+    event = next(event for event in page["events"] if event["state"] == "reconciling")
+    readable_activity_event(event, audiobook_pair.report)
+    assert event["change"] == "Paired title and subtitle change unconfirmed"
+    assert "Both fields have not been confirmed" in str(event["evidence"])
+    assert "stopped" not in event["change"]

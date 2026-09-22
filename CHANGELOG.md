@@ -12,6 +12,7 @@
   review, including exact paragraph breaks and boundary whitespace (#1080).
   Report v45 requires a clean rebuild of prior development state; comparison
   equivalence never relaxes exact write preconditions or read-back verification.
+  Activity distinguishes unconfirmed writes from closed preparations.
 
 - Preparation keeps ownership across committed stages and reports a stopped
   runtime when failure settlement cannot finish. Ready books remain browsable;
