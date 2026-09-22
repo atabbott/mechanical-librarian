@@ -307,12 +307,16 @@ def _inspect_bundle(
             _SourceIO(package_request), "r", allowZip64=True
         ) as archive:
             package_report = EpubPackageExtractor().extract(package_request, archive)
-            opening_report = EpubOpeningExtractor().extract(
+            opening_report, selection = EpubOpeningExtractor().extract_with_selection(
                 request, limits, package_report, archive
             )
             try:
-                rear_facts = _adapter_rear_facts(
-                    request, package_report, opening_report, archive
+                rear_facts = (
+                    _adapter_rear_facts(
+                        request, package_report, opening_report, archive, selection
+                    )
+                    if selection is not None
+                    else ()
                 )
             # ``rejected`` is rebound by this handler, but mypy keeps the ``None``
             # narrowing left behind by the outer preflight result, so each use
@@ -415,8 +419,11 @@ def _rear_facts(
     package_report: EpubPackageReport,
     opening_report: EpubOpeningReport,
     archive: zipfile.ZipFile,
+    selection: opening_parser._OpeningSelection,
 ) -> tuple[EpubInspectionFact, ...]:
-    return _adapter_rear_facts(request, package_report, opening_report, archive)
+    return _adapter_rear_facts(
+        request, package_report, opening_report, archive, selection
+    )
 
 
 def _snapshot_source(descriptor: int, maximum: int) -> bytes:

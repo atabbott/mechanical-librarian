@@ -905,3 +905,115 @@ def test_two_sources_stating_one_narrator_cast_leave_the_guard_silent() -> None:
     result = _result(proposal_set, TargetDestination.NARRATORS)
     assert ProposalOutcome.PROPOSE_CHANGE == result.outcome
     assert ("unique_typed_candidate",) == result.reasons
+
+
+@pytest.mark.parametrize("names", (("Ada Author",), ("Ada Author", "Bea Writer")))
+@pytest.mark.parametrize(
+    "witness", ("none", "opening", "provider", "partial", "conflict")
+)
+def test_neutral_package_creator_set_needs_complete_typed_corroboration(
+    names: tuple[str, ...], witness: str
+) -> None:
+    neutral = tuple(
+        LocalClaim.create(
+            kind=ClaimKind.CREATOR,
+            observed=name,
+            canonical=name,
+            excerpt=name,
+            applicability="not_applicable",
+            checksum="not_applicable",
+            applicability_basis="not_applicable",
+            basis="package_metadata",
+            scope=ClaimScope.WORK,
+            role=None,
+            occurrence=index,
+        )
+        for index, name in enumerate(names)
+    )
+    witness_names = (
+        names
+        if witness not in {"partial", "conflict"}
+        else ("Other Author",)
+        if witness == "conflict"
+        else names[:-1]
+    )
+    opening = (
+        tuple(
+            _local_creator(name, basis="opening_matter", occurrence=index)
+            for index, name in enumerate(witness_names)
+        )
+        if witness == "opening"
+        else ()
+    )
+    providers = (
+        (
+            _provider(
+                "catalogue",
+                "edition-1",
+                tuple(
+                    _claim(
+                        "catalogue",
+                        "edition-1",
+                        ClaimKind.CREATOR,
+                        name,
+                        scope=ClaimScope.WORK,
+                        role="author",
+                        order=index,
+                    )
+                    for index, name in enumerate(witness_names)
+                ),
+            ),
+        )
+        if witness in {"provider", "partial", "conflict"} and witness_names
+        else ()
+    )
+    report = _report(
+        fields=_fields(
+            None,
+            authors=TargetField(TargetDestination.AUTHORS, TargetFieldState.MISSING),
+        ),
+        local_claims=neutral + opening,
+        providers=providers,
+    )
+    result = _result(evaluate_report(report), TargetDestination.AUTHORS)
+    references = {
+        reference
+        for alternative in result.alternatives
+        for reference in alternative.evidence_references
+    }
+    assert {claim.reference for claim in neutral}.issubset(references) == (
+        witness in {"opening", "provider"}
+    )
+    assert all(claim.role is None for claim in report.local_claims[: len(neutral)])
+    if witness == "opening":
+        assert len(result.alternatives) == 1
+        assert len(result.alternatives[0].correlations) == 1
+    if witness == "provider":
+        assert len(result.alternatives[0].correlations) == 2
+    if witness == "none":
+        assert result.outcome is ProposalOutcome.INELIGIBLE
+
+
+@pytest.mark.parametrize("current", (None, ("Ada Author",), ("Other Author",)))
+def test_explicit_local_authors_only_fill_or_preserve(
+    current: tuple[str, ...] | None,
+) -> None:
+    report = _report(
+        fields=_fields(
+            None,
+            authors=TargetField(
+                TargetDestination.AUTHORS,
+                TargetFieldState.MISSING if current is None else TargetFieldState.VALUE,
+                current,
+            ),
+        ),
+        local_claims=(_local_creator("Ada Author", basis="opening_matter"),),
+    )
+    result = _result(evaluate_report(report), TargetDestination.AUTHORS)
+    assert result.outcome is (
+        ProposalOutcome.PROPOSE_CHANGE
+        if current is None
+        else ProposalOutcome.KEEP
+        if current == ("Ada Author",)
+        else ProposalOutcome.UNRESOLVED_CHOICE
+    )

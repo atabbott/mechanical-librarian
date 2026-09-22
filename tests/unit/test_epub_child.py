@@ -70,6 +70,7 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
     default_target_fields,
 )
+from tests.support.author_evidence import AUTHOR_STATEMENTS, author_epub
 from tests.support.epub_packages import (
     EPUB2_PACKAGE,
     EPUB3_PACKAGE,
@@ -335,6 +336,20 @@ def _bundle(tail: bytes):
         request.cancellation,
     )
     return request, child._inspect_bundle(request, package_request, EpubOpeningLimits())
+
+
+def _rear_facts(request, package_report, opening_report, archive):
+    # Reconstruct through the actual producer for direct adapter failure seams.
+    _, selection = child.EpubOpeningExtractor().extract_with_selection(
+        request,
+        opening_report.limits,
+        package_report,
+        archive,
+    )
+    assert selection is not None
+    return child._rear_facts(
+        request, package_report, opening_report, archive, selection
+    )
 
 
 def _inspect_in_child(value: bytes):
@@ -920,7 +935,7 @@ def test_rear_pool_reads_only_tail_evidence_with_marker_and_explicit_cues() -> N
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert [(fact.field.value, fact.canonical_value) for fact in facts] == [
         ("title", "Rear Clock"),
         ("creator", "Ada Example"),
@@ -937,7 +952,7 @@ def test_rear_indicia_retains_correlated_multiple_series_memberships() -> None:
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     series = tuple(
         (fact.field, fact.canonical_value, fact.supporting_context)
         for fact in facts
@@ -1073,7 +1088,7 @@ def test_rear_indicia_rejects_prose_catalogue_and_trailing_series_ambiguity(
 ) -> None:
     request, (package, opening, _) = _bundle(_xhtml(markup))
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert not any(
         fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
         for fact in facts
@@ -1098,7 +1113,7 @@ def test_rear_order_heading_excludes_its_forward_series_scope(heading: str) -> N
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert not any(
         fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
         for fact in facts
@@ -1118,7 +1133,7 @@ def test_rear_series_trailing_clauses_are_rejected(markup: str) -> None:
         _xhtml("<p>All rights reserved</p>" + markup)
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert not any(
         fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
         for fact in facts
@@ -1130,7 +1145,7 @@ def test_rear_series_label_can_begin_with_a_reserved_name_first_lead() -> None:
         _xhtml("<p>All rights reserved</p><p>Series: New Worlds</p>")
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert [
         (fact.field, fact.canonical_value)
         for fact in facts
@@ -1162,7 +1177,7 @@ def test_rear_unicode_series_names_preserve_label_and_order_first_forms(
         _xhtml("<p>All rights reserved</p>" + markup)
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert (
         tuple(
             (fact.field, fact.canonical_value)
@@ -1190,7 +1205,7 @@ def test_rear_unicode_series_names_require_explicit_cased_or_numeric_tokens(
         _xhtml("<p>All rights reserved</p>" + markup)
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert not any(
         fact.field in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
         for fact in facts
@@ -1220,7 +1235,7 @@ def test_rear_series_name_grammar_is_closed(markup: str) -> None:
         _xhtml("<p>All rights reserved</p>" + markup)
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     series = tuple(
         (fact.field, fact.canonical_value)
         for fact in facts
@@ -1245,7 +1260,7 @@ def test_rear_fact_limit_keeps_a_series_pair_atomic() -> None:
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
         with pytest.raises(child.opening_parser._AggregateRejected) as raised:
-            child._rear_facts(request, package, opening, archive)
+            _rear_facts(request, package, opening, archive)
     assert raised.value.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
     assert len(raised.value.partial_facts) == 15
     assert not any(
@@ -1271,7 +1286,7 @@ def test_rear_series_indicia_aggregate_improves_recall_without_false_positives()
             _xhtml("<p>All rights reserved</p>" + markup)
         )
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-            facts = child._rear_facts(request, package, opening, archive)
+            facts = _rear_facts(request, package, opening, archive)
         actual_count = sum(
             fact.field
             in {EpubInspectionField.SERIES, EpubInspectionField.SERIES_SEQUENCE}
@@ -1323,7 +1338,7 @@ def test_front_and_rear_bibliographic_indicia_have_paired_semantics() -> None:
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear_facts = child._rear_facts(request, package, opening, archive)
+        rear_facts = _rear_facts(request, package, opening, archive)
 
     fields = {
         EpubInspectionField.SUBTITLE,
@@ -1412,7 +1427,7 @@ def test_front_and_rear_labels_reject_contextual_values_without_name_guessing(
     )
     request, (package, opening, _) = _bundle(_xhtml(markup))
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear = child._rear_facts(request, package, opening, archive)
+        rear = _rear_facts(request, package, opening, archive)
 
     fields = {
         EpubInspectionField.PUBLISHER,
@@ -1495,7 +1510,7 @@ def test_front_and_rear_labels_apply_contextual_and_promotion_vocabularies(
     )
     request, (package, opening, _) = _bundle(_xhtml(markup))
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear = child._rear_facts(
+        rear = _rear_facts(
             request,
             package,
             opening,
@@ -1548,7 +1563,7 @@ def test_front_and_rear_labels_preserve_exact_occurrence_ownership(
     )
     request, (package, opening, _) = _bundle(_xhtml(markup))
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear = child._rear_facts(request, package, opening, archive)
+        rear = _rear_facts(request, package, opening, archive)
 
     fields = {
         EpubInspectionField.SUBTITLE,
@@ -1662,7 +1677,7 @@ def test_front_and_rear_bibliographic_canonical_values_share_normalization(
     )
     request, (package, opening, _) = _bundle(_xhtml(markup))
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear = child._rear_facts(request, package, opening, archive)
+        rear = _rear_facts(request, package, opening, archive)
     expected = [
         (EpubInspectionField.SUBTITLE, "Café Companion"),
         (EpubInspectionField.PUBLISHER, "Café House"),
@@ -1686,7 +1701,7 @@ def test_rear_split_labels_preserve_the_sixteen_fact_cap() -> None:
     )
     with pytest.raises(child.opening_parser._AggregateRejected) as raised:
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-            child._rear_facts(request, package, opening, archive)
+            _rear_facts(request, package, opening, archive)
     assert raised.value.outcome == EpubInspectionOutcome.RESOURCE_LIMIT
     assert [
         (
@@ -1726,7 +1741,7 @@ def test_rear_bibliographic_indicia_preserves_conflicts_and_repetition() -> None
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
 
     assert [
         (fact.field, fact.canonical_value)
@@ -1826,7 +1841,7 @@ def test_front_and_rear_labels_enforce_the_exact_excerpt_bound(source: str) -> N
         )
         request, (package, opening, _) = _bundle(_xhtml(markup))
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-            rear = child._rear_facts(
+            rear = _rear_facts(
                 request,
                 package,
                 opening,
@@ -1890,7 +1905,7 @@ def test_rear_bibliographic_indicia_has_aggregate_safe_quality_evidence() -> Non
     for markup, expected_count in samples:
         request, (package, opening, _) = _bundle(_xhtml(markup))
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-            facts = child._rear_facts(request, package, opening, archive)
+            facts = _rear_facts(request, package, opening, archive)
         actual_count = sum(fact.field in fields for fact in facts)
         expected += expected_count
         found += min(actual_count, expected_count)
@@ -1917,7 +1932,7 @@ def test_rear_indicia_retains_roles_dates_and_contextual_credits_with_provenance
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
 
     assert [
         (fact.field, fact.canonical_value, fact.role)
@@ -1997,7 +2012,7 @@ def test_rear_mixed_edition_and_unsigned_datetime_evidence_fails_closed() -> Non
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
 
     assert not any(
         fact.field
@@ -2020,7 +2035,7 @@ def test_rear_indicia_rejects_malformed_date_tokens_and_stops_credit_prose() -> 
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert (EpubInspectionField.TITLE, "A Sample of Life") in {
         (fact.field, fact.canonical_value) for fact in facts
     }
@@ -2054,7 +2069,7 @@ def test_rear_promotion_notice_is_bounded_to_its_forward_sibling_scope() -> None
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert {
         (fact.canonical_value, fact.role)
         for fact in facts
@@ -2087,7 +2102,7 @@ def test_rear_uncontained_promotion_run_stops_at_target_section() -> None:
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert {
         (fact.canonical_value, fact.role)
         for fact in facts
@@ -2124,7 +2139,7 @@ def test_rear_marker_detection_accepts_plain_and_inline_assembled_text(
         _xhtml(f"<p>{marker}</p><p>Edited by Marker Editor</p>")
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert ("Marker Editor", "editor") in {
         (fact.canonical_value, fact.role)
         for fact in facts
@@ -2145,7 +2160,7 @@ def test_rear_descendant_promotion_credit_and_date_ambiguity_fail_closed() -> No
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert {
         (fact.canonical_value, fact.role)
         for fact in facts
@@ -2172,7 +2187,7 @@ def test_rear_colophon_is_admitted_but_advertisement_and_preview_are_not(
         _xhtml("<h2>Colophon</h2><p>Edited by Colophon Editor</p>")
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert [
         (fact.canonical_value, fact.role)
         for fact in facts
@@ -2185,7 +2200,7 @@ def test_rear_colophon_is_admitted_but_advertisement_and_preview_are_not(
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert facts == ()
 
 
@@ -2199,12 +2214,11 @@ def test_rear_pool_admits_nested_explicit_cues_but_scans_isbns_only_on_leaves() 
     )
     request, (package, opening, _) = _bundle(tail)
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert [(fact.field.value, fact.canonical_value) for fact in facts] == [
         ("title", "Nested Title"),
         ("creator", "Ada Example"),
         ("contributor", "Bea Contributor"),
-        ("creator", "Cara Example"),
         ("isbn", "9780306406157"),
     ]
     assert sum(fact.field.value == "isbn" for fact in facts) == 1
@@ -2220,7 +2234,7 @@ def test_rear_pool_rejects_isbn_shaped_digits_owned_by_a_uri() -> None:
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert [fact for fact in facts if fact.field.value == "isbn"] == []
 
 
@@ -2229,7 +2243,7 @@ def test_rear_pool_preserves_colon_delimited_media_label_isbns() -> None:
         _xhtml("<p>All rights reserved</p><p>Paperback: 9780306406157</p>")
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert [fact.canonical_value for fact in facts if fact.field.value == "isbn"] == [
         "9780306406157"
     ]
@@ -2240,7 +2254,7 @@ def test_rear_pool_does_not_replace_a_tail_slot_without_marker() -> None:
         _xhtml('<h1 epub:type="fulltitle">Unmarked Tail</h1><p>ISBN 9780306406157</p>')
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        assert child._rear_facts(request, package, opening, archive) == ()
+        assert _rear_facts(request, package, opening, archive) == ()
 
 
 def test_invalid_final_spine_slot_cannot_displace_a_valid_rear_tail_slot() -> None:
@@ -2297,7 +2311,7 @@ def test_invalid_final_spine_slot_cannot_displace_a_valid_rear_tail_slot() -> No
         package_report.source_fingerprint,
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package_report, opening, archive)
+        facts = _rear_facts(request, package_report, opening, archive)
     assert [(fact.field.value, fact.canonical_value) for fact in facts] == [
         ("title", "Retained Tail")
     ]
@@ -2316,7 +2330,7 @@ def test_rear_pool_suppresses_unsafe_cues_without_losing_safe_facts(
         )
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package, opening, archive)
+        facts = _rear_facts(request, package, opening, archive)
     assert [(fact.field.value, fact.canonical_value) for fact in facts] == [
         ("creator", "Ada Example")
     ]
@@ -2365,7 +2379,7 @@ def test_rear_pool_caps_combined_navigation_opening_and_rear_resources_at_nine()
     )
     assert sum(resource.opened for resource in opening_report.resources) == 6
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package_report, opening_report, archive)
+        facts = _rear_facts(request, package_report, opening_report, archive)
     assert [(fact.field.value, fact.canonical_value) for fact in facts] == [
         ("title", "Slot 8"),
         ("title", "Slot 7"),
@@ -2427,7 +2441,7 @@ def test_rear_pool_counts_duplicate_navigation_open_operations_against_budget() 
         == 5
     )
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package_report, opening_report, archive)
+        facts = _rear_facts(request, package_report, opening_report, archive)
     assert [(fact.field.value, fact.canonical_value) for fact in facts] == [
         ("title", "Slot 8"),
         ("title", "Slot 7"),
@@ -2495,7 +2509,7 @@ def test_rear_pool_charges_crc_failed_opening_attempts_before_rear_reads() -> No
     assert opening_report.usage.opened_resources == 6
     assert all(resource.opened for resource in opening_report.resources)
     with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        facts = child._rear_facts(request, package_report, opening_report, archive)
+        facts = _rear_facts(request, package_report, opening_report, archive)
     assert [(fact.field.value, fact.canonical_value) for fact in facts] == [
         ("title", "Rear 3"),
         ("title", "Rear 2"),
@@ -2577,7 +2591,11 @@ def test_rear_pool_preserves_cancellation_terminal() -> None:
     request = _request(value, cancelled=lambda: True)
     with pytest.raises(child.opening_parser._AggregateRejected) as raised:
         with zipfile.ZipFile(child._SourceIO(initial), "r") as archive:
-            child._rear_facts(request, package, opening, archive)
+            _, selection = child.EpubOpeningExtractor().extract_with_selection(
+                initial, opening.limits, package, archive
+            )
+            assert selection is not None
+            child._rear_facts(request, package, opening, archive, selection)
     assert raised.value.outcome == EpubInspectionOutcome.CANCELLATION
 
 
@@ -2695,7 +2713,7 @@ def test_rear_resource_limit_preserves_facts_admitted_before_exhaustion() -> Non
     )
     with pytest.raises(child.opening_parser._AggregateRejected) as raised:
         with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-            child._rear_facts(request, package_report, opening_report, archive)
+            _rear_facts(request, package_report, opening_report, archive)
     rear = raised.value.partial_facts
     assert raised.value.outcome is EpubInspectionOutcome.RESOURCE_LIMIT
     assert [
@@ -2915,3 +2933,93 @@ def test_child_preserves_explicit_publisher_and_imprint_as_distinct_report_field
         ClaimKind.PUBLISHER: FieldState.VALID,
         ClaimKind.IMPRINT: FieldState.VALID,
     }
+
+
+@pytest.mark.parametrize("body, expected, role", AUTHOR_STATEMENTS)
+@pytest.mark.parametrize("recovered", (False, True))
+@pytest.mark.parametrize("rear", (False, True))
+def test_isolated_author_statement_preserves_whole_credit(
+    body: str, expected: str | None, role: str | None, recovered: bool, rear: bool
+) -> None:
+    report = _inspect_in_child(author_epub(body, recovered=recovered, rear=rear))
+    authors = [
+        fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
+    ]
+    assert [(fact.canonical_value, fact.role) for fact in authors] == (
+        [] if expected is None else [(expected, role)]
+    )
+
+
+@pytest.mark.parametrize("rear", (False, True))
+@pytest.mark.parametrize(
+    "role, fragment, duplicate, expected",
+    (
+        ("copyright-page", "#blocked", False, ("Allowed Example",)),
+        ("copyright-page", "", False, ()),
+        ("copyright-page", "#missing", False, ("Blocked Example", "Allowed Example")),
+        ("copyright-page", "#blocked", True, ("Blocked Example", "Allowed Example")),
+        ("bodymatter", "#blocked", False, ()),
+        ("preview", "#blocked", False, ("Allowed Example",)),
+    ),
+)
+def test_original_navigation_bounds_authority_in_both_pools(
+    rear: bool, role: str, fragment: str, duplicate: bool, expected: tuple[str, ...]
+) -> None:
+    from tests.support.author_evidence import fragment_author_epub
+
+    report = _inspect_in_child(
+        fragment_author_epub(role, fragment, rear=rear, duplicate=duplicate)
+    )
+    assert (
+        tuple(
+            fact.canonical_value
+            for fact in report.facts
+            if fact.field is EpubInspectionField.CREATOR
+        )
+        == expected
+    )
+
+
+def test_opening_selection_is_shared_without_additional_navigation_reads() -> None:
+    from tests.support.author_evidence import fragment_author_epub
+
+    value = fragment_author_epub()
+    request = _request(value)
+    package_request = EpubPackageRequest(
+        request.target,
+        request.file,
+        request.source,
+        request.expected_source,
+        EpubPackageCapability.PACKAGE,
+        request.limits,
+        request.deadline,
+        request.monotonic_deadline,
+        request.cancellation,
+    )
+    reads = []
+    original = child.opening_parser._read_member
+
+    def read(archive, name, maximum, active_request):
+        reads.append(name)
+        return original(archive, name, maximum, active_request)
+
+    with (
+        patch.object(
+            child.opening_parser,
+            "_candidate_graph",
+            wraps=child.opening_parser._candidate_graph,
+        ) as graph,
+        patch.object(child.opening_parser, "_read_member", side_effect=read),
+    ):
+        _, opening, rear = child._inspect_bundle(
+            request, package_request, EpubOpeningLimits()
+        )
+    assert graph.call_count == 1
+    assert reads.count("EPUB/nav.xhtml") == 1
+    assert opening.usage.opened_resources == 6
+    assert len([name for name in reads if name.startswith("EPUB/s")]) == 8
+    assert tuple(
+        fact.canonical_value
+        for fact in rear
+        if fact.field is EpubInspectionField.CREATOR
+    ) == ("Allowed Example",)

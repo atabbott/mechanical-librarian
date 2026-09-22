@@ -50,6 +50,7 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
+from tests.support.author_evidence import AUTHOR_STATEMENTS, author_epub
 from tests.support.epub_packages import (
     MATERIALIZED_RECIPES,
     _opening_epub,
@@ -651,7 +652,7 @@ def test_identifier_owner_spans_are_computed_once_per_element() -> None:
 
 def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
     report = _extract(opening_claims_complete())
-    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v3"
+    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v4"
     assert all(
         claim.citation.extractor_version == EPUB_OPENING_EXTRACTOR_VERSION
         for claim in report.claims
@@ -825,7 +826,7 @@ def test_indicia_roles_dates_and_production_credits_remain_typed_and_separate() 
         _single(
             _xhtml(
                 '<section epub:type="copyright-page">'
-                "<p>by Ada Author</p>"
+                "<p>Author: Ada Author</p>"
                 "<p>Translated and illustrated by Bea Artist</p>"
                 "<p>Edited by Cara Editor; Foreword by Dev Writer</p>"
                 "<p>Book design by Eli Designer; Photography by Fran Lens; "
@@ -3913,3 +3914,16 @@ def test_recovered_html_text_is_bounded_inert_data(value: str) -> None:
         EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
     }
     assert "example.invalid" not in report.to_json()
+
+
+@pytest.mark.parametrize("body, expected, role", AUTHOR_STATEMENTS)
+@pytest.mark.parametrize("recovered", (False, True))
+def test_whole_author_statement_requires_structural_context(
+    body: str, expected: str | None, role: str | None, recovered: bool
+) -> None:
+    report = _extract(author_epub(body, recovered=recovered))
+    assert report.outcome.succeeded
+    authors = [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
+    assert [(claim.normalized_value, claim.role) for claim in authors] == (
+        [] if expected is None else [(expected, role)]
+    )

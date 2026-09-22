@@ -356,3 +356,7 @@ is sufficient; same-work print and ebook ISBNs may coexist. Material competing
 work, author, title or variant evidence withholds the new election. The current
 reason is `isbn_creator_supported_title`; Ask keeps the choice available and
 Ignore suppresses its action. See [ADR-0075](../architecture/decisions/0075-independent-evidence-led-titles.md).
+
+## Author evidence authority
+
+The `fixed-conservative-v28` Authors proposal requires complete creator sets. A neutral package set contributes only when an explicit opening author set or independent typed provider set corroborates every member; observations from the same file remain one correlation. Automatic Authors admission follows proposal sufficiency and material conflicts. Independent provider agreement needs no local witness; explicit local-only fill or preservation remains supported, while local-only replacement of populated authors remains manual. Ask, Ignore and owner-final choices remain authoritative (#1083).

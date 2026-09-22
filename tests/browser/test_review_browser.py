@@ -364,6 +364,8 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    author_fixture: str | None = None,
+    author_destination: str = "automatic",
     isbn_title_fixture: str | None = None,
     description_fixture: Literal[
         "ready",
@@ -529,7 +531,14 @@ def _server(
         )
     else:
         report = _report()
-    if isbn_title_fixture is not None:
+    if author_fixture is not None:
+        from tests.support.author_evidence import author_report, publish_author_case
+
+        report = author_report(database.parent / "author-media", author_fixture)
+        case_id, proposal_set = publish_author_case(
+            repository, report, author_destination
+        )
+    elif isbn_title_fixture is not None:
         from tests.support.evidence_led_titles import (
             isbn_title_report,
             publish_title_case,

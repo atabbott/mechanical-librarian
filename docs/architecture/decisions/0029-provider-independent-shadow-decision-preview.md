@@ -57,6 +57,13 @@ from absent evidence.
 
 ## Later evolution
 
+Policy v15 (#1083) makes Authors obey the complete-set proposal sufficiency and
+material-conflict result. It removes the historical source-only bypass and
+mandatory local witness for Authors. Supported local fill/preservation and
+independent provider agreement can qualify; local-only populated replacement
+remains manual. Structural attribution and neutral package corroboration preserve
+truthful roles. The v5 rationale and measured results below remain historical.
+
 Policy v5 and its validation figures below are historical. Current publication
 admission does not accept local-only dates: both candidate formation and the
 publication preview require local evidence plus two independent provider

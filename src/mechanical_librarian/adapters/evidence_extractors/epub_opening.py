@@ -602,6 +602,15 @@ class _Candidate:
 
 
 @dataclass(frozen=True)
+class _OpeningSelection:
+    """Original bounded graph, retained only inside one child inspection."""
+
+    candidates: tuple[_Candidate, ...]
+    body_targets: tuple[_RoleAssociation, ...]
+    excluded_targets: tuple[_RoleAssociation, ...]
+
+
+@dataclass(frozen=True)
 class _RecognitionContext:
     selection_path: tuple[str, ...]
     recognition_semantics: frozenset[str]
@@ -611,6 +620,7 @@ class _RecognitionContext:
     excluded_scopes: tuple[int | None, ...]
     warnings: tuple[str, ...]
     suppress_claims: bool = False
+    non_author_scopes: tuple[int | None, ...] = ()
 
 
 class _SourceIO(io.RawIOBase):
@@ -2989,8 +2999,8 @@ def _promotion_excluded_ordinals(projection: _Projection) -> frozenset[int]:
 def _recognition_context(
     projection: _Projection,
     candidate: _Candidate,
-    body_targets: list[_RoleAssociation],
-    excluded_targets: list[_RoleAssociation],
+    body_targets: list[_RoleAssociation] | tuple[_RoleAssociation, ...],
+    excluded_targets: list[_RoleAssociation] | tuple[_RoleAssociation, ...],
 ) -> _RecognitionContext:
     fragments = _fragment_index(projection)
     warnings: list[str] = []
@@ -3125,7 +3135,120 @@ def _recognition_context(
         tuple(dict.fromkeys(excluded_scopes)),
         tuple(sorted(set(warnings))),
         suppress_claims,
+        tuple(
+            None if target is None else target.ordinal
+            for association, target in surviving
+            if association.role in _NON_AUTHOR_SCOPES
+        ),
     )
+
+
+_NON_AUTHOR_SCOPES = {
+    "copyright-page",
+    "copyright_page",
+    "imprint",
+    "other-credits",
+    "contributors",
+}
+_ATTRIBUTION_BLOCKS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "dt", "dd"}
+_AUTHOR_LABEL = re.compile(r"^authors?\s*:\s*(.+)$", re.I)
+_AUTHOR_BYLINE = re.compile(r"^(?:by|written by)\s+(.+)$", re.I)
+
+
+def _attribution_owner(element: _Element, elements: dict[int, _Element]) -> bool:
+    """Emit one whole claim block, never its inline credit fragments."""
+    if element.name not in _ATTRIBUTION_BLOCKS and any(
+        elements[n].name in _ATTRIBUTION_BLOCKS for n in element.ancestors
+    ):
+        return False
+    if element.name not in _ATTRIBUTION_BLOCKS and "creator" not in element.semantics:
+        return False
+    return not any(
+        element.ordinal in child.ancestors and child.name in _ATTRIBUTION_BLOCKS
+        for child in elements.values()
+    )
+
+
+def _author_attribution(
+    element: _Element,
+    projection: _Projection,
+    elements: dict[int, _Element],
+    context: _RecognitionContext,
+) -> tuple[str, str | None] | None:
+    """Classify complete statements; structure supplies By context, never names."""
+    if not _attribution_owner(element, elements) or context.suppress_claims:
+        return None
+    ancestry = [elements[n] for n in (*element.ancestors, element.ordinal)]
+    if (
+        any(
+            parent.active
+            or not _is_html_namespace(parent.namespace)
+            or parent.name in {"figure", "figcaption", "address", "blockquote"}
+            or parent.semantics & (_BODY_SEMANTICS | _EXCLUDED_SEMANTICS)
+            for parent in ancestry
+        )
+        or any(_scope_contains(scope, element) for scope in context.excluded_scopes)
+        or (
+            context.body_ordinal is not None and element.ordinal >= context.body_ordinal
+        )
+        or any(
+            child.active or not _is_html_namespace(child.namespace)
+            for child in elements.values()
+            if element.ordinal in child.ancestors
+        )
+    ):
+        return None
+    text = element.exact_text
+    if (
+        _indicia_credits(text)
+        or _bibliographic_indicia(element.semantics, text, ())
+        or _indicia_dates(text)
+        or _NON_BIBLIOGRAPHIC_INDICIA.match(text)
+        or element.semantics
+        & {"title", "fulltitle", "subtitle", "publisher", "imprint", "contributor"}
+        or text.casefold().endswith(" imprint")
+    ):
+        return None
+    label = _AUTHOR_LABEL.fullmatch(text)
+    if label is not None:
+        return label.group(1), "author"
+    byline = _AUTHOR_BYLINE.fullmatch(text)
+    if byline is not None:
+        if any(parent.semantics & _NON_AUTHOR_SCOPES for parent in ancestry) or any(
+            _scope_contains(scope, element) for scope in context.non_author_scopes
+        ):
+            return None
+        previous = next(
+            (
+                other
+                for other in reversed(projection.elements)
+                if other.end <= element.start
+                and other.ancestors == element.ancestors
+                and other.ordinal != element.ordinal
+            ),
+            None,
+        )
+        title_sibling = (
+            previous is not None
+            and bool(previous.semantics & {"title", "fulltitle"})
+            and not projection.text[previous.end : element.start].strip()
+            and not previous.active
+            and _is_html_namespace(previous.namespace)
+        )
+        if (
+            "creator" in element.semantics
+            or any(
+                parent.semantics & {"titlepage", "title_page", "halftitlepage"}
+                for parent in ancestry
+            )
+            or any(_scope_contains(scope, element) for scope in context.title_scopes)
+            or title_sibling
+        ):
+            return byline.group(1), "author"
+        return None
+    if "creator" in element.semantics:
+        return text, None
+    return None
 
 
 def _recognize(
@@ -3331,21 +3454,25 @@ def _recognize(
             and lowered.endswith(" imprint")
         ):
             add(OpeningField.IMPRINT, text, EpubObservationApplicability.EDITION)
-        if lowered.startswith(("by ", "author: ", "written by ")):
-            value = re.sub(r"^(?:by|author:|written by)\s+", "", text, flags=re.I)
+        attribution = _author_attribution(element, projection, by_ordinal, context)
+        if attribution is not None:
+            value, author_role = attribution
             add(
                 OpeningField.CREATOR,
                 value,
                 EpubObservationApplicability.WORK,
-                role="author",
+                role=author_role,
             )
-            add(
-                OpeningField.CREATOR_ROLE,
-                text,
-                EpubObservationApplicability.WORK,
-                "author",
-            )
-        recovered_credits = _indicia_credits(text)
+            if author_role is not None:
+                add(
+                    OpeningField.CREATOR_ROLE,
+                    text,
+                    EpubObservationApplicability.WORK,
+                    author_role,
+                )
+        recovered_credits = (
+            _indicia_credits(text) if _attribution_owner(element, by_ordinal) else ()
+        )
         bibliographic_credit = False
         for (
             credit_field,
@@ -3388,11 +3515,7 @@ def _recognize(
                     role=credit_role,
                 )
         explicit_semantics = _tokens(element.attributes)
-        if "creator" in explicit_semantics and not lowered.startswith(
-            ("by ", "author: ", "written by ")
-        ):
-            add(OpeningField.CREATOR, text, EpubObservationApplicability.WORK)
-        elif "contributor" in explicit_semantics and not bibliographic_credit:
+        if "contributor" in explicit_semantics and not bibliographic_credit:
             add(OpeningField.CONTRIBUTOR, text, EpubObservationApplicability.WORK)
         if "edition" in lowered:
             add(OpeningField.EDITION, text, EpubObservationApplicability.EDITION)
@@ -3692,6 +3815,15 @@ class EpubOpeningExtractor:
         package_report: EpubPackageReport,
         archive: zipfile.ZipFile | None = None,
     ) -> EpubOpeningReport:
+        return self.extract_with_selection(request, limits, package_report, archive)[0]
+
+    def extract_with_selection(
+        self,
+        request: EpubPackageRequest,
+        limits: EpubOpeningLimits,
+        package_report: EpubPackageReport,
+        archive: zipfile.ZipFile | None = None,
+    ) -> tuple[EpubOpeningReport, _OpeningSelection | None]:
         if (
             type(request) is not EpubPackageRequest
             or type(limits) is not EpubOpeningLimits
@@ -3705,25 +3837,31 @@ class EpubOpeningExtractor:
                 and package_report.source_fingerprint != request.expected_source
             )
         ):
-            return EpubOpeningReport(EpubInspectionOutcome.INTERNAL_FAILURE, limits)
+            return EpubOpeningReport(
+                EpubInspectionOutcome.INTERNAL_FAILURE, limits
+            ), None
         if not package_report.succeeded:
-            return EpubOpeningReport(package_report.outcome, limits)
+            return EpubOpeningReport(package_report.outcome, limits), None
         if package_report.outcome is EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE:
             return EpubOpeningReport(
                 EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
                 limits,
                 request.expected_source,
-            )
+            ), None
         try:
             return self._extract_validated(request, limits, package_report, archive)
         except _AggregateRejected as error:
-            return EpubOpeningReport(error.outcome, limits)
+            return EpubOpeningReport(error.outcome, limits), None
         except EpubPackageSourceError:
-            return EpubOpeningReport(EpubInspectionOutcome.UNAVAILABLE_SOURCE, limits)
+            return EpubOpeningReport(
+                EpubInspectionOutcome.UNAVAILABLE_SOURCE, limits
+            ), None
         except (MemoryError, RecursionError):
-            return EpubOpeningReport(EpubInspectionOutcome.RESOURCE_LIMIT, limits)
+            return EpubOpeningReport(EpubInspectionOutcome.RESOURCE_LIMIT, limits), None
         except Exception:
-            return EpubOpeningReport(EpubInspectionOutcome.INTERNAL_FAILURE, limits)
+            return EpubOpeningReport(
+                EpubInspectionOutcome.INTERNAL_FAILURE, limits
+            ), None
 
     def _extract_validated(
         self,
@@ -3731,7 +3869,7 @@ class EpubOpeningExtractor:
         limits: EpubOpeningLimits,
         package_report: EpubPackageReport,
         archive: zipfile.ZipFile | None = None,
-    ) -> EpubOpeningReport:
+    ) -> tuple[EpubOpeningReport, _OpeningSelection]:
         archive_context = (
             nullcontext(archive)
             if archive is not None
@@ -4015,6 +4153,8 @@ class EpubOpeningExtractor:
                     unique_warnings,
                     usage,
                     same_file_lineage=package_lineage,
+                ), _OpeningSelection(
+                    tuple(candidates), tuple(body_targets), tuple(excluded_targets)
                 )
             except EvidenceValueError as error:
                 if "byte limit" in str(error):

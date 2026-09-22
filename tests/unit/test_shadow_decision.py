@@ -282,7 +282,6 @@ def test_supported_fields_select_the_unique_eligible_candidate(destination) -> N
 @pytest.mark.parametrize(
     "destination",
     (
-        "authors",
         "language",
         "publisher",
         "publishedDate",
@@ -305,7 +304,6 @@ def test_report_only_source_evidence_is_not_blocked_by_write_sufficiency(
 @pytest.mark.parametrize(
     "destination",
     (
-        "authors",
         "language",
         "publisher",
         "publishedDate",
@@ -845,7 +843,7 @@ def test_the_decoration_tidy_rule_states_its_own_closed_thresholds() -> None:
 
 
 def test_v14_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v14" == DECISION_POLICY_VERSION
+    assert "deterministic-shadow-decision-policy-v15" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"
@@ -891,3 +889,21 @@ def test_bounded_parser_rejects_noncanonical_and_oversized_documents() -> None:
         ShadowDecisionSet.from_json(" " + serialized, packet)
     with pytest.raises(ShadowDecisionError):
         ShadowDecisionSet.from_json(serialized + (" " * 1_000_000), packet)
+
+
+@pytest.mark.parametrize(
+    "sufficiency,expected", (("manual", "manual"), ("candidate", "recommend_candidate"))
+)
+@pytest.mark.parametrize("local_support,provider_support", ((0, 2), (0, 3), (1, 0)))
+def test_authors_follow_proposal_sufficiency_without_local_witness(
+    sufficiency, expected, local_support, provider_support
+):
+    decision = decide_shadow_packet(
+        _packet(
+            "authors",
+            sufficiency=sufficiency,
+            local_support=local_support,
+            provider_support=provider_support,
+        )
+    ).decisions[0]
+    assert decision.recommendation == expected

@@ -820,3 +820,7 @@ Mechanical Librarian service to resume its retained checkpoints; browser refresh
 and Scan cannot clear the runtime stop. The authenticated incident is runtime
 evidence, not a durable terminal work row. See [observability](observability.md)
 and [the recovery decision](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md).
+
+## Author evidence authority
+
+EPUB author evidence now uses whole attribution statements and their structural context. Title-page By/Written by statements and explicit Author:/Authors: labels retain truthful author roles; neutral package creators and unlabelled semantic creators retain role=None. Photo, cover, copyright and body text cannot supply inferred authorship. Report `metadata-report-v46` and extractor `epub-opening-v4` reject falsely typed predecessor evidence: **clean rebuild required**, with no migration or adoption (#1083).

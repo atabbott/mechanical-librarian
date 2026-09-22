@@ -7,9 +7,9 @@ grant effect consent, construct a target write, or change provider selection.
 
 ## Incumbent paragraph source successor (#1080)
 
-[F46 v12](../reference/f46-audiobook-qualification-candidate-v12.json),
-[F19a v29](../reference/f19a-qualification-manifest-v29.json) and
-[F20 v43](../reference/f20-rich-metadata-qualification-candidate-v43.json) bind
+[F46 v13](../reference/f46-audiobook-qualification-candidate-v13.json),
+[F19a v30](../reference/f19a-qualification-manifest-v30.json) and
+[F20 v44](../reference/f20-rich-metadata-qualification-candidate-v44.json) bind
 exact multiline incumbent description admission and comparison to the current
 consumer closure. This is a behavioral successor, not whole-source equivalence or
 new quality measurement. Historical manifests, evaluators, measurement artifacts
@@ -586,3 +586,14 @@ pairs, including malformed companions that prevent partial Automatic values.
 Recording-bound WORK subtitles are available for owner review under proposal
 policy v26; subtitle Automatic remains withheld. These consumer corrections
 do not claim fresh source scoring or repeat the historical 530-scenario run.
+
+## Whole author evidence successor
+
+The #1083 successors retain every inherited source path and qualification option.
+They bind whole-statement EPUB attribution, neutral complete-set corroboration,
+proposal-governed Authors admission, the real SQLite/owner/effect consumers and
+new generated fixtures. Historical measurements and evaluators remain unchanged;
+new synthetic attribution and lifecycle controls are distinct from library quality
+measurements. No provider, model or production-library requests were made.
+Report v46 requires a clean rebuild; old automatic records cannot mint current
+authority.

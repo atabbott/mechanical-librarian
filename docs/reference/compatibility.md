@@ -6,7 +6,7 @@ version and digest. Compatibility is field-local and demonstrated for metadata/
 tags and multipart cover endpoints; a service version alone is not capability
 proof.
 
-Report v45 preserves exact incumbent LF/CRLF description paragraphs and ordinary
+Report v46 preserves exact incumbent LF/CRLF description paragraphs and ordinary
 boundary spaces/tabs for ebooks and audiobooks (#1080). **Clean rebuild required**
 under ADR-0013: v44 reports and the prior SQL contract are refused without migration
 or adoption. Review and shadow-packet envelope versions remain unchanged; their
@@ -18,11 +18,11 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v45` plus `proposal-set-v8` under
-  `fixed-conservative-v27`, or the separate `catalogue-v2` schema;
+  `metadata-report-v46` plus `proposal-set-v8` under
+  `fixed-conservative-v28`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v14`,
+  `deterministic-shadow-decision-policy-v15`,
   `shadow-review-action-policy-v4`, `shadow-outcome-set-v6`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
   these successors require a clean rebuild and do not adopt prior state;
@@ -208,3 +208,9 @@ candidate fact identifies only the elected title; it does not expand reviewer
 authority or require companion changes. **Clean rebuild required**: v23
 proposals, packet-v6 and their application stores are rejected before mutation.
 See [ADR-0075](../architecture/decisions/0075-independent-evidence-led-titles.md).
+
+Report `metadata-report-v46` requires a **clean rebuild** (#1083): v45 may contain
+false author provenance that cannot be distinguished from corrected evidence.
+`fixed-conservative-v28`, `deterministic-shadow-decision-policy-v15` and
+`epub-opening-v4` are current. Opening report v2, citation v1, proposal envelope
+v8, packet v9, outcome v6 and package-parser identities are unchanged.

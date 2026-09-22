@@ -2908,11 +2908,11 @@ def _dependency_qualification_documents():
 
 
 CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v12.json"
+    "f46-audiobook-qualification-candidate-v13.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v29.json")
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v30.json")
 CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v43.json"
+    "f20-rich-metadata-qualification-candidate-v44.json"
 )
 
 
@@ -3150,7 +3150,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         document = json.loads(path.read_bytes())
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
         assert document["clean_rebuild_required"] is True
-        assert document["proposal_policy_version"] == "fixed-conservative-v27"
+        assert document["proposal_policy_version"] == "fixed-conservative-v28"
         assert re.fullmatch(r"[0-9a-f]{40}", document["frozen_candidate_sha"])
         assert required <= set(document["source_closure"])
         assert set(predecessor["source_closure"]) - _BUILD_PROVENANCE_PATHS <= set(

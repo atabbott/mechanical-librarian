@@ -5,6 +5,7 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -591,3 +592,106 @@ def test_multiline_incumbent_description_persists_and_applies(
     ]
     assert (audit[0]["kind"], audit[-1]["kind"]) == ("planned", "verified")
     repository.close()
+
+
+@pytest.mark.parametrize(
+    "scenario, admitted",
+    (
+        ("supported", True),
+        ("local_fill", True),
+        ("local_replace", False),
+        ("incidental", False),
+        ("conflict", False),
+        ("none", False),
+    ),
+)
+def test_generated_authors_cross_persistence_owner_projection_and_guarded_fake_effect(
+    tmp_path: Path, scenario: str, admitted: bool
+) -> None:
+    from types import SimpleNamespace
+
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.adapters.field_effect_runtime import (
+        PersistedEffectConsent,
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+    from tests.support.author_evidence import author_report
+    from tests.support.automatic_decisions import _automatic_decisions
+
+    report = author_report(tmp_path / "media", scenario)
+    database = tmp_path / "reviews.sqlite"
+    repository = open_repository(database)
+    try:
+        decisions = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            "contributor_names",
+            "canonical",
+            qualified=True,
+        )
+        authors = [value for value in decisions if value.destination == "authors"]
+        assert bool(authors) == admitted
+        if not admitted:
+            assert repository._connection.execute(
+                "SELECT count(*) FROM automatic_decisions WHERE destination='authors'"
+            ).fetchone() == (0,)
+            return
+        decision = authors[0]
+        raw = decision.to_json()
+        case_id = decision.review_case_id
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        projected = next(
+            field for field in detail["fields"] if field["destination"] == "authors"
+        )
+        assert projected["automatic_decision"]["selected_value"] == {
+            "kind": "list",
+            "value": ["Ada Example"],
+        }
+        repository.persist_shadow_outcome(case_id, 5)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE destination='authors'"
+        ).fetchone() == (1,)
+        repository.close()
+        repository = open_repository(database, create=False)
+        assert raw in repository.get_review_case_decisions(case_id)
+        decision = AutomaticDecision.from_json(raw)
+        authority = repository.field_effect_authority_source(decision)
+        target = FakeTargetService()
+        service = GuardedFieldApplication(
+            repository,
+            target,
+            FakeBackupReadiness(),
+            FakeCapabilityObserver("c" * 64),
+            PersistedFieldEffectAuthority(repository),
+            FakeDependencyCurrentness(),
+            PersistedEffectConsent(repository),
+            SimpleNamespace(),
+            FakeForwardReevaluation(),
+            lambda: 10,
+        )
+        repository.grant_field_effect_consents("primary", ("ebooks",), ("authors",), 6)
+        operation = service.plan(
+            decision,
+            connection=cast(str, authority["connection"]),
+            library=cast(str, authority["library"]),
+            work_id=cast(str, authority["work_id"]),
+            destination="authors",
+            pre_value=authority["pre_value"],
+            desired_value=authority["decision_value"],
+            target_fingerprint=cast(str, authority["target_fingerprint"]),
+            target_version=cast(str, authority["target_version"]),
+            dependency_digests=cast(tuple[str, ...], authority["dependency_digests"]),
+            capability_digest="c" * 64,
+        )
+        assert operation is not None
+        target.seed(operation.plan)
+        applied = service.apply(operation.plan.plan_id)
+        assert applied.state == "verified"
+        assert target.read(operation.plan).value == project_decision_value(
+            "authors", authority["decision_value"]
+        )
+    finally:
+        repository.close()

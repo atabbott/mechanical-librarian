@@ -23,15 +23,13 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v14"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v15"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
     {"title", "authors", "narrators", "language", "publisher", "publishedDate"}
 )
-_REPORT_ONLY_SOURCE_DESTINATIONS = frozenset(
-    {"authors", "language", "publisher", "publishedDate"}
-)
+_REPORT_ONLY_SOURCE_DESTINATIONS = frozenset({"language", "publisher", "publishedDate"})
 _WORK_DESTINATIONS = frozenset({"title", "authors"})
 _PUBLICATION_DESTINATIONS = frozenset({"publishedDate"})
 _COMBINATION_DESTINATIONS = ("title", "subtitle", "series")
@@ -66,13 +64,14 @@ _RULE_TABLE = {
     },
     "candidate": {
         "compiler_admission_required": True,
-        "local_evidence": 1,
-        "proposal_evidence_sufficiency_required_for": ["title"],
+        "local_evidence_required_except": ["authors"],
+        "proposal_evidence_sufficiency_required_for": ["authors", "title"],
         "same_candidate_provider_correlation_required_for": ["title"],
         "source_evidence_report_only_destinations": sorted(
             _REPORT_ONLY_SOURCE_DESTINATIONS
         ),
         "target_only_preservation": 0,
+        "authors": "complete_set_proposal_sufficiency_without_incumbent_or_local_witness",
         "unique_action_required": True,
     },
     "combinations": {
@@ -542,13 +541,14 @@ def _candidate_is_eligible(
     if (
         (
             not source_evidence_report_only
+            and destination != "authors"
             and not field_support
             and not independent_title
             and proposal_target_only_preservation != (1 if title_election else 0)
         )
         or support["target_only_preservation"] != 0
         or (
-            destination != "publishedDate"
+            destination not in {"authors", "publishedDate"}
             and not field_support
             and not decoration_tidy_title
             and not independent_title
@@ -556,6 +556,7 @@ def _candidate_is_eligible(
         )
         or (
             not source_evidence_report_only
+            and destination != "authors"
             and support["independent_provider_correlations"]
             < minimum_provider_correlations
         )
@@ -664,7 +665,11 @@ def _base_reason(
     )
     if not source_evidence_report_only and summary["evidence_sufficiency"] == "manual":
         return "evidence_sufficiency_manual"
-    if not source_evidence_report_only and summary["target_only_preservation"] != 0:
+    if (
+        not source_evidence_report_only
+        and proposal["destination"] != "authors"
+        and summary["target_only_preservation"] != 0
+    ):
         return "target_only_preservation"
     if not eligible:
         candidates = cast("list[dict[str, object]]", proposal["candidates"])
