@@ -78,7 +78,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "db2ef6861819b0665fa73007981dcd096b3c2be61b12cc7a9ef1512afa8601a5"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "f75c205c29da565dfaca508e39f54906ef29663db6e4a84967be45858fbc6e88"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
