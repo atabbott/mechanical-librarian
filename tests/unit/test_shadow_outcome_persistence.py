@@ -8904,7 +8904,7 @@ def test_title_recovery_reads_safety_after_the_competing_writer_commits(tmp_path
             False, None, (("title_layout", "automatic_admission_failed"),)
         ),
     )
-    sibling = open_repository(path, create=False)
+    sibling = open_repository(path, create=False, authority=repository.authority)
     sibling._connection.execute("BEGIN IMMEDIATE")
     started = threading.Event()
     results = []
