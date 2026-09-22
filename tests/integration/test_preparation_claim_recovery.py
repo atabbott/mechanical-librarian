@@ -343,16 +343,35 @@ def test_stop_before_publication_commits_checkpoint_without_successor_claim(
 
 
 @pytest.mark.parametrize("root", [3], indirect=True)
+@pytest.mark.parametrize("blocked_settlement", [False, True])
 def test_two_real_lanes_stop_with_exact_failed_owner_and_drain_other_checkpoint(
-    root: SQLiteMetadataReportRepository, tmp_path: Path
+    root: SQLiteMetadataReportRepository, tmp_path: Path, blocked_settlement: bool
 ) -> None:
+    import asyncio
     import threading
     from dataclasses import replace
 
+    from mechanical_librarian.application.live_updates import LiveUpdateChannel
     from mechanical_librarian.domain.metadata_report import MetadataReport
 
     path = tmp_path / "application.sqlite3"
     pipeline = _pipeline(root, path)
+    updates = LiveUpdateChannel()
+    broken = updates.subscribe()
+    healthy = updates.subscribe(0)
+    failed_wakes: list[bool] = []
+    healthy_wakes: list[bool] = []
+    closed_loop = asyncio.new_event_loop()
+    closed_loop.close()
+
+    def wake_closed_loop() -> None:
+        failed_wakes.append(True)
+        closed_loop.call_soon_threadsafe(lambda: None)
+
+    broken.wake_with(wake_closed_loop)
+    healthy.wake_with(lambda: healthy_wakes.append(True))
+    pipeline.attach_updates(updates.publish)
+    initial_failed_wakes = len(failed_wakes)
     both = threading.Barrier(2)
     stopped = threading.Event()
     readers: dict[int, sqlite3.Connection] = {}
@@ -362,14 +381,15 @@ def test_two_real_lanes_stop_with_exact_failed_owner_and_drain_other_checkpoint(
     def extract(repository, action, claim_next):
         executions.append(action.item_id)
         both.wait(timeout=5)
-        if action.item_id == "item-1":
+        if blocked_settlement and action.item_id == "item-1":
             reader = sqlite3.connect(path)
             readers[threading.get_ident()] = reader
             reader.execute("BEGIN")
             reader.execute("SELECT * FROM review_preparation_work").fetchall()
             raise ReviewPipelineError("parser_refused")
-        assert action.item_id == "item-2"
-        assert stopped.wait(5)
+        assert action.item_id in {"item-1", "item-2"}
+        if blocked_settlement:
+            assert stopped.wait(5)
         original = _report()
         report = MetadataReport.create(
             target=replace(original.target, item=action.item_id),
@@ -381,19 +401,21 @@ def test_two_real_lanes_stop_with_exact_failed_owner_and_drain_other_checkpoint(
         repository.publish(
             report,
             lambda: True,
-            after_publication=lambda *_: (
-                repository.complete_review_extraction_publication(
+            after_publication=(
+                lambda *_: repository.complete_review_extraction_publication(
                     action, report.report_id, 10, claim_next=claim_next
                 )
-            ),
+            )
+            if blocked_settlement
+            else None,
         )
-        return report.report_id, True
+        return report.report_id, blocked_settlement
 
     pipeline._extract = extract
 
     def run() -> None:
         try:
-            pipeline.run_next()
+            pipeline.run_next(maximum_actions=64 if blocked_settlement else 1)
         except BaseException as error:
             failures.append(error)
         finally:
@@ -409,10 +431,25 @@ def test_two_real_lanes_stop_with_exact_failed_owner_and_drain_other_checkpoint(
     for worker in workers:
         worker.join(10)
     assert not any(worker.is_alive() for worker in workers)
+    assert len(failed_wakes) > initial_failed_wakes
+    assert healthy_wakes and healthy.take()[-1].sequence > 0
+    updates.close()
+    assert broken.closed and healthy.closed
+    assert sorted(executions) == ["item-1", "item-2"]
+    if not blocked_settlement:
+        assert failures == []
+        assert not pipeline.recovery_required and not pipeline.owned_claims
+        assert root._connection.execute(
+            "SELECT item_id,stage,state,attempt FROM review_preparation_work ORDER BY item_id"
+        ).fetchall() == [
+            ("item-1", "provider", "queued", 0),
+            ("item-2", "provider", "queued", 0),
+            ("item-3", "extraction", "queued", 0),
+        ]
+        return
     assert len(failures) == 1
     assert isinstance(failures[0], ReviewPipelineError)
     assert str(failures[0]) == "persistence"
-    assert sorted(executions) == ["item-1", "item-2"]
     assert pipeline.recovery_required
     (owned,) = pipeline.owned_claims
     assert (owned.item_id, owned.stage, owned.attempt) == ("item-1", "extraction", 1)
@@ -858,6 +895,11 @@ def test_actual_supervisor_timeout_retains_exact_active_claim_before_close(
 
     path = tmp_path / "application.sqlite3"
     pipeline = _pipeline(root, path)
+    # This deadline proof uses normal connections; the shared fault fixture's
+    # 1 ms writer timeout belongs only to deliberate settlement contention.
+    pipeline._repository_factory = lambda: open_repository(
+        path, authority=root.authority
+    )
     pipeline._observation_repository_factory = lambda: open_repository(
         path, authority=root.authority, cross_thread=True
     )

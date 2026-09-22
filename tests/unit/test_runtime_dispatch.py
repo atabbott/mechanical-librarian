@@ -169,6 +169,7 @@ def test_post_commit_paused_library_addition_keeps_successor_available_until_res
     None
 ):
     class PausedPipeline:
+        recovery_required = False
         libraries = (("primary", "added", "lib-2"),)
 
         def __init__(self) -> None:

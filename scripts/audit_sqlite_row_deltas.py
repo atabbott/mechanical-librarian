@@ -17,7 +17,7 @@ from mechanical_librarian.adapters.persistence.schema import (
 
 TEST_NODES = (
     "tests/unit/test_review_pipeline.py::test_one_work_progresses_through_every_persisted_stage[False]",
-    "tests/unit/test_review_pipeline.py::test_recovery_successor_uses_normal_projection_and_atomic_package_cutover",
+    "tests/unit/test_review_pipeline.py::test_recovery_successor_uses_normal_projection_and_atomic_package_cutover[None]",
     "tests/unit/test_review_session_persistence.py::test_sqlite_human_decision_is_atomic_idempotent_and_reopens_exactly",
     "tests/unit/test_metadata_policy_activation.py::test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart",
     "tests/unit/test_field_effects.py::test_verified_sibling_survives_failure_and_restart",
