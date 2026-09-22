@@ -1,9 +1,9 @@
 {
   "audiobook_activation": {
     "clean_rebuild_required": true,
-    "frozen_candidate_sha": "59c52843409504590f9a52a7a2446b5dea35ceed",
+    "frozen_candidate_sha": "f536630599d97a7fa01580f0897239a9e366e8c5",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v14.json",
-    "manifest_sha256": "5f42160350c3297c2292e5d91900456a321ac8141e670793ab9b4555074a4b42",
+    "manifest_sha256": "88f79b6038765c0a0932e6bd9893ada5f9d390ec2dd224555c9133182766a851",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -111,7 +111,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "59c52843409504590f9a52a7a2446b5dea35ceed"
+    "source_sha": "f536630599d97a7fa01580f0897239a9e366e8c5"
   },
   "build_provenance_paths": [
     "frontend/package-lock.json",
@@ -127,7 +127,7 @@
     "retained_controls": 2,
     "source_reconstructions": 2
   },
-  "frozen_candidate_sha": "59c52843409504590f9a52a7a2446b5dea35ceed",
+  "frozen_candidate_sha": "f536630599d97a7fa01580f0897239a9e366e8c5",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f19a-qualification-manifest-v24.json",
@@ -646,7 +646,7 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "59c52843409504590f9a52a7a2446b5dea35ceed",
+    "current_source_sha": "f536630599d97a7fa01580f0897239a9e366e8c5",
     "introduced_sources": {
       "frontend/src/queryWork.ts": {
         "current_sha256": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
@@ -690,6 +690,10 @@
       "frontend/src/routes/LibraryPage.tsx": {
         "current_sha256": "ae29b8365b912a380b0d0389b7b2dcc612506884e4b15de5562b552bcbbff691",
         "prior_sha256": "3fddd69f7bb86399812ca4134fcdfd6de00b0920b7a6a17dde2e7c16fdd3a6a8"
+      },
+      "frontend/tests/identifierEvidenceFixture.json": {
+        "current_sha256": "f7e7ae23a83d2b88ca3462ce510a3a6440ca6e3ad77d259662e188ccaf041f73",
+        "prior_sha256": "7a07650efec697fec1619b094e4e1b0b1f2ae6799a53e28982efda0b474c3663"
       },
       "frontend/tests/router.library.test.tsx": {
         "current_sha256": "26e1f49e8e090fca35dc7f309a2f27906f71fc27498b944e45568187a1b1d796",
@@ -1058,7 +1062,7 @@
     "frontend/tests/fixtures.tsx": "4957666d76ea8857ec15a0cca691f23dfa7b43963a3183bd6cb51dc1bdecd0e1",
     "frontend/tests/focus.test.tsx": "0dfc5728cdf539fa07d8487655e40cb721294a41043e82b4251731bcdea85051",
     "frontend/tests/http.test.ts": "324d9de4ab7c74b0f16d26e58deec9e5e5470fa93002ccec6dd221706890f713",
-    "frontend/tests/identifierEvidenceFixture.json": "7a07650efec697fec1619b094e4e1b0b1f2ae6799a53e28982efda0b474c3663",
+    "frontend/tests/identifierEvidenceFixture.json": "f7e7ae23a83d2b88ca3462ce510a3a6440ca6e3ad77d259662e188ccaf041f73",
     "frontend/tests/liveUpdates.test.ts": "d1dd1e4880f4eae5dce0fd14c1713e6bcface9133ce5d95fb0773272c988dd2e",
     "frontend/tests/ownerConfirmation.test.tsx": "9d8195c19da7b80723d2d0492e8b2fd4b024e1dbe3eb4f2a78906ec1990c7cdb",
     "frontend/tests/policyImpact.test.ts": "44dc17d36e5292075b042ed7c1ba12a259ec93759decb8d2375b43ea1c625cc3",
@@ -1213,8 +1217,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "7b4ac554f299409a6c18fe914a6937cf669ea56f830529e626f36f4aeef148ea",
-    "src/mechanical_librarian/domain/automatic_decision.py": "bb4c0f2c795dd458621a2a83f84518661da9d257a2b661f2e7b8664b767d1c15",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "1c99e3e2d2ea96b261b37c0baaca65b3582435ab30ea8bc3a6abda6ebe3da1fc",
+    "src/mechanical_librarian/domain/automatic_decision.py": "23c68f6bee719c2f85c7ba090a59615fdb038ec92a6d151444b4fb6287a8663b",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -1245,7 +1249,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "b98e49526fedc5bc80d812a52f56df83687cde545af35f8c8e4dcd895ef5aed3",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "986758a18525a283aee966f619fdb8c8ccbef78e419e43caa974e865a39ae5fb",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "3ebd6b660ae2a4ecdc93067819b35c098f4629e802e024df2e41f5e0b983195b",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
