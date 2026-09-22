@@ -3197,9 +3197,8 @@ def _credit_owner(
         return True
     if any(elements[n].name in _ATTRIBUTION_BLOCKS for n in element.ancestors):
         return False
-    return "contributor" in element.semantics or (
-        element.name in {"div", "section"}
-        and not any(element.ordinal in child.ancestors for child in elements.values())
+    return "contributor" in element.semantics or not any(
+        element.ordinal in child.ancestors for child in elements.values()
     )
 
 

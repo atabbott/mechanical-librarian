@@ -3963,5 +3963,9 @@ def test_typed_credit_containers_preserve_roles_without_authors(
     assert [
         (claim.normalized_value, claim.role, claim.citation.exact_excerpt)
         for claim in credits
-    ] == ([("Bea Artist", role, context)] if body.startswith(("<p>", "<span")) else [])
+    ] == (
+        [("Bea Artist", role, context)]
+        if (body.startswith("<p>") or 'epub:type="contributor"' in body)
+        else []
+    )
     assert not [claim for claim in report.claims if claim.field is OpeningField.CREATOR]

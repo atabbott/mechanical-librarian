@@ -3115,7 +3115,7 @@ def test_typed_credit_containers_preserve_roles_without_authors(
         (fact.canonical_value, fact.role, fact.supporting_context) for fact in credits
     ] == (
         [("Bea Artist", role, context)]
-        if rear or body.startswith(("<p>", "<span"))
+        if rear or (body.startswith("<p>") or 'epub:type="contributor"' in body)
         else []
     )
     assert not [

@@ -77,6 +77,12 @@ MIXED_AUTHOR_STATEMENTS = (
 
 TYPED_CREDIT_STATEMENTS = (
     (
+        "<span>Translated by Bea Artist</span>",
+        "Translated by Bea Artist",
+        "translator",
+        "CONTRIBUTOR",
+    ),
+    (
         '<span epub:type="contributor">Translated by Bea Artist</span>',
         "Translated by Bea Artist",
         "translator",
