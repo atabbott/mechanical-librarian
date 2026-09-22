@@ -71,7 +71,7 @@ _RULE_TABLE = {
             _REPORT_ONLY_SOURCE_DESTINATIONS
         ),
         "target_only_preservation": 0,
-        "authors": "complete_set_proposal_sufficiency_without_incumbent_or_local_witness",
+        "authors": "complete_set_proposal_sufficiency_and_local_or_two_independent_providers",
         "unique_action_required": True,
     },
     "combinations": {
@@ -548,6 +548,11 @@ def _candidate_is_eligible(
         )
         or support["target_only_preservation"] != 0
         or (
+            destination == "authors"
+            and support["local_evidence"] == 0
+            and support["independent_provider_correlations"] < 2
+        )
+        or (
             destination not in {"authors", "publishedDate"}
             and not field_support
             and not decoration_tidy_title
@@ -673,6 +678,23 @@ def _base_reason(
         return "target_only_preservation"
     if not eligible:
         candidates = cast("list[dict[str, object]]", proposal["candidates"])
+        if proposal["destination"] == "authors":
+            return (
+                "insufficient_support"
+                if candidates
+                and any(
+                    cast("_CandidateSummary", value["decision_summary"])["support"][
+                        "local_evidence"
+                    ]
+                    == 0
+                    and cast("_CandidateSummary", value["decision_summary"])["support"][
+                        "independent_provider_correlations"
+                    ]
+                    < 2
+                    for value in candidates
+                )
+                else "no_eligible_action"
+            )
         if candidates and any(
             cast("_CandidateSummary", value["decision_summary"])["support"][
                 "local_evidence"

@@ -3189,6 +3189,20 @@ def _attribution_owner(
     return element.ordinal not in context.claim_containers
 
 
+def _credit_owner(
+    element: _Element, elements: dict[int, _Element], context: _RecognitionContext
+) -> bool:
+    """Keep typed leaf credits without duplicating a containing claim block."""
+    if _attribution_owner(element, elements, context):
+        return True
+    if any(elements[n].name in _ATTRIBUTION_BLOCKS for n in element.ancestors):
+        return False
+    return "contributor" in element.semantics or (
+        element.name in {"div", "section"}
+        and not any(element.ordinal in child.ancestors for child in elements.values())
+    )
+
+
 def _author_attribution(
     element: _Element,
     projection: _Projection,
@@ -3489,7 +3503,7 @@ def _recognize(
                 )
         recovered_credits = (
             _indicia_credits(text)
-            if _attribution_owner(element, by_ordinal, context)
+            if _credit_owner(element, by_ordinal, context)
             else ()
         )
         bibliographic_credit = False

@@ -74,6 +74,7 @@ from tests.support.author_evidence import (
     AUTHOR_STATEMENTS,
     LEGITIMATE_AUTHOR_STATEMENTS,
     MIXED_AUTHOR_STATEMENTS,
+    TYPED_CREDIT_STATEMENTS,
     author_epub,
 )
 from tests.support.epub_packages import (
@@ -3096,3 +3097,27 @@ def test_whole_author_mixed_indicia_refuses_authority(body, expected, rear, reco
     assert [(fact.canonical_value, fact.role) for fact in creators] == (
         [] if expected is None else [(expected, "author")]
     )
+
+
+@pytest.mark.parametrize("body,context,role,field", TYPED_CREDIT_STATEMENTS)
+@pytest.mark.parametrize("recovered", (False, True))
+@pytest.mark.parametrize("rear", (False, True))
+def test_typed_credit_containers_preserve_roles_without_authors(
+    body, context, role, field, recovered, rear
+):
+    report = _inspect_in_child(author_epub(body, rear=rear, recovered=recovered))
+    credits = [
+        fact
+        for fact in report.facts
+        if fact.field is getattr(EpubInspectionField, field)
+    ]
+    assert [
+        (fact.canonical_value, fact.role, fact.supporting_context) for fact in credits
+    ] == (
+        [("Bea Artist", role, context)]
+        if rear or body.startswith(("<p>", "<span"))
+        else []
+    )
+    assert not [
+        fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
+    ]

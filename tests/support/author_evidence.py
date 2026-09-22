@@ -75,6 +75,39 @@ MIXED_AUTHOR_STATEMENTS = (
     "<p>Authors: Ada Example; <span>Copyright <em>by Example House</em></span></p>",
 )
 
+TYPED_CREDIT_STATEMENTS = (
+    (
+        '<span epub:type="contributor">Translated by Bea Artist</span>',
+        "Translated by Bea Artist",
+        "translator",
+        "CONTRIBUTOR",
+    ),
+    (
+        "<div>Edited by Bea Artist</div>",
+        "Edited by Bea Artist",
+        "editor",
+        "CONTRIBUTOR",
+    ),
+    (
+        "<section>Illustrated by Bea Artist</section>",
+        "Illustrated by Bea Artist",
+        "illustrator",
+        "CONTRIBUTOR",
+    ),
+    (
+        "<div>Converted by Bea Artist</div>",
+        "Converted by Bea Artist",
+        "conversion",
+        "CONTEXTUAL_CREDIT",
+    ),
+    (
+        "<p>Translated by <em>Bea Artist</em></p>",
+        "Translated by Bea Artist",
+        "translator",
+        "CONTRIBUTOR",
+    ),
+)
+
 LEGITIMATE_AUTHOR_STATEMENTS = (
     ("<p>Authors: The Imprint Collective</p>", "The Imprint Collective"),
     ("<p>Author: The Copyright Collective</p>", "The Copyright Collective"),
@@ -221,6 +254,9 @@ def author_report(
         "none": "<p>Ordinary prose.</p>",
         "mixed": MIXED_AUTHOR_STATEMENTS[2],
         "copyright_notice": MIXED_AUTHOR_STATEMENTS[0],
+        "single_provider": "<p>Ordinary prose.</p>",
+        "two_provider_fill": "<p>Ordinary prose.</p>",
+        "same_authority": "<p>Ordinary prose.</p>",
     }[scenario]
     if long_names:
         body = "<p>Author photograph by Patricia Example of the Northern Portrait and Archival Photography Collective, with image preparation for the Clockwork Illustrated Edition</p>"
@@ -249,16 +285,35 @@ def author_report(
                     )
                     for index, author in enumerate(names)
                 ),
-                authority=name,
+                authority="hardcover" if scenario == "same_authority" else name,
             )
-            for name in ("hardcover", "open_library")
+            for name in (
+                ("hardcover",)
+                if scenario == "single_provider"
+                else ("hardcover", "open_library")
+            )
         )
-        if scenario in {"supported", "conflict"}
+        if scenario
+        in {
+            "supported",
+            "conflict",
+            "single_provider",
+            "two_provider_fill",
+            "same_authority",
+        }
         else ()
     )
     current = (
         None
-        if scenario in {"local_fill", "mixed", "copyright_notice"}
+        if scenario
+        in {
+            "local_fill",
+            "mixed",
+            "copyright_notice",
+            "single_provider",
+            "two_provider_fill",
+            "same_authority",
+        }
         else ("Current Writer",)
     )
     report = MetadataReport.create(

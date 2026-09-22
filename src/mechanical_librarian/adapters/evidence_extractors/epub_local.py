@@ -622,7 +622,7 @@ def rear_facts(
             )
             credits = (
                 opening._indicia_credits(value)
-                if opening._attribution_owner(element, by_ordinal, recognition_context)
+                if opening._credit_owner(element, by_ordinal, recognition_context)
                 else ()
             )
             dates = () if is_ancestor else opening._indicia_dates(value)

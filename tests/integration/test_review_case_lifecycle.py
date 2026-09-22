@@ -598,6 +598,9 @@ def test_multiline_incumbent_description_persists_and_applies(
     "scenario, admitted",
     (
         ("supported", True),
+        ("single_provider", False),
+        ("two_provider_fill", True),
+        ("same_authority", False),
         ("local_fill", True),
         ("local_replace", False),
         ("incidental", False),
@@ -729,5 +732,33 @@ def test_mixed_author_indicia_cannot_fill_empty_target_automatically(
         ).fetchone() == (0,)
         repository.persist_shadow_outcome(case_id, 5)
         assert repository.get_review_case_decisions(case_id) == ()
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize("scenario", ("single_provider", "same_authority"))
+def test_one_author_provider_remains_owner_review_without_automatic_authority(
+    tmp_path, scenario
+):
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from tests.support.author_evidence import author_report, publish_author_case
+
+    repository = open_repository(tmp_path / "one-provider.sqlite")
+    try:
+        case_id, proposal = publish_author_case(
+            repository, author_report(tmp_path / "media", scenario)
+        )
+        field = next(
+            value
+            for value in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if value["destination"] == "authors"
+        )
+        assert field["current"]["state"] == "missing"
+        assert field["automatic_decision"] is None
+        assert field["editable"] is True
+        assert "accept" in field["decision_actions"]
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE destination='authors'"
+        ).fetchone() == (0,)
     finally:
         repository.close()

@@ -907,3 +907,14 @@ def test_authors_follow_proposal_sufficiency_without_local_witness(
         )
     ).decisions[0]
     assert decision.recommendation == expected
+
+
+@pytest.mark.parametrize("provider_support", (0, 1))
+def test_authors_without_local_need_two_independent_provider_correlations(
+    provider_support,
+):
+    decision = decide_shadow_packet(
+        _packet("authors", local_support=0, provider_support=provider_support)
+    ).decisions[0]
+    assert decision.recommendation == "manual"
+    assert decision.reason_code == "insufficient_support"
