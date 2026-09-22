@@ -3030,6 +3030,7 @@ def test_generated_author_policy_routes_owner_attention_without_automatic_leak(
             assert settled["needs_attention"] is False
             after = browser.attention(search=None, limit=10, cursor=None)
             assert "authors" not in {item["destination"] for item in after["items"]}
+            assert type(attention["total"]) is int
             assert after["total"] == attention["total"] - 1
     finally:
         repository.close()
