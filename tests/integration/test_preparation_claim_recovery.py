@@ -66,7 +66,10 @@ def root(
 
 
 def _pipeline(
-    root: SQLiteMetadataReportRepository, path: Path
+    root: SQLiteMetadataReportRepository,
+    path: Path,
+    *,
+    blocked_settlement: bool = False,
 ) -> ReviewPreparationPipeline:
     def extract(repository: ReviewPipelineRepository, _: PipelineAction, __: bool):
         concrete = cast("SQLiteMetadataReportRepository", repository)
@@ -76,7 +79,8 @@ def _pipeline(
 
     def factory() -> SQLiteMetadataReportRepository:
         repository = open_repository(path, authority=root.authority)
-        repository._connection.execute("PRAGMA busy_timeout=1")
+        if blocked_settlement:
+            repository._connection.execute("PRAGMA busy_timeout=1")
         return repository
 
     return ReviewPreparationPipeline(
@@ -127,7 +131,7 @@ def test_reader_blocked_parser_settlement_retains_claim_and_stops_admission(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "application.sqlite3"
-    pipeline = _pipeline(root, path)
+    pipeline = _pipeline(root, path, blocked_settlement=True)
     reader = sqlite3.connect(path)
 
     def refuse(*_: object):
@@ -164,7 +168,7 @@ def test_unsettled_committed_successor_restarts_without_repeating_extraction(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "application.sqlite3"
-    pipeline = _pipeline(root, path)
+    pipeline = _pipeline(root, path, blocked_settlement=True)
     reader = sqlite3.connect(path)
     extracted: list[bool] = []
     original = pipeline._extract
@@ -382,6 +386,7 @@ def test_two_real_lanes_stop_with_exact_failed_owner_and_drain_other_checkpoint(
         executions.append(action.item_id)
         both.wait(timeout=5)
         if blocked_settlement and action.item_id == "item-1":
+            repository._connection.execute("PRAGMA busy_timeout=1")
             reader = sqlite3.connect(path)
             readers[threading.get_ident()] = reader
             reader.execute("BEGIN")
@@ -895,11 +900,6 @@ def test_actual_supervisor_timeout_retains_exact_active_claim_before_close(
 
     path = tmp_path / "application.sqlite3"
     pipeline = _pipeline(root, path)
-    # This deadline proof uses normal connections; the shared fault fixture's
-    # 1 ms writer timeout belongs only to deliberate settlement contention.
-    pipeline._repository_factory = lambda: open_repository(
-        path, authority=root.authority
-    )
     pipeline._observation_repository_factory = lambda: open_repository(
         path, authority=root.authority, cross_thread=True
     )
