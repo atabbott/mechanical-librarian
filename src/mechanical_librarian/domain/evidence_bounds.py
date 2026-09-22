@@ -123,8 +123,11 @@ def validate_incumbent_description(value: object, label: str, maximum: int) -> s
         or len(value.encode("utf-8", errors="surrogatepass")) > maximum * 4
     ):
         raise EvidenceValueError(f"{label} exceeds its size limit")
-    controls = value.strip(" \t").replace("\r\n", "\n").replace("\n", " ")
-    if any(_forbidden_codepoint(ord(character)) for character in controls):
+    controls = value.replace("\r\n", "\n").strip(" \t\n")
+    if controls != controls.strip() or any(
+        _forbidden_codepoint(ord(character))
+        for character in controls.replace("\n", " ")
+    ):
         raise EvidenceValueError(f"{label} contains forbidden control or Unicode text")
     _validate_projection_safety(value.strip(" \t\r\n"), label)
     return value

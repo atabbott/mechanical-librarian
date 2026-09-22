@@ -16,6 +16,8 @@ from tests.support.audiobookshelf_targets import target_snapshot
         "First paragraph.\n\nSecond paragraph.",
         "First paragraph.\r\n\r\nSecond paragraph.",
         " \tCafé description.\t ",
+        "\r\n\tText\t\r\n",
+        "\n \tText\t \n",
     ),
 )
 def test_incumbent_description_retains_exact_text(value: str) -> None:
@@ -57,6 +59,11 @@ def test_incumbent_description_comparison_is_not_source_identity() -> None:
         " \t\\private\t ",
         " \tsecret: synthetic\t ",
         "\u00a0",
+        "\u00a0Text",
+        "Text\u00a0",
+        " \n\u2003Text\t\r\n",
+        "\rText",
+        "Text\r",
     ),
 )
 def test_incumbent_description_rejects_unsafe_or_blank_text(value: str) -> None:
@@ -82,45 +89,72 @@ def test_intake_safety_refusal_precedes_oversized(suffix: str) -> None:
     assert field.state is TargetFieldState.MALFORMED
 
 
-def test_domain_bounds_precede_safety_and_paths_precede_credentials() -> None:
+@pytest.mark.parametrize(
+    "suffix", ("\x00", " /home/private/book", " api_key=synthetic")
+)
+def test_domain_bounds_precede_safety(suffix: str) -> None:
     from mechanical_librarian.domain.evidence_bounds import (
         EvidenceValueError,
         validate_incumbent_description,
     )
 
-    for suffix in ("\x00", " /home/private/book", " api_key=synthetic"):
-        with pytest.raises(EvidenceValueError, match="size limit"):
-            validate_incumbent_description("a" * 16385 + suffix, "description", 16384)
-    with pytest.raises(EvidenceValueError, match="production path"):
-        validate_incumbent_description(
-            "/home/private/book api_key=synthetic", "description", 16384
-        )
-    with pytest.raises(EvidenceValueError, match="forbidden control"):
-        validate_incumbent_description(
-            "Text\x00 /home/private/book", "description", 16384
-        )
+    with pytest.raises(EvidenceValueError, match="size limit"):
+        validate_incumbent_description("a" * 16385 + suffix, "description", 16384)
 
 
-def test_description_original_bounds_exact_type_and_scalar_contract() -> None:
+@pytest.mark.parametrize(
+    "value,message",
+    (
+        ("/home/private/book api_key=synthetic", "production path"),
+        ("Text\x00 /home/private/book", "forbidden control"),
+    ),
+)
+def test_domain_safety_precedence(value: str, message: str) -> None:
     from mechanical_librarian.domain.evidence_bounds import (
         EvidenceValueError,
         validate_incumbent_description,
-        validate_projection_text,
     )
 
-    class Text(str):
-        pass
+    with pytest.raises(EvidenceValueError, match=message):
+        validate_incumbent_description(value, "description", 16384)
 
-    for value in (Text("Description"), None, 123, "Text\ud800"):
-        with pytest.raises(EvidenceValueError):
-            validate_incumbent_description(value, "description", 16384)
+
+class Text(str):
+    pass
+
+
+@pytest.mark.parametrize("value", (Text("Description"), None, 123, "Text\ud800"))
+def test_description_exact_type_and_unicode(value: object) -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        EvidenceValueError,
+        validate_incumbent_description,
+    )
+
+    with pytest.raises(EvidenceValueError):
+        validate_incumbent_description(value, "description", 16384)
+
+
+def test_description_original_bounds() -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        EvidenceValueError,
+        validate_incumbent_description,
+    )
+
     text = " " + "a" * 16382 + "\n"
     assert validate_incumbent_description(text, "description", 16384) == text
     with pytest.raises(EvidenceValueError, match="size limit"):
         validate_incumbent_description(text + " ", "description", 16384)
-    for value in ("First\nSecond", " padded ", "\tboundary"):
-        with pytest.raises(EvidenceValueError):
-            validate_projection_text(value, "scalar", 16384)
+
+
+@pytest.mark.parametrize("value", ("First\nSecond", " padded ", "\tboundary"))
+def test_scalar_contract_unchanged(value: str) -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        EvidenceValueError,
+        validate_projection_text,
+    )
+
+    with pytest.raises(EvidenceValueError):
+        validate_projection_text(value, "scalar", 16384)
 
 
 def test_report_valid_multibyte_description_cannot_exceed_effect_byte_bound() -> None:
