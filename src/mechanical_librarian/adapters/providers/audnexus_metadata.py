@@ -81,6 +81,7 @@ from mechanical_librarian.domain.metadata_report import (
     comparison_links,
     finalize_candidate_comparisons,
     normalize_date_value,
+    validate_observed_title,
 )
 
 AUDNEXUS_ORIGIN = "https://api.audnex.us"
@@ -819,6 +820,8 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
             # Other timestamps do not silently lose their stated precision.
             text = text.removesuffix("T00:00:00.000Z")
             normalize_date_value(text)
+        if kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}:
+            validate_observed_title(text)
         return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
         return (

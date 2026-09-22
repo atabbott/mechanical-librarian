@@ -606,7 +606,7 @@ def test_real_sqlite_progress_reconciles_mixed_terminal_and_active_work() -> Non
         (
             "transient",
             "Bounded automatic recovery attempts were exhausted.",
-            "No owner action is currently available.",
+            "When this library finishes with failures, open Background activity and choose Retry.",
         ),
         (
             "projection",

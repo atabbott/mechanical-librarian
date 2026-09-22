@@ -1807,3 +1807,114 @@ def test_hardcover_invalid_cover_links_and_author_names_are_field_local() -> Non
             for candidate in observation.candidates
             for claim in candidate.claims
         )
+
+
+@pytest.mark.parametrize("key", ["title", "subtitle"])
+def test_http_title_rejection_retains_edition_siblings(key: str) -> None:
+    row = {
+        "id": 1,
+        "book_id": 10,
+        "isbn_13": "9780306406157",
+        "title": "Example Book",
+        "subtitle": "A Test",
+        "publisher": {"name": "Example Press"},
+        key: "Example\u200b Book",
+    }
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(
+                        200,
+                        json=hardcover_envelope(
+                            [row], [{"id": 10, "title": "Example Book"}]
+                        ),
+                    )
+                )
+            ),
+            65_536,
+        )
+        .observe(isbn_lookup((isbn_claim(),)))
+        .observation
+    )
+    assert observation.status is ProviderStatus.CANDIDATES
+    claims = [
+        claim for candidate in observation.candidates for claim in candidate.claims
+    ]
+    kind = ClaimKind.TITLE if key == "title" else ClaimKind.SUBTITLE
+    assert any(
+        claim.kind is kind
+        and claim.state is FieldState.MALFORMED
+        and claim.value is None
+        for claim in claims
+    )
+    assert any(
+        claim.kind is ClaimKind.PUBLISHER and claim.value == "Example Press"
+        for claim in claims
+    )
+
+
+def test_overflow_title_rejection_is_typed_before_work_admission() -> None:
+    envelope = hardcover_envelope(
+        [{"id": index, "book_id": 10} for index in range(1, 7)],
+        [
+            {
+                "id": 10,
+                "title": "Example\u200b Book",
+                "contributions": [
+                    {
+                        "id": 1,
+                        "contribution": "Author",
+                        "author": {"id": 7, "name": "Ada Example"},
+                    }
+                ],
+            }
+        ],
+    )
+    title = hardcover_metadata._claim(
+        "catalogue",
+        "hardcover-work-0000000010",
+        ClaimKind.TITLE,
+        "Example\u200b Book",
+        ClaimScope.WORK,
+        "not_applicable",
+        None,
+        (),
+        0,
+    )
+    assert title.state is FieldState.MALFORMED
+    assert title.value is None
+    with pytest.raises(ValueError, match="^provider overflow work is incomplete$"):
+        hardcover_metadata._parse_edition_enrichment_overflow(
+            json.dumps(envelope).encode(), "catalogue"
+        )
+    observation = (
+        HardcoverMetadataProvider(
+            "catalogue",
+            httpx.Client(
+                transport=httpx.MockTransport(
+                    lambda _: httpx.Response(200, json=envelope)
+                )
+            ),
+            65_536,
+        )
+        .observe(work_lookup())
+        .observation
+    )
+    assert observation.status is ProviderStatus.MALFORMED
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.metadata_report_schemas import synthetic_report
+
+    report = synthetic_report()
+    report = MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=(observation,),
+    )
+    assert (
+        evaluate_report(MetadataReport.from_json(report.to_json())).report_id
+        == report.report_id
+    )

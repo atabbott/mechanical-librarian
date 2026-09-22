@@ -666,11 +666,13 @@ const limitingProviderStatuses = new Set([
   'query_limit_exceeded',
 ])
 const providerGroup = (work: LibraryWorkView) =>
-  work.attentionCount === 0
-    ? 'No attention needed'
-    : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
-      ? 'Provider evidence limited'
-      : 'Provider evidence complete'
+  work.preparation
+    ? 'Preparation needs attention'
+    : work.attentionCount === 0
+      ? 'No attention needed'
+      : work.preparationOutcomes.some((outcome) => limitingProviderStatuses.has(outcome.status))
+        ? 'Provider evidence limited'
+        : 'Provider evidence complete'
 const providerSummary = (outcomes: readonly ProviderOutcomeView[]) => {
   const counts = new Map<string, number>()
   for (const outcome of outcomes) {
@@ -3211,7 +3213,8 @@ export default function LibraryPage({
                     {showGroup ? (
                       <div className="library-provider-group">
                         <h3>{group}</h3>
-                        {group !== 'No attention needed' ? (
+                        {group === 'Provider evidence complete' ||
+                        group === 'Provider evidence limited' ? (
                           <p>
                             {group === 'Provider evidence complete'
                               ? 'Lookups completed or did not apply; a match is not guaranteed.'

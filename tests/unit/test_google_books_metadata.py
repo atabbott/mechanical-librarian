@@ -1818,7 +1818,13 @@ def test_undispatched_causes_are_once_per_physical_lookup_and_closed() -> None:
         assert forbidden not in serialized
 
 
-def test_report_proposal_admission_and_review_packet_replay_google_evidence() -> None:
+@pytest.mark.parametrize("title", ["Example Book", "Example\u200b Book"])
+def test_report_proposal_admission_and_review_packet_replay_google_evidence(
+    title: str,
+) -> None:
+    volume = _volume()
+    assert isinstance(volume["volumeInfo"], dict)
+    volume["volumeInfo"]["title"] = title
     observation = (
         GoogleBooksMetadataProvider(
             "google_books",
@@ -1827,7 +1833,7 @@ def test_report_proposal_admission_and_review_packet_replay_google_evidence() ->
                     lambda _: httpx.Response(
                         200,
                         headers={"content-type": "application/json"},
-                        json={"totalItems": 1, "items": [_volume()]},
+                        json={"totalItems": 1, "items": [volume]},
                     )
                 )
             ),
@@ -1870,6 +1876,10 @@ def test_report_proposal_admission_and_review_packet_replay_google_evidence() ->
         finally:
             repository.close()
     serialized = packet.to_json()
+    assert "\u200b" not in serialized
+    assert "\u200b" not in report.to_json()
+    assert MetadataReport.from_json(report.to_json()) == report
+    assert observation.status is ProviderStatus.CANDIDATES
     assert "Example Press" in serialized
     assert "2026-Spring" in serialized
     assert not any(
@@ -1886,3 +1896,55 @@ def test_over_cap_optional_collection_rejects_once_without_member_traversal() ->
         fromlist=["_optional_string_list"],
     )._optional_string_list([object()] * 9, 8, counts.append)
     assert [1] == counts
+
+
+@pytest.mark.parametrize("key", ["title", "subtitle"])
+def test_rejection_provenance_preserves_safe_sibling_bytes(key: str) -> None:
+    from mechanical_librarian.domain.metadata_report import ProviderClaim
+
+    volume = _volume()
+    assert isinstance(volume["volumeInfo"], dict)
+    volume["volumeInfo"][key] = "Example\u200b Book"
+    with httpx.Client(
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(200, json={"items": [volume], "totalItems": 1})
+        )
+    ) as client:
+        observation = (
+            GoogleBooksMetadataProvider("google_books", client, 65_536)
+            .observe(_lookup())
+            .observation
+        )
+    assert observation.status is ProviderStatus.CANDIDATES
+    candidate = observation.candidates[0]
+    kind = ClaimKind.TITLE if key == "title" else ClaimKind.SUBTITLE
+    rejected = next(claim for claim in candidate.claims if claim.kind is kind)
+    assert rejected.state is FieldState.MALFORMED
+    assert rejected.value is None
+    expected = ProviderClaim.create(
+        provider=observation.provider,
+        candidate=candidate.identity,
+        kind=kind,
+        value=None,
+        state=FieldState.MALFORMED,
+        scope=rejected.scope,
+        applicability=rejected.applicability,
+        raw_order=rejected.raw_order,
+    )
+    assert rejected.reference == expected.reference
+    predecessor = json.loads(
+        (
+            Path(__file__).parents[1] / "fixtures/metadata-report-v46/report-v46.json"
+        ).read_text()
+    )
+    prior = predecessor["providers"][0]["candidates"][0]
+    assert candidate.identity == prior["identity"]
+    for claim in candidate.claims:
+        old = next(
+            value for value in prior["claims"] if value["raw_order"] == claim.raw_order
+        )
+        if claim.kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}:
+            if claim.kind is kind:
+                assert claim.reference != old["reference"]
+            continue
+        assert claim.to_data() == old

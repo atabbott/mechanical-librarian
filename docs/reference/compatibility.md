@@ -18,7 +18,7 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v46` plus `proposal-set-v8` under
+  `metadata-report-v47` plus `proposal-set-v8` under
   `fixed-conservative-v28`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
@@ -214,3 +214,8 @@ false author provenance that cannot be distinguished from corrected evidence.
 `fixed-conservative-v28`, `deterministic-shadow-decision-policy-v15` and
 `epub-opening-v4` are current. Opening report v2, citation v1, proposal envelope
 v8, packet v9, outcome v6 and package-parser identities are unchanged.
+
+
+## Provider title report successor
+
+Report `metadata-report-v47` and its exact SQLite discriminator require a **clean rebuild** (#1084). Prior v46 reports may contain falsely VALID title text that cannot reach comparison. Both old persisted schemas and forged current documents remain refused; no adoption or compatibility parser is supplied.

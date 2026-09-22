@@ -79,6 +79,7 @@ from mechanical_librarian.domain.metadata_report import (
     isbn_family,
     normalize_date_value,
     provider_candidate_work_identity_contradiction,
+    validate_observed_title,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -947,6 +948,8 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         text = validate_projection_text(value, "provider evidence value", maximum)
         if kind is ClaimKind.PUBLICATION_DATE:
             text = normalize_date_value(text)[0]
+        if kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}:
+            validate_observed_title(text)
         return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
         return (

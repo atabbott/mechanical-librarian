@@ -1523,3 +1523,8 @@ unchanged. The report/SQL successor requires a clean rebuild, never migration.
 ## Author evidence authority
 
 Author attribution is evidence, never authority by itself (#1083). Opening and rear EPUB paths share whole-statement structural classification and the original bounded navigation selection; fragment roles never spread across a resource. Incidental credits cannot mint Authors authority, and complete-set proposal conflicts cannot be bypassed by the shadow policy. Report v46, proposal policy v28 and shadow policy v15 invalidate old admission bindings; clean rebuild required. Historical automatic documents remain historical. Consent, exact currentness, backup, optimistic preconditions, read-back and durable audit still govern every permitted effect.
+
+
+## Provider title comparison admission
+
+Provider TITLE/SUBTITLE ingress and VALID report claims require the existing observed-title validator. Rejected text never becomes persisted payload, diagnostics or an inferred normalized match. Canonical rejection references bind state/value; existing candidate identity and occurrence order survive where the existing admission rules retain the claim. Same-candidate admissible fields and independent provider/local evidence retain their authority. Overflow witnesses and audiobook recording admission keep their existing complete-evidence requirements. Report v47 requires a clean rebuild; no effect, egress or reviewer authority changes (#1084).

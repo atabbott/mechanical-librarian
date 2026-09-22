@@ -4325,3 +4325,46 @@ def test_original_date_source_parser(raw: str, expected: str) -> None:
 def test_original_date_source_parser_refuses_guessing(raw: object) -> None:
     with pytest.raises((ValueError, TypeError)):
         open_library_metadata._work_first_publication(raw)
+
+
+@pytest.mark.parametrize("key", ["title", "subtitle"])
+def test_http_title_rejection_retains_edition_siblings(key: str) -> None:
+    edition = _edition("/books/OL1M")
+    edition[key] = "Example\u200b Book"
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/search.json":
+            document = _search("/books/OL1M")
+        elif request.url.path == "/books/OL1M.json":
+            document = edition
+        elif request.url.path == "/works/OL5W.json":
+            document = _work()
+        else:
+            document = {"key": "/authors/OL7A", "name": "Ada Example"}
+        return httpx.Response(200, json=document)
+
+    observation = (
+        OpenLibraryMetadataProvider(
+            "catalogue",
+            httpx.Client(transport=httpx.MockTransport(respond)),
+            65_536,
+            pacer=OpenLibraryPacer(sleep=lambda _: None),
+        )
+        .observe(_isbn_lookup((_isbn(),)))
+        .observation
+    )
+    assert observation.status is ProviderStatus.CANDIDATES
+    claims = [
+        claim for candidate in observation.candidates for claim in candidate.claims
+    ]
+    kind = ClaimKind.TITLE if key == "title" else ClaimKind.SUBTITLE
+    assert any(
+        claim.kind is kind
+        and claim.state is FieldState.MALFORMED
+        and claim.value is None
+        for claim in claims
+    )
+    assert any(
+        claim.kind is ClaimKind.PUBLISHER and claim.value == "Example Press"
+        for claim in claims
+    )

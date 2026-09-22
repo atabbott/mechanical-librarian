@@ -2908,11 +2908,11 @@ def _dependency_qualification_documents():
 
 
 CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v13.json"
+    "f46-audiobook-qualification-candidate-v14.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v30.json")
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v31.json")
 CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v44.json"
+    "f20-rich-metadata-qualification-candidate-v45.json"
 )
 
 
@@ -3463,7 +3463,14 @@ def test_paragraph_successors_preserve_prior_closure_and_option_authority():
 
 def test_author_successors_retain_all_386_paths_and_bind_new_consumers():
     for current, prior_name in zip(
-        _current_qualification_documents(),
+        [
+            json.loads(MANIFEST.with_name(name).read_bytes())
+            for name in (
+                "f46-audiobook-qualification-candidate-v13.json",
+                "f19a-qualification-manifest-v30.json",
+                "f20-rich-metadata-qualification-candidate-v44.json",
+            )
+        ],
         (
             "f46-audiobook-qualification-candidate-v12.json",
             "f19a-qualification-manifest-v29.json",
@@ -3509,6 +3516,61 @@ def test_author_successors_retain_all_386_paths_and_bind_new_consumers():
             "author_evidence_source_changes"
         ]
         for name, delta in changes.items():
+            assert delta["prior_sha256"] == prior["source_closure"].get(name)
+            assert delta["current_sha256"] == current["source_closure"][name]
+
+
+def test_provider_title_successors_preserve_closure_and_authority():
+    for current, prior_name in zip(
+        _current_qualification_documents(),
+        (
+            "f46-audiobook-qualification-candidate-v13.json",
+            "f19a-qualification-manifest-v30.json",
+            "f20-rich-metadata-qualification-candidate-v44.json",
+        ),
+        strict=True,
+    ):
+        prior_path = MANIFEST.with_name(prior_name)
+        prior = json.loads(prior_path.read_bytes())
+        assert len(prior["source_closure"]) == 397
+        assert set(prior["source_closure"]) < set(current["source_closure"])
+        assert (
+            current["prior_manifest_sha256"]
+            == hashlib.sha256(prior_path.read_bytes()).hexdigest()
+        )
+        assert current["versions"]["report"] == "metadata-report-v47"
+        assert (
+            current["versions"]["decision_policy"]
+            == "deterministic-shadow-decision-policy-v15"
+        )
+        assert current["proposal_policy_version"] == "fixed-conservative-v28"
+        assert (
+            current["binding_only_source_equivalence"]["excluded_binding_assignments"]
+            == prior["binding_only_source_equivalence"]["excluded_binding_assignments"]
+        )
+        for key in (
+            "qualified_policy_options",
+            "passing_automatic_options",
+            "passing_paired_options",
+            "historical_measurements",
+            "current_measurement",
+            "current_ebook_measurement",
+            "author_evidence_measurement",
+        ):
+            if key in prior:
+                assert current[key] == prior[key]
+        assert (
+            current["provider_title_measurement"]["historical_quality_rescored"]
+            is False
+        )
+        assert {
+            "tests/unit/test_provider_title_admission.py",
+            "tests/fixtures/metadata-report-v46/report-v46.json",
+            "tests/fixtures/metadata-report-v46/reports-v46.sql",
+        } <= set(current["source_closure"])
+        for name, delta in current["measurement_source_continuity"][
+            "provider_title_source_changes"
+        ].items():
             assert delta["prior_sha256"] == prior["source_closure"].get(name)
             assert delta["current_sha256"] == current["source_closure"][name]
         _assert_live_source_closure(current)

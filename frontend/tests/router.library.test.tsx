@@ -1755,6 +1755,8 @@ describe('Library route', () => {
     // Openable, because the evidence is real -- but not reported as a success.
     expect(row).toHaveTextContent('Preparation failed safely')
     expect(row).not.toHaveTextContent('Recorded evidence available')
+    expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(row.querySelector('.needs-attention')).not.toBeNull()
   })
 
@@ -7936,6 +7938,41 @@ const providerRailField = detail.fields[0]
 if (!providerRailWork || !providerRailField) throw new Error('Provider rail fixtures are missing')
 
 describe('Provider evidence rail', () => {
+  it('groups a failed preparation separately from complete zero-attention work', async () => {
+    const failed = {
+      ...providerRailWork,
+      id: 'failed',
+      reviewCaseId: undefined,
+      detailUrl: null,
+      detailKind: null,
+      attentionCount: 0,
+      preparationOutcomes: [],
+      preparation: {
+        attempt: 3,
+        diagnosticReference: 'prep-transient',
+        mediaHealth: [],
+        provider: null,
+        reason: 'Bounded automatic recovery attempts were exhausted.',
+        recovery:
+          'When this library finishes with failures, open Background activity and choose Retry.',
+        recoveryAttempt: 0,
+        stage: 'provider',
+        status: 'transient',
+      },
+    }
+    const http = Object.assign(createHttp(), {
+      getLibrary: vi.fn(async () => ({ ...library, works: [failed] })),
+    })
+    renderRoute('/library?lens=all', http)
+    expect(
+      await screen.findByRole('heading', { name: 'Preparation needs attention' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
+    expect(screen.getByRole('article', { name: 'Terminal preparation failure' })).toHaveTextContent(
+      'open Background activity and choose Retry',
+    )
+  })
+
   it.each(['all', 'needs_attention'])(
     'shows server-ordered page-local boundaries in %s',
     async (lens) => {
@@ -8835,35 +8872,49 @@ it.each([
     onTestFinished(unsubscribe)
     const query = await screen.findByRole('searchbox')
     expect(screen.getByText('Loading works…')).toBeVisible()
-    const user = userEvent.setup()
-    if (draft) await user.type(query, draft)
-    else await user.clear(query)
-    expect(query).toHaveValue(draft)
-    await act(async () => releaseInitial(library))
-    if (action !== 'default') {
-      if (action === 'selection')
-        fireEvent.click(await screen.findByRole('button', { name: /^A Book\./ }))
-      else act(() => router.history.back())
-      await waitFor(() =>
-        expect(router.state.location.search.preview).toBe(
-          action === 'selection' ? 'case-1' : 'prior-case',
-        ),
+    if (action === 'default') {
+      const user = userEvent.setup()
+      if (draft) await user.type(query, draft)
+      else await user.clear(query)
+      expect(query).toHaveValue(draft)
+      await act(async () => releaseInitial(library))
+      await waitFor(() => expect(router.state.location.search.q).toBe(draft || undefined))
+      expect(query).toHaveValue(draft)
+      expect(query).toHaveFocus()
+      expect(query).toHaveProperty('selectionStart', draft.length)
+      await waitFor(() => expect(router.state.location.search.preview).toBe('filtered-case'))
+      expect(selected).not.toContain('case-1')
+      return
+    }
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: draft } })
+      expect(query).toHaveValue(draft)
+      await act(async () => releaseInitial(library))
+      await vi.waitFor(
+        () => expect(screen.getByRole('button', { name: /^A Book\./ })).toBeVisible(),
+        { interval: 0 },
       )
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200))
-      })
+      // Selection and Back must precede the pending draft's debounce deadline.
+      expect(router.state.location.search.q).toBeUndefined()
+      expect(router.state.location.search.preview).toBeUndefined()
+      if (action === 'selection') fireEvent.click(screen.getByRole('button', { name: /^A Book\./ }))
+      else act(() => router.history.back())
+      await vi.waitFor(
+        () =>
+          expect(router.state.location.search.preview).toBe(
+            action === 'selection' ? 'case-1' : 'prior-case',
+          ),
+        { interval: 0 },
+      )
+      await act(() => vi.advanceTimersByTimeAsync(150))
       expect(router.state.location.search.q).toBe(action === 'selection' ? undefined : 'prior')
       expect(query).toHaveValue(action === 'selection' ? '' : 'prior')
       expect(router.state.location.search.preview).toBe(
         action === 'selection' ? 'case-1' : 'prior-case',
       )
-      return
+    } finally {
+      vi.useRealTimers()
     }
-    await waitFor(() => expect(router.state.location.search.q).toBe(draft || undefined))
-    expect(query).toHaveValue(draft)
-    expect(query).toHaveFocus()
-    expect(query).toHaveProperty('selectionStart', draft.length)
-    await waitFor(() => expect(router.state.location.search.preview).toBe('filtered-case'))
-    expect(selected).not.toContain('case-1')
   },
 )

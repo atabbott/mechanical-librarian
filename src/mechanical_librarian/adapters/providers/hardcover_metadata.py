@@ -95,6 +95,7 @@ from mechanical_librarian.domain.metadata_report import (
     normalize_date_value,
     normalize_title,
     provider_access_time,
+    validate_observed_title,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -2383,6 +2384,8 @@ def _field(
             normalize_date_value(text)
         if kind is ClaimKind.SERIES_SEQUENCE:
             text = _position(text)
+        if kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}:
+            validate_observed_title(text)
         return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
         if rejected:

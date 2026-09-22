@@ -2344,7 +2344,7 @@ _TERMINAL_PREPARATION_GUIDANCE: dict[str, tuple[str, str]] = {
     ),
     "transient": (
         "Bounded automatic recovery attempts were exhausted.",
-        "No owner action is currently available.",
+        "When this library finishes with failures, open Background activity and choose Retry.",
     ),
     "projection": (
         "Review projection could not be completed.",

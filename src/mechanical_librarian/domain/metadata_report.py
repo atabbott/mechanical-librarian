@@ -78,7 +78,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v46"
+REPORT_SCHEMA = "metadata-report-v47"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -1548,6 +1548,11 @@ class ProviderClaim:
             (link.publication_date_relation is None) == is_date for link in self.links
         ):
             raise ReportValueError("provider date comparison links are inconsistent")
+        if self.state is FieldState.VALID and self.kind in {
+            ClaimKind.TITLE,
+            ClaimKind.SUBTITLE,
+        }:
+            validate_observed_title(self.value)
 
     @classmethod
     def create(

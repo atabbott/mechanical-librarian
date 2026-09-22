@@ -90,6 +90,7 @@ from mechanical_librarian.domain.metadata_report import (
     comparison_links,
     finalize_candidate_comparisons,
     normalize_date_value,
+    validate_observed_title,
 )
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
@@ -1003,6 +1004,8 @@ def _field(kind: ClaimKind, value: object) -> tuple[FieldState, str | None]:
         text = _text(value, maximum)
         if kind is ClaimKind.PUBLICATION_DATE:
             normalize_date_value(text)
+        if kind in {ClaimKind.TITLE, ClaimKind.SUBTITLE}:
+            validate_observed_title(text)
         return FieldState.VALID, text
     except (ValueError, EvidenceValueError):
         return (
