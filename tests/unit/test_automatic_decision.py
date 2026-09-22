@@ -864,3 +864,55 @@ def test_each_historical_manifest_digest_has_one_frozen_option_binding() -> None
             f19a_bindings[digest]
             == automatic_decision._PRE_1007_F19A_QUALIFIED_POLICY_OPTIONS
         )
+
+
+@pytest.mark.parametrize(
+    "option,kind",
+    [
+        ("preserve", "ordinary_title_preservation_v1"),
+        ("title_and_subtitle", "ordinary_title_preservation_v1"),
+        ("preserve:audiobook_title_preserve", "audiobook_title_preservation_v1"),
+        (
+            "title_and_subtitle:audiobook_title_preserve",
+            "audiobook_title_preservation_v1",
+        ),
+    ],
+)
+def test_title_preservation_witness_is_closed_and_retains_audiobook_identity(
+    option, kind
+):
+    from types import SimpleNamespace
+
+    from mechanical_librarian.domain.automatic_decision import title_preservation_bundle
+
+    values = dict(
+        destination="title",
+        policy_category="title_layout",
+        policy_option=option,
+        disposition="keep_current",
+        candidate_id=None,
+        combination_ids=(),
+        citation_ids=("citation-one", "citation-two"),
+        reason_code="unique_supported_preservation",
+        outcome_id="bound-outcome",
+    )
+    assert title_preservation_bundle(
+        SimpleNamespace(**values)
+    ) == "automatic_bundle_" + _digest(
+        {
+            "kind": kind,
+            "source_outcome_id": "bound-outcome",
+            "citation_ids": ["citation-one", "citation-two"],
+        }
+    )
+    for change in (
+        {"destination": "subtitle"},
+        {"policy_category": "title"},
+        {"policy_option": "other"},
+        {"disposition": "candidate"},
+        {"candidate_id": "alternative"},
+        {"combination_ids": ("combination",)},
+        {"citation_ids": ()},
+        {"reason_code": "target_only_preservation"},
+    ):
+        assert title_preservation_bundle(SimpleNamespace(**(values | change))) is None

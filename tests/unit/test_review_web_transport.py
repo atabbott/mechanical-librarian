@@ -2561,3 +2561,64 @@ def test_shadow_sample_response_refuses_genuine_predecessor_outcome():
         Path("tests/support/audiobook_predecessors/outcome.json").read_bytes()
         == document
     )
+
+
+def test_owner_title_recovery_route_requeues_actual_completed_work(
+    tmp_path, web: ReviewWebContext[FakeReviewRepository]
+):
+    from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    repository = open_repository(tmp_path / "state.sqlite", cross_thread=True)
+    case_id, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Title"),
+        safety=AutomaticSafetyState(
+            False, None, (("title_layout", "automatic_admission_failed"),)
+        ),
+    )
+    web.client.close()
+    web.client = TestClient(
+        create_transport_test_app(
+            repository,
+            ReviewWebConfiguration(
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(web.hash_path),
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+            ),
+            clock=lambda: web.now,
+        ),
+        base_url="https://review.test",
+    )
+    context = web
+    try:
+        route = "/api/v1/metadata-policy/automatic-safety/recover"
+        assert (
+            context.client.post(
+                route, headers=context.origin, json={"category": "title_layout"}
+            ).status_code
+            == 401
+        )
+        login = context.login()
+        assert (
+            context.client.post(
+                route, headers=context.origin, json={"category": "title_layout"}
+            ).status_code
+            == 403
+        )
+        response = context.client.post(
+            route,
+            headers={**context.origin, "x-csrf-token": login["csrf_token"]},
+            json={"category": "title_layout"},
+        )
+        assert response.status_code == 200
+        assert response.json()["category_suspensions"] == {}
+        action = repository.claim_review_pipeline_action(1001)
+        assert action is not None and action.stage == "projection"
+        repository.persist_shadow_outcome(case_id, 1002, staged_action=action)
+        repository.advance_review_pipeline_action(action, None, 1003)
+        assert repository.claim_review_pipeline_action(1004) is None
+        assert len(repository.get_review_case_decisions(case_id)) == 1
+    finally:
+        repository.close()

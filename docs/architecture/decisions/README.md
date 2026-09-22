@@ -99,3 +99,5 @@ an accepted ADR to make history match current preference; supersede it.
 | [0076](0076-dependency-build-provenance.md) | accepted | Separate dependency build provenance from semantic qualification |
 
 | [0078](0078-preparation-claim-and-crash-recovery.md) | accepted | Retain preparation ownership and admit verified private crash recovery |
+
+| [0079](0079-supported-title-preservation-and-recovery.md) | accepted | Preserve supported unchanged titles and atomically requeue explicit recovery |

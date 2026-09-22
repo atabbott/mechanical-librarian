@@ -79,6 +79,10 @@ class AutomaticSafetyRepository(Protocol):
         self, state: AutomaticSafetyState, updated_at: int
     ) -> None: ...
 
+    def recover_automatic_safety(
+        self, updated_at: int, category: str | None
+    ) -> AutomaticSafetyState: ...
+
 
 class AutomaticSafetyControls:
     """Owner-only durable pause/suspension controls; recovery is explicit.
@@ -148,21 +152,12 @@ class AutomaticSafetyControls:
     def recover(
         self, updated_at: int, category: str | None = None
     ) -> AutomaticSafetyState:
-        current = self.state()
-        result = AutomaticSafetyState(
-            current.paused,
-            None if category is None else current.global_suspension,
-            tuple(
-                value for value in current.category_suspensions if value[0] != category
-            ),
-        )
         try:
-            self._repository.set_automatic_safety_state(result, updated_at)
+            return self._repository.recover_automatic_safety(updated_at, category)
         except Exception as error:
             raise MetadataPolicyApplicationError(
                 "automatic safety is unavailable"
             ) from error
-        return result
 
 
 class CurrentPolicyResolutionRepository(Protocol):

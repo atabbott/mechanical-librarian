@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Supported unchanged titles record one durable no-change without disabling
+  Automatic title decisions. Explicit title recovery re-evaluates eligible
+  completed books using retained evidence, without writing library metadata.
+  Earlier application state requires a clean rebuild. (#1073)
+
 - Failed preparation stays visibly separate from completed work and points
   owners to the existing retry action after temporary failures. (#1084)
 

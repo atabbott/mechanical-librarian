@@ -1612,6 +1612,53 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 row[0], "proposal", current_report_id, updated_at
             )
 
+    def _requeue_title_projections(self, updated_at: int) -> None:
+        """Reconsider completed current titles inside the safety recovery transaction."""
+        rows = self._connection.execute(
+            "SELECT DISTINCT w.work_id,w.scan_id FROM review_preparation_work w "
+            "JOIN current_metadata_report_lineages m ON m.connection_name=w.connection_name "
+            "AND m.library_name=w.library_name AND m.item_id=w.item_id AND m.report_id=w.report_id "
+            "JOIN current_metadata_reports f ON f.connection_name=w.connection_name "
+            "AND f.library_name=w.library_name AND f.item_id=w.item_id "
+            "AND f.file_identity=w.file_identity AND f.report_id=w.report_id "
+            "JOIN current_review_case_lineages c ON c.connection_name=w.connection_name "
+            "AND c.library_name=w.library_name AND c.item_id=w.item_id "
+            "AND c.report_id=w.report_id AND c.proposal_set_id=w.proposal_set_id "
+            "AND c.review_case_id=w.review_case_id AND c.outcome='admitted' "
+            "JOIN current_review_packages p ON p.connection_name=c.connection_name "
+            "AND p.library_name=c.library_name AND p.item_id=c.item_id "
+            "AND p.report_id=c.report_id AND p.proposal_set_id=c.proposal_set_id "
+            "AND p.review_case_id=c.review_case_id AND p.checkpoint=c.checkpoint "
+            "JOIN shadow_decision_outcomes o ON o.review_case_id=w.review_case_id "
+            "AND o.report_id=w.report_id AND o.proposal_set_id=w.proposal_set_id "
+            "JOIN shadow_outcome_field_facts title ON title.outcome_set_id=o.outcome_set_id "
+            "AND title.destination='title' AND title.automatic_destination=1 "
+            "AND title.policy_category IN ('title_layout','title') "
+            "AND title.disposition IN ('candidate','keep_current') "
+            "JOIN metadata_policy_state policy ON policy.singleton=1 "
+            "AND policy.generation=json_extract(o.document,'$.policy_generation') "
+            "JOIN metadata_policy_resolutions resolution ON resolution.generation=policy.generation "
+            "AND resolution.library_name=w.library_name AND resolution.resolved_policy_id=o.resolved_policy_id "
+            "WHERE w.state='complete' AND w.stage='complete' AND w.outcome='case' "
+            "AND NOT EXISTS (SELECT 1 FROM human_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title') "
+            "AND NOT EXISTS (SELECT 1 FROM automatic_decisions d WHERE d.review_case_id=w.review_case_id AND d.destination='title') "
+            "AND NOT EXISTS (SELECT 1 FROM field_effect_manual_holds h WHERE h.review_case_id=w.review_case_id AND h.destination='title' AND h.active=1)"
+        ).fetchall()
+        for work_id, scan_id in rows:
+            self._connection.execute(
+                "UPDATE review_preparation_work SET stage='projection',state='queued',"
+                "attempt=0,recovery_attempt=0,retry_not_before=0,failure_code=NULL,"
+                "failure_root=NULL,outcome=NULL,updated_at=? WHERE work_id=?",
+                (updated_at, work_id),
+            )
+            self._connection.execute(
+                "UPDATE review_preparation_scans SET state='processing',updated_at=? "
+                "WHERE scan_id=? AND state IN ('completed','completed_with_failures')",
+                (updated_at, scan_id),
+            )
+        if rows:
+            refresh_preparation_presentation(self._connection, updated_at)
+
     def _restart_metadata_policy_work(
         self,
         work_id: str,

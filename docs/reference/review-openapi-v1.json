@@ -8170,7 +8170,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "shadow-outcome-set-v6",
+            "const": "shadow-outcome-set-v7",
             "title": "Schema Version",
             "type": "string"
           },

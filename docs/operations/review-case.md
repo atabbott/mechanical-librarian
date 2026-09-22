@@ -319,3 +319,14 @@ Mechanical Librarian service to resume its retained checkpoints; browser refresh
 and Scan cannot clear the runtime stop. The authenticated incident is runtime
 evidence, not a durable terminal work row. See [observability](observability.md)
 and [the recovery decision](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md).
+
+## Recovering title decisions
+
+In Policy, expand Safety and recover the title suspension. Eligible completed
+books are queued for re-evaluation of retained evidence; Library history records
+the decision and Activity records a supported unchanged title as no change.
+Recovery does not apply metadata. Pause, global suspensions and other category
+suspensions still apply. Books with owner decisions, manual holds, stale evidence,
+Ask/Ignore policy or work already in progress are not requeued. An empty eligible
+cohort is a successful recovery with no new work. A failed request retains the
+suspension and work; inspect current state and retry explicitly.

@@ -1528,3 +1528,18 @@ Author attribution is evidence, never authority by itself (#1083). Opening and r
 ## Provider title comparison admission
 
 Provider TITLE/SUBTITLE ingress and VALID report claims require the existing observed-title validator. Rejected text never becomes persisted payload, diagnostics or an inferred normalized match. Canonical rejection references bind state/value; existing candidate identity and occurrence order survive where the existing admission rules retain the claim. Same-candidate admissible fields and independent provider/local evidence retain their authority. Overflow witnesses and audiobook recording admission keep their existing complete-evidence requirements. Report v47 requires a clean rebuild; no effect, egress or reviewer authority changes (#1084).
+
+## Ordinary title preservation and explicit recovery
+
+The ordinary citation-bound title preservation witness grants unchanged-value
+authority only. Automatic-only coherence excludes Ask and Ignore from safety
+failure. Existing authenticated CSRF/build-protected recovery atomically removes
+only the requested suspension and, for an actual title suspension, requeues only
+eligible exact-current completed title projections. Safety is read inside that
+transaction; no precomputed replacement can erase another committed suspension.
+Report/proposal/case and policy currentness, owner-final and manual holds constrain
+the cohort; final projection checks and insertion uniqueness remain authoritative.
+No external acquisition, model, target or media write authority is added. A failed
+transaction rolls back safety, work, scan and presentation together. Predecessor
+v6 state requires a clean rebuild, never silent clearing or migration. See
+[ADR-0079](decisions/0079-supported-title-preservation-and-recovery.md).

@@ -762,3 +762,58 @@ def test_one_author_provider_remains_owner_review_without_automatic_authority(
         ).fetchone() == (0,)
     finally:
         repository.close()
+
+
+def test_completed_title_recovery_restarts_as_one_durable_no_change(tmp_path):
+    from types import SimpleNamespace
+
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
+    )
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    path = tmp_path / "recovery.sqlite"
+    repository = open_repository(path)
+    case_id, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Title"),
+        safety=AutomaticSafetyState(
+            False, None, (("title_layout", "automatic_admission_failed"),)
+        ),
+    )
+    AutomaticSafetyControls(repository).recover(30, "title_layout")
+    repository.close()
+    repository = open_repository(path, create=False)
+    action = repository.claim_review_pipeline_action(31)
+    assert action is not None and action.stage == "projection"
+    repository.persist_shadow_outcome(case_id, 32, staged_action=action)
+    repository.advance_review_pipeline_action(action, None, 33)
+    assert repository.claim_review_pipeline_action(34) is None
+    scheduler = ContinuousGuardedApplication(
+        repository,
+        {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+        {("primary", "ebooks"): SimpleNamespace()},
+        SimpleNamespace(),
+        (("primary", "ebooks"),),
+        lambda: 35,
+        lambda *_: None,
+    )
+    assert scheduler.schedule() == scheduler.schedule() == 0
+    assert repository._connection.execute(
+        "SELECT count(*) FROM field_effect_no_changes"
+    ).fetchone() == (1,)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM field_effects"
+    ).fetchone() == (0,)
+    assert repository.pending_field_effect_decision_documents(100) == ()
+    repository.close()
+    repository = open_repository(path, create=False)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM automatic_decisions WHERE destination='title'"
+    ).fetchone() == (1,)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM field_effect_no_changes"
+    ).fetchone() == (1,)
+    repository.close()

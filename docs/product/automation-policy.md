@@ -590,3 +590,11 @@ Every decision records:
 - later human override or rollback, if any.
 
 Changing applicability rules, automatic-write eligibility, evidence weighting, or material prompts creates a new policy version and evaluation cohort.
+
+## Supported unchanged titles
+
+Ordinary title preservation with positive bound evidence records one Automatic
+no-change decision even when no changing bibliographic combination exists. Ask
+and Ignore remain owner policy, not safety failures. No-change bypasses target
+application guards because it creates no write or plan. Actual malformed
+Automatic authority still suspends its category (#1073).

@@ -1128,3 +1128,43 @@ it.each([
     }
   },
 )
+
+it('explains title re-evaluation, retains retry, and restores focus after recovery', async () => {
+  const user = userEvent.setup()
+  let recovered = false
+  let fail = true
+  const command = vi.fn(async () => {
+    if (fail) throw new ApiError(503, 'persistence')
+    recovered = true
+    return {}
+  })
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getAutomaticSafety: vi.fn(async () => ({
+      paused: true,
+      global_suspension: null,
+      category_suspensions: recovered
+        ? { publisher_preference: 'other_failure' }
+        : { title_layout: 'automatic_admission_failed', publisher_preference: 'other_failure' },
+    })),
+    policyCommand: <T,>() => command() as Promise<T>,
+  }
+  renderRoute('/policy', http)
+  await screen.findByRole('heading', { name: 'Library policy' })
+  const summary = screen.getByText('Safety').closest('summary')!
+  await user.click(summary)
+  expect(
+    screen.getByText(/Recovering title decisions queues eligible completed books/u),
+  ).toBeVisible()
+  await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
+  expect(await screen.findByText(/Nothing changed. Review the current server state/u)).toBeVisible()
+  expect(screen.getByRole('button', { name: /Recover .*title.* suspension/iu })).toBeEnabled()
+  fail = false
+  await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: /Recover .*title.* suspension/iu })).toBeNull(),
+  )
+  expect(summary).toHaveFocus()
+  expect(screen.getByRole('button', { name: /Recover .*publisher.* suspension/iu })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
+})

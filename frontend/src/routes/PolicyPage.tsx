@@ -815,11 +815,19 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         : 'Draft matches active policy.',
     })
   }
+  const safetySummaryRef = useRef<HTMLElement>(null)
   const runAuxiliary = async (action: string, body?: unknown) => {
     setStatus({ tone: 'neutral', message: 'Updating policy state…' })
     try {
       await command.mutateAsync({ action, body })
-      setStatus({ tone: 'success', message: 'Policy state updated from the authoritative server.' })
+      setStatus({
+        tone: 'success',
+        message:
+          action === 'automatic-safety/recover'
+            ? 'Suspension recovered. Eligible completed titles are queued for re-evaluation. Other pauses and suspensions still apply.'
+            : 'Policy state updated from the authoritative server.',
+      })
+      if (action === 'automatic-safety/recover') safetySummaryRef.current?.focus()
     } catch (error) {
       setStatus(
         error instanceof AmbiguousMutationError
@@ -1172,7 +1180,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           </nav>
           <p className="cm-policy-chapter-legend">Changed fields</p>
           <details className="cm-policy-mode">
-            <summary>
+            <summary ref={safetySummaryRef}>
               <strong>
                 {shadow.posture === 'preview'
                   ? 'Preview mode active'
@@ -1222,9 +1230,17 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   </button>
                 ) : null}
               </div>
+              {safety.category_suspensions.title_layout ? (
+                <p>
+                  Recovering title decisions queues eligible completed books for re-evaluation using
+                  their retained evidence. A supported unchanged title records no change; recovery
+                  does not write to your library. Other pauses and suspensions still apply.
+                </p>
+              ) : null}
               {Object.keys(safety.category_suspensions).map((category) => (
                 <button
                   key={category}
+                  disabled={command.isPending}
                   onClick={() => void runAuxiliary('automatic-safety/recover', { category })}
                 >
                   Recover {readableCategory(category)} suspension
