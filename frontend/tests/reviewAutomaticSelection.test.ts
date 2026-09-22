@@ -27,6 +27,31 @@ describe('automaticChoiceSelected', () => {
     ).toBe(false)
   })
 
+  it('restores only the complete selected Authors list', () => {
+    const decision = {
+      outcome: 'candidate',
+      selected_value: { kind: 'list', value: ['Ada Example', 'Bea Example'] },
+    }
+    expect(
+      automaticChoiceSelected(decision, 'accept', {
+        kind: 'list',
+        value: ['Ada Example', 'Bea Example'],
+      }),
+    ).toBe(true)
+    expect(
+      automaticChoiceSelected(decision, 'accept', {
+        kind: 'list',
+        value: ['Ada Example'],
+      }),
+    ).toBe(false)
+    expect(
+      automaticChoiceSelected(decision, 'accept', {
+        kind: 'list',
+        value: ['Bea Example', 'Ada Example'],
+      }),
+    ).toBe(false)
+  })
+
   it('maps persisted ignore to the owner no-action choice', () => {
     expect(
       automaticChoiceSelected({ outcome: 'keep_current', selected_value: null }, 'keep_current'),

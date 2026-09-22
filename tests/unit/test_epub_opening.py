@@ -50,6 +50,13 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
+from tests.support.author_evidence import (
+    AUTHOR_STATEMENTS,
+    LEGITIMATE_AUTHOR_STATEMENTS,
+    MIXED_AUTHOR_STATEMENTS,
+    TYPED_CREDIT_STATEMENTS,
+    author_epub,
+)
 from tests.support.epub_packages import (
     MATERIALIZED_RECIPES,
     _opening_epub,
@@ -651,7 +658,7 @@ def test_identifier_owner_spans_are_computed_once_per_element() -> None:
 
 def test_canonical_envelope_rejects_forged_versions_lineage_and_usage() -> None:
     report = _extract(opening_claims_complete())
-    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v3"
+    assert EPUB_OPENING_EXTRACTOR_VERSION == "epub-opening-v4"
     assert all(
         claim.citation.extractor_version == EPUB_OPENING_EXTRACTOR_VERSION
         for claim in report.claims
@@ -825,7 +832,7 @@ def test_indicia_roles_dates_and_production_credits_remain_typed_and_separate() 
         _single(
             _xhtml(
                 '<section epub:type="copyright-page">'
-                "<p>by Ada Author</p>"
+                "<p>Author: Ada Author</p>"
                 "<p>Translated and illustrated by Bea Artist</p>"
                 "<p>Edited by Cara Editor; Foreword by Dev Writer</p>"
                 "<p>Book design by Eli Designer; Photography by Fran Lens; "
@@ -1602,6 +1609,7 @@ def test_byline_is_a_creator_with_author_role_and_source_values_are_redacted() -
         claim for claim in oversized.claims if claim.field is OpeningField.CREATOR
     )
     assert claim.state == "oversized"
+    assert claim.normalized_value is None
     assert re.search(r"^oversized-source-text-sha256:[0-9a-f]{64}$", claim.raw_value)
     assert claim.raw_value == claim.citation.exact_excerpt
     unsafe = _extract(
@@ -1611,6 +1619,7 @@ def test_byline_is_a_creator_with_author_role_and_source_values_are_redacted() -
         claim for claim in unsafe.claims if claim.field is OpeningField.CREATOR
     )
     assert creator.state == "unsupported"
+    assert creator.normalized_value is None
     assert re.search(r"^unsafe-source-text-sha256:[0-9a-f]{64}$", creator.raw_value)
     assert creator.raw_value == creator.citation.exact_excerpt
     assert [
@@ -3913,3 +3922,50 @@ def test_recovered_html_text_is_bounded_inert_data(value: str) -> None:
         EpubInspectionOutcome.NO_APPLICABLE_EVIDENCE,
     }
     assert "example.invalid" not in report.to_json()
+
+
+@pytest.mark.parametrize("body, expected, role", AUTHOR_STATEMENTS)
+@pytest.mark.parametrize("recovered", (False, True))
+def test_whole_author_statement_requires_structural_context(
+    body: str, expected: str | None, role: str | None, recovered: bool
+) -> None:
+    report = _extract(author_epub(body, recovered=recovered))
+    assert report.outcome.succeeded
+    authors = [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
+    assert [(claim.normalized_value, claim.role) for claim in authors] == (
+        [] if expected is None else [(expected, role)]
+    )
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [(body, None) for body in MIXED_AUTHOR_STATEMENTS]
+    + list(LEGITIMATE_AUTHOR_STATEMENTS),
+)
+@pytest.mark.parametrize("recovered", (False, True))
+def test_whole_author_mixed_indicia_refuses_authority(body, expected, recovered):
+    report = _extract(author_epub(body, recovered=recovered))
+    creators = [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
+    assert [(claim.normalized_value, claim.role) for claim in creators] == (
+        [] if expected is None else [(expected, "author")]
+    )
+
+
+@pytest.mark.parametrize("body,context,role,field", TYPED_CREDIT_STATEMENTS)
+@pytest.mark.parametrize("recovered", (False, True))
+def test_typed_credit_containers_preserve_roles_without_authors(
+    body, context, role, field, recovered
+):
+    report = _extract(author_epub(body, recovered=recovered))
+    credits = [
+        claim for claim in report.claims if claim.field is getattr(OpeningField, field)
+    ]
+    assert [
+        (claim.normalized_value, claim.role, claim.citation.exact_excerpt)
+        for claim in credits
+    ] == (
+        [("Bea Artist", role, context)]
+        if (body.startswith("<p>") or 'epub:type="contributor"' in body)
+        else []
+    )
+    assert not [claim for claim in report.claims if claim.field is OpeningField.CREATOR]

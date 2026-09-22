@@ -100,7 +100,8 @@ def test_epub_child_keeps_one_private_archive_session() -> None:
     child = (PACKAGE_ROOT / "bootstrap" / "epub_child.py").read_text(encoding="utf-8")
     assert child.count("zipfile.ZipFile(") == 1
     assert "EpubPackageExtractor().extract(package_request, archive)" in child
-    assert "EpubOpeningExtractor().extract(" in child
+    assert "EpubOpeningExtractor().extract_with_selection(" in child
+    assert "_candidate_graph(" not in child
     assert "package_report.to_json" not in child
 
 

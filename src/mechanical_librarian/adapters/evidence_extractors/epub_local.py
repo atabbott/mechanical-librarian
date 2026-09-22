@@ -81,7 +81,6 @@ _CONTEXTUAL_ROLE_MAP = {
 _MARKER = re.compile(
     r"(?:copyright|©|all rights reserved|\bcolophon\b|\bcredits\b)", re.I
 )
-_BYLINE = re.compile(r"^(?:by|author\s*[:\-]?|written by)\s+(.+)$", re.I)
 _SENTINEL = re.compile(r"(?:unsafe|oversized)-source-text-sha256:[0-9a-f]{64}")
 _ISBN_LABEL = re.compile(r"^(?:urn:isbn:|isbn(?:-1[03])?\s*:?)", re.I)
 
@@ -419,8 +418,13 @@ def rear_facts(
     report: EpubPackageReport,
     opening_report: EpubOpeningReport,
     archive: zipfile.ZipFile,
+    selection: opening._OpeningSelection,
 ) -> tuple[EpubInspectionFact, ...]:
-    if not report.succeeded or report.source_fingerprint is None:
+    if (
+        not report.succeeded
+        or not opening_report.outcome.succeeded
+        or report.source_fingerprint is None
+    ):
         return ()
     manifests = {
         d.resource_identity: d
@@ -518,6 +522,18 @@ def rear_facts(
             raise opening._AggregateRejected(report.outcome.MALFORMED) from None
         promotion_exclusions = opening._promotion_excluded_ordinals(projection)
         by_ordinal = {element.ordinal: element for element in projection.elements}
+        graph_candidate = next(
+            (item for item in selection.candidates if item.identity == identity),
+            None,
+        )
+        if graph_candidate is None:
+            continue
+        recognition_context = opening._recognition_context(
+            projection,
+            graph_candidate,
+            selection.body_targets,
+            selection.excluded_targets,
+        )
         parents = {
             ancestor
             for element in projection.elements
@@ -588,7 +604,9 @@ def rear_facts(
                 continue
             field = canonical = None
             role = None
-            byline = _BYLINE.match(value)
+            attribution = opening._author_attribution(
+                element, projection, by_ordinal, recognition_context
+            )
             bibliographic_label = opening._is_bibliographic_indicia_label(value)
             bibliographic_indicia = opening._bibliographic_indicia(
                 element.semantics,
@@ -599,10 +617,14 @@ def rear_facts(
                 bool(
                     element.semantics & {"title", "fulltitle", "contributor", "creator"}
                 )
-                or byline is not None
+                or attribution is not None
                 or bool(bibliographic_indicia)
             )
-            credits = () if is_ancestor else opening._indicia_credits(value)
+            credits = (
+                opening._indicia_credits(value)
+                if opening._credit_owner(element, by_ordinal, recognition_context)
+                else ()
+            )
             dates = () if is_ancestor else opening._indicia_dates(value)
             admitted_cue = admitted_cue or bool(credits) or bool(dates)
             if is_ancestor and not admitted_cue:
@@ -616,14 +638,9 @@ def rear_facts(
                 credit[0] is opening.OpeningField.CONTRIBUTOR for credit in credits
             ):
                 field, canonical = EpubInspectionField.CONTRIBUTOR, value
-            elif byline is not None and len(byline.group(1)) <= 280:
-                field, canonical, role = (
-                    EpubInspectionField.CREATOR,
-                    byline.group(1),
-                    "author",
-                )
-            elif element.semantics & {"creator"}:
-                field, canonical, role = EpubInspectionField.CREATOR, value, "author"
+            elif attribution is not None:
+                canonical, role = attribution
+                field = EpubInspectionField.CREATOR
             if field is not None:
                 facts.append(
                     EpubInspectionFact(

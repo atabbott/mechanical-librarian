@@ -2976,3 +2976,61 @@ def test_non_provider_abstention_keeps_review_without_provider_claim(tmp_path):
     assert field["needs_attention"] is True
     assert field["automatic_withheld_reason"] is None
     repository.close()
+
+
+@pytest.mark.parametrize("destination", ("ask", "ignore", "automatic"))
+def test_generated_author_policy_routes_owner_attention_without_automatic_leak(
+    tmp_path, destination
+):
+    from tests.support.author_evidence import author_report, publish_author_case
+
+    repository = open_repository(tmp_path / "authors.sqlite")
+    try:
+        case_id, _ = publish_author_case(
+            repository, author_report(tmp_path / "media"), destination
+        )
+        inspector = InspectCurrentReviewCase(repository)
+        detail = inspector.run(case_id)
+        field = next(
+            item for item in detail["fields"] if item["destination"] == "authors"
+        )
+        browser = BrowseReviewLibrary(repository)
+        attention = browser.attention(search=None, limit=10, cursor=None)
+        library = browser.library(lens="all", search=None, limit=10, cursor=None)
+        assert library["items"][0]["attention_count"] == attention["total"]
+        assert ("authors" in {item["destination"] for item in attention["items"]}) == (
+            destination == "ask"
+        )
+        assert (field["automatic_decision"] is not None) == (destination == "automatic")
+        assert field["needs_attention"] == (destination == "ask")
+        if destination == "ignore":
+            assert field["decision_actions"] == []
+            assert field["proposed_values"] == []
+            assert field["editable"] is False
+        elif destination == "ask":
+            assert field["editable"] is True
+            assert field["decision_actions"] == ["keep_current", "accept"]
+            RecordHumanDecision(repository, clock=lambda: 5).run(
+                case_id,
+                proposal_id=field["proposal_id"],
+                target_fingerprint=field["target_fingerprint"],
+                destination="authors",
+                actor="owner",
+                outcome="accept",
+                selected_value={"kind": "list", "value": ["Ada Example"]},
+                idempotency_key="authors-ask-owner-final-0001",
+            )
+            settled = next(
+                item
+                for item in inspector.run(case_id)["fields"]
+                if item["destination"] == "authors"
+            )
+            assert settled["human_decision"]["outcome"] == "accept"
+            assert settled["automatic_decision"] is None
+            assert settled["needs_attention"] is False
+            after = browser.attention(search=None, limit=10, cursor=None)
+            assert "authors" not in {item["destination"] for item in after["items"]}
+            assert type(attention["total"]) is int
+            assert after["total"] == attention["total"] - 1
+    finally:
+        repository.close()

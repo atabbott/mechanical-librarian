@@ -1519,3 +1519,7 @@ collapse and case folding are comparison-only: fingerprints, field-effect versio
 optimistic preconditions and read-back remain exact. A populated value cannot become
 fill-empty. Owner-final, Ask/Ignore, consent, backup and verification authority are
 unchanged. The report/SQL successor requires a clean rebuild, never migration.
+
+## Author evidence authority
+
+Author attribution is evidence, never authority by itself (#1083). Opening and rear EPUB paths share whole-statement structural classification and the original bounded navigation selection; fragment roles never spread across a resource. Incidental credits cannot mint Authors authority, and complete-set proposal conflicts cannot be bypassed by the shadow policy. Report v46, proposal policy v28 and shadow policy v15 invalidate old admission bindings; clean rebuild required. Historical automatic documents remain historical. Consent, exact currentness, backup, optimistic preconditions, read-back and durable audit still govern every permitted effect.

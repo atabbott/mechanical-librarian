@@ -364,6 +364,8 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    author_fixture: str | None = None,
+    author_destination: str = "automatic",
     isbn_title_fixture: str | None = None,
     description_fixture: Literal[
         "ready",
@@ -529,7 +531,14 @@ def _server(
         )
     else:
         report = _report()
-    if isbn_title_fixture is not None:
+    if author_fixture is not None:
+        from tests.support.author_evidence import author_report, publish_author_case
+
+        report = author_report(database.parent / "author-media", author_fixture)
+        case_id, proposal_set = publish_author_case(
+            repository, report, author_destination
+        )
+    elif isbn_title_fixture is not None:
         from tests.support.evidence_led_titles import (
             isbn_title_report,
             publish_title_case,
@@ -6408,3 +6417,72 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 page.unroute_all(behavior="wait")
                 context.close()
                 browser.close()
+
+
+@pytest.mark.parametrize("scenario", ("supported", "conflict", "long", "ask", "ignore"))
+def test_generated_authors_fixture_reaches_library_choice_and_evidence(
+    scenario: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        os.chmod(hash_path, 0o600)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(viewport={"width": 390, "height": 844})
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=root / "unused.crt",
+                    key=root / "unused.key",
+                    port=port,
+                    transport_mode="http",
+                    author_fixture="supported"
+                    if scenario in {"ask", "ignore"}
+                    else scenario,
+                    author_destination=scenario
+                    if scenario in {"ask", "ignore"}
+                    else "automatic",
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=authors")
+                if scenario == "ignore":
+                    expect(
+                        page.get_by_role(
+                            "button", name="Choose proposed value: Ada Example"
+                        )
+                    ).to_have_count(0)
+                    page.get_by_text("Inspect context", exact=True).click()
+                    expect(page.get_by_text("Authors", exact=True)).to_be_visible()
+                    expect(
+                        page.get_by_text(
+                            "No eligible change · Current Writer", exact=False
+                        )
+                    ).to_be_visible()
+                    context.close()
+                    browser.close()
+                    return
+                choice = page.locator(".direct-choice").first
+                expect(choice).to_be_visible()
+                expect(choice).to_contain_text(
+                    "Alexandra" if scenario == "long" else "Ada Example"
+                )
+                if scenario == "conflict":
+                    expect(choice).to_contain_text("Different Writer")
+                page.get_by_role("link", name="Evidence", exact=True).click()
+                expect(
+                    page.get_by_text(
+                        "Alexandra Everlasting Example of the Northern Collaborative Writing Society"
+                        if scenario == "long"
+                        else "Ada Example",
+                        exact=False,
+                    ).first
+                ).to_be_visible()
+            browser.close()
