@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Malformed provider titles no longer stop preparation of usable sibling evidence.
+  Rejected title text stays out of reports and choices; safe Unicode is preserved.
+  Report v47 requires a clean rebuild of prior development state. (#1084)
+
 - Authors routed to Ask remain available for owner review and choice. (#1083)
 
 - Photo credits and incidental EPUB text no longer replace book authors.

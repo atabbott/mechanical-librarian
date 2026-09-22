@@ -609,3 +609,8 @@ new synthetic attribution and lifecycle controls are distinct from library quali
 measurements. No provider, model or production-library requests were made.
 Report v46 requires a clean rebuild; old automatic records cannot mint current
 authority.
+
+
+## Provider title admission successor
+
+The #1084 successors F19 v31, F20 v45 and F46 v14 retain all 397 inherited source paths, add the actual title-admission consumers, and preserve all five binding exclusions and existing qualified options. New synthetic provider, report and persistence checks are separate from unchanged historical quality measurements. Report v47 requires a clean rebuild; proposal policy v28, comparison v5 and shadow policy v15 are unchanged. No provider, model or production-library requests were made.

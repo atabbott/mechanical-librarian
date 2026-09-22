@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v26` policy. It does not construct or contact a metadata or
+`fixed-conservative-v28` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -360,3 +360,8 @@ Ignore suppresses its action. See [ADR-0075](../architecture/decisions/0075-inde
 ## Author evidence authority
 
 The `fixed-conservative-v28` Authors proposal requires complete creator sets. A neutral package set contributes only when an explicit opening author set or independent typed provider set corroborates every member; observations from the same file remain one correlation. Automatic Authors admission follows proposal sufficiency and material conflicts. Independent provider agreement needs no local witness; explicit local-only fill or preservation remains supported, while local-only replacement of populated authors remains manual. Ask, Ignore and owner-final choices remain authoritative (#1083).
+
+
+## Malformed provider titles
+
+Title and subtitle admission rejects text that the unchanged closed comparison cannot consume. Proposal evaluation ignores typed nonvalid claims while preserving admissible local, same-candidate and sibling-provider evidence. Existing work/recording admission remains authoritative: an unadmitted candidate or recording field does not acquire authority merely because its rejection is typed. Report v47 changes report-derived bindings, while proposal policy `fixed-conservative-v28`, comparison v5 and shadow policy v15 remain unchanged (#1084).

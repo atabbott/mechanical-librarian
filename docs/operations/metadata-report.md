@@ -824,3 +824,8 @@ and [the recovery decision](../architecture/decisions/0078-preparation-claim-and
 ## Author evidence authority
 
 EPUB author evidence now uses whole attribution statements and their structural context. Title-page By/Written by statements and explicit Author:/Authors: labels retain truthful author roles; neutral package creators and unlabelled semantic creators retain role=None. Photo, cover, copyright and body text cannot supply inferred authorship. Report `metadata-report-v46` and extractor `epub-opening-v4` reject falsely typed predecessor evidence: **clean rebuild required**, with no migration or adoption (#1083).
+
+
+## Provider title admission
+
+Provider title and subtitle claims must satisfy the existing public-safe and closed comparison validation. Unsupported format characters, including U+200B, become value-free MALFORMED claims; overlong input remains OVERSIZED. Safe Unicode is retained exactly, never stripped into agreement. Rejection references bind the rejected state and absent value; valid sibling references are unchanged. Existing work and recording admission still determines which claims survive. A Hardcover overflow witness requires a valid work title and fails as a malformed provider result otherwise. Report `metadata-report-v47` requires a **clean rebuild**, without migration or adoption (#1084).
