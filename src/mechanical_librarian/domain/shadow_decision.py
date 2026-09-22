@@ -71,7 +71,7 @@ _RULE_TABLE = {
             _REPORT_ONLY_SOURCE_DESTINATIONS
         ),
         "target_only_preservation": 0,
-        "authors": "complete_set_proposal_sufficiency_and_local_or_two_independent_providers",
+        "authors": "complete_set_proposal_sufficiency_and_recording_or_local_or_two_independent_providers",
         "unique_action_required": True,
     },
     "combinations": {
@@ -549,6 +549,7 @@ def _candidate_is_eligible(
         or support["target_only_preservation"] != 0
         or (
             destination == "authors"
+            and not recording_support
             and support["local_evidence"] == 0
             and support["independent_provider_correlations"] < 2
         )
@@ -683,7 +684,10 @@ def _base_reason(
                 "insufficient_support"
                 if candidates
                 and any(
-                    cast("_CandidateSummary", value["decision_summary"])["support"][
+                    not cast("_CandidateSummary", value["decision_summary"])[
+                        "recording_support"
+                    ]
+                    and cast("_CandidateSummary", value["decision_summary"])["support"][
                         "local_evidence"
                     ]
                     == 0
