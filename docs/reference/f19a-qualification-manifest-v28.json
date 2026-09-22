@@ -1,9 +1,9 @@
 {
   "audiobook_activation": {
     "clean_rebuild_required": true,
-    "frozen_candidate_sha": "81f63cece4ea586657cc9c5104a51b57cf48c131",
+    "frozen_candidate_sha": "07942204cca0417bff6565b9880213b775f88919",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v11.json",
-    "manifest_sha256": "5dd99522add540b13f0c0516a83c2356cbcb4917b4b826b830a6d6f2c76bd2bd",
+    "manifest_sha256": "a662de0addbf6fe7cb5591ebd4766660b1df23bca312b3dd093281eca5e9ca85",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -98,7 +98,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "81f63cece4ea586657cc9c5104a51b57cf48c131"
+    "source_sha": "07942204cca0417bff6565b9880213b775f88919"
   },
   "build_provenance_paths": [
     "frontend/package-lock.json",
@@ -114,7 +114,7 @@
     "retained_controls": 2,
     "source_reconstructions": 2
   },
-  "frozen_candidate_sha": "81f63cece4ea586657cc9c5104a51b57cf48c131",
+  "frozen_candidate_sha": "07942204cca0417bff6565b9880213b775f88919",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f19a-qualification-manifest-v24.json",
@@ -445,7 +445,7 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "81f63cece4ea586657cc9c5104a51b57cf48c131",
+    "current_source_sha": "07942204cca0417bff6565b9880213b775f88919",
     "introduced_sources": {
       "frontend/src/queryWork.ts": {
         "current_sha256": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
@@ -709,6 +709,7 @@
     "frontend/tests/router.policy.test.tsx": "3c0a03e3682790a99f779fc12c509a5ac7fad5c1d8068951a362164387694ccd",
     "frontend/tests/router.settings.test.tsx": "bca19478faf91f44e2055890ac84d6985d81c9bb70d3985d6934f626e4541cd1",
     "frontend/tests/router.shell.test.tsx": "c8069ca379f6f595af1b46bedcfe0b83df8031ef8f95615ad192e48bd58fd025",
+    "scripts/audit_sqlite_row_deltas.py": "f4d14606f3aff0915f3f467d197f7cf37296c3b18b1dcf4a369d6fdb283d52a0",
     "scripts/build_frontend.py": "d982370a14490fff44c57baafc9ffad781a0cd24e2b30e5a9f51b66507aacccd",
     "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
     "scripts/qualify_container_lifecycle.py": "12581532f47b332a94bd9b2eccd24842c44613075557f28a78f6b1bcafd675e5",
@@ -851,8 +852,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "edde2e241b427e471f99603bc19d36fe710717ce1430637cf0e3401dcf12c223",
-    "src/mechanical_librarian/domain/automatic_decision.py": "c3fd27303b7baaf00bea03ccc9e25f7db3a4ec6637fac048671c688b8d065351",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "3cae0f5624da1a993877cb337dc24581f4571cfe9fd64df3d3f425c794d14258",
+    "src/mechanical_librarian/domain/automatic_decision.py": "e542dd55b777c4e4ad769a6414db0372f2cc1ccfa175a599e30edfd88eb8206b",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -883,7 +884,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "589ebfba1ae88c0697a5b3b45ee2a8708626eac3bdfede7d74a199e284c744d2",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "d55cb2d78674e61494ac3be1f0b4f09d96431f5cc1b7e44d1ae7a6f90333ea7d",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "8d6fcff5b4af8a71d76a46efb3e6131caeb7cd7d06a03a027f95447f0850502f",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
@@ -920,7 +921,7 @@
     "tests/integration/test_continuous_review_scale.py": "a3700a28f38289a898ea75b9693efd304974ba6a41dcc1ad3ee9ce80ff757e23",
     "tests/integration/test_database_crash_recovery.py": "285eb4cb629482f192426f61b11f306c352f53a8b40fbdea9d2b1452041619f0",
     "tests/integration/test_owner_responsiveness.py": "5dba461576e003616db48b87502fa3c25c25fe38c529a6bfe302f8987461c872",
-    "tests/integration/test_preparation_claim_recovery.py": "eff2dbee44aecd96cece5603542d294b78c4a990655c77649a1e55d74980c909",
+    "tests/integration/test_preparation_claim_recovery.py": "6fbc280749b245ccadbfb5494cf7b1e8cae9666af3e1c81e619a1c7d9a7b0b6f",
     "tests/slow/test_owner_browser_responsiveness.py": "69e68df24c18bd1d601ea3a08b7c9ec70bcd15a81552717956b1eff895c8d3b7",
     "tests/slow/test_owner_responsiveness.py": "6edeee7f7d1336232ac3590e7f08574872d56ba2e071948094e22b86542e314c",
     "tests/support/audiobook_covers.py": "c2df1ff212ef459f966da8d6be5b484a55d190c85aac2dc0c3077c01fe5e1d50",
@@ -1001,14 +1002,15 @@
     "tests/unit/test_review_web_transport.py": "2e8b3b165d8f105fe4a6f35662b6fd0389770b5b7b51fd24697a043b0c45c2b4",
     "tests/unit/test_reviewer_access_application.py": "2de0a8b58c585f9fcb4b4374d967d8f69c1dfb7688050c1d62454ffb94382f0d",
     "tests/unit/test_rich_metadata_preview.py": "1450abb8d097d10e4600f696715828a5dc0b66e003c86965ac057b14f46ed1f5",
-    "tests/unit/test_rich_metadata_qualification_manifest.py": "2b2084fec3fa0f539fa94e03eee1410fa998e69e6fcd458908ebfd09b9a5b591",
-    "tests/unit/test_runtime_dispatch.py": "cbe04cb5b4398ea5fe2d7b6915c70bf633f4eacd820b06a6b6308494b3b30398",
+    "tests/unit/test_rich_metadata_qualification_manifest.py": "a4f1e9bd05f6456636e152bd4035580f879ecf10d2167968c54ae563dedfb032",
+    "tests/unit/test_runtime_dispatch.py": "f210bf070c9d4a2aa73cf4a3d67925171afdadbc58b632bd5e6311f2c846a5cb",
     "tests/unit/test_security_scanning_contract.py": "15cdc7cbc61ca9975c04f610cdd9ade28febdb57f715765adc5f5bfa589e1c1e",
     "tests/unit/test_setup_state_store.py": "f69347e23008015821c87eee2550bb1595d061985ee0baef30f4d0a04ebc9afe",
     "tests/unit/test_setup_web.py": "4aca217f13fa09f6b61c7950afa3214b16942381c107315161fbc7a93e76f137",
     "tests/unit/test_shadow_decision.py": "eb07eddd3878840aea7c21a4d27d9948ff0dca215c2ec824b6c08710fd7ff614",
     "tests/unit/test_shadow_outcome_persistence.py": "d4ba1210795e165324bda214a44bd15d553f8d968a67fba6d1b036b67948a6c0",
     "tests/unit/test_shadow_review_packets.py": "cc6a9b23ffc04c150bdb0522bf5cad6930fd8d6a34543909290e7db7efadfb56",
+    "tests/unit/test_sqlite_row_delta_audit.py": "013e6a009bdff0208e11cdb9abf36eb240fec76b035f079801fc7580962a8221",
     "tests/unit/test_test_tiers.py": "04a10af1c4a7ad484881116de40ce87c6855ba48eebb0e3fd3dbc2b73bc3935b",
     "tests/unit/test_transaction_scope.py": "220aa16d0156ce795a036fe3c246a6167452eeb555408d07e8b86f982b26a13a",
     "tests/unit/test_work_identity.py": "561906ba2447c972ba5dc24bda35de965075a15860663935f1a8d990195dee87"
