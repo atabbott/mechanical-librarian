@@ -34,6 +34,21 @@ def _identity(info: os.stat_result) -> tuple[int, int, int, int, int]:
     return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns
 
 
+def _inventory(parent: int) -> set[str]:
+    """Read a fresh directory stream without changing the bound parent."""
+    expected = os.fstat(parent)
+    descriptor = os.open(
+        ".", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent
+    )
+    try:
+        actual = os.fstat(descriptor)
+        if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+            _refuse()
+        return set(os.listdir(descriptor))
+    finally:
+        os.close(descriptor)
+
+
 def _regular(info: os.stat_result, *, copy: bool = False) -> None:
     if (
         not stat.S_ISREG(info.st_mode)
@@ -181,10 +196,10 @@ def _cleanup_scratch(
             information
         ):
             _refuse()
-        for child, expected in objects.items():
+        for child, expected_child in objects.items():
             if _identity(
                 os.stat(child, dir_fd=descriptor, follow_symlinks=False)
-            ) != _identity(expected):
+            ) != _identity(expected_child):
                 _refuse()
         for child in names:
             os.unlink(child, dir_fd=descriptor)
@@ -213,7 +228,7 @@ def recover_private_bindings(
     current: Callable[[], None],
 ) -> None:
     """Called only by an opted-in root while its exclusive parent lock is held."""
-    names = set(os.listdir(parent))
+    names = _inventory(parent)
     aliases: dict[str, os.stat_result] = {}
     journals: dict[str, os.stat_result] = {}
     scratch: list[str] = []
@@ -310,7 +325,7 @@ def recover_private_bindings(
             finally:
                 os.close(copied)
             current()
-            if set(os.listdir(parent)) != (names - set(scratch)) | {scratch_name}:
+            if _inventory(parent) != (names - set(scratch)) | {scratch_name}:
                 _refuse()
             for name, information in aliases.items():
                 if _identity(

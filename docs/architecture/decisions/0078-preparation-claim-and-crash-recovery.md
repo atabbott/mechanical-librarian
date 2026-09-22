@@ -65,7 +65,10 @@ Verify both copied digests against the captured source digests. Native SQLite
 rolls back only this copy first; the existing full schema, integrity, foreign-key
 and canonical-content validator must admit it. Recheck source identities and both
 source digests before native SQLite rolls back through the original retained
-alias. Never replace the database from the copy or manually delete its journal.
+alias. Parent inventory snapshots use fresh directory descriptors verified against
+the held parent inode, avoiding stale directory streams while preserving exact
+inventory equality. Never replace the database from the copy or manually delete
+its journal.
 
 Scratch cleanup accepts only the exact private name, ownership, mode and closed
 database/journal inventory. It never recursively deletes unknown objects. A later

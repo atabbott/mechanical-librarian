@@ -362,3 +362,86 @@ def test_copy_admission_rechecks_original_path_and_parent_binding(
         open_repository(path, recover_stale_bindings=True)
     assert len(copies) == 1
     assert _snapshot(tuple(retained)) == before
+
+
+@pytest.mark.parametrize("change", ["added", "removed"])
+def test_fresh_inventory_refuses_changes_before_source_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str
+) -> None:
+    from mechanical_librarian.adapters.persistence import crash_recovery
+
+    path = tmp_path / "application.sqlite3"
+    alias, journal = _crash(path, "single")
+    foreign = tmp_path / "foreign"
+    if change == "removed":
+        foreign.write_text("synthetic sibling")
+    before = _snapshot((path, alias, journal))
+    native = crash_recovery._native_rollback
+    copies = []
+
+    def change_inventory(candidate: Path, descriptor: int) -> None:
+        assert candidate.name == "database.sqlite", (
+            "source replay after inventory drift"
+        )
+        copies.append(candidate)
+        native(candidate, descriptor)
+        if change == "added":
+            foreign.write_text("synthetic sibling")
+        else:
+            foreign.unlink()
+
+    monkeypatch.setattr(crash_recovery, "_native_rollback", change_inventory)
+    with pytest.raises(MetadataReportError):
+        open_repository(path, recover_stale_bindings=True)
+    assert len(copies) == 1
+    assert _snapshot((path, alias, journal)) == before
+    assert foreign.exists() is (change == "added")
+
+
+@pytest.mark.parametrize("fault", ["identity", "enumeration"])
+def test_fresh_inventory_descriptor_refusal_closes_without_source_replay(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    from mechanical_librarian.adapters.persistence import crash_recovery
+
+    parent = tmp_path / "bound"
+    parent.mkdir(mode=0o700)
+    other = tmp_path / "other"
+    other.mkdir(mode=0o700)
+    path = parent / "application.sqlite3"
+    alias, journal = _crash(path, "single")
+    before = _snapshot((path, alias, journal))
+    original_open = os.open
+    original_listdir = os.listdir
+    descriptors = []
+
+    def open_inventory(name, flags, *args, **kwargs):
+        if name != ".":
+            return original_open(name, flags, *args, **kwargs)
+        assert flags & os.O_DIRECTORY and flags & os.O_NOFOLLOW
+        descriptor = (
+            original_open(other, flags)
+            if fault == "identity"
+            else original_open(name, flags, *args, **kwargs)
+        )
+        descriptors.append(descriptor)
+        return descriptor
+
+    def list_inventory(descriptor):
+        if descriptor in descriptors:
+            assert fault == "enumeration", "enumerated an unbound directory"
+            raise OSError("synthetic enumeration failure")
+        return original_listdir(descriptor)
+
+    def no_replay(*_args):
+        pytest.fail("native replay before directory admission")
+
+    monkeypatch.setattr(crash_recovery.os, "open", open_inventory)
+    monkeypatch.setattr(crash_recovery.os, "listdir", list_inventory)
+    monkeypatch.setattr(crash_recovery, "_native_rollback", no_replay)
+    with pytest.raises(MetadataReportError):
+        open_repository(path, recover_stale_bindings=True)
+    assert len(descriptors) == 1
+    with pytest.raises(OSError):
+        os.fstat(descriptors[0])
+    assert _snapshot((path, alias, journal)) == before
