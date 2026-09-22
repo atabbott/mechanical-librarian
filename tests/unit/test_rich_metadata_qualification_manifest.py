@@ -2102,7 +2102,10 @@ def test_predecessor_title_successors_bind_frozen_consumer_source_inventory() ->
     assert (
         title["measurement_artifacts"]["synthetic-report-builder"]["sha256"]
         == hashlib.sha256(
-            (MANIFEST.parents[2] / "tests/support/evidence_led_titles.py").read_bytes()
+            (
+                MANIFEST.parents[2]
+                / "tests/fixtures/shadow-outcome-v6/evidence-led-titles.py.txt"
+            ).read_bytes()
         ).hexdigest()
     )
     assert title["new_title_measurement"]["synthetic"]["candidate_predictions"] == 25

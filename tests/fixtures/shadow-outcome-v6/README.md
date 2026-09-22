@@ -18,3 +18,6 @@ SHA-256:
 - `preservation-automatic.json`: `37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570`
 - `preservation-outcomes.json`: `6325a4e148109b0509c0b6443f694109e80241a9b1cb7823e0da99df2c240158`
 - `preservation-v6.sql`: `fd9d2d1d56a7b20d3e8b0834be2c1ae5652df8caf1163142a5ccec6a08491d20`
+
+The retained `evidence-led-titles.py.txt` is the byte-identical base synthetic
+producer source, SHA-256 `0cff2ce4ecf8075d9c3815a7f6774e9ec30a9c2cb693eed332471fb881f7c18e`.
