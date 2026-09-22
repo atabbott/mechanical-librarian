@@ -14,7 +14,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "ec47492d3e0ae877617e1ed1ed885728212f1591"
+    "source_sha": "1fd1752be9d238fcfad0f610dcb80e86153c96c7"
   },
   "build_provenance_paths": [
     "frontend/package-lock.json",
@@ -58,7 +58,7 @@
       "verified_abs_effects": 32
     }
   },
-  "frozen_candidate_sha": "ec47492d3e0ae877617e1ed1ed885728212f1591",
+  "frozen_candidate_sha": "1fd1752be9d238fcfad0f610dcb80e86153c96c7",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v7.json",
@@ -218,7 +218,7 @@
         "measured_sha256": "0d47f91dfd6e6bf97eb74fef183a95a70e2e698d9a690f8131b9dd50362a1179"
       },
       "src/mechanical_librarian/domain/evidence_bounds.py": {
-        "current_sha256": "acb1d715f3e3ee9bc996fad6ed3adffc6866e9a5eeb2db818d0dc736b2b40e4c",
+        "current_sha256": "8250a77eee31a7f1be6866ea82c732b847f951256eb19ab8e755b531513ffe85",
         "measured_sha256": "dd21b6b9fe02af6b666f51077e31c39d5249d0888e3ffa37119fa50e5bc05957"
       },
       "src/mechanical_librarian/domain/field_value_comparison.py": {
@@ -456,7 +456,7 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "ec47492d3e0ae877617e1ed1ed885728212f1591",
+    "current_source_sha": "1fd1752be9d238fcfad0f610dcb80e86153c96c7",
     "introduced_sources": {
       "frontend/src/queryWork.ts": {
         "current_sha256": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
@@ -953,8 +953,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "d942bd0652670e65e2a8546e637aa481b2db8191b95dcedfb7766c656825e889",
-    "src/mechanical_librarian/domain/automatic_decision.py": "b04ad9ade5e5a3e7427698435f56fd3b8d78f220babe7e563578417100896b74",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "5ee6f65b8ba51e479eb8b57fb4df952155a4efc571989b6a583459a9ccd31440",
+    "src/mechanical_librarian/domain/automatic_decision.py": "f49e7a231a56fa7d129b7120723ad6e4236413cb5aa97cdee8d335c9e021a42d",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -965,7 +965,7 @@
     "src/mechanical_librarian/domain/epub_inspection.py": "45fabde84422d56e2154cd3f49b4add6becc1f1ba36011f0e00ef106390472f2",
     "src/mechanical_librarian/domain/epub_opening.py": "1d6714c2d668f0ef82c4e12e0ee3075f8b2164aade9bb5c2ecf2d7506f99bf12",
     "src/mechanical_librarian/domain/epub_source.py": "63d8d3d86a6195134b3ddc0c4b2980410b9d15facd240622d5e3fb7c8698479e",
-    "src/mechanical_librarian/domain/evidence_bounds.py": "acb1d715f3e3ee9bc996fad6ed3adffc6866e9a5eeb2db818d0dc736b2b40e4c",
+    "src/mechanical_librarian/domain/evidence_bounds.py": "8250a77eee31a7f1be6866ea82c732b847f951256eb19ab8e755b531513ffe85",
     "src/mechanical_librarian/domain/failure_diagnostics.py": "90adc37a72a0dcad63ab8833da1c9a071bedacd0c4d84911a5c5d79c069b06b7",
     "src/mechanical_librarian/domain/field_effect.py": "0ad503715e7b0f5e12e1b34083d7e5d5fc885b4202addfa0008e393d985acee3",
     "src/mechanical_librarian/domain/field_outcomes.py": "e8f989da95c8a6527cb49c55e4c0cc25f0e6d148a9a47edb678cd24c78818772",
@@ -985,7 +985,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "ebd7d463c4eb3d26784803efb2709211c1045cf3a651368c00a1c868e6ce4db8",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "4b12ddfc65a72bff4441ae8906cea283bb3edcb32d684110911241b92c2334a2",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "8d6fcff5b4af8a71d76a46efb3e6131caeb7cd7d06a03a027f95447f0850502f",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
@@ -1080,7 +1080,7 @@
     "tests/unit/test_field_value_comparison.py": "0945ed5934d9823a0aae764c5953bde69dd3b3ecf3e8a06aac899baf17dd8b90",
     "tests/unit/test_first_boot.py": "a3ca21c975dcecf868ab4ab10005e1224b3a054d952236699694924854c15900",
     "tests/unit/test_google_books_metadata.py": "e48f08509e0fb6180a55d32f569711f09d4135ad06274c5a61e7526676ad6a03",
-    "tests/unit/test_incumbent_description_text.py": "dcc2bb273c05be2741d35eb27d3f4eed7bca700cc1eca73065f7b6a65a6f2017",
+    "tests/unit/test_incumbent_description_text.py": "223c64bc75fe76a1aadfc8c4690cc223efb907ed1280ba1f19421e29d3a46046",
     "tests/unit/test_inventaire_metadata.py": "d218bb61c1d8c73b9bf6659715196de3daa4365a1d45572add0d92ea0b19e9f3",
     "tests/unit/test_inventaire_preparation.py": "447817a84c86802c522a41c78c231acaeb9a8b105c9435c9f0c91ffe4a23c899",
     "tests/unit/test_linux_fast.py": "0d266a78849dddc40ad15c5a509b25fc2c646ccf3fc9a9374f19c6c2fb4ea549",
