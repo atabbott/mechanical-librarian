@@ -1603,6 +1603,7 @@ def test_byline_is_a_creator_with_author_role_and_source_values_are_redacted() -
         claim for claim in oversized.claims if claim.field is OpeningField.CREATOR
     )
     assert claim.state == "oversized"
+    assert claim.normalized_value is None
     assert re.search(r"^oversized-source-text-sha256:[0-9a-f]{64}$", claim.raw_value)
     assert claim.raw_value == claim.citation.exact_excerpt
     unsafe = _extract(
@@ -1612,6 +1613,7 @@ def test_byline_is_a_creator_with_author_role_and_source_values_are_redacted() -
         claim for claim in unsafe.claims if claim.field is OpeningField.CREATOR
     )
     assert creator.state == "unsupported"
+    assert creator.normalized_value is None
     assert re.search(r"^unsafe-source-text-sha256:[0-9a-f]{64}$", creator.raw_value)
     assert creator.raw_value == creator.citation.exact_excerpt
     assert [

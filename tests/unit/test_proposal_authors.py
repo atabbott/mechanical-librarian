@@ -1017,3 +1017,53 @@ def test_explicit_local_authors_only_fill_or_preserve(
         if current == ("Ada Author",)
         else ProposalOutcome.UNRESOLVED_CHOICE
     )
+
+
+@pytest.mark.parametrize("count", (2, 3))
+@pytest.mark.parametrize("same_authority", (False, True))
+def test_complete_author_replacement_counts_independent_authorities(
+    count: int, same_authority: bool
+) -> None:
+    providers = tuple(
+        _provider(
+            name,
+            name + "-edition",
+            tuple(
+                _claim(
+                    name,
+                    name + "-edition",
+                    ClaimKind.CREATOR,
+                    author,
+                    scope=ClaimScope.WORK,
+                    role="author",
+                    order=index,
+                )
+                for index, author in enumerate(("Ada Author", "Bea Writer"))
+            ),
+            authority="hardcover" if same_authority else name,
+        )
+        for name in ("hardcover", "open_library", "google_books")[:count]
+    )
+    result = _result(
+        evaluate_report(
+            _report(
+                fields=_fields(
+                    None,
+                    authors=TargetField(
+                        TargetDestination.AUTHORS,
+                        TargetFieldState.VALUE,
+                        ("Current Writer",),
+                    ),
+                ),
+                providers=providers,
+            )
+        ),
+        TargetDestination.AUTHORS,
+    )
+    assert result.outcome is (
+        ProposalOutcome.UNRESOLVED_CHOICE
+        if same_authority
+        else ProposalOutcome.PROPOSE_CHANGE
+    )
+    assert len(result.alternatives[0].correlations) == (1 if same_authority else count)
+    assert result.alternatives[0].value.value == ("Ada Author", "Bea Writer")

@@ -5,11 +5,23 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Incumbent paragraph source successor (#1080)
+## Author evidence source successor (#1083)
 
 [F46 v13](../reference/f46-audiobook-qualification-candidate-v13.json),
 [F19a v30](../reference/f19a-qualification-manifest-v30.json) and
 [F20 v44](../reference/f20-rich-metadata-qualification-candidate-v44.json) bind
+whole-statement author attribution and complete-set proposal-governed automatic
+admission. Their explicit synthetic controls exercise isolated extraction,
+SQLite publication, owner projections, reopen/replay and consent-guarded fake
+effects. All 386 inherited source paths and existing options remain bound;
+new current consumers extend that inventory. Report v46 requires a clean rebuild.
+Inherited quality measurements are historical and were not rescored.
+
+## Incumbent paragraph source successor (#1080)
+
+[F46 v12](../reference/f46-audiobook-qualification-candidate-v12.json),
+[F19a v29](../reference/f19a-qualification-manifest-v29.json) and
+[F20 v43](../reference/f20-rich-metadata-qualification-candidate-v43.json) bind
 exact multiline incumbent description admission and comparison to the current
 consumer closure. This is a behavioral successor, not whole-source equivalence or
 new quality measurement. Historical manifests, evaluators, measurement artifacts

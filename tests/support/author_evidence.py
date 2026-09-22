@@ -1,5 +1,7 @@
 """Fixed-byte synthetic author statements shared by extraction and lifecycle proof."""
 
+import html
+
 from tests.support.epub_packages import _opening_epub, _opening_package, _xhtml
 
 AUTHOR_STATEMENTS = (
@@ -58,7 +60,13 @@ AUTHOR_STATEMENTS = (
 )
 
 
-def author_epub(body: str, *, rear: bool = False, recovered: bool = False) -> bytes:
+def author_epub(
+    body: str,
+    *,
+    rear: bool = False,
+    recovered: bool = False,
+    package_creators: tuple[tuple[str, str | None], ...] = (),
+) -> bytes:
     """Use nine slots to force rear inspection without changing the opening limit."""
     media = "text/html" if recovered else "application/xhtml+xml"
     items = tuple((f"slot{i}", f"slot{i}.xhtml", media, "") for i in range(9))
@@ -70,6 +78,16 @@ def author_epub(body: str, *, rear: bool = False, recovered: bool = False) -> by
         if recovered
         else (),
     )
+    metadata = "".join(
+        f'<dc:creator id="creator{index}">{html.escape(name)}</dc:creator>'
+        + (
+            f'<meta refines="#creator{index}" property="role" scheme="marc:relators">{html.escape(role)}</meta>'
+            if role is not None
+            else ""
+        )
+        for index, (name, role) in enumerate(package_creators)
+    )
+    package = package.replace(b"</metadata>", metadata.encode() + b"</metadata>")
     content = ("<p>All rights reserved</p>" if rear else "") + body
 
     def markup(value: str) -> bytes:
@@ -158,6 +176,16 @@ def author_report(root, scenario: str = "supported"):
     )
     from tests.support.proposal_evidence import _claim, _fields, _provider
 
+    names = (
+        (
+            "Alexandra Everlasting Example of the Northern Collaborative Writing Society",
+            "Beatrice Wonderfully Long Example and the Clockwork Storytelling Collective",
+        )
+        if scenario == "long"
+        else ("Ada Example",)
+    )
+    if scenario == "long":
+        scenario = "supported"
     body = {
         "supported": "<p>Author photograph by Pat Example</p>",
         "incidental": "<p>Author photograph by Pat Example</p>",
@@ -179,15 +207,17 @@ def author_report(root, scenario: str = "supported"):
             _provider(
                 name,
                 name + "-edition",
-                (
+                tuple(
                     _claim(
                         name,
                         name + "-edition",
                         ClaimKind.CREATOR,
-                        "Ada Example",
+                        author,
                         scope=ClaimScope.WORK,
                         role="author",
-                    ),
+                        order=index,
+                    )
+                    for index, author in enumerate(names)
                 ),
                 authority=name,
             )

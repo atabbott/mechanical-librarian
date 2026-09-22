@@ -3023,3 +3023,54 @@ def test_opening_selection_is_shared_without_additional_navigation_reads() -> No
         for fact in rear
         if fact.field is EpubInspectionField.CREATOR
     ) == ("Allowed Example",)
+
+
+def test_package_creator_roles_remain_true_through_isolated_projection() -> None:
+    report = _inspect_in_child(
+        author_epub(
+            "<p>Authors: Ada Example</p>",
+            package_creators=(("Ada Example", None), ("Bea Example", "aut")),
+        )
+    )
+    package = [
+        fact
+        for fact in report.facts
+        if fact.field is EpubInspectionField.CREATOR
+        and fact.basis == "package_metadata"
+    ]
+    assert [(fact.canonical_value, fact.role) for fact in package] == [
+        ("Ada Example", None),
+        ("Bea Example", "author"),
+    ]
+
+
+@pytest.mark.parametrize("rear", (False, True))
+def test_whole_credit_context_and_role_are_retained_without_authorship(
+    rear: bool,
+) -> None:
+    report = _inspect_in_child(
+        author_epub(
+            '<p>Author photograph <span epub:type="creator">by Pat Example</span></p>',
+            rear=rear,
+        )
+    )
+    assert not any(fact.field is EpubInspectionField.CREATOR for fact in report.facts)
+    credits = [
+        fact for fact in report.facts if fact.field is EpubInspectionField.CONTRIBUTOR
+    ]
+    assert [
+        (fact.canonical_value, fact.role, fact.supporting_context) for fact in credits
+    ] == [("Pat Example", "photographer", "Author photograph by Pat Example")]
+
+
+@pytest.mark.parametrize("rear", (False, True))
+def test_whole_author_context_keeps_inline_name_and_explicit_role(rear: bool) -> None:
+    report = _inspect_in_child(
+        author_epub("<p>Authors: <em>Ada Example</em></p>", rear=rear)
+    )
+    creators = [
+        fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
+    ]
+    assert [
+        (fact.canonical_value, fact.role, fact.supporting_context) for fact in creators
+    ] == [("Ada Example", "author", "Authors: Ada Example")]

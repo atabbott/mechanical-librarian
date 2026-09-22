@@ -621,6 +621,8 @@ class _RecognitionContext:
     warnings: tuple[str, ...]
     suppress_claims: bool = False
     non_author_scopes: tuple[int | None, ...] = ()
+    claim_containers: frozenset[int] = frozenset()
+    unsafe_containers: frozenset[int] = frozenset()
 
 
 class _SourceIO(io.RawIOBase):
@@ -2777,7 +2779,7 @@ def _claim(
     semantic_path = f"{element.name}[{element.ordinal}]" + (
         ":" + ".".join(sorted(element.semantics)) if element.semantics else ""
     )
-    if citation_context is not None:
+    if citation_context is not None and state == "valid":
         citation_element, citation_start, citation_end = citation_context
         if (
             citation_element is element
@@ -3140,6 +3142,18 @@ def _recognition_context(
             for association, target in surviving
             if association.role in _NON_AUTHOR_SCOPES
         ),
+        frozenset(
+            ancestor
+            for child in projection.elements
+            if child.name in _ATTRIBUTION_BLOCKS
+            for ancestor in child.ancestors
+        ),
+        frozenset(
+            ancestor
+            for child in projection.elements
+            if child.active or not _is_html_namespace(child.namespace)
+            for ancestor in child.ancestors
+        ),
     )
 
 
@@ -3155,7 +3169,9 @@ _AUTHOR_LABEL = re.compile(r"^authors?\s*:\s*(.+)$", re.I)
 _AUTHOR_BYLINE = re.compile(r"^(?:by|written by)\s+(.+)$", re.I)
 
 
-def _attribution_owner(element: _Element, elements: dict[int, _Element]) -> bool:
+def _attribution_owner(
+    element: _Element, elements: dict[int, _Element], context: _RecognitionContext
+) -> bool:
     """Emit one whole claim block, never its inline credit fragments."""
     if element.name not in _ATTRIBUTION_BLOCKS and any(
         elements[n].name in _ATTRIBUTION_BLOCKS for n in element.ancestors
@@ -3163,10 +3179,7 @@ def _attribution_owner(element: _Element, elements: dict[int, _Element]) -> bool
         return False
     if element.name not in _ATTRIBUTION_BLOCKS and "creator" not in element.semantics:
         return False
-    return not any(
-        element.ordinal in child.ancestors and child.name in _ATTRIBUTION_BLOCKS
-        for child in elements.values()
-    )
+    return element.ordinal not in context.claim_containers
 
 
 def _author_attribution(
@@ -3176,7 +3189,7 @@ def _author_attribution(
     context: _RecognitionContext,
 ) -> tuple[str, str | None] | None:
     """Classify complete statements; structure supplies By context, never names."""
-    if not _attribution_owner(element, elements) or context.suppress_claims:
+    if not _attribution_owner(element, elements, context) or context.suppress_claims:
         return None
     ancestry = [elements[n] for n in (*element.ancestors, element.ordinal)]
     if (
@@ -3191,11 +3204,7 @@ def _author_attribution(
         or (
             context.body_ordinal is not None and element.ordinal >= context.body_ordinal
         )
-        or any(
-            child.active or not _is_html_namespace(child.namespace)
-            for child in elements.values()
-            if element.ordinal in child.ancestors
-        )
+        or element.ordinal in context.unsafe_containers
     ):
         return None
     text = element.exact_text
@@ -3462,6 +3471,7 @@ def _recognize(
                 value,
                 EpubObservationApplicability.WORK,
                 role=author_role,
+                citation_context=(element, element.start, element.end),
             )
             if author_role is not None:
                 add(
@@ -3471,7 +3481,9 @@ def _recognize(
                     author_role,
                 )
         recovered_credits = (
-            _indicia_credits(text) if _attribution_owner(element, by_ordinal) else ()
+            _indicia_credits(text)
+            if _attribution_owner(element, by_ordinal, context)
+            else ()
         )
         bibliographic_credit = False
         for (
@@ -3487,6 +3499,7 @@ def _recognize(
                     credit_value,
                     credit_applicability,
                     role=credit_role,
+                    citation_context=(element, element.start, element.end),
                 )
                 add(
                     OpeningField.CONTRIBUTOR_ROLE,
@@ -3513,6 +3526,7 @@ def _recognize(
                     credit_value,
                     credit_applicability,
                     role=credit_role,
+                    citation_context=(element, element.start, element.end),
                 )
         explicit_semantics = _tokens(element.attributes)
         if "contributor" in explicit_semantics and not bibliographic_credit:

@@ -6417,3 +6417,51 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 page.unroute_all(behavior="wait")
                 context.close()
                 browser.close()
+
+
+@pytest.mark.parametrize("scenario", ("supported", "conflict", "long"))
+def test_generated_authors_fixture_reaches_library_choice_and_evidence(
+    scenario: str,
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        os.chmod(root, 0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        os.chmod(hash_path, 0o600)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(viewport={"width": 390, "height": 844})
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite",
+                    hash_path=hash_path,
+                    certificate=root / "unused.crt",
+                    key=root / "unused.key",
+                    port=port,
+                    transport_mode="http",
+                    author_fixture=scenario,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=authors")
+                choice = page.locator(".direct-choice").first
+                expect(choice).to_be_visible()
+                expect(choice).to_contain_text(
+                    "Alexandra" if scenario == "long" else "Ada Example"
+                )
+                if scenario == "conflict":
+                    expect(choice).to_contain_text("Different Writer")
+                page.get_by_role("link", name="Evidence", exact=True).click()
+                expect(
+                    page.get_by_text(
+                        "Alexandra Everlasting Example of the Northern Collaborative Writing Society"
+                        if scenario == "long"
+                        else "Ada Example",
+                        exact=False,
+                    ).first
+                ).to_be_visible()
+            browser.close()
