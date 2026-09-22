@@ -1,6 +1,7 @@
 """Synthetic Inventaire outcomes injected before real preparation publication."""
 
 import io
+import threading
 import time
 from dataclasses import replace
 from pathlib import Path
@@ -53,6 +54,7 @@ class InventairePreparationFixture:
         self.fail = True
         self.state = state
         self.artifacts = artifacts
+        self._cover_fetch_lock = threading.Lock()
 
     def __call__(self, seed: MetadataReport) -> MetadataReport:
         source_id = cover_source_id(CoverSourceKind.INVENTAIRE, seed.target.item)
@@ -77,10 +79,13 @@ class InventairePreparationFixture:
                 "https://inventaire.io/img/entities/" + "a" * 40,
                 source.provenance,
             )
-            with patch(
-                "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
-                return_value=RemoteCover(
-                    descriptor.url or "", "image/jpeg", image.getvalue()
+            with (
+                self._cover_fetch_lock,
+                patch(
+                    "mechanical_librarian.bootstrap.composition.fetch_remote_cover",
+                    return_value=RemoteCover(
+                        descriptor.url or "", "image/jpeg", image.getvalue()
+                    ),
                 ),
             ):
                 source = _CoverEvidenceObserver(

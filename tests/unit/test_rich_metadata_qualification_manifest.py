@@ -3118,6 +3118,8 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         "scripts/audit_sqlite_row_deltas.py",
         "tests/unit/test_sqlite_row_delta_audit.py",
         "tests/unit/test_runtime_dispatch.py",
+        "tests/support/inventaire_preparation.py",
+        "tests/unit/test_inventaire_preparation.py",
         "tests/unit/test_live_updates.py",
         "tests/unit/test_first_boot.py",
         "tests/unit/test_operations.py",

@@ -6313,10 +6313,13 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
             page = context.new_page()
             stopped = {"value": True}
             mutations: list[str] = []
+            _login(page, origin)
+            response = page.request.get(origin + "/api/v1/review-preparation")
+            assert response.status == 200
+            snapshot = response.json()
 
             def preparation_response(route) -> None:
-                response = route.fetch()
-                document = response.json()
+                document = dict(snapshot)
                 # Deliberately retain stale active wording beneath the newer
                 # runtime stop. The actual server supplies durable presentation.
                 document["recovery_required"] = stopped["value"]
@@ -6338,7 +6341,7 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                         "stages": [{"stage": "extraction", "count": 2}],
                     }
                 ]
-                route.fulfill(response=response, json=document)
+                route.fulfill(status=200, json=document)
 
             page.route("**/api/v1/review-preparation", preparation_response)
             page.on(
@@ -6351,7 +6354,7 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 ),
             )
             try:
-                _login(page, origin)
+                page.reload()
                 summary = page.locator(".preparation-summary")
                 expect(summary).to_contain_text("Preparation stopped")
                 summary.click()
