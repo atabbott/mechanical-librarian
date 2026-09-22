@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { ApiError, mapCaseDetail } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
@@ -1228,24 +1228,36 @@ describe('Library route', () => {
       .mockResolvedValueOnce(confirmed)
       .mockRejectedValueOnce(new ApiError(503, 'unavailable'))
       .mockResolvedValue(confirmed)
-    renderRoute('/library?lens=all', http, updates)
+    const { queryClient } = renderRoute('/library?lens=all', http, updates)
 
     const summary = await screen.findByRole('button', { name: /Preparation is starting/u })
     expect(summary).toBeVisible()
     await userEvent.click(summary)
     expect(await screen.findByRole('heading', { name: 'Now preparing' })).toBeVisible()
+    // Mount the actual panel before controlling the fallback sampling cadence.
+    vi.useFakeTimers()
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
     act(() => updates.setState('degraded'))
-    expect(
-      await screen.findByText(/Reconnecting · showing the last confirmed state/u),
-    ).toBeVisible()
+    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
     act(() => updates.setState('live'))
 
-    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(http.getPreparation).toHaveBeenCalledTimes(2)
     expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
-    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3), { timeout: 2_500 })
-    await waitFor(() =>
-      expect(screen.queryByText(/Reconnecting · showing the last confirmed state/u)).toBeNull(),
-    )
+    await act(() => vi.advanceTimersByTimeAsync(1_499))
+    expect(http.getPreparation).toHaveBeenCalledTimes(2)
+    expect(screen.getByText(/Reconnecting · showing the last confirmed state/u)).toBeVisible()
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(http.getPreparation).toHaveBeenCalledTimes(3)
+    expect(queryClient.getQueryState(['review-preparation'])?.status).toBe('success')
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed)
+    expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(false)
+    // Query publishes to React on its separate zero-delay notification turn.
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(http.getPreparation).toHaveBeenCalledTimes(3)
+    expect(screen.queryByText(/Reconnecting · showing the last confirmed state/u)).toBeNull()
   })
 
   it('shows the terminal first-boot measurement without a Library self-action', async () => {

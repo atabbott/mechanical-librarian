@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider, QueryObserver } from '@tanstack/react
 import { RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import { ApiError } from '../src/api/http'
 import type { LibraryView, PreparationView, ReviewHttp } from '../src/api/http'
@@ -1316,6 +1316,11 @@ describe('Application shell', () => {
     const { queryClient } = renderRoute('/library?lens=all', http, updates)
     await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(initial))
     await screen.findByRole('button', { name: /Preparing your library/u })
+    // Finish the real lazy route mount before controlling the recovery cadence.
+    vi.useFakeTimers()
+    onTestFinished(() => {
+      vi.useRealTimers()
+    })
     const debtHistory: boolean[] = []
     const preparationActions: string[] = []
     const stopObservingDebt = queryClient.getQueryCache().subscribe((event) => {
@@ -1331,29 +1336,35 @@ describe('Application shell', () => {
 
     act(() => updates.setState('degraded'))
     act(() => updates.setState('live'))
-    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(2))
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    expect(http.getPreparation).toHaveBeenCalledTimes(2)
     act(() => updates.announce({ sequence: 1, subject: null, topic: 'preparation' }))
 
     const query = queryClient
       .getQueryCache()
       .find({ queryKey: ['review-preparation'], exact: true })
     if (!query) throw new Error('preparation query required')
-    await waitFor(() => expect(hasBackgroundDebt(queryClient, query)).toBe(true))
+    await act(() => vi.advanceTimersByTimeAsync(coalesceMilliseconds))
+    expect(hasBackgroundDebt(queryClient, query)).toBe(true)
     expect(heldAborted).toBe(false)
     await act(async () => releaseHeld(initial))
-    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(3))
+    await act(() => vi.advanceTimersByTimeAsync(coalesceMilliseconds))
+    expect(http.getPreparation).toHaveBeenCalledTimes(3)
+    expect(query.state.status).toBe('error')
     expect(heldAborted).toBe(false)
     expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(true)
     expect(screen.getByText(/Reconnecting · last confirmed progress shown/u)).toBeVisible()
     expect(queryClient.getQueryData(['review-preparation'])).toBe(initial)
     expect(debtHistory).not.toContain(false)
 
-    await waitFor(() => expect(http.getPreparation).toHaveBeenCalledTimes(4), { timeout: 2_500 })
-    await waitFor(() => expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed))
+    await act(() => vi.advanceTimersByTimeAsync(1_499))
+    expect(http.getPreparation).toHaveBeenCalledTimes(3)
+    expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(true)
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(http.getPreparation).toHaveBeenCalledTimes(4)
+    expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed)
     expect(preparationActions.at(-1)).toBe('success:undefined:idle')
-    await waitFor(() =>
-      expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(false),
-    )
+    expect(queryClient.getQueryData(['review-preparation-invalidation-debt'])).toBe(false)
     expect(queryClient.getQueryData(['review-preparation'])).toBe(confirmed)
     stopObservingDebt()
   })
