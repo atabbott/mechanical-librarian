@@ -22,6 +22,8 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 
@@ -31,7 +33,8 @@ ROOT = Path(__file__).resolve().parents[1]
 OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
 GRACEFUL_SHUTDOWN_SECONDS = 5
 _FAKE_AUDIOBOOKSHELF = r"""
-import json
+import json,time
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -67,6 +70,12 @@ class Handler(BaseHTTPRequestHandler):
         if route == "/api/libraries":
             value = {"libraries": [library]}
         elif route == "/api/libraries/books/items":
+            if Path("/tmp/hold-preparation").exists():
+                Path("/tmp/active-preparation").touch()
+                deadline = time.monotonic() + 10
+                while Path("/tmp/hold-preparation").exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                Path("/tmp/active-preparation").unlink(missing_ok=True)
             value = {"total": 1, "results": [summary]}
         elif route == "/api/items/item-1":
             value = detail
@@ -307,15 +316,19 @@ def _workspace(port: int, context: ssl.SSLContext) -> bool:
         return False
 
 
-def _clean_stop(container: str) -> int:
+def _clean_stop(
+    container: str, *, worker_seconds: int = GRACEFUL_SHUTDOWN_SECONDS
+) -> int:
+    # HTTP drain precedes the application worker deadline (compose.yaml).
+    budget = 2 * worker_seconds
     started = time.monotonic()
-    _run(["docker", "stop", "--time", str(GRACEFUL_SHUTDOWN_SECONDS), container])
+    _run(["docker", "stop", "--time", str(budget), container])
     shutdown_ms = int((time.monotonic() - started) * 1000)
     state = json.loads(
         _run(["docker", "inspect", container, "--format", "{{json .State}}"])
     )
     if (
-        shutdown_ms > GRACEFUL_SHUTDOWN_SECONDS * 1_000
+        shutdown_ms > budget * 1_000
         or state.get("Running") is not False
         or state.get("ExitCode") != 0
         or state.get("OOMKilled") is not False
@@ -361,6 +374,88 @@ def _json_request(
         if len(body) > 1_048_576:
             raise QualificationError("first_run_response_oversize") from error
         return error.code, json.loads(body.decode("utf-8", "strict"))
+
+
+@contextmanager
+def _active_preparation_stream(
+    target: str,
+    opener: urllib.request.OpenerDirector,
+    port: int,
+    scheme: str,
+) -> Iterator[None]:
+    """Hold one real preparation read at the isolated fake target and stream."""
+    python = "/opt/mechanical-librarian/bin/python"
+    _run(
+        [
+            "docker",
+            "exec",
+            target,
+            python,
+            "-I",
+            "-c",
+            "from pathlib import Path; Path('/tmp/active-preparation').unlink(missing_ok=True); Path('/tmp/hold-preparation').touch()",
+        ]
+    )
+    stream = None
+    try:
+        request = urllib.request.Request(
+            f"{scheme}://127.0.0.1:{port}/library", headers={"Host": "review.test"}
+        )
+        with opener.open(request, timeout=5) as response:
+            page = response.read(1_048_577).decode("utf-8", "strict")
+        csrf = re.search(r'data-csrf-token="([A-Za-z0-9_-]{32,128})"', page)
+        build = re.search(r'data-build-identity="([0-9a-f]{64})"', page)
+        if csrf is None or build is None:
+            raise QualificationError("active_preparation_identity_unavailable")
+        status, _ = _json_request(
+            opener,
+            port,
+            "/api/v1/review-preparation/primary/synthetic-books-essays/scan",
+            method="POST",
+            scheme=scheme,
+            headers={
+                "Origin": f"{scheme}://review.test",
+                "X-CSRF-Token": csrf[1],
+                "X-ML-Build-Identity": build[1],
+            },
+        )
+        if status != 202:
+            raise QualificationError("active_preparation_request_failed")
+        _run(
+            [
+                "docker",
+                "exec",
+                target,
+                python,
+                "-I",
+                "-c",
+                "import time; from pathlib import Path; deadline=time.monotonic()+5\nwhile not Path('/tmp/active-preparation').exists() and time.monotonic()<deadline: time.sleep(.05)\nassert Path('/tmp/active-preparation').exists()",
+            ]
+        )
+        request = urllib.request.Request(
+            f"{scheme}://127.0.0.1:{port}/api/v1/updates",
+            headers={"Host": "review.test", "Origin": f"{scheme}://review.test"},
+        )
+        stream = opener.open(request, timeout=65)
+        if stream.status != 200 or "text/event-stream" not in stream.headers.get(
+            "Content-Type", ""
+        ):
+            raise QualificationError("active_preparation_stream_failed")
+        yield
+    finally:
+        if stream is not None:
+            stream.close()
+        _run(
+            [
+                "docker",
+                "exec",
+                target,
+                python,
+                "-I",
+                "-c",
+                "from pathlib import Path; Path('/tmp/hold-preparation').unlink(missing_ok=True)",
+            ]
+        )
 
 
 def _qualify_first_run(
@@ -699,7 +794,11 @@ def _qualify_first_run(
             time.sleep(0.2)
         if not preparation_advanced:
             raise QualificationError("first_run_preparation_did_not_advance")
-        _clean_stop(review)
+        worker_seconds = settings["document"]["server"]["graceful_shutdown_seconds"]
+        if type(worker_seconds) is not int or not 1 <= worker_seconds <= 300:
+            raise QualificationError("first_run_shutdown_budget_invalid")
+        with _active_preparation_stream(target, opener, port, scheme):
+            active_shutdown_ms = _clean_stop(review, worker_seconds=worker_seconds)
         _run(["docker", "start", review])
         if not _health(port, "/health/ready", time.monotonic() + 30, context):
             raise QualificationError("first_run_restart_failed")
@@ -717,8 +816,22 @@ def _qualify_first_run(
         )
         if status != 200 or request_json(restarted, port, "/api/v1/settings")[0] != 200:
             raise QualificationError("first_run_durable_restart_failed")
-        _clean_stop(review)
+        with _active_preparation_stream(target, restarted, port, scheme):
+            _run(["docker", "kill", "--signal", "KILL", review])
+        killed = json.loads(
+            _run(["docker", "inspect", review, "--format", "{{json .State}}"])
+        )
+        if killed.get("ExitCode") != 137 or killed.get("Running") is not False:
+            raise QualificationError("first_run_kill_failed")
+        _run(["docker", "start", review])
+        if not _health(port, "/health/ready", time.monotonic() + 30, context):
+            raise QualificationError("first_run_crash_restart_failed")
+        _clean_stop(review, worker_seconds=worker_seconds)
         return {
+            "active_preparation_and_stream_sigterm": True,
+            "active_shutdown_ms": active_shutdown_ms,
+            "http_plus_worker_budget_seconds": 2 * worker_seconds,
+            "sigkill_ordinary_entrypoint_restart": True,
             "durable_restart": True,
             "empty_volume": True,
             "ordinary_session_continuity": True,
@@ -733,6 +846,66 @@ def _qualify_first_run(
         _remove_owned("volume", media_volume, run_id)
         _remove_owned("volume", secrets_volume, run_id)
         _remove_owned("volume", data_volume, run_id)
+
+
+def _qualify_retained_recovery(image: str, run_id: str) -> dict[str, object]:
+    """Run native kill/preservation fixtures against this image's installed code."""
+    import pytest
+
+    if pytest.__version__ != "9.1.1":
+        raise QualificationError("recovery_fixture_toolchain_mismatch")
+    dependencies = Path(pytest.__file__).resolve().parents[1]
+    proof = _run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--label",
+            f"{OWNERSHIP_LABEL}={run_id}",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--tmpfs",
+            "/tmp:rw,mode=1777",
+            "--mount",
+            f"type=bind,src={ROOT},dst=/qualification-source,readonly",
+            "--mount",
+            f"type=bind,src={dependencies},dst=/qualification-deps,readonly",
+            "--env",
+            "PYTHONPATH=/qualification-source",
+            "--env",
+            "PYTHONDONTWRITEBYTECODE=1",
+            "--workdir",
+            "/qualification-source",
+            "--entrypoint",
+            "/opt/mechanical-librarian/bin/python",
+            image,
+            "-c",
+            "import json,sqlite3,sys; import mechanical_librarian; "
+            "assert mechanical_librarian.__file__.startswith('/opt/mechanical-librarian/'); "
+            "sys.path.append('/qualification-deps'); import pytest; "
+            "assert pytest.__version__ == '9.1.1'; "
+            "print(json.dumps({'python':sys.version.split()[0],'sqlite':sqlite3.sqlite_version,'installed_origin':True}),flush=True); "
+            "raise SystemExit(pytest.main(['--disable-plugin-autoload','-p','no:cacheprovider','-q',"
+            "'tests/integration/test_database_crash_recovery.py',"
+            "'tests/integration/test_preparation_claim_recovery.py']))",
+        ]
+    )
+    identity = json.loads(proof.splitlines()[0])
+    if (
+        identity.get("python") != "3.14.7"
+        or identity.get("installed_origin") is not True
+    ):
+        raise QualificationError("recovery_runtime_identity_mismatch")
+    return {
+        **identity,
+        "native_kill_and_preservation_fixtures": True,
+        "proof_stdout_sha256": hashlib.sha256(proof.encode()).hexdigest(),
+    }
 
 
 def _configuration() -> dict[str, object]:
@@ -1093,6 +1266,7 @@ def main() -> None:
             second_hash = _sha256(second)
         if first_hash != second_hash:
             raise QualificationError("container_restart_state_changed")
+        retained_recovery = _qualify_retained_recovery(image, run_id)
         first_run = {
             "https": _qualify_first_run(image, run_id, suffix),
             "http": _qualify_first_run(image, run_id, suffix + "-http", scheme="http"),
@@ -1119,6 +1293,7 @@ def main() -> None:
                     "image_revision": image_revision,
                     "installed_artifact": "container-image",
                     "first_run": first_run,
+                    "retained_recovery": retained_recovery,
                     "liveness": True,
                     "non_root": True,
                     "read_only_root": True,

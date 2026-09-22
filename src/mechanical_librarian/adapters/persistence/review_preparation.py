@@ -43,7 +43,8 @@ import hashlib
 import re
 import sqlite3
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -155,7 +156,50 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         self._refresh_metadata_policy_transition = refresh_metadata_policy_transition
         self._enqueue_provider_recovery_outbox = enqueue_provider_recovery_outbox
         self._review_pipeline_claim: PipelineAction | None = None
+        self._claim_owner: Callable[[PipelineAction | None], None] | None = None
+        self._pending_claim: tuple[PipelineAction | None] | None = None
+        self._publication_guard: Callable[[], AbstractContextManager[bool]] | None = (
+            None
+        )
+        self._publication_admitted = False
         self._output_lease: LocalOperationLease | None = None
+
+    def bind_review_pipeline_owner(
+        self,
+        owner: Callable[[PipelineAction | None], None] | None,
+        publication_guard: Callable[[], AbstractContextManager[bool]] | None = None,
+    ) -> None:
+        """Bind one executing lane, never a subscriber or a durable authority."""
+        self._claim_owner = owner
+        self._publication_guard = publication_guard
+        self._pending_claim = None
+
+    @contextmanager
+    def publication_claim_guard(self) -> Iterator[bool]:
+        """Scope successor admission to the report's writer transaction only."""
+        if self._publication_guard is None:
+            yield False
+            return
+        try:
+            with self._publication_guard() as admitted:
+                self._publication_admitted = admitted
+                yield admitted
+        finally:
+            self._publication_admitted = False
+            self._pending_claim = None
+
+    def commit_review_pipeline_claim(self) -> None:
+        """Transfer the prepared receipt before post-commit reads or releases."""
+        pending = self._pending_claim
+        self._pending_claim = None
+        if pending is not None and self._claim_owner is not None:
+            self._claim_owner(pending[0])
+
+    def release_review_pipeline_claim(self) -> None:
+        """A committed connection hold returns the exact claim to its queue."""
+        self._pending_claim = None
+        if self._claim_owner is not None:
+            self._claim_owner(None)
 
     @local_operation
     def claim_review_pipeline_action(self, claimed_at: int) -> PipelineAction | None:
@@ -203,8 +247,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     (claimed_at, scan[0]),
                 )
                 refresh_preparation_run_state(self._connection, claimed_at)
-                transaction.commit()
-                return PipelineAction(
+                action = PipelineAction(
                     scan[0],
                     scan[0],
                     "discovery",
@@ -214,6 +257,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     scan[3],
                     scan[4],
                 )
+                self._pending_claim = (action,)
+                transaction.commit(after_commit=self.commit_review_pipeline_claim)
+                return action
             library = self._connection.execute(
                 "SELECT library_name FROM review_preparation_work WHERE state='queued' "
                 "AND NOT EXISTS(SELECT 1 FROM review_preparation_connection_conditions c "
@@ -276,8 +322,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     (work[5], claimed_at),
                 )
                 refresh_preparation_work(self._connection, work[0], claimed_at)
-                transaction.commit()
-                return PipelineAction(
+                action = PipelineAction(
                     work[0],
                     work[1],
                     work[2],
@@ -298,6 +343,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     work[17],
                     work[18],
                 )
+                self._pending_claim = (action,)
+                transaction.commit(after_commit=self.commit_review_pipeline_claim)
+                return action
             scans = self._connection.execute(
                 "SELECT scan_id,rescan_requested FROM review_preparation_scans "
                 "WHERE state='processing' AND NOT EXISTS("
@@ -423,8 +471,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             ):
                 raise MetadataReportError("review preparation claim changed")
             refresh_preparation_work(self._connection, work_id, claimed_at)
-            transaction.commit()
-            return PipelineAction(
+            action = PipelineAction(
                 work[0],
                 work[1],
                 work[2],
@@ -445,6 +492,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 work[17],
                 work[18],
             )
+            self._pending_claim = (action,)
+            transaction.commit(after_commit=self.commit_review_pipeline_claim)
+            return action
         except BaseException as error:
             transaction.rollback()
             if not isinstance(error, Exception):
@@ -586,6 +636,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
         transaction = self._transaction("complete_review_discovery")
         try:
             transaction.begin()
+            self._pending_claim = (None,)
             current = self._connection.execute(
                 "SELECT state FROM review_preparation_scans WHERE scan_id=?",
                 (action.scan_id,),
@@ -820,7 +871,7 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 self._connection, action.scan_id, selected, completed_at
             )
             refresh_preparation_presentation(self._connection, completed_at)
-            transaction.commit()
+            transaction.commit(after_commit=self.commit_review_pipeline_claim)
             return
         except BaseException as error:
             transaction.rollback()
@@ -1082,7 +1133,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                     else None
                 )
             )
+            self._pending_claim = (next_action,)
             self._connection.commit()
+            self.commit_review_pipeline_claim()
             return next_action
         except BaseException as error:
             if self._connection.in_transaction:
@@ -1319,8 +1372,11 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 )
         refresh_preparation_work(self._connection, action.action_id, completed_at)
         self._review_pipeline_claim = (
-            self.claim_review_pipeline_action(completed_at) if claim_next else None
+            self.claim_review_pipeline_action(completed_at)
+            if claim_next and (self._claim_owner is None or self._publication_admitted)
+            else None
         )
+        self._pending_claim = (self._review_pipeline_claim,)
 
     @local_operation
     def fail_review_pipeline_action(
@@ -1356,7 +1412,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 if updated != 1:
                     raise MetadataReportError("review preparation state changed")
                 refresh_preparation_run_state(self._connection, completed_at)
-                transaction.commit()
+                self._pending_claim = (None,)
+                transaction.commit(after_commit=self.commit_review_pipeline_claim)
                 return
             except BaseException as error:
                 transaction.rollback()
@@ -1459,7 +1516,8 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                         transition_row[0], completed_at
                     )
             refresh_preparation_work(self._connection, action.action_id, completed_at)
-            transaction.commit()
+            self._pending_claim = (None,)
+            transaction.commit(after_commit=self.commit_review_pipeline_claim)
             return
         except BaseException as error:
             transaction.rollback()

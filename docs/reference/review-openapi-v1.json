@@ -5818,10 +5818,23 @@
             "title": "Scope",
             "type": "string"
           },
+          "settlement_code": {
+            "anyOf": [
+              {
+                "const": "persistence",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Settlement Code"
+          },
           "stage": {
             "anyOf": [
               {
                 "enum": [
+                  "discovery",
                   "extraction",
                   "provider",
                   "proposal",
@@ -6784,6 +6797,11 @@
                 "type": "null"
               }
             ]
+          },
+          "recovery_required": {
+            "default": false,
+            "title": "Recovery Required",
+            "type": "boolean"
           },
           "schema_version": {
             "const": "review-preparation-v2",

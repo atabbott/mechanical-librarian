@@ -311,3 +311,11 @@ catalogue, artifact store, target writer, worker, or recovery writer, and it
 does not accept paths that could imply those authorities. Capability display
 uses only persisted suspension evidence and otherwise reports `not_ready`; the
 command neither reads service credentials nor probes Audiobookshelf.
+
+Preparation retains the exact committed successor before report readback or
+notification. If settlement cannot commit, **Preparation stopped** preserves the
+last durable progress and keeps published Library books available. Restart the
+Mechanical Librarian service to resume its retained checkpoints; browser refresh
+and Scan cannot clear the runtime stop. The authenticated incident is runtime
+evidence, not a durable terminal work row. See [observability](observability.md)
+and [the recovery decision](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md).

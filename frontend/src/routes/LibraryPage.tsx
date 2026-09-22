@@ -180,8 +180,8 @@ const boundedSearchName = (name: string) => {
   return last >= 0xd800 && last <= 0xdbff ? bounded.slice(0, -1) : bounded
 }
 
-const preparationScope = (presentation: PreparationPresentation) =>
-  `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish · ${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} in progress`
+const preparationScope = (presentation: PreparationPresentation, recoveryRequired: boolean) =>
+  `${String(presentation.passage.ready)} ready · ${String(presentation.passage.failed)} could not finish · ${String(Math.max(presentation.total - presentation.passage.ready - presentation.passage.failed, 0))} ${recoveryRequired ? 'retained' : 'in progress'}`
 const preparationPassage = [
   ['read', 'Read from library'],
   ['searches_finished', 'Searches finished'],
@@ -192,11 +192,13 @@ const preparationPassage = [
 const PreparationSummary = ({
   presentation,
   reconnecting,
+  recoveryRequired,
   selected,
   onSelect,
 }: {
   presentation: PreparationPresentation
   reconnecting: boolean
+  recoveryRequired: boolean
   selected: boolean
   onSelect: () => void
 }) => {
@@ -230,6 +232,10 @@ const PreparationSummary = ({
       copy = outcomes
       break
   }
+  if (recoveryRequired) {
+    title = 'Preparation stopped'
+    copy = `${outcomes} · Service restart required`
+  }
   return (
     <button
       type="button"
@@ -240,7 +246,13 @@ const PreparationSummary = ({
       <span className="preparation-summary-mark" aria-hidden="true" />
       <span>
         <strong>{title}</strong>
-        <small>{reconnecting ? 'Reconnecting · last confirmed progress shown' : copy}</small>
+        <small>
+          {recoveryRequired
+            ? copy
+            : reconnecting
+              ? 'Reconnecting · last confirmed progress shown'
+              : copy}
+        </small>
       </span>
     </button>
   )
@@ -249,12 +261,14 @@ const PreparationSummary = ({
 const PreparationDetail = ({
   presentation,
   reconnecting,
+  recoveryRequired,
   animateChange,
   dismissing,
   onDismiss,
 }: {
   presentation: PreparationPresentation
   reconnecting: boolean
+  recoveryRequired: boolean
   animateChange: boolean
   dismissing: boolean
   onDismiss: () => void
@@ -289,6 +303,11 @@ const PreparationDetail = ({
       introduction = 'This preparation record has been dismissed.'
       break
   }
+  if (recoveryRequired) {
+    heading = 'Preparation stopped'
+    introduction =
+      'Restart the Mechanical Librarian service to resume preparation. Refreshing this page or scanning again cannot recover it. Ready books remain available.'
+  }
   return (
     <div className="preparation-detail">
       <header>
@@ -304,18 +323,21 @@ const PreparationDetail = ({
         className={`preparation-run-state state-${presentation.state}${animateChange ? ' reported-change' : ''}`}
         role="status"
       >
-        {reconnecting
-          ? 'Reconnecting · showing the last confirmed state'
-          : preparationStateLine(presentation)}
+        {recoveryRequired
+          ? 'Service restart required · last saved progress shown'
+          : reconnecting
+            ? 'Reconnecting · showing the last confirmed state'
+            : preparationStateLine(presentation)}
       </p>
       <p className="preparation-provenance">
         {presentation.triggers.map(preparationTriggerLine).join(' · ')}
       </p>
       <section aria-labelledby="now-preparing-title">
         <div className="preparation-section-heading">
-          <h3 id="now-preparing-title">Now preparing</h3>
+          <h3 id="now-preparing-title">{recoveryRequired ? 'Retained work' : 'Now preparing'}</h3>
           <span>
-            {String(presentation.active_books.length + presentation.active_overflow)} active
+            {String(presentation.active_books.length + presentation.active_overflow)}{' '}
+            {recoveryRequired ? 'retained' : 'active'}
           </span>
         </div>
         {presentation.active_books.length ? (
@@ -333,10 +355,17 @@ const PreparationDetail = ({
             ))}
           </ol>
         ) : (
-          <p>No book is active at the last confirmed refresh.</p>
+          <p>
+            {recoveryRequired
+              ? 'No work is retained at the last confirmed refresh.'
+              : 'No book is active at the last confirmed refresh.'}
+          </p>
         )}
         {presentation.active_overflow ? (
-          <p>{String(presentation.active_overflow)} more active books follow in this run.</p>
+          <p>
+            {String(presentation.active_overflow)} more {recoveryRequired ? 'retained' : 'active'}{' '}
+            books follow in this run.
+          </p>
         ) : null}
         {presentation.active_books.length ? (
           <small className="activity-backup-note">A book appears in Works once it is ready.</small>
@@ -357,7 +386,8 @@ const PreparationDetail = ({
            * no current anything -- printing 0.0 books/min there read as a
            * performance fault rather than as silence.
            */}
-          {!reconnecting &&
+          {!recoveryRequired &&
+          !reconnecting &&
           (presentation.state === 'starting' || presentation.state === 'running') ? (
             <strong>
               {presentation.throughput_per_minute > 0
@@ -385,7 +415,7 @@ const PreparationDetail = ({
           <div className="preparation-outcomes">
             <dt>In this run</dt>
             <dd>
-              <strong>{preparationScope(presentation)}</strong>
+              <strong>{preparationScope(presentation, recoveryRequired)}</strong>
             </dd>
           </div>
         </dl>
@@ -427,7 +457,7 @@ const PreparationDetail = ({
         ) : null}
       </section>
       {presentation.dismissible ? (
-        <button type="button" disabled={dismissing} onClick={onDismiss}>
+        <button type="button" disabled={recoveryRequired || dismissing} onClick={onDismiss}>
           {dismissing ? 'Dismissing…' : 'Dismiss preparation'}
         </button>
       ) : null}
@@ -3017,6 +3047,7 @@ export default function LibraryPage({
             <PreparationSummary
               presentation={presentation}
               reconnecting={preparationState.reconnecting}
+              recoveryRequired={preparationState.data?.recovery_required ?? false}
               selected={preparationSelected}
               onSelect={() =>
                 void navigate({
@@ -3271,6 +3302,7 @@ export default function LibraryPage({
             <PreparationDetail
               presentation={presentation}
               reconnecting={preparationState.reconnecting}
+              recoveryRequired={preparationState.data?.recovery_required ?? false}
               animateChange={animatedPresentationVersion === presentationVersion}
               dismissing={dismissPreparation.isPending}
               onDismiss={() =>

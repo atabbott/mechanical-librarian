@@ -371,13 +371,14 @@ export const ConnectionNotice = ({
       : condition.state === 'recovered'
         ? 'Library connection recovered'
         : 'Library connection needs attention'
-  const copy =
-    condition.state === 'checking'
+  const copy = data?.recovery_required
+    ? 'Preparation stopped. Restart the Mechanical Librarian service to resume. Completed reviews remain available.'
+    : condition.state === 'checking'
       ? 'Preparation remains safely paused while the configured connection is checked.'
       : condition.state === 'recovered'
         ? 'Preparation resumed from its retained checkpoint. Completed reviews remain available.'
         : `${connectionCopy(condition.code)} ${String(paused)} preparation ${paused === 1 ? 'work is' : 'works are'} safely paused. Completed reviews remain available.`
-  const canCheck = condition.state === 'paused' && !checking
+  const canCheck = condition.state === 'paused' && !checking && !data?.recovery_required
   const action = condition.state === 'paused' ? 'Check connection again' : 'Checking connection…'
   return (
     <section
@@ -401,6 +402,7 @@ export const ConnectionNotice = ({
       </dl>
       <button
         type="button"
+        disabled={data?.recovery_required && condition.state !== 'recovered'}
         aria-disabled={condition.state === 'recovered' ? undefined : !canCheck}
         aria-busy={checking || undefined}
         onFocus={() => onControlFocusChange(true)}
@@ -571,7 +573,8 @@ export const PreparationActivity = () => {
       ])
     },
   })
-  const unavailable = !data || (!data.active && !data.actionable && !data.paused)
+  const unavailable =
+    !data || (!data.active && !data.actionable && !data.paused && !data.recovery_required)
   useEffect(() => {
     if (!open || !unavailable) return
     requestAnimationFrame(() => {
@@ -616,19 +619,31 @@ export const PreparationActivity = () => {
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        {data?.paused
-          ? 'Preparation paused'
-          : data?.actionable
-            ? 'Preparation needs attention'
-            : 'Preparing libraries'}
+        {data?.recovery_required
+          ? 'Preparation stopped'
+          : data?.paused
+            ? 'Preparation paused'
+            : data?.actionable
+              ? 'Preparation needs attention'
+              : 'Preparing libraries'}
       </button>
       {open && data ? (
         <section ref={popover} className="preparation-popover" aria-label="Background activity">
-          <h2>Background activity</h2>
+          <h2>{data.recovery_required ? 'Preparation stopped' : 'Background activity'}</h2>
+          {data.recovery_required ? (
+            <p role="status">
+              Restart the Mechanical Librarian service to resume preparation. Refreshing this page
+              or scanning again cannot recover it. Ready books remain available.
+            </p>
+          ) : null}
           {data.libraries.map((item) => (
             <article key={`${item.connection}:${item.library}`}>
               <strong>{item.library}</strong>
-              <span>{scanStateLabels[item.state] ?? fieldLabel(item.state)}</span>
+              <span>
+                {data.recovery_required
+                  ? 'Last saved progress'
+                  : (scanStateLabels[item.state] ?? fieldLabel(item.state))}
+              </span>
               <span>
                 {String(item.checked)} of {String(item.total)} checked · {String(item.ready)} ready
                 {item.blocked > 0 ? ` · ${String(item.blocked)} could not finish` : ''}
@@ -651,6 +666,7 @@ export const PreparationActivity = () => {
               </dl>
               <button
                 disabled={
+                  data.recovery_required ||
                   action.isPending ||
                   data.paused ||
                   item.state === 'queued' ||
@@ -666,7 +682,7 @@ export const PreparationActivity = () => {
               </button>
               {item.state === 'completed_with_failures' ? (
                 <button
-                  disabled={action.isPending || data.paused}
+                  disabled={data.recovery_required || action.isPending || data.paused}
                   onClick={() =>
                     action.mutate(
                       `${encodeURIComponent(item.connection)}/${encodeURIComponent(item.library)}/retry`,
@@ -682,16 +698,18 @@ export const PreparationActivity = () => {
                * `docs/operations/provider-recovery.md`. This states what they
                * do; it decides nothing.
                */}
-              <small className="activity-backup-note">
-                Scan now — and Retry after a run with failures — start a new preparation cycle for
-                this library; books that could not finish are prepared again; provider lookups that
-                hit limits recover automatically on the documented schedule; a failure before a
-                report has no automatic retry.
-              </small>
+              {!data.recovery_required ? (
+                <small className="activity-backup-note">
+                  Scan now — and Retry after a run with failures — start a new preparation cycle for
+                  this library; books that could not finish are prepared again; provider lookups
+                  that hit limits recover automatically on the documented schedule; a failure before
+                  a report has no automatic retry.
+                </small>
+              ) : null}
             </article>
           ))}
           <button
-            disabled={action.isPending}
+            disabled={data.recovery_required || action.isPending}
             onClick={() => action.mutate(data.paused ? 'resume' : 'pause')}
           >
             {data.paused ? 'Resume' : 'Pause'}

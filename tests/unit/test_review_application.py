@@ -546,6 +546,9 @@ def test_published_preparation_work_wakes_the_guarded_scheduler(
     repository: FakeReviewRepository,
 ) -> None:
     class Preparation:
+        recovery_required = False
+        recovery_incidents = ()
+
         def attach_updates(self, announce) -> None:
             self.announce = announce
 
@@ -593,6 +596,8 @@ def test_first_boot_presentation_survives_first_ready_until_terminal_measurement
     repository: FakeReviewRepository,
 ) -> None:
     class Preparation:
+        recovery_required = False
+        recovery_incidents = ()
         libraries = (("primary", "Books", "books"),)
 
         def __init__(self) -> None:
@@ -675,6 +680,8 @@ def test_first_boot_status_length_mismatch_keeps_typed_persistence_error(
     repository: FakeReviewRepository,
 ) -> None:
     class Preparation:
+        recovery_required = False
+        recovery_incidents = ()
         libraries = (("primary", "Books", "books"),)
 
         def attach_updates(self, announce: object) -> None:
@@ -778,6 +785,8 @@ def test_connection_probe_does_not_hold_the_global_application_gate(
     browse_finished = threading.Event()
 
     class BlockingPreparation:
+        recovery_required = False
+        recovery_incidents = ()
         libraries: tuple[tuple[str, str, str], ...] = ()
 
         def attach_updates(self, announce: object) -> None:

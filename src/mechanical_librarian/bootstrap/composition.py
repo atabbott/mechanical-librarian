@@ -3311,7 +3311,8 @@ def compose_store_runtime_generation(
                 (
                     "operational_incidents",
                     lambda: support_preparation_incidents(
-                        repository.operational_snapshot()
+                        repository.operational_snapshot(),
+                        preparation.recovery_incidents,
                     ),
                 ),
                 (
@@ -3636,6 +3637,7 @@ def run_review_server(
                 create=True,
                 cross_thread=True,
                 admission=operation_admission,
+                recover_stale_bindings=True,
             )
             setup_session_store: SQLiteReviewSessionRepository | None = None
             try:
@@ -3702,6 +3704,7 @@ def run_review_server(
             create=True,
             cross_thread=True,
             admission=OperationAdmission(),
+            recover_stale_bindings=True,
         )
         try:
             session_store = _open_review_session_store(database_path)
@@ -3804,7 +3807,8 @@ def run_review_server(
                     (
                         "operational_incidents",
                         lambda: support_preparation_incidents(
-                            repository.operational_snapshot()
+                            repository.operational_snapshot(),
+                            preparation.recovery_incidents,
                         ),
                     ),
                     (

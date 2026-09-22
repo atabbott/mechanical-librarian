@@ -1963,6 +1963,7 @@ describe('ReviewApiClient', () => {
       .mockResolvedValueOnce(
         Response.json({
           schema_version: 'review-preparation-v2',
+          recovery_required: false,
           active: false,
           actionable: false,
           paused: false,
@@ -1978,6 +1979,7 @@ describe('ReviewApiClient', () => {
     })
     await expect(client.preparationAction('pause')).resolves.toMatchObject({
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       paused: false,
     })
   })
@@ -1985,6 +1987,7 @@ describe('ReviewApiClient', () => {
   it('maps only closed target-connection preparation conditions', () => {
     const base = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -2047,6 +2050,7 @@ describe('ReviewApiClient', () => {
     }
     const base = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -2642,4 +2646,19 @@ it('sends the actual read scheduling hint while ordinary reads remain foreground
   expect(
     fetchMock.mock.calls.map((call) => new Headers(call[1]?.headers).get('X-ML-Work-Class')),
   ).toEqual(['foreground', 'background'])
+})
+
+it('requires an exact recovery flag in every preparation response', () => {
+  const preparation = {
+    schema_version: 'review-preparation-v2',
+    active: false,
+    actionable: true,
+    paused: false,
+    libraries: [],
+    connections: [],
+  }
+  for (const recovery_required of [undefined, null, 0, 1, 'false', {}, []]) {
+    expect(() => mapPreparation({ ...preparation, recovery_required })).toThrow()
+  }
+  expect(mapPreparation({ ...preparation, recovery_required: true }).recovery_required).toBe(true)
 })

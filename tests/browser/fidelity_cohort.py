@@ -1464,6 +1464,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
     if path == "/api/v1/review-preparation":
         return {
             "schema_version": "review-preparation-v2",
+            "recovery_required": False,
             "active": True,
             "actionable": True,
             "paused": False,

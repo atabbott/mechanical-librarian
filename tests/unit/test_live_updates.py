@@ -192,6 +192,33 @@ def test_an_installed_wakeup_fires_for_work_that_arrived_before_it() -> None:
     assert woken.is_set()
 
 
+def test_closed_event_loop_cannot_fail_publish_registration_or_shutdown() -> None:
+    channel = LiveUpdateChannel(pending_maximum=2)
+    broken = channel.subscribe()
+    healthy = channel.subscribe(0)
+    loop = asyncio.new_event_loop()
+    loop.close()
+
+    def wake_closed_loop() -> None:
+        loop.call_soon_threadsafe(lambda: None)
+
+    broken.wake_with(wake_closed_loop)
+    wakes: list[bool] = []
+    healthy.wake_with(lambda: wakes.append(True))
+
+    for index in range(10):
+        assert channel.publish("case", str(index)) == index + 1
+    assert healthy.take()[-1].sequence == 10
+    assert len(broken.take()) <= 2
+    assert len(wakes) == 10
+    channel.close()
+    channel.close()
+    broken.close()
+    assert healthy.closed and broken.closed
+    assert channel.subscribers == 0
+    assert len(wakes) == 11
+
+
 # --- the wire ---------------------------------------------------------------
 
 

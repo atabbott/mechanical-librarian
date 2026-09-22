@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import sqlite3
 from collections.abc import Callable
+from contextlib import AbstractContextManager, nullcontext
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
@@ -68,6 +69,8 @@ class SQLiteReportRepository(ConnectionScoped):
         # the bound repository and calls review-pipeline methods on it, so the
         # composing facade supplies itself rather than this aggregate.
         bound: ReportRepository,
+        committed_claim: Callable[[], None] | None = None,
+        publication_guard: Callable[[], AbstractContextManager[bool]] | None = None,
     ) -> str:
         if type(report) is not MetadataReport or not callable(currentness):
             raise MetadataReportError("report publication failed")
@@ -90,125 +93,136 @@ class SQLiteReportRepository(ConnectionScoped):
                 self._binding.require_current()
             if currentness() is not True:
                 raise MetadataReportError("target or media changed")
-            transaction.begin()
-            if self._binding is not None:
-                self._binding.require_current()
-            if (
-                expected_package is not None
-                and self.current_review_package(
-                    report.target.connection, report.target.library, report.target.item
-                )
-                != expected_package
+            with (
+                nullcontext(False) if publication_guard is None else publication_guard()
             ):
-                raise MetadataReportError("current review package changed")
-            current = self._connection.execute(
-                "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
-                values[1:5],
-            ).fetchone()
-            if current is not None:
-                document = _validate_report_row(current)
-                persisted = MetadataReport.from_json(document)
-                if (
-                    persisted.target.connection,
-                    persisted.target.library,
-                    persisted.target.item,
-                    persisted.file.identity,
-                ) != values[1:5]:
-                    raise MetadataReportError(
-                        "persisted current report scope disagrees"
-                    )
-                if (
-                    persisted.report_id != report.report_id
-                    and persisted.report_id != expected_current
-                ):
-                    raise MetadataReportError("current report changed")
-            elif expected_current is not None:
-                raise MetadataReportError("current report changed")
-            existing = self._connection.execute(
-                "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
-                (report.report_id,),
-            ).fetchone()
-            if existing is None:
-                self._connection.execute(
-                    "INSERT INTO metadata_reports(report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document) VALUES(?,?,?,?,?,?,?,?,?)",
-                    values,
-                )
-                for source in report.cover_sources:
+                try:
+                    transaction.begin()
+                    if self._binding is not None:
+                        self._binding.require_current()
+                    if (
+                        expected_package is not None
+                        and self.current_review_package(
+                            report.target.connection,
+                            report.target.library,
+                            report.target.item,
+                        )
+                        != expected_package
+                    ):
+                        raise MetadataReportError("current review package changed")
+                    current = self._connection.execute(
+                        "SELECT r.report_id,r.connection_name,r.library_name,r.item_id,r.file_identity,r.content_digest,r.schema_version,r.document_digest,r.document FROM current_metadata_reports c JOIN metadata_reports r ON r.report_id=c.report_id WHERE c.connection_name=? AND c.library_name=? AND c.item_id=? AND c.file_identity=?",
+                        values[1:5],
+                    ).fetchone()
+                    if current is not None:
+                        document = _validate_report_row(current)
+                        persisted = MetadataReport.from_json(document)
+                        if (
+                            persisted.target.connection,
+                            persisted.target.library,
+                            persisted.target.item,
+                            persisted.file.identity,
+                        ) != values[1:5]:
+                            raise MetadataReportError(
+                                "persisted current report scope disagrees"
+                            )
+                        if (
+                            persisted.report_id != report.report_id
+                            and persisted.report_id != expected_current
+                        ):
+                            raise MetadataReportError("current report changed")
+                    elif expected_current is not None:
+                        raise MetadataReportError("current report changed")
+                    existing = self._connection.execute(
+                        "SELECT connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
+                        (report.report_id,),
+                    ).fetchone()
+                    if existing is None:
+                        self._connection.execute(
+                            "INSERT INTO metadata_reports(report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document) VALUES(?,?,?,?,?,?,?,?,?)",
+                            values,
+                        )
+                        for source in report.cover_sources:
+                            self._connection.execute(
+                                "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest,preview_variant) VALUES(?,?,?,?,?)",
+                                (
+                                    report.report_id,
+                                    source.source_id,
+                                    None
+                                    if source.artifact is None
+                                    else source.artifact.artifact_id,
+                                    None
+                                    if source.artifact is None
+                                    else source.artifact.preview_digest,
+                                    None
+                                    if source.artifact is None
+                                    else source.artifact.preview_variant,
+                                ),
+                            )
+                    else:
+                        if existing != values[1:]:
+                            raise MetadataReportError(
+                                "persisted report identity conflicts"
+                            )
+                        expected_references = tuple(
+                            (
+                                source.source_id,
+                                None
+                                if source.artifact is None
+                                else source.artifact.artifact_id,
+                                None
+                                if source.artifact is None
+                                else source.artifact.preview_digest,
+                                None
+                                if source.artifact is None
+                                else source.artifact.preview_variant,
+                            )
+                            for source in report.cover_sources
+                        )
+                        actual_references = tuple(
+                            self._connection.execute(
+                                "SELECT source_id,artifact_id,preview_digest,preview_variant FROM metadata_report_cover_references WHERE report_id=? ORDER BY source_id",
+                                (report.report_id,),
+                            )
+                        )
+                        if tuple(sorted(expected_references)) != actual_references:
+                            raise MetadataReportError(
+                                "persisted report cover references conflict"
+                            )
                     self._connection.execute(
-                        "INSERT INTO metadata_report_cover_references(report_id,source_id,artifact_id,preview_digest,preview_variant) VALUES(?,?,?,?,?)",
+                        "INSERT INTO current_metadata_reports(connection_name,library_name,item_id,file_identity,report_id) VALUES(?,?,?,?,?) "
+                        "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",
+                        (*values[1:5], report.report_id),
+                    )
+                    self._connection.execute(
+                        "INSERT INTO current_metadata_report_lineages(connection_name,library_name,item_id,report_id) VALUES(?,?,?,?) "
+                        "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET report_id=excluded.report_id",
                         (
+                            report.target.connection,
+                            report.target.library,
+                            report.target.item,
                             report.report_id,
-                            source.source_id,
-                            None
-                            if source.artifact is None
-                            else source.artifact.artifact_id,
-                            None
-                            if source.artifact is None
-                            else source.artifact.preview_digest,
-                            None
-                            if source.artifact is None
-                            else source.artifact.preview_variant,
                         ),
                     )
-            else:
-                if existing != values[1:]:
-                    raise MetadataReportError("persisted report identity conflicts")
-                expected_references = tuple(
-                    (
-                        source.source_id,
-                        None
-                        if source.artifact is None
-                        else source.artifact.artifact_id,
-                        None
-                        if source.artifact is None
-                        else source.artifact.preview_digest,
-                        None
-                        if source.artifact is None
-                        else source.artifact.preview_variant,
-                    )
-                    for source in report.cover_sources
-                )
-                actual_references = tuple(
-                    self._connection.execute(
-                        "SELECT source_id,artifact_id,preview_digest,preview_variant FROM metadata_report_cover_references WHERE report_id=? ORDER BY source_id",
-                        (report.report_id,),
-                    )
-                )
-                if tuple(sorted(expected_references)) != actual_references:
-                    raise MetadataReportError(
-                        "persisted report cover references conflict"
-                    )
-            self._connection.execute(
-                "INSERT INTO current_metadata_reports(connection_name,library_name,item_id,file_identity,report_id) VALUES(?,?,?,?,?) "
-                "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",
-                (*values[1:5], report.report_id),
-            )
-            self._connection.execute(
-                "INSERT INTO current_metadata_report_lineages(connection_name,library_name,item_id,report_id) VALUES(?,?,?,?) "
-                "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET report_id=excluded.report_id",
-                (
-                    report.target.connection,
-                    report.target.library,
-                    report.target.item,
-                    report.report_id,
-                ),
-            )
-            if after_publication is None:
-                self._connection.execute(
-                    "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,NULL,?,NULL,NULL,'report_only') "
-                    "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,checkpoint=NULL,outcome='report_only'",
-                    (
-                        report.target.connection,
-                        report.target.library,
-                        report.target.item,
-                        report.report_id,
-                    ),
-                )
-            if after_publication is not None:
-                after_publication(bound, report)
-            if self._binding is not None:
-                self._binding.require_current()
-            transaction.commit()
+                    if after_publication is None:
+                        self._connection.execute(
+                            "INSERT INTO current_review_packages(connection_name,library_name,item_id,proposal_set_id,report_id,review_case_id,checkpoint,outcome) VALUES(?,?,?,NULL,?,NULL,NULL,'report_only') "
+                            "ON CONFLICT(connection_name,library_name,item_id) DO UPDATE SET proposal_set_id=NULL,report_id=excluded.report_id,review_case_id=NULL,checkpoint=NULL,outcome='report_only'",
+                            (
+                                report.target.connection,
+                                report.target.library,
+                                report.target.item,
+                                report.report_id,
+                            ),
+                        )
+                    if after_publication is not None:
+                        after_publication(bound, report)
+                    if self._binding is not None:
+                        self._binding.require_current()
+                    transaction.commit(after_commit=committed_claim)
+                except BaseException:
+                    transaction.rollback()
+                    raise
             return self.get(report.report_id)
         except BaseException as error:
             transaction.rollback()

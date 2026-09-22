@@ -10,7 +10,7 @@ import stat
 import sys
 from _thread import RLock
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
 from pathlib import Path
 from typing import cast
 from urllib.parse import quote
@@ -27,6 +27,9 @@ from mechanical_librarian.adapters.persistence.binding import (
 )
 from mechanical_librarian.adapters.persistence.cover_considerations import (
     SQLiteCoverConsiderationRepository,
+)
+from mechanical_librarian.adapters.persistence.crash_recovery import (
+    recover_private_bindings,
 )
 from mechanical_librarian.adapters.persistence.decisions import (
     SQLiteDecisionRepository,
@@ -1211,7 +1214,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._review_scans.target_connection_conditions()
 
     def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool:
-        return self._review_scans.guard_target_connection(action, checked_at)
+        return self._review_scans.guard_target_connection(
+            action,
+            checked_at,
+            claim_released=self._review_preparation.release_review_pipeline_claim,
+        )
 
     def discovery_requires_qualification(self, action: PipelineAction) -> bool:
         return self._review_scans.discovery_requires_qualification(action)
@@ -1219,12 +1226,21 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def qualify_review_discovery(
         self, action: PipelineAction, qualified_at: int
     ) -> bool:
-        return self._review_scans.qualify_review_discovery(action, qualified_at)
+        return self._review_scans.qualify_review_discovery(
+            action,
+            qualified_at,
+            claim_released=self._review_preparation.release_review_pipeline_claim,
+        )
 
     def defer_for_target_connection(
         self, action: PipelineAction, code: str, updated_at: int
     ) -> None:
-        self._review_scans.defer_for_target_connection(action, code, updated_at)
+        self._review_scans.defer_for_target_connection(
+            action,
+            code,
+            updated_at,
+            claim_released=self._review_preparation.release_review_pipeline_claim,
+        )
 
     def hold_target_connection(
         self, connection: str, code: str, updated_at: int
@@ -1299,6 +1315,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     def take_review_pipeline_claim(self) -> PipelineAction | None:
         return self._review_preparation.take_review_pipeline_claim()
 
+    def bind_review_pipeline_owner(
+        self,
+        owner: Callable[[PipelineAction | None], None] | None,
+        publication_guard: Callable[[], AbstractContextManager[bool]] | None = None,
+    ) -> None:
+        self._review_preparation.bind_review_pipeline_owner(owner, publication_guard)
+
     def rollback_review_pipeline_output(self) -> None:
         self._review_preparation.rollback_review_pipeline_output()
 
@@ -1352,6 +1375,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             after_publication,
             expected_package=expected_package,
             bound=self,
+            committed_claim=self._review_preparation.commit_review_pipeline_claim,
+            publication_guard=self._review_preparation.publication_claim_guard,
         )
 
     def get(self, report_id: str) -> str:
@@ -2407,7 +2432,12 @@ def open_repository(
     cross_thread: bool = False,
     authority: object | None = None,
     admission: OperationAdmission | None = None,
+    recover_stale_bindings: bool = False,
 ) -> SQLiteMetadataReportRepository:
+    if type(recover_stale_bindings) is not bool or (
+        recover_stale_bindings and authority is not None
+    ):
+        raise MetadataReportError("database recovery authority is invalid")
     created = False
     descriptor = -1
     created_identity: tuple[int, int] | None = None
@@ -2433,7 +2463,22 @@ def open_repository(
                 raise MetadataReportError("database path is invalid")
             _validate_delete_mode_header(descriptor)
             if sys.platform.startswith("linux"):
-                binding = _LinuxDatabaseBinding.create(path, descriptor, authority)
+                binding = _LinuxDatabaseBinding.create(
+                    path,
+                    descriptor,
+                    authority,
+                    recover_stale=(
+                        lambda parent, database, current: recover_private_bindings(
+                            parent,
+                            database,
+                            path.name,
+                            _validate_existing_read_only,
+                            current,
+                        )
+                    )
+                    if recover_stale_bindings
+                    else None,
+                )
                 descriptor = -1
                 schema_validated = binding.borrows_schema_validation()
                 if not schema_validated:

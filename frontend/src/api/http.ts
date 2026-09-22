@@ -2125,6 +2125,7 @@ export const mapPreparation = (value: unknown): PreparationView => {
     typeof value.paused !== 'boolean' ||
     typeof value.active !== 'boolean' ||
     typeof value.actionable !== 'boolean' ||
+    typeof value.recovery_required !== 'boolean' ||
     (value.first_boot !== undefined && typeof value.first_boot !== 'boolean') ||
     (value.first_boot_complete !== undefined && typeof value.first_boot_complete !== 'boolean') ||
     (value.presentation !== null &&

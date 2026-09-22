@@ -2908,11 +2908,11 @@ def _dependency_qualification_documents():
 
 
 CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v10.json"
+    "f46-audiobook-qualification-candidate-v11.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v27.json")
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v28.json")
 CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v41.json"
+    "f20-rich-metadata-qualification-candidate-v42.json"
 )
 
 
@@ -3056,10 +3056,10 @@ def _predecessor_source_text(name: str) -> str:
 
 
 def test_current_title_successors_bind_complete_consumer_source_inventory():
-    """Current successors bind responsive read/currentness behavior and its consumers.
+    """Current successors bind preparation ownership/recovery and every consumer.
 
     Historical measurements and manifests remain frozen. The new compact facts,
-    local admission, confirmed decisions and nonblocking UI are semantic changes;
+    local admission, claim ownership and crash recovery are semantic changes;
     only named qualification assignments use cycle-breaking AST equivalence.
     """
 
@@ -3112,6 +3112,22 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         "tests/unit/test_review_pipeline.py",
         "tests/support/continuous_review_scale.py",
         "tests/integration/test_continuous_review_scale.py",
+        "src/mechanical_librarian/adapters/persistence/crash_recovery.py",
+        "tests/integration/test_database_crash_recovery.py",
+        "tests/integration/test_preparation_claim_recovery.py",
+        "scripts/audit_sqlite_row_deltas.py",
+        "tests/unit/test_sqlite_row_delta_audit.py",
+        "tests/unit/test_runtime_dispatch.py",
+        "tests/support/inventaire_preparation.py",
+        "tests/unit/test_inventaire_preparation.py",
+        "tests/unit/test_live_updates.py",
+        "tests/unit/test_first_boot.py",
+        "tests/unit/test_operations.py",
+        "scripts/qualify_container_lifecycle.py",
+        "tests/unit/test_container_lifecycle_qualifier.py",
+        "tests/browser/fidelity_cohort.py",
+        "tests/browser/test_live_updates_browser.py",
+        "docs/architecture/decisions/0078-preparation-claim-and-crash-recovery.md",
     }
     required.update(
         {
@@ -3149,6 +3165,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         )
         assert continuity["current_source_sha"] == document["frozen_candidate_sha"]
         assert set(continuity["changed_read_sources"]) == {
+            "src/mechanical_librarian/application/operations.py",
             "frontend/src/api/http.ts",
             "frontend/src/components/DescriptionAdvice.tsx",
             "frontend/src/components/DescriptionAdviceSettings.tsx",
@@ -3183,6 +3200,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "src/mechanical_librarian/interfaces/web/setup_frontend.py",
         }
         assert set(continuity["changed_coordination_sources"]) == {
+            "src/mechanical_librarian/application/live_updates.py",
             "src/mechanical_librarian/application/review_pipeline.py",
             "src/mechanical_librarian/application/review_pipeline_stages.py",
             "src/mechanical_librarian/application/reviewer_access.py",
@@ -3191,6 +3209,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             assert delta["current_sha256"] == document["source_closure"][name]
             assert delta["measured_sha256"] != delta["current_sha256"]
         assert set(continuity["changed_persistence_sources"]) == {
+            "src/mechanical_librarian/adapters/persistence/binding.py",
             "src/mechanical_librarian/adapters/persistence/cover_considerations.py",
             "src/mechanical_librarian/adapters/persistence/decisions.py",
             "src/mechanical_librarian/adapters/persistence/description_advice.py",
@@ -3211,6 +3230,8 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             assert delta["current_sha256"] == document["source_closure"][name]
             assert delta["measured_sha256"] != delta["current_sha256"]
         assert set(continuity["changed_admission_sources"]) == {
+            "src/mechanical_librarian/infrastructure/first_boot.py",
+            "src/mechanical_librarian/bootstrap/container.py",
             "src/mechanical_librarian/domain/proposal_set.py",
             "src/mechanical_librarian/application/continuous_field_effects.py",
             "src/mechanical_librarian/application/metadata_report.py",
@@ -3219,6 +3240,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             assert delta["current_sha256"] == document["source_closure"][name]
             assert delta["measured_sha256"] != delta["current_sha256"]
         assert set(continuity["introduced_sources"]) == {
+            "src/mechanical_librarian/adapters/persistence/crash_recovery.py",
             "frontend/src/queryWork.ts",
             "src/mechanical_librarian/application/operation_admission.py",
         }
@@ -3317,6 +3339,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "title",
             (
                 DEPENDENCY_TITLE_DIGEST,
+                "1b84a02a5629fea2475ac2a51b18d06219ba5e7c92f07b38e98eb4359a5a0f29",
                 "7fbe2ea38f06b0ad0bd3a6941ec1bc7dc08079bdf1a38202898201a3720f9f00",
             ),
         ),
@@ -3324,6 +3347,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "rich",
             (
                 DEPENDENCY_RICH_DIGEST,
+                "e54d3fcd29b77dd0f81319b61f1491ab86c6c652fccdef61c6543e56e70922a7",
                 "8135de356454590a708bbf57af25c488f87933b5c8315a78688f000e29d643ad",
             ),
         ),
@@ -3331,6 +3355,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             "audio",
             (
                 DEPENDENCY_AUDIOBOOK_DIGEST,
+                "16eabc9abc5d141a4ce85bf1f5b28c909c5705b49d7642cec3ed75989f6f8e98",
                 "3bc740723d81d15cac137aa92e3731c4cf5da848a03ff88016e36db9553acd63",
             ),
         ),
@@ -3362,3 +3387,24 @@ def test_dependency_and_responsiveness_origins_remain_historical_only(family, di
     for digest in digests:
         assert digest != current
         assert dict(history)[digest] == options
+
+
+@pytest.mark.parametrize(
+    "name,digest",
+    [
+        (
+            "f19a-qualification-manifest-v27.json",
+            "1b84a02a5629fea2475ac2a51b18d06219ba5e7c92f07b38e98eb4359a5a0f29",
+        ),
+        (
+            "f20-rich-metadata-qualification-candidate-v41.json",
+            "e54d3fcd29b77dd0f81319b61f1491ab86c6c652fccdef61c6543e56e70922a7",
+        ),
+        (
+            "f46-audiobook-qualification-candidate-v10.json",
+            "16eabc9abc5d141a4ce85bf1f5b28c909c5705b49d7642cec3ed75989f6f8e98",
+        ),
+    ],
+)
+def test_preparation_recovery_predecessors_remain_byte_frozen(name, digest):
+    assert hashlib.sha256(MANIFEST.with_name(name).read_bytes()).hexdigest() == digest

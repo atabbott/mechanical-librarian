@@ -5,6 +5,19 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Preparation recovery source successor (#1085)
+
+[F46 v11](../reference/f46-audiobook-qualification-candidate-v11.json),
+[F19a v28](../reference/f19a-qualification-manifest-v28.json) and
+[F20 v42](../reference/f20-rich-metadata-qualification-candidate-v42.json) bind
+committed preparation claim ownership, a truthful runtime recovery stop and
+source-preserving Linux crash admission. These are behavioral coordination and
+recovery changes with current consumer proof, not binding-only equivalence or
+new metadata-quality measurements. All historical manifests, measurements,
+evaluators, passing options, paired options and fixed-conservative-v27 policy
+remain unchanged. No persisted schema changes in this successor; the inherited
+clean-rebuild declaration describes the existing schema lineage.
+
 ## Useful audiobook metadata (#1047)
 
 [F46 v8](../reference/f46-audiobook-qualification-candidate-v8.json) registers

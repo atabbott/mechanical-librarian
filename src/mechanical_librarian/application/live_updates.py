@@ -107,8 +107,18 @@ class LiveUpdateSubscription:
         """
         with self._channel.lock:
             self._wake = wake
-        if self._pending or self._closed:
-            wake()
+            if self._pending or self._closed:
+                self._notify()
+
+    def _notify(self) -> None:
+        """A reader's failed event loop has no authority over its producer."""
+        if self._wake is not None:
+            try:
+                self._wake()
+            except Exception:
+                # Keep pending invalidations and the blocking Event intact. A
+                # replacement callback can still consume the same position.
+                pass
 
     def offer(self, update: LiveUpdate) -> None:
         """Record one update. The caller holds the channel lock; never blocks."""
@@ -122,8 +132,7 @@ class LiveUpdateSubscription:
                 collapsed[topic, None] = max(collapsed.get((topic, None), 0), sequence)
             self._pending = collapsed
         self._ready.set()
-        if self._wake is not None:
-            self._wake()
+        self._notify()
 
     def take(self) -> tuple[LiveUpdate, ...]:
         """Take everything pending without waiting, in sequence order."""
@@ -154,8 +163,7 @@ class LiveUpdateSubscription:
         """Mark this reader finished and wake it. The channel calls this."""
         self._closed = True
         self._ready.set()
-        if self._wake is not None:
-            self._wake()
+        self._notify()
 
     def close(self) -> None:
         self._channel.release(self)

@@ -679,6 +679,8 @@ class FakeReviewRepository:
 
 
 class FakePreparation:
+    recovery_required = False
+    recovery_incidents = ()
     libraries = (("primary", "fiction", "lib-1"),)
 
     def __init__(self) -> None:

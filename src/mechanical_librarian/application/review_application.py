@@ -259,6 +259,7 @@ class PreparationView:
     first_boot_works: int | None = None
     presentation: dict[str, object] | None = None
     schema_version: str = "review-preparation-v2"
+    recovery_required: bool = False
 
     def to_data(self) -> dict[str, object]:
         return {
@@ -266,6 +267,7 @@ class PreparationView:
             "paused": self.paused,
             "active": self.active,
             "actionable": self.actionable,
+            "recovery_required": self.recovery_required,
             "first_boot": self.first_boot,
             "first_boot_complete": self.first_boot_complete,
             "first_boot_works": self.first_boot_works,
@@ -1202,14 +1204,17 @@ class ReviewApplication:
                 for item in libraries
             )
         )
+        recovery_required = self._preparation.recovery_required
         return PreparationView(
             libraries,
             paused,
-            any(
+            not recovery_required
+            and any(
                 item["state"] in {"queued", "discovering", "processing"}
                 for item in libraries
             ),
-            any(item["state"] == "completed_with_failures" for item in libraries),
+            recovery_required
+            or any(item["state"] == "completed_with_failures" for item in libraries),
             connections,
             first_boot,
             first_boot_complete,
@@ -1217,6 +1222,7 @@ class ReviewApplication:
             if first_boot_complete
             else None,
             None if presentation is None else presentation.to_data(),
+            recovery_required=recovery_required,
         )
 
     def dismiss_preparation(self, run_id: str) -> PreparationView:
@@ -1507,6 +1513,9 @@ def compose_review_application(
             snapshot=lambda: serialized(state_owner.operational_snapshot),
             timings=operational_timings,
             support=operational_support,
+            runtime_incidents=lambda: (
+                () if preparation is None else preparation.recovery_incidents
+            ),
         )
     )
     overrides = {name: value for name, value in policy_libraries if value is not None}

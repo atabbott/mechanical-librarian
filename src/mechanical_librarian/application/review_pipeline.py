@@ -3,8 +3,8 @@ from __future__ import annotations
 import hashlib
 import threading
 import time
-from collections.abc import Callable
-from contextlib import nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from typing import Protocol, TypeVar
 
@@ -14,7 +14,11 @@ from mechanical_librarian.application.catalogue import (
 )
 from mechanical_librarian.application.metadata_report import CredentialError
 from mechanical_librarian.application.operation_admission import OperationAdmission
-from mechanical_librarian.application.operations import StageTimer
+from mechanical_librarian.application.operations import (
+    Incident,
+    StageTimer,
+    preparation_restart_incident,
+)
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import ProviderStatus
@@ -264,6 +268,12 @@ class PipelineAction:
 
 
 class ReviewPipelineRepository(Protocol):
+    def bind_review_pipeline_owner(
+        self,
+        owner: Callable[[PipelineAction | None], None] | None,
+        publication_guard: Callable[[], AbstractContextManager[bool]] | None = None,
+    ) -> None: ...
+
     def require_current(self) -> None: ...
 
     def request_review_scan(
@@ -483,6 +493,73 @@ class ReviewPreparationPipeline:
         self._claim_lock = threading.Lock()
         self._observation_lock = threading.RLock()
         self._observation_repository: ReviewPipelineRepository | None = None
+        self._owners_lock = threading.Lock()
+        self._owners: dict[int, PipelineAction] = {}
+        self._recovery_incidents: dict[int, Incident] = {}
+        self._recovery_stop = threading.Event()
+
+    @property
+    def recovery_required(self) -> bool:
+        return self._recovery_stop.is_set()
+
+    @property
+    def recovery_incidents(self) -> tuple[Incident, ...]:
+        with self._owners_lock:
+            return tuple(self._recovery_incidents.values())
+
+    @property
+    def owned_claims(self) -> tuple[PipelineAction, ...]:
+        """Exact active or unsettled claims, retained through a shutdown timeout."""
+        with self._owners_lock:
+            return tuple(self._owners.values())
+
+    def _own(self, action: PipelineAction | None) -> None:
+        with self._owners_lock:
+            if action is None:
+                self._owners.pop(threading.get_ident(), None)
+            else:
+                self._owners[threading.get_ident()] = action
+
+    def _owned(self) -> PipelineAction | None:
+        with self._owners_lock:
+            return self._owners.get(threading.get_ident())
+
+    def _owner_requires_recovery(self) -> bool:
+        with self._owners_lock:
+            return threading.get_ident() in self._recovery_incidents
+
+    def stop_for_recovery(self, code: str, *, settlement_failed: bool = False) -> None:
+        """Latch once per owner; only a fresh process may recover durable work."""
+        with self._claim_lock:
+            self._draining.set()
+            self._recovery_stop.set()
+        with self._owners_lock:
+            owner = threading.get_ident()
+            action = self._owners.get(owner)
+            stage = "discovery" if action is None else action.stage
+            attempt = 1 if action is None else action.attempt
+            reference = preparation_failure_reference(
+                "startup" if action is None else action.action_id,
+                stage,
+                attempt,
+                0,
+                "preparation_restart_required",
+            )
+            self._recovery_incidents.setdefault(
+                owner,
+                preparation_restart_incident(
+                    reference,
+                    stage,
+                    code,
+                    attempt,
+                    settlement_failed=settlement_failed,
+                ),
+            )
+        try:
+            self._announce("preparation", None)
+        except Exception:
+            # A notification is not the authority for the latched stop.
+            pass
 
     @property
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
@@ -535,6 +612,8 @@ class ReviewPreparationPipeline:
         *,
         trigger: PreparationTrigger | None = None,
     ) -> PipelineProgress:
+        if self.recovery_required:
+            raise ReviewPipelineError("preparation_restart_required")
         selected = self._libraries.get((connection, library))
         if selected is None:
             raise ReviewPipelineError("library")
@@ -565,6 +644,8 @@ class ReviewPreparationPipeline:
     def request_library_addition(
         self, connection: str, library: str
     ) -> PipelineProgress | None:
+        if self.recovery_required:
+            raise ReviewPipelineError("preparation_restart_required")
         selected = self._libraries.get((connection, library))
         if selected is None:
             raise ReviewPipelineError("library")
@@ -612,6 +693,8 @@ class ReviewPreparationPipeline:
         )
 
     def recover(self) -> None:
+        if self.recovery_required:
+            raise ReviewPipelineError("preparation_restart_required")
         repository = self._open_repository()
         try:
             try:
@@ -643,6 +726,8 @@ class ReviewPreparationPipeline:
             repository.close()
 
     def set_paused(self, paused: bool) -> None:
+        if self.recovery_required:
+            raise ReviewPipelineError("preparation_restart_required")
         repository = self._open_repository()
         try:
             try:
@@ -754,11 +839,26 @@ class ReviewPreparationPipeline:
             self._draining.set()
 
     def resume_claiming(self) -> None:
-        self._draining.clear()
+        with self._claim_lock:
+            if not self.recovery_required:
+                self._draining.clear()
+
+    @contextmanager
+    def _publication_claim_guard(self) -> Iterator[bool]:
+        # Publication acquires before its writer. Direct advance may already
+        # hold that writer, so both gate acquisitions must be nonblocking.
+        acquired = self._claim_lock.acquire(blocking=False)
+        try:
+            yield acquired and not self._draining.is_set()
+        finally:
+            if acquired:
+                self._claim_lock.release()
 
     def run_next(self, maximum_actions: int = 64) -> bool:
         if type(maximum_actions) is not int or not 1 <= maximum_actions <= 64:
             raise ReviewPipelineError("configuration")
+        if self.recovery_required:
+            return False
         with (
             nullcontext()
             if self._operation_admission is None
@@ -766,6 +866,9 @@ class ReviewPreparationPipeline:
         ):
             repository = self._open_repository()
             try:
+                repository.bind_review_pipeline_owner(
+                    self._own, self._publication_claim_guard
+                )
                 with self._claim_lock:
                     if self._draining.is_set():
                         return False
@@ -777,6 +880,7 @@ class ReviewPreparationPipeline:
                         raise ReviewPipelineError("persistence") from error
                 if action is None:
                     return False
+                self._own(action)
                 for index in range(maximum_actions):
                     next_action = self._run_claimed_action(
                         repository,
@@ -789,7 +893,12 @@ class ReviewPreparationPipeline:
                         return True
                     action = next_action
                 return True
+            except BaseException:
+                if self._owned() is not None:
+                    self.stop_for_recovery("persistence")
+                raise
             finally:
+                repository.bind_review_pipeline_owner(None)
                 repository.close()
 
     def run_recovery_successor(
@@ -801,8 +910,15 @@ class ReviewPreparationPipeline:
         heartbeat()
         repository = self._open_repository()
         try:
+            repository.bind_review_pipeline_owner(
+                self._own, self._publication_claim_guard
+            )
             work_id = repository.provider_retry_work_id(report_id)
-            action = repository.claim_review_pipeline_work(work_id, self._clock())
+            with self._claim_lock:
+                if self._draining.is_set():
+                    return False
+                action = repository.claim_review_pipeline_work(work_id, self._clock())
+                self._own(action)
             if action is None:
                 return repository.provider_retry_complete(report_id)
             for _index in range(4):
@@ -819,11 +935,15 @@ class ReviewPreparationPipeline:
                 if action is None:
                     return repository.provider_retry_complete(report_id)
             return False
-        except ReviewPipelineError:
-            raise
         except Exception as error:
+            owned = self._owned()
+            if owned is not None and not self._owner_requires_recovery():
+                self._fail(repository, owned, "persistence", False)
+            if isinstance(error, ReviewPipelineError):
+                raise
             raise ReviewPipelineError("persistence") from error
         finally:
+            repository.bind_review_pipeline_owner(None)
             repository.close()
 
     def _run_claimed_action(
@@ -862,6 +982,7 @@ class ReviewPreparationPipeline:
         claim_next: bool,
         exact_next: bool = False,
     ) -> PipelineAction | None:
+        self._own(action)
         output_transaction = False
         try:
             # A connection can become paused after this worker obtained its
@@ -870,6 +991,7 @@ class ReviewPreparationPipeline:
             # failure.
             guard = getattr(repository, "guard_target_connection", None)
             if guard is not None and not guard(action, self._clock()):
+                self._own(None)
                 return None
             output_id: str | None = None
             if action.stage == "discovery":
@@ -881,6 +1003,7 @@ class ReviewPreparationPipeline:
                 ):
                     self._check_connection(action.connection)
                     if not repository.qualify_review_discovery(action, self._clock()):
+                        self._own(None)
                         return None
                 generation, fingerprint, entries = self._discover(
                     action.connection, action.library
@@ -894,7 +1017,7 @@ class ReviewPreparationPipeline:
                     repository, action, claim_next
                 )
                 if checkpoint_committed:
-                    successor = repository.take_review_pipeline_claim()
+                    successor = self._owned()
                     if successor is not None:
                         self._cooperative_wait()
                     return successor
@@ -938,47 +1061,45 @@ class ReviewPreparationPipeline:
                 claim_next=claim_next,
                 exact_next=exact_next,
             )
-        except ReviewPipelineError as error:
-            if output_transaction:
-                repository.rollback_review_pipeline_output()
-            self._fail(
-                repository,
-                action,
-                error.code,
-                error.code in {"stale", "transient"},
-                error.root,
+        except Exception as error:
+            if self._owner_requires_recovery():
+                raise ReviewPipelineError("persistence") from None
+            owned = self._owned()
+            if owned is None:
+                return None
+            code = (
+                error.code
+                if isinstance(error, ReviewPipelineError)
+                else "authentication"
+                if isinstance(error, CredentialError)
+                else "unknown"
             )
-        except TargetConnectionError as error:
-            # The action remains at its first uncommitted target-dependent
-            # checkpoint.  This is deliberately distinct from provider and
-            # item-currentness failures.
-            if output_transaction:
-                repository.rollback_review_pipeline_output()
-            repository.defer_for_target_connection(action, error.code, self._clock())
-        except CredentialError as error:
-            if output_transaction:
-                repository.rollback_review_pipeline_output()
-            self._fail(
-                repository,
-                action,
-                "authentication",
-                False,
-                error.provider,
-            )
-        except Exception:
-            # Terminal epilogue for one claimed action. The stages above are
-            # injected callables spanning the target, the providers, the media,
-            # and the repository, so nothing here can enumerate what they
-            # raise, and an action left claimed by an escaping fault would stall
-            # its lane for every later work. ``failed`` is the honest code for
-            # a cause this layer cannot name: it is not retryable, it does not
-            # borrow a provider or currentness meaning, and the durable record
-            # keeps the action visible for owner attention rather than
-            # discarding it. The rollback runs first so no partial output
-            # survives the failure.
-            if output_transaction:
-                repository.rollback_review_pipeline_output()
-            self._fail(repository, action, "unknown", False)
+            try:
+                if output_transaction and owned == action:
+                    repository.rollback_review_pipeline_output()
+                if isinstance(error, TargetConnectionError):
+                    repository.defer_for_target_connection(
+                        owned, error.code, self._clock()
+                    )
+                    self._own(None)
+                else:
+                    self._fail(
+                        repository,
+                        owned,
+                        code,
+                        code in {"stale", "transient"},
+                        error.root
+                        if isinstance(error, ReviewPipelineError)
+                        else error.provider
+                        if isinstance(error, CredentialError)
+                        else None,
+                    )
+            except Exception:
+                if self._owned() is None:
+                    # Settlement committed before its notification failed.
+                    return None
+                self.stop_for_recovery(code, settlement_failed=True)
+                raise ReviewPipelineError("persistence") from None
         except BaseException as error:
             if output_transaction:
                 try:
@@ -1004,6 +1125,7 @@ class ReviewPreparationPipeline:
             repository.complete_review_discovery(
                 action, generation, fingerprint, entries, self._clock()
             )
+            self._own(None)
         except ReviewPipelineError:
             raise
         except Exception as error:
@@ -1019,6 +1141,7 @@ class ReviewPreparationPipeline:
         claim_next: bool,
         exact_next: bool = False,
     ) -> PipelineAction | None:
+        self._own(action)
         try:
             if claim_next:
                 # An output transaction may already own SQLite's writer lock.
@@ -1036,17 +1159,23 @@ class ReviewPreparationPipeline:
                     if acquired:
                         self._claim_lock.release()
             elif exact_next:
-                advanced = repository.advance_review_pipeline_action(
-                    action,
-                    output_id,
-                    self._clock(),
-                    False,
-                    True,
-                )
+                acquired = self._claim_lock.acquire(blocking=False)
+                try:
+                    advanced = repository.advance_review_pipeline_action(
+                        action,
+                        output_id,
+                        self._clock(),
+                        False,
+                        acquired and not self._draining.is_set(),
+                    )
+                finally:
+                    if acquired:
+                        self._claim_lock.release()
             else:
                 advanced = repository.advance_review_pipeline_action(
                     action, output_id, self._clock(), False
                 )
+            self._own(advanced)
             try:
                 self._after_advance(repository, action, output_id)
             except Exception:
@@ -1107,14 +1236,17 @@ class ReviewPreparationPipeline:
         retryable: bool,
         failure_root: str | None = None,
     ) -> None:
+        self._own(action)
         try:
             repository.fail_review_pipeline_action(
                 action, code, retryable, self._clock(), failure_root
             )
-        except ReviewPipelineError:
-            raise
-        except Exception as error:
-            raise ReviewPipelineError("persistence") from error
+            self._own(None)
+        except Exception:
+            if self._owned() is None:
+                return
+            self.stop_for_recovery(code, settlement_failed=True)
+            raise ReviewPipelineError("persistence") from None
         # A terminal failure is preparation state an owner acts on, and a work
         # that becomes visible as "could not finish", so both are announced.
         self._announce("preparation", None)
@@ -1172,6 +1304,14 @@ class ReviewPreparationSupervisor:
     def libraries(self) -> tuple[tuple[str, str, str], ...]:
         return self._pipeline.libraries
 
+    @property
+    def recovery_required(self) -> bool:
+        return self._pipeline.recovery_required
+
+    @property
+    def recovery_incidents(self) -> tuple[Incident, ...]:
+        return self._pipeline.recovery_incidents
+
     def attach_updates(self, announce: Callable[[str, str | None], object]) -> None:
         """Bind the invalidation channel the pipeline announces stages on."""
         self._pipeline.attach_updates(announce)
@@ -1181,9 +1321,9 @@ class ReviewPreparationSupervisor:
             return
         self._stop.clear()
         self._admission.clear()
-        self._pipeline.open_observation()
-        self._observation_open = True
         try:
+            self._pipeline.open_observation()
+            self._observation_open = True
             if self._recovery_resume is not None:
                 self._recovery_resume()
             resume = getattr(self._pipeline, "resume_claiming", None)
@@ -1221,6 +1361,8 @@ class ReviewPreparationSupervisor:
             self._threads = threads
             self._wake.set()
         except BaseException as error:
+            if isinstance(error, Exception):
+                self._pipeline.stop_for_recovery("persistence")
             if not self._threads:
                 try:
                     self._close_observation()
@@ -1239,8 +1381,12 @@ class ReviewPreparationSupervisor:
         self._admission.clear()
         self._startup_ready.clear()
         self._dormant_start = True
-        self._pipeline.open_observation()
-        self._observation_open = True
+        try:
+            self._pipeline.open_observation()
+            self._observation_open = True
+        except Exception:
+            self._pipeline.stop_for_recovery("persistence")
+            raise
         threads = tuple(
             threading.Thread(
                 target=self._run,
@@ -1389,6 +1535,8 @@ class ReviewPreparationSupervisor:
 
     def _schedule_due(self) -> None:
         with self._schedule_lock:
+            if self._pipeline.recovery_required:
+                return
             if self._polling_interval_seconds is None:
                 return
             if self._schedule_paused:
@@ -1445,13 +1593,13 @@ class ReviewPreparationSupervisor:
                             self.resume_admission()
                             self._pipeline.recover()
                             self._schedule_due()
-                        except ReviewPipelineError:
-                            pass
+                        except Exception:
+                            self._pipeline.stop_for_recovery("persistence")
                         finally:
                             self._dormant_start = False
                             self._startup_ready.set()
                 self._startup_ready.wait()
-            while not self._stop.is_set():
+            while not self._stop.is_set() and not self._pipeline.recovery_required:
                 self._wake.wait(timeout=1)
                 self._wake.clear()
                 try:
@@ -1477,14 +1625,16 @@ class ReviewPreparationSupervisor:
                                 # here needs a channel of its own.
                                 pass
                         self._schedule_due()
-                    while not self._stop.is_set():
+                    while (
+                        not self._stop.is_set() and not self._pipeline.recovery_required
+                    ):
                         advanced = self._pipeline.run_next()
                         if lane == 0:
                             self._schedule_due()
                         if not advanced:
                             break
-                except ReviewPipelineError:
-                    continue
+                except Exception:
+                    self._pipeline.stop_for_recovery("persistence")
 
 
 def pipeline_scan_id(connection: str, library: str, *, first_boot: bool = False) -> str:

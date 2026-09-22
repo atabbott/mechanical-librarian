@@ -57,8 +57,11 @@ completed canary is not sent to the provider again.
 
 If inline delivery fails after a package cutover claimed the next preparation
 action, that successor is returned to the existing bounded preparation state
-machine with the typed `persistence` failure. It is never left running to
-occupy a worker lane; restart retains the same three-attempt recovery limit.
+machine with the typed `persistence` failure. If that settlement cannot commit,
+the exact running claim remains owned and preparation stops with an explicit
+service-restart instruction. Other active work finishes its safe checkpoint;
+no new claim is admitted. Ordinary restart retains the same three-attempt
+recovery limit and does not repeat committed report or package output.
 
 Recovery state contains bounded connection, adapter, scope, generation, phase,
 attempt, and timing data plus the exact private work, source-report, lane, file,

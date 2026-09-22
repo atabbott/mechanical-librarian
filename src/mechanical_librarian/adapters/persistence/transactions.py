@@ -339,7 +339,7 @@ class TransactionScope:
             raise failure from None
         self._started = True
 
-    def commit(self) -> None:
+    def commit(self, *, after_commit: Callable[[], None] | None = None) -> None:
         """Release this scope's writes, committing only when outermost.
 
         The scope stays open until the statement succeeds, so a failing commit
@@ -349,10 +349,16 @@ class TransactionScope:
         """
         if not self._started:
             return
+        callback_error: BaseException | None = None
         if self._nested:
             self._connection.execute(f"RELEASE SAVEPOINT {self._savepoint}")
         else:
             self._connection.commit()
+            if after_commit is not None:
+                try:
+                    after_commit()
+                except BaseException as error:
+                    callback_error = error
         balanced = True
         release_error: BaseException | None = None
         if self._lock is not None:
@@ -365,6 +371,8 @@ class TransactionScope:
             raise RuntimeError("transaction serialization release failed") from None
         self._started = False
         self._release_admission()
+        if callback_error is not None:
+            raise callback_error from None
         if release_error is not None and not isinstance(release_error, Exception):
             raise release_error from None
 

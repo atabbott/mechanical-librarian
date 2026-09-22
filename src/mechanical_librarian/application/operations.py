@@ -41,7 +41,7 @@ MAX_INCIDENTS = 64
 MAX_SUPPORT_BYTES = 65_536
 _PREPARATION_REFERENCE = re.compile(r"^prep-[0-9a-f]{16}$")
 _PREPARATION_STAGES = frozenset(
-    ("extraction", "provider", "proposal", "admission", "projection")
+    ("discovery", "extraction", "provider", "proposal", "admission", "projection")
 )
 _TERMINAL_PREPARATION_CODES = frozenset(
     (
@@ -131,6 +131,7 @@ class Incident:
     code: str | None = None
     attempt: int | None = None
     count: int = 1
+    settlement_code: str | None = None
 
     def __post_init__(self) -> None:
         identifiers = (
@@ -149,6 +150,7 @@ class Incident:
             or not 1 <= len(self.cause) <= 64
             or type(self.count) is not int
             or not 1 <= self.count <= 10_000
+            or self.settlement_code not in {None, "persistence"}
             or any(
                 value is not None and (not value or len(value) > 512)
                 for value in identifiers
@@ -170,6 +172,7 @@ class Incident:
 
     def to_data(self) -> dict[str, object]:
         return {
+            "settlement_code": self.settlement_code,
             "category": self.category,
             "code": self.code,
             "cause": self.cause,
@@ -261,10 +264,12 @@ class OperationalStatus:
         snapshot: Callable[[], dict[str, object]],
         timings: TimingRepository,
         support: SupportExporter | None = None,
+        runtime_incidents: Callable[[], tuple[Incident, ...]] = lambda: (),
     ) -> None:
         self._snapshot = snapshot
         self._timings = timings
         self._support = support
+        self._runtime_incidents = runtime_incidents
         self._started = False
         self._draining = False
 
@@ -280,7 +285,9 @@ class OperationalStatus:
         return self._started and not self._draining
 
     def status(self) -> dict[str, object]:
-        incidents = operational_incidents(self._snapshot())
+        incidents = (
+            self._runtime_incidents() + operational_incidents(self._snapshot())
+        )[:MAX_INCIDENTS]
         return {
             "incidents": [value.to_data() for value in incidents],
             "readiness": "ready" if self.ready() else "draining",
@@ -403,14 +410,42 @@ def aggregate_incidents(signals: object) -> tuple[Incident, ...]:
     ]
 
 
+def preparation_restart_incident(
+    reference: str,
+    stage: str,
+    code: str,
+    attempt: int,
+    *,
+    settlement_failed: bool,
+) -> Incident:
+    """Bound a process-local stop without claiming a durable terminal write."""
+    return Incident(
+        incident_id=reference,
+        kind="owner_action_required",
+        cause="preparation_restart_required",
+        scope="runtime",
+        diagnostic_reference=reference,
+        stage=stage
+        if type(stage) is str and stage in _PREPARATION_STAGES
+        else "discovery",
+        code=code
+        if type(code) is str and code in _TERMINAL_PREPARATION_CODES
+        else "unknown",
+        attempt=attempt if type(attempt) is int and 1 <= attempt <= 3 else 1,
+        settlement_code="persistence" if settlement_failed else None,
+    )
+
+
 def operational_incidents(snapshot: dict[str, object]) -> tuple[Incident, ...]:
     """Project the bounded incident contract from one repository snapshot."""
     return aggregate_incidents(snapshot.get("signals", ()))
 
 
-def support_preparation_incidents(snapshot: dict[str, object]) -> dict[str, object]:
-    """Return only terminal preparation diagnostics for a re-redacted bundle."""
-    incidents = operational_incidents(snapshot)
+def support_preparation_incidents(
+    snapshot: dict[str, object], runtime_incidents: tuple[Incident, ...] = ()
+) -> dict[str, object]:
+    """Keep runtime restart incidents distinct from durable terminal evidence."""
+    incidents = (runtime_incidents + operational_incidents(snapshot))[:MAX_INCIDENTS]
     return {
         "incidents": [
             {
@@ -418,6 +453,15 @@ def support_preparation_incidents(snapshot: dict[str, object]) -> dict[str, obje
                 "code": incident.code,
                 "diagnostic_reference": incident.diagnostic_reference,
                 "stage": incident.stage,
+                **(
+                    {
+                        "cause": incident.cause,
+                        "scope": incident.scope,
+                        "settlement_code": incident.settlement_code,
+                    }
+                    if incident.cause == "preparation_restart_required"
+                    else {}
+                ),
             }
             for incident in incidents
             if incident.diagnostic_reference is not None

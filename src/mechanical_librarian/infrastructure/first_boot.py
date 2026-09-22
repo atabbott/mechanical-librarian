@@ -40,6 +40,14 @@ def select_first_boot_mode(
         return FirstBootMode.INITIALIZE_SETUP
     if database_name not in entries:
         raise FirstBootError("first boot state is unavailable")
+    try:
+        if complete_store():
+            return FirstBootMode.NORMAL
+        # Root admission may remove verified retained aliases. Inspect what
+        # actually remains; never subtract filenames presumed to be recovered.
+        entries = {entry.name for entry in data_path.iterdir()}
+    except Exception as error:
+        raise FirstBootError("first boot state is unavailable") from error
     # The private directory holds the dedicated session database (#912), which
     # setup's first sign-in legitimately creates before setup completes; it is
     # not evidence of a completed runtime. Any other private content is
@@ -67,8 +75,6 @@ def select_first_boot_mode(
         ):
             setup_entries.discard("private")
     try:
-        if complete_store():
-            return FirstBootMode.NORMAL
         if setup_entries == {database_name} and uninitialized_setup():
             return FirstBootMode.INITIALIZE_SETUP
         if setup_entries == {database_name} and resumable_setup():

@@ -587,3 +587,48 @@ def test_cover_recovery_contains_permission_capacity_and_write_failures() -> Non
         os.chmod(root, 0o755)
         with pytest.raises(ValueError, match="unavailable"):
             store.exists(plan.plan_id)
+
+
+def test_runtime_preparation_stop_is_closed_and_shared_with_support() -> None:
+    from mechanical_librarian.application.operations import preparation_restart_incident
+
+    incident = preparation_restart_incident(
+        "prep-0123456789abcdef",
+        "discovery",
+        "parser_refused",
+        2,
+        settlement_failed=True,
+    )
+    timings = Mock()
+    timings.list.return_value = ()
+    status = OperationalStatus(
+        snapshot=lambda: {"signals": []},
+        timings=timings,
+        runtime_incidents=lambda: (incident,),
+    ).status()
+    assert status["summary"] == {
+        "automatic_recovery": 0,
+        "healthy": False,
+        "owner_action_required": 1,
+    }
+    bundle = support_preparation_incidents({"signals": []}, (incident,))
+    assert bundle["incidents"] == [
+        {
+            "attempt": 2,
+            "code": "parser_refused",
+            "diagnostic_reference": "prep-0123456789abcdef",
+            "stage": "discovery",
+            "cause": "preparation_restart_required",
+            "scope": "runtime",
+            "settlement_code": "persistence",
+        }
+    ]
+    invalid = preparation_restart_incident(
+        "prep-0123456789abcdef",
+        "private stage",
+        "private SQL",
+        True,
+        settlement_failed=False,
+    )
+    assert (invalid.stage, invalid.code, invalid.attempt) == ("discovery", "unknown", 1)
+    assert "private" not in json.dumps(invalid.to_data())

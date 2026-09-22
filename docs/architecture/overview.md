@@ -207,8 +207,11 @@ lock on the owner-only database parent, and opens SQLite through an
 unpredictable verified hard-link alias to the already-opened database inode.
 SQLite journal artifacts are therefore private-alias scoped. On every platform
 a same-process dependent open presents the live root's authority and inherits
-its admission; only an open with no live authority treats the live root's
-rollback journal as unsupported recovery state. A competing
+its admission. Ordinary Linux server roots alone may opt into the bounded
+[private-alias crash admission](decisions/0078-preparation-claim-and-crash-recovery.md):
+a byte-verified owner-private copy must pass native rollback and complete
+exact-current validation before native SQLite replays the original retained
+alias. Borrowers and offline tools remain reject-only. A competing
 repository process waits on that exclusive binding lock, then performs the
 same identity and currentness checks after the preceding process closes; this
 makes concurrent identical admissions converge without weakening the binding.
