@@ -1755,6 +1755,8 @@ describe('Library route', () => {
     // Openable, because the evidence is real -- but not reported as a success.
     expect(row).toHaveTextContent('Preparation failed safely')
     expect(row).not.toHaveTextContent('Recorded evidence available')
+    expect(screen.getByRole('heading', { name: 'Preparation needs attention' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
     expect(row.querySelector('.needs-attention')).not.toBeNull()
   })
 
@@ -7936,6 +7938,41 @@ const providerRailField = detail.fields[0]
 if (!providerRailWork || !providerRailField) throw new Error('Provider rail fixtures are missing')
 
 describe('Provider evidence rail', () => {
+  it('groups a failed preparation separately from complete zero-attention work', async () => {
+    const failed = {
+      ...providerRailWork,
+      id: 'failed',
+      reviewCaseId: undefined,
+      detailUrl: null,
+      detailKind: null,
+      attentionCount: 0,
+      preparationOutcomes: [],
+      preparation: {
+        attempt: 3,
+        diagnosticReference: 'prep-transient',
+        mediaHealth: [],
+        provider: null,
+        reason: 'Bounded automatic recovery attempts were exhausted.',
+        recovery:
+          'When this library finishes with failures, open Background activity and choose Retry.',
+        recoveryAttempt: 0,
+        stage: 'provider',
+        status: 'transient',
+      },
+    }
+    const http = Object.assign(createHttp(), {
+      getLibrary: vi.fn(async () => ({ ...library, works: [failed] })),
+    })
+    renderRoute('/library?lens=all', http)
+    expect(
+      await screen.findByRole('heading', { name: 'Preparation needs attention' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'No attention needed' })).toBeNull()
+    expect(screen.getByRole('article', { name: 'Terminal preparation failure' })).toHaveTextContent(
+      'open Background activity and choose Retry',
+    )
+  })
+
   it.each(['all', 'needs_attention'])(
     'shows server-ordered page-local boundaries in %s',
     async (lens) => {

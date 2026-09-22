@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Failed preparation stays visibly separate from completed work and points
+  owners to the existing retry action after temporary failures. (#1084)
+
 - Malformed provider titles no longer stop preparation of usable sibling evidence.
   Rejected title text stays out of reports and choices; safe Unicode is preserved.
   Report v47 requires a clean rebuild of prior development state. (#1084)
