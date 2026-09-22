@@ -107,6 +107,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -176,6 +177,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: false,
         actionable: true,
         paused: false,
@@ -264,6 +266,7 @@ describe('Application shell', () => {
         ...createHttp(),
         getPreparation: vi.fn(async (): Promise<PreparationView> => ({
           schema_version: 'review-preparation-v2',
+          recovery_required: false,
           active: true,
           actionable: false,
           paused: false,
@@ -301,12 +304,57 @@ describe('Application shell', () => {
     }
   })
 
+  it('keeps ready books usable while a runtime stop requires an ordinary service restart', async () => {
+    const user = userEvent.setup()
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        schema_version: 'review-preparation-v2',
+        recovery_required: true,
+        active: true,
+        actionable: true,
+        paused: false,
+        libraries: [
+          {
+            blocked: 1,
+            recorded: 0,
+            checked: 2,
+            connection: 'primary',
+            library: 'Books',
+            library_id: 'books',
+            ready: 1,
+            rescan_requested: false,
+            scan_id: 'scan-1',
+            state: 'completed_with_failures',
+            total: 4,
+          },
+        ],
+      })),
+    }
+    renderRoute('/library?lens=all', http)
+    const trigger = await screen.findByRole('button', { name: 'Preparation stopped' })
+    await user.click(trigger)
+    expect(screen.getByRole('heading', { name: 'Preparation stopped' })).toBeVisible()
+    expect(screen.getByText(/Restart the Mechanical Librarian service/)).toBeVisible()
+    expect(screen.getByText('2 of 4 checked · 1 ready · 1 could not finish')).toBeVisible()
+    for (const name of ['Scan now', 'Retry', 'Pause']) {
+      expect(screen.getByRole('button', { name })).toBeDisabled()
+    }
+    expect(screen.queryByText('Preparing libraries')).toBeNull()
+    screen.getByRole('button', { name: 'Close' }).focus()
+    await user.keyboard('{Escape}')
+    expect(trigger).toHaveFocus()
+    expect(screen.getByRole('link', { name: 'Library' })).toBeVisible()
+    expect(http.preparationAction).not.toHaveBeenCalled()
+  })
+
   it('returns focus to the preparation trigger when its activity panel closes', async () => {
     const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -365,6 +413,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -420,6 +469,7 @@ describe('Application shell', () => {
     async (state, title, action, disabled) => {
       const preparation: PreparationView = {
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -489,6 +539,7 @@ describe('Application shell', () => {
   it('does not restore a completed connection incident from retained recovered state', async () => {
     const recovered: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -520,6 +571,7 @@ describe('Application shell', () => {
   it('sums simultaneous connection holds while keeping one focused recovery control', async () => {
     const preparation: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -554,6 +606,7 @@ describe('Application shell', () => {
     async (code, expected) => {
       const preparation: PreparationView = {
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -589,6 +642,7 @@ describe('Application shell', () => {
     }
     const paused: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -646,6 +700,7 @@ describe('Application shell', () => {
       }
       const paused: PreparationView = {
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -733,6 +788,7 @@ describe('Application shell', () => {
     }
     const paused: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -768,6 +824,7 @@ describe('Application shell', () => {
     }
     const view = (state: 'paused' | 'recovered', updated_at: number): PreparationView => ({
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -819,6 +876,7 @@ describe('Application shell', () => {
       }
       const paused: PreparationView = {
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -871,6 +929,7 @@ describe('Application shell', () => {
     }
     const paused: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -906,6 +965,7 @@ describe('Application shell', () => {
     const user = userEvent.setup()
     const active: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -913,6 +973,7 @@ describe('Application shell', () => {
     }
     const inactive: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: false,
       actionable: false,
       paused: false,
@@ -1036,6 +1097,7 @@ describe('Application shell', () => {
       }
       const active: PreparationView = {
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -1163,6 +1225,7 @@ describe('Application shell', () => {
       ...createHttp(),
       getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         schema_version: 'review-preparation-v2',
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,
@@ -1214,6 +1277,7 @@ describe('Application shell', () => {
     const updates = createLiveStream()
     const initial: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -1284,6 +1348,7 @@ describe('Application shell', () => {
     }
     const initial: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -1373,6 +1438,7 @@ describe('Application shell', () => {
     const updates = createLiveStream()
     const initial: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -1427,6 +1493,7 @@ describe('Application shell', () => {
     }
     const degraded: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: true,

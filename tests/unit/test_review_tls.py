@@ -462,6 +462,7 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
             create=True,
             cross_thread=True,
             admission=repository.operation_admission,
+            recover_stale_bindings=True,
         )
         assert pipeline.call_args.kwargs["admission"] is repository.operation_admission
         assert composed.call_args.kwargs["admission"] is repository.operation_admission

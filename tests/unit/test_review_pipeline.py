@@ -2684,23 +2684,29 @@ def test_pipeline_preflight_is_once_per_cycle_and_recovery_retains_qualification
             raise KeyboardInterrupt()
         return 1, "a" * 64, ()
 
-    pipeline = ReviewPreparationPipeline(
-        repository_factory=lambda: open_repository(application_path),
-        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
-        discover=discover,
-        extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
-        providers=lambda *_: (),
-        propose=lambda *_: "",
-        admit=lambda *_: ("", None),
-        project=lambda *_: True,
-        check_connection=checks.append,
-        clock=lambda: 10,
-    )
+    def fresh_pipeline() -> ReviewPreparationPipeline:
+        return ReviewPreparationPipeline(
+            repository_factory=lambda: open_repository(application_path),
+            libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+            discover=discover,
+            extract=lambda *_: (_ for _ in ()).throw(AssertionError()),
+            providers=lambda *_: (),
+            propose=lambda *_: "",
+            admit=lambda *_: ("", None),
+            project=lambda *_: True,
+            check_connection=checks.append,
+            clock=lambda: 10,
+        )
+
+    pipeline = fresh_pipeline()
     pipeline.request("primary", "fiction")
     with pytest.raises(KeyboardInterrupt):
         pipeline.run_next()
     assert checks == ["primary"]
 
+    assert pipeline.recovery_required
+    assert not pipeline.run_next()
+    pipeline = fresh_pipeline()
     pipeline.recover()
     assert pipeline.run_next()
     assert checks == ["primary"]
@@ -5284,6 +5290,12 @@ def test_committed_extraction_checkpoint_pauses_only_for_claimed_successor() -> 
         project=lambda *_args: (_ for _ in ()).throw(AssertionError()),
         clock=lambda: 9,
     )
+
+    def committed(repository, *_args):
+        pipeline._own(repository.successor)
+        return "report-1", True
+
+    pipeline._extract = committed
     pauses: list[None] = []
     pipeline._cooperative_wait = lambda: pauses.append(None)
 
@@ -8931,6 +8943,9 @@ def _entry(item_id: str, file_identity: str) -> CatalogueEntry:
 
 
 class _ConcurrentRepository:
+    def bind_review_pipeline_owner(self, owner, publication_guard=None) -> None:
+        self.owner = owner
+
     def __init__(self, actions: list[PipelineAction]) -> None:
         self.actions = actions
         self.lock = threading.Lock()
@@ -8987,6 +9002,12 @@ class _ConcurrentRepository:
 
 
 class _ScheduledPipeline:
+    recovery_required = False
+    recovery_incidents = ()
+
+    def stop_for_recovery(self, code: str) -> None:
+        self.recovery_required = True
+
     _operation_admission = None
     libraries = (
         ("primary", "fiction", "lib-1"),
@@ -9046,6 +9067,12 @@ class _ScheduledPipeline:
 
 
 class _LifecyclePipeline:
+    recovery_required = False
+    recovery_incidents = ()
+
+    def stop_for_recovery(self, code: str) -> None:
+        self.recovery_required = True
+
     """Small supervisor double that records only its lifecycle contract."""
 
     libraries: tuple[tuple[str, str, str], ...] = ()

@@ -1276,6 +1276,7 @@ def test_review_page_rotates_one_memory_only_csrf_token(
     assert inactive.status_code == 200, inactive.text
     assert inactive.json() == {
         "schema_version": "review-preparation-v2",
+        "recovery_required": False,
         "libraries": [],
         "paused": False,
         "active": False,

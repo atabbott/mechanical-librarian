@@ -20,6 +20,7 @@ and the other module runs it.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
@@ -818,7 +819,13 @@ class SQLiteReviewScanRepository(ConnectionScoped):
             ) from error
 
     @local_operation
-    def guard_target_connection(self, action: PipelineAction, checked_at: int) -> bool:
+    def guard_target_connection(
+        self,
+        action: PipelineAction,
+        checked_at: int,
+        *,
+        claim_released: Callable[[], None] | None = None,
+    ) -> bool:
         """Return a claimed action to queue when its connection is held."""
         transaction = self._transaction("guard_target_connection")
         try:
@@ -845,7 +852,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
-            transaction.commit()
+            transaction.commit(after_commit=claim_released)
             return False
         except BaseException as error:
             transaction.rollback()
@@ -881,7 +888,11 @@ class SQLiteReviewScanRepository(ConnectionScoped):
 
     @local_operation
     def qualify_review_discovery(
-        self, action: PipelineAction, qualified_at: int
+        self,
+        action: PipelineAction,
+        qualified_at: int,
+        *,
+        claim_released: Callable[[], None] | None = None,
     ) -> bool:
         """Persist successful preflight authority before target enumeration."""
         if action.stage != "discovery":
@@ -902,7 +913,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 ).rowcount
                 if updated != 1:
                     raise MetadataReportError("review preparation state changed")
-                transaction.commit()
+                transaction.commit(after_commit=claim_released)
                 return False
             epoch = 0 if condition is None else condition[1]
             updated = self._connection.execute(
@@ -930,7 +941,12 @@ class SQLiteReviewScanRepository(ConnectionScoped):
 
     @local_operation
     def defer_for_target_connection(
-        self, action: PipelineAction, code: str, updated_at: int
+        self,
+        action: PipelineAction,
+        code: str,
+        updated_at: int,
+        *,
+        claim_released: Callable[[], None] | None = None,
     ) -> None:
         if code not in {"tls", "authentication", "authorization", "unavailable"}:
             raise MetadataReportError("target connection condition is invalid")
@@ -970,7 +986,7 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 "WHERE connection_name=?",
                 (affected, action.connection),
             )
-            transaction.commit()
+            transaction.commit(after_commit=claim_released)
             return
         except BaseException as error:
             transaction.rollback()

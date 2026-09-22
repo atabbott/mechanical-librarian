@@ -97,3 +97,5 @@ an accepted ADR to make history match current preference; supersede it.
 | [0077](0077-owned-responsive-review-reads.md) | accepted | Own responsive review reads and validate compact currentness facts |
 
 | [0076](0076-dependency-build-provenance.md) | accepted | Separate dependency build provenance from semantic qualification |
+
+| [0078](0078-preparation-claim-and-crash-recovery.md) | accepted | Retain preparation ownership and admit verified private crash recovery |

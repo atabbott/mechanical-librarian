@@ -190,6 +190,8 @@ class _LinuxDatabaseBinding:
         path: Path,
         descriptor: int,
         authority: object | None = None,
+        *,
+        recover_stale: Callable[[int, int, Callable[[], None]], None] | None = None,
     ) -> "_LinuxDatabaseBinding":
         if fcntl is None:
             raise MetadataReportError("database private binding is unavailable")
@@ -224,7 +226,29 @@ class _LinuxDatabaseBinding:
             _require_named_identity(parent_descriptor, absolute.name, expected_identity)
             _reject_database_sidecars_in_directory(parent_descriptor, absolute.name)
             if authority is None:
-                _reject_stale_private_binding(parent_descriptor, expected_identity)
+                if recover_stale is None:
+                    _reject_stale_private_binding(parent_descriptor, expected_identity)
+                else:
+
+                    def current() -> None:
+                        assert directory_chain is not None
+                        current_parent = directory_chain.open_current_parent()
+                        try:
+                            _require_owner_only_database_parent(
+                                os.fstat(current_parent)
+                            )
+                            _require_named_identity(
+                                current_parent, absolute.name, expected_identity
+                            )
+                            _reject_database_sidecars_in_directory(
+                                current_parent, absolute.name
+                            )
+                        finally:
+                            os.close(current_parent)
+
+                    recover_stale(parent_descriptor, descriptor, current)
+            elif recover_stale is not None:
+                raise MetadataReportError("database recovery authority is invalid")
             for _ in range(8):
                 candidate = f".metadata-report-binding-{secrets.token_hex(16)}.sqlite"
                 try:

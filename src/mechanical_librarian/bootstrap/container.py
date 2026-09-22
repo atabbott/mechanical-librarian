@@ -36,7 +36,9 @@ def main() -> None:
     os.chmod(DATA, 0o700)
 
     def complete_store() -> bool:
-        repository = open_repository(DATABASE, create=False)
+        repository = open_repository(
+            DATABASE, create=False, recover_stale_bindings=True
+        )
         try:
             repository.owner_settings_store().activate_runtime()
             return True

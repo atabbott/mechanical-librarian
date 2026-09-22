@@ -266,3 +266,63 @@ def test_rollback_preserves_existing_process_control_over_release_fault(
     assert _values(connection) == []
     assert lock._recursion_count() == 0
     _assert_contender_acquires(lock.lock)
+
+
+def test_outer_commit_callback_precedes_release_and_never_runs_for_savepoint() -> None:
+    connection = _connection()
+    lock = RLock()
+    outer = TransactionScope(connection, "outer", serialization_lock=lock)
+    outer.begin()
+    inner = TransactionScope(connection, "inner", serialization_lock=lock)
+    inner.begin()
+    calls: list[bool] = []
+    inner.commit(after_commit=lambda: calls.append(False))
+    assert calls == []
+
+    def committed() -> None:
+        assert not connection.in_transaction
+        assert lock._recursion_count() == 1
+        calls.append(True)
+
+    outer.commit(after_commit=committed)
+    assert calls == [True]
+    assert lock._recursion_count() == 0
+    connection.close()
+
+
+def test_failed_outer_commit_never_transfers_ownership() -> None:
+    connection = _connection()
+    scope = TransactionScope(
+        cast(sqlite3.Connection, _FailingCommit(connection)), "outer"
+    )
+    scope.begin()
+    connection.execute("INSERT INTO facts VALUES('pending')")
+    calls: list[bool] = []
+    with pytest.raises(sqlite3.OperationalError):
+        scope.commit(after_commit=lambda: calls.append(True))
+    assert calls == []
+    scope.rollback()
+    assert _values(connection) == []
+    connection.close()
+
+
+@pytest.mark.parametrize("fault", (RuntimeError("callback"), KeyboardInterrupt()))
+def test_commit_callback_fault_preserves_committed_state_and_balances_release(
+    fault: BaseException,
+) -> None:
+    connection = _connection()
+    lock = RLock()
+    scope = TransactionScope(connection, "outer", serialization_lock=lock)
+    scope.begin()
+    connection.execute("INSERT INTO facts VALUES('committed')")
+
+    def fail() -> None:
+        raise fault
+
+    with pytest.raises(type(fault)) as raised:
+        scope.commit(after_commit=fail)
+    assert raised.value is fault
+    assert not scope.started and not connection.in_transaction
+    assert lock._recursion_count() == 0
+    assert _values(connection) == ["committed"]
+    connection.close()

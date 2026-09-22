@@ -145,7 +145,16 @@ dormant runtime generation, atomically replaces incomplete state with complete
 owner settings, publishes
 the successor on the existing listener, closes setup routes, and starts
 preparation immediately. Ordinary startup accepts only exact-current, owner-only
-stores. A schema mismatch,
+stores. On Linux, ordinary server roots can clean verified stale private
+bindings and recover one supported interrupted DELETE transaction. Recovery first
+admits a byte-verified private copy through native SQLite and full current-schema
+validation, then rechecks the original before native rollback through its retained
+alias. It requires free space proportional to the database and journal. Unknown
+files, malformed journals, drift and unavailable copy space stop admission without
+replaying the original. Do not manually remove private aliases or journals.
+Verified interrupted copy directories are cleaned on restart; arbitrary contents
+are refused. Offline tools and dependent connections have no recovery authority.
+A schema mismatch,
 missing/incomplete settings, an unowned volume, invalid file or bootstrap,
 backup/recovery error, or permission failure stops startup rather than falling
 back, importing, migrating, or repairing data. A present `/data/config.json`

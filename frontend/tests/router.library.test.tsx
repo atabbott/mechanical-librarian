@@ -131,6 +131,7 @@ const terminalPreparation = (
   updatedAt = 101,
 ): PreparationView & { presentation: NonNullable<PreparationView['presentation']> } => ({
   schema_version: 'review-preparation-v2',
+  recovery_required: false,
   active: false,
   actionable: true,
   paused: false,
@@ -284,6 +285,7 @@ describe('Library route', () => {
     const updates = createLiveStream()
     const confirmed: PreparationView = {
       schema_version: 'review-preparation-v2' as const,
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -1195,6 +1197,7 @@ describe('Library route', () => {
     const updates = createLiveStream()
     const confirmed: PreparationView = {
       schema_version: 'review-preparation-v2',
+      recovery_required: false,
       active: true,
       actionable: false,
       paused: false,
@@ -1270,6 +1273,7 @@ describe('Library route', () => {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
         schema_version: 'review-preparation-v2' as const,
+        recovery_required: false,
         active: false,
         actionable: false,
         paused: false,
@@ -7857,6 +7861,7 @@ describe('Library route', () => {
       ...createHttp(),
       getPreparation: vi.fn(async () => ({
         schema_version: 'review-preparation-v2' as const,
+        recovery_required: false,
         active: true,
         actionable: false,
         paused: false,

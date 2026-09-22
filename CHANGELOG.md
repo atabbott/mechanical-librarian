@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Preparation keeps ownership across committed stages and reports a stopped
+  runtime when failure settlement cannot finish. Ready books remain browsable;
+  an ordinary service restart resumes retained checkpoints. Linux startup safely
+  admits supported interrupted private database transactions. (#1085)
+
 - Owner navigation, choices and Settings take priority over background database
   work; collections show truthful loading and retry states. Choices return their
   actual recorded confirmation without a competing background read. Existing

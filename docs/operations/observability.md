@@ -49,9 +49,22 @@ progress and connection-condition snapshots with owner scan and retry controls,
 and closes only after both lanes stop. Worker and recovery actions open dependent
 repositories under that lifecycle owner's authority on every platform: they
 inherit its schema admission and inode identity, and treat the owner's hot
-rollback journal as a live transaction rather than recovery state. A root open
-with no live authority still refuses every `-journal`, `-wal`, or `-shm`
-sidecar.
+rollback journal as a live transaction rather than recovery state. Ordinary
+Linux server roots can admit one verified private binding journal through the
+source-preserving copy boundary in
+[ADR-0078](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md).
+Other root opens remain reject-only; configured-basename journals and WAL are
+always refused.
+
+If a claimed stage cannot commit its failure settlement, preparation reports
+**Preparation stopped**. Restart the Mechanical Librarian service; refreshing
+the browser, Scan and Resume cannot clear this process-local stop. Ready books
+remain browsable, and the last durable progress is retained. Authenticated status
+and support evidence carry `preparation_restart_required`, runtime scope, the
+bounded `prep-` reference, stage, primary code and attempt, with optional
+`settlement_code: persistence`. This does not assert that the work has a durable
+terminal row. Successful fresh startup uses the existing checkpoint recovery.
+Subscriber wake failures do not fail the producer or another subscriber.
 
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound

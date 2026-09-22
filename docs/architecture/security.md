@@ -12,6 +12,21 @@ normalized code; authenticated operations and re-redacted support evidence may
 carry that same bounded reference, never a path, report, provider payload,
 credential, root, item, or exception.
 
+Preparation's process-local recovery stop exposes only that same closed reference,
+stage, primary code and attempt, with optional `settlement_code: persistence`.
+`preparation_restart_required` has runtime scope; an uncommitted settlement never
+becomes invented durable failure evidence. No raw exception value is projected.
+
+Ordinary Linux server-root recovery is explicitly opted in under the exclusive
+bound-parent lock. A supported private DELETE journal must pass streaming envelope
+checks and native rollback plus full current-schema admission on byte-verified
+owner-private copies before source rollback. Original database and journal
+identities and digests are rechecked before native SQLite touches the original
+retained alias. Unknown inventory, malformed state and I/O failure refuse; source
+replacement, manual journal deletion, generic repair and offline adoption remain
+outside authority. Closed interrupted-copy cleanup never recursively removes
+unknown objects. See [ADR-0078](decisions/0078-preparation-claim-and-crash-recovery.md).
+
 ## Authority
 
 Qualified automatic policy is decision-only. Its clean-schema built-in profile

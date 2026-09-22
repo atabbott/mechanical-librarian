@@ -1200,6 +1200,7 @@ class _PreparationResponse(_ClosedModel):
     paused: bool = False
     active: bool = False
     actionable: bool = False
+    recovery_required: bool = False
     first_boot: bool = False
     first_boot_complete: bool = False
     first_boot_works: int | None = Field(default=None, ge=0)
@@ -1541,6 +1542,7 @@ class _OperationalResponse(_ClosedModel):
 
 
 class _OperationalIncident(_ClosedModel):
+    settlement_code: Literal["persistence"] | None = None
     attempt: int | None = Field(default=None, ge=0, le=3)
     category: StrictStr | None = Field(default=None, min_length=1, max_length=512)
     cause: StrictStr = Field(min_length=1, max_length=64)
@@ -1577,7 +1579,10 @@ class _OperationalIncident(_ClosedModel):
     library: StrictStr | None = Field(default=None, min_length=1, max_length=512)
     scope: StrictStr
     stage: (
-        Literal["extraction", "provider", "proposal", "admission", "projection"] | None
+        Literal[
+            "discovery", "extraction", "provider", "proposal", "admission", "projection"
+        ]
+        | None
     ) = None
     work_id: StrictStr | None = Field(default=None, min_length=1, max_length=512)
 

@@ -280,6 +280,7 @@ export const createHttp = (): ReviewHttp => ({
   }),
   getPreparation: vi.fn(async (): Promise<PreparationView> => ({
     schema_version: 'review-preparation-v2',
+    recovery_required: false,
     active: false,
     actionable: false,
     paused: false,
@@ -287,6 +288,7 @@ export const createHttp = (): ReviewHttp => ({
   })),
   preparationAction: vi.fn(async (): Promise<PreparationView> => ({
     schema_version: 'review-preparation-v2',
+    recovery_required: false,
     active: false,
     actionable: false,
     paused: false,
@@ -294,6 +296,7 @@ export const createHttp = (): ReviewHttp => ({
   })),
   dismissPreparation: vi.fn(async (): Promise<PreparationView> => ({
     schema_version: 'review-preparation-v2',
+    recovery_required: false,
     active: false,
     actionable: false,
     paused: false,

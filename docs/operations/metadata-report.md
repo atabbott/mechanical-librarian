@@ -812,3 +812,11 @@ cover acquisition. An unexpected dispatch failure still yields unavailable lanes
 using its declared partial snapshot; cancellation and interruption propagate.
 No-dispatch outcomes invent neither access time nor attempts. Later lanes and
 report reads retain the first actual access time.
+
+Preparation retains the exact committed successor before report readback or
+notification. If settlement cannot commit, **Preparation stopped** preserves the
+last durable progress and keeps published Library books available. Restart the
+Mechanical Librarian service to resume its retained checkpoints; browser refresh
+and Scan cannot clear the runtime stop. The authenticated incident is runtime
+evidence, not a durable terminal work row. See [observability](observability.md)
+and [the recovery decision](../architecture/decisions/0078-preparation-claim-and-crash-recovery.md).

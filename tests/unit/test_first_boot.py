@@ -117,3 +117,30 @@ def test_every_other_nonempty_state_fails_closed(
         (tmp_path / name).touch()
     with pytest.raises(FirstBootError):
         _select(tmp_path, resume=True)
+
+
+@pytest.mark.parametrize("foreign", [False, True])
+def test_setup_inventory_is_refreshed_after_root_admission(
+    tmp_path: Path, foreign: bool
+) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    alias = tmp_path / (".metadata-report-binding-" + "a" * 32 + ".sqlite")
+    alias.touch()
+
+    def complete() -> bool:
+        alias.unlink()
+        if foreign:
+            (tmp_path / "foreign").touch()
+        return False
+
+    def select() -> FirstBootMode:
+        return select_first_boot_mode(
+            tmp_path, complete_store=complete, resumable_setup=lambda: True
+        )
+
+    if foreign:
+        with pytest.raises(FirstBootError):
+            select()
+        assert (tmp_path / "foreign").exists()
+    else:
+        assert select() is FirstBootMode.RESUME_SETUP

@@ -3781,6 +3781,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                         route.fulfill(
                             json={
                                 "schema_version": "review-preparation-v2",
+                                "recovery_required": False,
                                 "active": False,
                                 "actionable": False,
                                 "paused": False,
@@ -3798,6 +3799,7 @@ def test_setup_to_library_preparation_handoff_focuses_and_announces_destination(
                     route.fulfill(
                         json={
                             "schema_version": "review-preparation-v2",
+                            "recovery_required": False,
                             "active": not terminal,
                             "actionable": terminal,
                             "paused": state == "blocked",
@@ -6276,3 +6278,126 @@ def test_description_retry_retains_real_selected_choice(state):
                         )
                     ).to_have_count(1)
             browser.close()
+
+
+@pytest.mark.parametrize("width", [1440, 390, 320])
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_preparation_stop_preserves_browse_and_requires_service_restart(
+    width: int, theme: str
+) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with (
+            sync_playwright() as playwright,
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "review.sqlite3",
+                hash_path=hash_path,
+                certificate=certificate,
+                key=key,
+                port=port,
+                preparation=True,
+            ) as (origin, case_id),
+        ):
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True,
+                viewport={"width": width, "height": 900},
+                color_scheme=theme,
+            )
+            page = context.new_page()
+            stopped = {"value": True}
+            mutations: list[str] = []
+
+            def preparation_response(route) -> None:
+                response = route.fetch()
+                document = response.json()
+                # Deliberately retain stale active wording beneath the newer
+                # runtime stop. The actual server supplies durable presentation.
+                document["recovery_required"] = stopped["value"]
+                document["active"] = True
+                document["actionable"] = stopped["value"]
+                document["libraries"] = [
+                    {
+                        "scan_id": "retained",
+                        "connection": "primary",
+                        "library": "Synthetic household library with a long descriptive name",
+                        "library_id": "library",
+                        "state": "completed_with_failures",
+                        "checked": 7,
+                        "total": 9,
+                        "ready": 4,
+                        "blocked": 1,
+                        "recorded": 2,
+                        "rescan_requested": False,
+                        "stages": [{"stage": "extraction", "count": 2}],
+                    }
+                ]
+                route.fulfill(response=response, json=document)
+
+            page.route("**/api/v1/review-preparation", preparation_response)
+            page.on(
+                "request",
+                lambda request: (
+                    mutations.append(request.url)
+                    if request.method == "POST"
+                    and "/review-preparation/" in request.url
+                    else None
+                ),
+            )
+            try:
+                _login(page, origin)
+                summary = page.locator(".preparation-summary")
+                expect(summary).to_contain_text("Preparation stopped")
+                summary.click()
+                expect(
+                    page.get_by_role("heading", name="Preparation stopped", exact=True)
+                ).to_be_visible()
+                expect(page.locator(".preparation-detail")).to_contain_text(
+                    "Restart the Mechanical Librarian service"
+                )
+                expect(page.locator(".preparation-detail")).to_contain_text(
+                    "last saved progress"
+                )
+                expect(page.locator(".preparation-detail")).not_to_contain_text(
+                    "in progress"
+                )
+                trigger = page.get_by_role(
+                    "button", name="Preparation stopped", exact=True
+                )
+                trigger.click()
+                popover = page.get_by_role("region", name="Background activity")
+                expect(popover).to_contain_text("7 of 9 checked · 4 ready")
+                for label in ("Scan now", "Retry", "Pause"):
+                    expect(
+                        popover.get_by_role("button", name=label, exact=True)
+                    ).to_be_disabled()
+                popover.get_by_role("button", name="Close", exact=True).focus()
+                page.keyboard.press("Escape")
+                expect(trigger).to_be_focused()
+                page.reload()
+                expect(page.locator(".preparation-summary")).to_contain_text(
+                    "Preparation stopped"
+                )
+                page.locator(".library-work-row").first.click()
+                page.wait_for_url(f"**/library?*preview={case_id}*")
+                expect(page.locator(".selected-work-header")).to_be_visible()
+                assert page.evaluate(
+                    "document.documentElement.scrollWidth <= innerWidth"
+                )
+                assert mutations == []
+                # The backend restart boundary is covered by the real SQLite
+                # claim fixture. A fresh snapshot alone clears its browser flag.
+                stopped["value"] = False
+                page.reload()
+                expect(
+                    page.get_by_role("button", name="Preparation stopped", exact=True)
+                ).to_have_count(0)
+            finally:
+                context.close()
+                browser.close()

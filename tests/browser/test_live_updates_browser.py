@@ -644,6 +644,7 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                     lambda route: route.fulfill(
                         json={
                             "schema_version": "review-preparation-v2",
+                            "recovery_required": False,
                             "active": True,
                             "actionable": False,
                             "paused": True,
