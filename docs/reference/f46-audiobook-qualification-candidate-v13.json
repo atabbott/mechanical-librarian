@@ -9,7 +9,7 @@
     "production_writes": 0,
     "provider_threshold_durable_controls": 5,
     "provider_threshold_shadow_controls": 2,
-    "typed_credit_container_controls": 30
+    "typed_credit_container_controls": 36
   },
   "base_sha": "f9ca341c651732dead04ed9f88948ed129753757",
   "binding_only_source_equivalence": {
@@ -26,7 +26,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "20fcbeab4e3ce48e767d288f1881048199f4bf03"
+    "source_sha": "6815ebfaa7f61ba9af3ea6e4620bed9649153a09"
   },
   "build_provenance_paths": [
     "frontend/package-lock.json",
@@ -70,7 +70,7 @@
       "verified_abs_effects": 32
     }
   },
-  "frozen_candidate_sha": "20fcbeab4e3ce48e767d288f1881048199f4bf03",
+  "frozen_candidate_sha": "6815ebfaa7f61ba9af3ea6e4620bed9649153a09",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v7.json",
@@ -253,7 +253,7 @@
         "prior_sha256": "c5003f5d9087ecb0e5f4a733c7a1574ea9013392804fc03f1976ee1de130e62a"
       },
       "src/mechanical_librarian/adapters/evidence_extractors/epub_opening.py": {
-        "current_sha256": "756aee448b1ce7715209bdce04ec1873da2f9accddbe27cc03a5834eb749cb7f",
+        "current_sha256": "f7361bec84ea07ba57bc1db31ade090b9afe970ebd10085bb3d67c8b02f95447",
         "prior_sha256": "4fd31872aac7c6941ad33ec0c0a7ede6f4d18c7cbeffd0f617b0a631e20ab264"
       },
       "src/mechanical_librarian/adapters/persistence/review_sql.py": {
@@ -313,7 +313,7 @@
         "prior_sha256": "a5837bf99c00f76b2ef8b774ed9ac44d1ea5f6c9e67dc255769c315d6fb9bc61"
       },
       "tests/support/author_evidence.py": {
-        "current_sha256": "72419db53cc83e8dcc286734fa1e016d75817f27cdbebb760b0d809f209b2b43",
+        "current_sha256": "583e49ddddcfc3900cbaf4ec6dec6732d9fb7dfc70277772b7e218c79247042c",
         "prior_sha256": null
       },
       "tests/support/metadata_report_schemas.py": {
@@ -329,11 +329,11 @@
         "prior_sha256": "01cec32a47aeb831985e8ae5f2cf1081cb7d7e26750e3afda41da8532f78401c"
       },
       "tests/unit/test_epub_child.py": {
-        "current_sha256": "535a0bfa6f5366b15bb01006ff011b1524d099c44662c0101327a2aa84fb3121",
+        "current_sha256": "8dccb2b33b6ee9f8adc942143947f1b89cd959caed79b1b58fb148c5ad64796c",
         "prior_sha256": null
       },
       "tests/unit/test_epub_opening.py": {
-        "current_sha256": "611a2c83c597891f91b07f6b8c74209f63e7d2d6f6cfcf91fbdd0a3453cf8366",
+        "current_sha256": "85ec64e01d65aa4fa4704d19031f39791383a44c726cf64ecbe60109b854287e",
         "prior_sha256": null
       },
       "tests/unit/test_inventaire_metadata.py": {
@@ -639,7 +639,7 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "20fcbeab4e3ce48e767d288f1881048199f4bf03",
+    "current_source_sha": "6815ebfaa7f61ba9af3ea6e4620bed9649153a09",
     "introduced_sources": {
       "frontend/src/queryWork.ts": {
         "current_sha256": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
@@ -1009,7 +1009,7 @@
     "src/mechanical_librarian/adapters/evidence_extractors/audio_local.py": "daebcaadf6b1f51e99a2330dddd5fd2a4d071168439cd2bbf6d0ff71877c60b9",
     "src/mechanical_librarian/adapters/evidence_extractors/epub_cover.py": "d0f41fa1c0d4224d3df63cba245f4e336720e30521397212c67aff7127764d4d",
     "src/mechanical_librarian/adapters/evidence_extractors/epub_local.py": "7b35009a0e9f89d7864906ba04ba5a2d15d8a97bb3d61f71e7ca06e439105e39",
-    "src/mechanical_librarian/adapters/evidence_extractors/epub_opening.py": "756aee448b1ce7715209bdce04ec1873da2f9accddbe27cc03a5834eb749cb7f",
+    "src/mechanical_librarian/adapters/evidence_extractors/epub_opening.py": "f7361bec84ea07ba57bc1db31ade090b9afe970ebd10085bb3d67c8b02f95447",
     "src/mechanical_librarian/adapters/evidence_extractors/epub_package.py": "56e6ba6149052e13cc901cb0c7bb6372f1f0eeb2036f5760cf4f82153b880a2e",
     "src/mechanical_librarian/adapters/evidence_extractors/epub_package_model.py": "70d5eb80a41ca93ce334c4d9e6f38275845c08d6eed76c01bb88a505142f7ce9",
     "src/mechanical_librarian/adapters/evidence_extractors/process.py": "a5b4053981f3d82fcca0e64d23667ca2f71fb2049b6144bef614b11434291bd2",
@@ -1135,8 +1135,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "b43d1dd3822938560f1b5c004a2dd1208177b12133c31d68ee1a3d438ac64a45",
-    "src/mechanical_librarian/domain/automatic_decision.py": "c4fa4cd819cfc222507db581d8be7bed4c03e0b3111797dd5c52e80d37557620",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "7cedc2eb94eace7785fa78b0864dd5c2eca8ac475d1fc53bbce9970c814c3be7",
+    "src/mechanical_librarian/domain/automatic_decision.py": "fa752af47c0c00ff1242630b915b1d24fc8369b2699b95566f1c8f18dffaa3b9",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -1167,7 +1167,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "2dac8f50cda8ca7ffb1e7d38810f0b255bb55e129b178f00b097bc55f6d13bd8",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "e11e225cf4ec69dcb32ba8f3c060258b297759e3662e6bf40897d3d0a6bb02a4",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "a48dda5bfe43501b36bfbae1db8d99882c5cd2809aa66d19c4dc9cc8012c4781",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
@@ -1224,7 +1224,7 @@
     "tests/support/audiobook_provider_payloads/open_library_original_date.json": "4e43f6f15d127afcc5ed1675a4d30933743375510c4dddad093559c83e58f34c",
     "tests/support/audiobook_reports.py": "7e402cb013429e5d5f06e1840d0927c9d26ab36cac91eda64af325739348c02b",
     "tests/support/audiobookshelf_targets.py": "96b31682b9022c4e45d9910b688559d035594d950b82fe141ae18271ddec66b6",
-    "tests/support/author_evidence.py": "72419db53cc83e8dcc286734fa1e016d75817f27cdbebb760b0d809f209b2b43",
+    "tests/support/author_evidence.py": "583e49ddddcfc3900cbaf4ec6dec6732d9fb7dfc70277772b7e218c79247042c",
     "tests/support/automatic_decision_predecessors/before-dependency-provenance.json": "1b7d8be53cfda89cb9873c4c6c6b5d5abed058c1fa2a4772554f9d77cd33e91b",
     "tests/support/continuous_review_scale.py": "d5aae5f70d9f16271232081b8b50521b5e73fd49996878560d4256102447850b",
     "tests/support/cover_images.py": "c2de1c554de8b008bc9d0ccbf62dd2a8321f4977cd4e244f3ad86f9dee206ee7",
@@ -1261,8 +1261,8 @@
     "tests/unit/test_dependency_qualification_history.py": "fbc7f88f1e3d560054154e80604f079e20c1d13f2a22222b5d93bc4119a67a3d",
     "tests/unit/test_description_advice_activation.py": "f9f6e91eacc328a924fe308bda780fabd7557188d1825254f94bf63e09139ec7",
     "tests/unit/test_description_advice_persistence.py": "1b27d74957ea916965386325e56b2f73db7deb7ad0193c22f77376b7db4cb2ef",
-    "tests/unit/test_epub_child.py": "535a0bfa6f5366b15bb01006ff011b1524d099c44662c0101327a2aa84fb3121",
-    "tests/unit/test_epub_opening.py": "611a2c83c597891f91b07f6b8c74209f63e7d2d6f6cfcf91fbdd0a3453cf8366",
+    "tests/unit/test_epub_child.py": "8dccb2b33b6ee9f8adc942143947f1b89cd959caed79b1b58fb148c5ad64796c",
+    "tests/unit/test_epub_opening.py": "85ec64e01d65aa4fa4704d19031f39791383a44c726cf64ecbe60109b854287e",
     "tests/unit/test_exact_artifact_qualification.py": "dcde11bd16a98a3ebb4651c49a8b694aa615e4ed84c29abfdab8c138e8c267cb",
     "tests/unit/test_field_effects.py": "281076bfe44918a608760e8a9f359eca68aa1d91aaa059ad25ca93a1e4259f3a",
     "tests/unit/test_field_value_comparison.py": "0945ed5934d9823a0aae764c5953bde69dd3b3ecf3e8a06aac899baf17dd8b90",
