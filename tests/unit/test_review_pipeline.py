@@ -9546,7 +9546,8 @@ def reports_path() -> Iterator[Path]:
 
 
 @pytest.mark.parametrize(
-    "heartbeat_fault", [None, "initial", "owned", "successor", "settlement"]
+    "heartbeat_fault",
+    [None, "initial", "owned", "successor", "settlement", "other_owner"],
 )
 def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
     reports_path: Path,
@@ -9664,13 +9665,26 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
         def heartbeat() -> None:
             nonlocal beats
             beats += 1
-            boundary = {"initial": 1, "owned": 2, "successor": 3, "settlement": 3}[
-                heartbeat_fault
-            ]
+            boundary = {
+                "initial": 1,
+                "owned": 2,
+                "successor": 3,
+                "settlement": 3,
+                "other_owner": 3,
+            }[heartbeat_fault]
             if beats == boundary:
                 if heartbeat_fault == "settlement":
                     reader.execute("BEGIN")
                     reader.execute("SELECT * FROM review_preparation_work").fetchall()
+                elif heartbeat_fault == "other_owner":
+                    # Another lane's startup failure closes admission while
+                    # this real staged successor still owns its proposal.
+                    worker = threading.Thread(
+                        target=lambda: recovery.stop_for_recovery("persistence")
+                    )
+                    worker.start()
+                    worker.join(5)
+                    assert not worker.is_alive() and recovery.recovery_required
                 raise RuntimeError("synthetic heartbeat interruption")
 
         try:
@@ -9684,7 +9698,7 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
             ).fetchone()
             assert stage == (
                 "proposal"
-                if heartbeat_fault in {"successor", "settlement"}
+                if heartbeat_fault in {"successor", "settlement", "other_owner"}
                 else "provider"
             )
             assert state == (
@@ -9702,6 +9716,14 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
                 assert recovery.recovery_incidents[0].settlement_code == "persistence"
                 recovery.resume_claiming()
                 assert not recovery.run_next()
+            elif heartbeat_fault == "other_owner":
+                assert not recovery.owned_claims and recovery.recovery_required
+                (incident,) = recovery.recovery_incidents
+                assert (incident.stage, incident.code, incident.settlement_code) == (
+                    "discovery",
+                    "persistence",
+                    None,
+                )
             else:
                 assert not recovery.owned_claims and not recovery.recovery_required
         finally:

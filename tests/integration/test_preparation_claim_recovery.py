@@ -933,3 +933,146 @@ def test_actual_supervisor_timeout_retains_exact_active_claim_before_close(
     assert root._connection.execute(
         "SELECT stage,state FROM review_preparation_work"
     ).fetchone() == ("extraction", "failed")
+
+
+@pytest.mark.parametrize("root", [3], indirect=True)
+@pytest.mark.parametrize("other_failure", ["ordinary", "target"])
+def test_other_owned_lane_settles_after_recovery_stop(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    other_failure: str,
+) -> None:
+    import threading
+    from dataclasses import replace
+
+    from mechanical_librarian.application.catalogue import TargetConnectionError
+    from mechanical_librarian.domain.metadata_report import MetadataReport
+
+    path = tmp_path / "application.sqlite3"
+    pipeline = _pipeline(root, path)
+    both_claimed = threading.Barrier(2)
+    successor_owned = threading.Event()
+    stopped = threading.Event()
+    readers: dict[int, sqlite3.Connection] = {}
+    extractions: list[str] = []
+    failures: list[BaseException] = []
+    settlements: list[str | None] = []
+    original_fail = SQLiteMetadataReportRepository.fail_review_pipeline_action
+
+    def fail(bound, action, *args):
+        settlements.append(action.item_id)
+        return original_fail(bound, action, *args)
+
+    monkeypatch.setattr(
+        SQLiteMetadataReportRepository, "fail_review_pipeline_action", fail
+    )
+    original = _report()
+    report = MetadataReport.create(
+        target=replace(original.target, item="item-2"),
+        file=original.file,
+        local_claims=original.local_claims,
+        local_reasons=original.local_reasons,
+        providers=(),
+    )
+
+    def extract(repository, action, claim_next):
+        extractions.append(action.item_id)
+        both_claimed.wait(timeout=5)
+        if action.item_id == "item-1":
+            assert successor_owned.wait(5)
+            repository._connection.execute("PRAGMA busy_timeout=1")
+            reader = sqlite3.connect(path)
+            readers[threading.get_ident()] = reader
+            reader.execute("BEGIN")
+            reader.execute("SELECT * FROM review_preparation_work").fetchall()
+            raise ReviewPipelineError("parser_refused")
+        assert action.item_id == "item-2"
+        repository.publish(report, lambda: True)
+        return report.report_id, False
+
+    def dwell() -> None:
+        owned = pipeline._owned()
+        assert owned is not None and (owned.item_id, owned.stage) == (
+            "item-2",
+            "provider",
+        )
+        successor_owned.set()
+        assert stopped.wait(5)
+        assert pipeline.recovery_required
+        if other_failure == "target":
+            raise TargetConnectionError("unavailable")
+        raise ReviewPipelineError("malformed_retained_data")
+
+    pipeline._extract = extract
+    pipeline._cooperative_wait = dwell
+
+    def run() -> None:
+        try:
+            pipeline.run_next()
+        except BaseException as error:
+            failures.append(error)
+        finally:
+            reader = readers.pop(threading.get_ident(), None)
+            if reader is not None:
+                reader.rollback()
+                reader.close()
+                stopped.set()
+
+    workers = [threading.Thread(target=run) for _ in range(2)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(10)
+    assert not any(worker.is_alive() for worker in workers)
+    assert len(failures) == 1 and isinstance(failures[0], ReviewPipelineError)
+    assert sorted(extractions) == ["item-1", "item-2"]
+    assert settlements.count("item-1") == 1
+    assert settlements.count("item-2") == (1 if other_failure == "ordinary" else 0)
+    (owner,) = pipeline.owned_claims
+    assert (owner.item_id, owner.stage, owner.attempt) == ("item-1", "extraction", 1)
+    (incident,) = pipeline.recovery_incidents
+    assert (incident.code, incident.stage, incident.settlement_code) == (
+        "parser_refused",
+        "extraction",
+        "persistence",
+    )
+    rows = root._connection.execute(
+        "SELECT item_id,stage,state,attempt FROM review_preparation_work ORDER BY item_id"
+    ).fetchall()
+    assert rows == [
+        ("item-1", "extraction", "running", 1),
+        (
+            "item-2",
+            "provider",
+            "failed" if other_failure == "ordinary" else "queued",
+            1 if other_failure == "ordinary" else 0,
+        ),
+        ("item-3", "extraction", "queued", 0),
+    ]
+    assert root.get(report.report_id) == report.to_json()
+    pipeline.resume_claiming()
+    assert not pipeline.run_next()
+    restarted = _pipeline(root, path)
+    restarted.recover()
+    assert root.get(report.report_id) == report.to_json()
+    if other_failure == "target":
+        condition = root.begin_target_connection_check("primary", 11)
+        assert condition is not None
+        assert root.finish_target_connection_check("primary", condition.epoch, None, 12)
+    providers: list[str] = []
+
+    def refuse_uncommitted(_repository, action, _claim_next):
+        assert action.item_id != "item-2", "committed extraction repeated"
+        raise ReviewPipelineError("parser_refused")
+
+    def provider(_repository, report_id):
+        providers.append(report_id)
+        return ()
+
+    restarted._extract = refuse_uncommitted
+    restarted._providers = provider
+    while restarted.run_next():
+        pass
+    assert providers == ([report.report_id] if other_failure == "target" else [])
+    assert not restarted.owned_claims and not restarted.recovery_required

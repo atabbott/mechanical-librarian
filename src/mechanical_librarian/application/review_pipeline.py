@@ -524,6 +524,10 @@ class ReviewPreparationPipeline:
         with self._owners_lock:
             return self._owners.get(threading.get_ident())
 
+    def _owner_requires_recovery(self) -> bool:
+        with self._owners_lock:
+            return threading.get_ident() in self._recovery_incidents
+
     def stop_for_recovery(self, code: str, *, settlement_failed: bool = False) -> None:
         """Latch once per owner; only a fresh process may recover durable work."""
         with self._claim_lock:
@@ -933,7 +937,7 @@ class ReviewPreparationPipeline:
             return False
         except Exception as error:
             owned = self._owned()
-            if owned is not None and not self.recovery_required:
+            if owned is not None and not self._owner_requires_recovery():
                 self._fail(repository, owned, "persistence", False)
             if isinstance(error, ReviewPipelineError):
                 raise
@@ -1058,7 +1062,7 @@ class ReviewPreparationPipeline:
                 exact_next=exact_next,
             )
         except Exception as error:
-            if self.recovery_required:
+            if self._owner_requires_recovery():
                 raise ReviewPipelineError("persistence") from None
             owned = self._owned()
             if owned is None:
