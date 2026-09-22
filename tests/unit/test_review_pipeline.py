@@ -11546,3 +11546,63 @@ def test_output_admission_balances_only_its_own_increment(application_path, entr
         assert next_action is not None and next_action.stage == "provider"
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize("removed_deferred", [False, True])
+def test_startup_drain_preserves_completed_presentation_times_and_compacts_order(
+    application_path: Path, removed_deferred: bool
+) -> None:
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    repository = open_repository(application_path)
+    if removed_deferred:
+        repository.set_review_pipeline_paused(True, 1)
+        repository.request_library_addition(
+            "primary", "removed", "lib-removed", "f" * 64, 2
+        )
+        repository.set_review_pipeline_paused(False, 3)
+    complete_title_work(repository, isbn_title_report(current="Example Title"))
+    before = repository._connection.execute(
+        "SELECT row_id,row_kind,updated_at FROM review_preparation_presentation "
+        "WHERE row_kind IN ('run','enrollment','work') ORDER BY row_id"
+    ).fetchall()
+    assert repository._connection.execute(
+        "SELECT ordinal FROM review_preparation_presentation WHERE row_kind='enrollment'"
+    ).fetchone() == (int(removed_deferred),)
+    assert repository._connection.execute(
+        "SELECT state FROM review_preparation_presentation WHERE row_id='run'"
+    ).fetchone() == ("blocked" if removed_deferred else "completed_clean",)
+    scope = (("primary", "ebooks", "lib-1", "f" * 64),)
+    repository.drain_library_additions(scope, 40)
+    after = repository._connection.execute(
+        "SELECT row_id,row_kind,updated_at FROM review_preparation_presentation "
+        "WHERE row_kind IN ('run','enrollment','work') ORDER BY row_id"
+    ).fetchall()
+    assert after == [
+        (row_id, kind, 40 if removed_deferred and kind == "run" else updated_at)
+        for row_id, kind, updated_at in before
+    ]
+    assert repository.deferred_library_additions() == ()
+    assert repository._connection.execute(
+        "SELECT ordinal FROM review_preparation_presentation WHERE row_kind='enrollment'"
+    ).fetchone() == (0,)
+    assert repository._connection.execute(
+        "SELECT enrollment_ordinal FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone() == (0,)
+    assert repository._connection.execute(
+        "SELECT state,completed_at FROM review_preparation_presentation WHERE row_id='run'"
+    ).fetchone() == ("completed_clean", 40 if removed_deferred else 23)
+    snapshot = repository._connection.execute(
+        "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+    ).fetchall()
+    repository.close()
+    reopened = open_repository(application_path, create=False)
+    reopened.drain_library_additions(scope, 50)
+    assert (
+        reopened._connection.execute(
+            "SELECT * FROM review_preparation_presentation ORDER BY row_id"
+        ).fetchall()
+        == snapshot
+    )
+    reopened.close()
+    open_repository(application_path, create=False).close()
