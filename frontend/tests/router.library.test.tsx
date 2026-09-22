@@ -8765,3 +8765,98 @@ it('commits an explicitly cleared search together with Attention', async () => {
   )
   expect(query).toHaveValue('')
 })
+
+it.each([
+  ['', 'Current title', 'default'],
+  ['before', '', 'default'],
+  ['', 'Current title', 'selection'],
+  ['', 'Current title', 'back'],
+] as const)(
+  'preserves search ownership %s to %s with %s when the first wide page arrives',
+  async (initialQuery, draft, action) => {
+    const previousMatchMedia = window.matchMedia
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(min-width: 761px)',
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(() => true),
+    }))
+    onTestFinished(() => {
+      vi.stubGlobal('matchMedia', previousMatchMedia)
+    })
+    let releaseInitial: (value: LibraryView) => void = () => undefined
+    const http = createHttp()
+    const work = library.works[0]
+    if (!work) throw new Error('public work fixture required')
+    const filtered = {
+      ...library,
+      works: [{ ...work, reviewCaseId: 'filtered-case', title: 'Filtered work' }],
+    }
+    let first = true
+    http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(() => {
+      if (!first) return Promise.resolve(filtered)
+      first = false
+      return new Promise((resolve) => {
+        releaseInitial = resolve
+      })
+    })
+    http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async (id) => ({ ...detail, id }))
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const router = createApplicationRouter(
+      http,
+      queryClient,
+      createMemoryHistory({
+        initialEntries: [
+          '/library?lens=all&q=prior&preview=prior-case',
+          '/library?lens=all' + (initialQuery ? '&q=' + initialQuery : ''),
+        ],
+      }),
+    )
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    )
+    const selected: (string | undefined)[] = []
+    const unsubscribe = router.subscribe('onResolved', () => {
+      selected.push(router.state.location.search.preview)
+    })
+    onTestFinished(unsubscribe)
+    const query = await screen.findByRole('searchbox')
+    expect(screen.getByText('Loading works…')).toBeVisible()
+    const user = userEvent.setup()
+    if (draft) await user.type(query, draft)
+    else await user.clear(query)
+    expect(query).toHaveValue(draft)
+    await act(async () => releaseInitial(library))
+    if (action !== 'default') {
+      if (action === 'selection')
+        fireEvent.click(await screen.findByRole('button', { name: /^A Book\./ }))
+      else act(() => router.history.back())
+      await waitFor(() =>
+        expect(router.state.location.search.preview).toBe(
+          action === 'selection' ? 'case-1' : 'prior-case',
+        ),
+      )
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 200))
+      })
+      expect(router.state.location.search.q).toBe(action === 'selection' ? undefined : 'prior')
+      expect(query).toHaveValue(action === 'selection' ? '' : 'prior')
+      expect(router.state.location.search.preview).toBe(
+        action === 'selection' ? 'case-1' : 'prior-case',
+      )
+      return
+    }
+    await waitFor(() => expect(router.state.location.search.q).toBe(draft || undefined))
+    expect(query).toHaveValue(draft)
+    expect(query).toHaveFocus()
+    expect(query).toHaveProperty('selectionStart', draft.length)
+    await waitFor(() => expect(router.state.location.search.preview).toBe('filtered-case'))
+    expect(selected).not.toContain('case-1')
+  },
+)

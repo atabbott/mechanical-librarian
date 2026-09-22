@@ -2689,6 +2689,7 @@ export default function LibraryPage({
     const selectWideDefault = () => {
       if (
         !media.matches ||
+        searchPending ||
         currentSearch.current.preview ||
         currentSearch.current.work ||
         currentSearch.current.preparation
@@ -2710,7 +2711,7 @@ export default function LibraryPage({
     selectWideDefault()
     media.addEventListener('change', selectWideDefault)
     return () => media.removeEventListener('change', selectWideDefault)
-  }, [works, navigate])
+  }, [works, navigate, searchPending])
 
   const selectCase = (
     reviewCaseId: string,
