@@ -1,20 +1,26 @@
 from __future__ import annotations
 
-from threading import Event, Thread
+from pathlib import Path
+from threading import Event, Thread, current_thread
 from types import SimpleNamespace
-from typing import Any, Callable, Literal, TypeVar, cast
+from typing import Any, Callable, Literal, TypeVar
 from unittest.mock import Mock
 
 import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
 
+from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexDeviceAuthState,
+)
 from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
     ReviewerAccessRepositoryError,
 )
+from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.application.setup_connection import SetupConnectionError
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
@@ -75,38 +81,130 @@ def test_setup_reviewer_read_translates_repository_unavailability() -> None:
     assert response.json() == {"detail": {"error": "reviewer_access_unavailable"}}
 
 
-def test_setup_generation_serializes_reviewer_operations() -> None:
-    reviewer = object.__new__(ReviewerAccessOperations)
-    reviewer._serialized = lambda call: call()
+@pytest.mark.parametrize("boundary", ("snapshot", "replace"))
+def test_setup_generation_serializes_reviewer_local_operations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str
+) -> None:
+    repository = open_repository(tmp_path / "review.sqlite", cross_thread=True)
+    store = repository.reviewer_access_store()
+    reviewer = ReviewerAccessOperations(
+        store,
+        codex_auth=Mock(
+            passive_status=Mock(return_value=CodexDeviceAuthState("ready"))
+        ),
+        codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+        codex_binding=Mock(),
+        openrouter_factory=Mock(),
+    )
     _client(reviewer)
     entered = Event()
     release = Event()
+    second_started = Event()
     second_done = Event()
     calls: list[str] = []
+    errors: list[BaseException] = []
+    original = getattr(store, boundary)
 
-    def view() -> object:
-        calls.append("entered")
+    def held(*args: object, **kwargs: object) -> object:
+        calls.append(boundary)
         entered.set()
-        release.wait(timeout=2)
-        return object()
+        assert release.wait(timeout=5)
+        return original(*args, **kwargs)
 
-    cast("Any", reviewer)._view = view
+    monkeypatch.setattr(store, boundary, held)
 
-    def second_read() -> None:
-        reviewer.read()
-        second_done.set()
+    def first_call() -> None:
+        try:
+            if boundary == "replace":
+                reviewer.select_none(expected_revision=1)
+            else:
+                reviewer.read()
+        except BaseException as error:
+            errors.append(error)
 
-    first = Thread(target=reviewer.read)
-    second = Thread(target=second_read)
-    first.start()
-    assert entered.wait(timeout=2)
-    second.start()
-    assert not second_done.wait(timeout=0.05)
-    assert calls == ["entered"]
-    release.set()
-    first.join(timeout=2)
-    second.join(timeout=2)
-    assert calls == ["entered", "entered"]
+    def second_call() -> None:
+        second_started.set()
+        try:
+            reviewer.read()
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            second_done.set()
+
+    first = Thread(target=first_call)
+    second = Thread(target=second_call)
+    try:
+        first.start()
+        assert entered.wait(timeout=5)
+        second.start()
+        assert second_started.wait(timeout=5)
+        assert not second_done.wait(timeout=0.05)
+        assert calls == [boundary]
+        release.set()
+        first.join(timeout=5)
+        second.join(timeout=5)
+        assert not first.is_alive() and not second.is_alive()
+        assert errors == []
+        assert store.snapshot()[0].revision == (2 if boundary == "replace" else 1)
+    finally:
+        release.set()
+        first.join(timeout=5)
+        if second.ident is not None:
+            second.join(timeout=5)
+        repository.close()
+
+
+def test_setup_external_reviewer_observation_allows_commit_and_refuses_stale_view(
+    tmp_path: Path,
+) -> None:
+    repository = open_repository(tmp_path / "review.sqlite", cross_thread=True)
+    store = repository.reviewer_access_store()
+    entered = Event()
+    release = Event()
+    errors: list[BaseException] = []
+
+    def host() -> ReviewerHostStatus:
+        if current_thread().name == "held-reviewer-observation":
+            assert not repository._connection.in_transaction
+            entered.set()
+            assert release.wait(timeout=5)
+        return ReviewerHostStatus(True, None, 2 * 1024**3)
+
+    reviewer = ReviewerAccessOperations(
+        store,
+        codex_auth=Mock(
+            passive_status=Mock(return_value=CodexDeviceAuthState("ready"))
+        ),
+        codex_host=host,
+        codex_binding=Mock(),
+        openrouter_factory=Mock(),
+    )
+    _client(reviewer)
+
+    def read() -> None:
+        try:
+            reviewer.read()
+        except BaseException as error:
+            errors.append(error)
+
+    worker = Thread(target=read, name="held-reviewer-observation")
+    try:
+        worker.start()
+        assert entered.wait(timeout=5)
+        assert reviewer.select_none(expected_revision=1).revision == 2
+        with pytest.raises(ReviewerAccessRepositoryError, match="stale"):
+            reviewer.select_none(expected_revision=1)
+        assert store.snapshot()[0].revision == 2
+        release.set()
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+        assert len(errors) == 1
+        assert isinstance(errors[0], ReviewerAccessApplicationError)
+        assert str(errors[0]) == "access_changed"
+    finally:
+        release.set()
+        worker.join(timeout=5)
+        repository.close()
 
 
 class _Sessions:
