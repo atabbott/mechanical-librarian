@@ -6,7 +6,10 @@
     "mixed_statement_empty_target_persistence_controls": 8,
     "mixed_statement_front_and_child_controls": 96,
     "navigation_and_read_once_controls": 13,
-    "production_writes": 0
+    "production_writes": 0,
+    "provider_threshold_durable_controls": 5,
+    "provider_threshold_shadow_controls": 2,
+    "typed_credit_container_controls": 30
   },
   "base_sha": "f9ca341c651732dead04ed9f88948ed129753757",
   "binding_only_source_equivalence": {
@@ -23,7 +26,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "3eb4fc953ca711f3c16ae08a6367fd88ccdb8769"
+    "source_sha": "20fcbeab4e3ce48e767d288f1881048199f4bf03"
   },
   "build_provenance_paths": [
     "frontend/package-lock.json",
@@ -67,7 +70,7 @@
       "verified_abs_effects": 32
     }
   },
-  "frozen_candidate_sha": "3eb4fc953ca711f3c16ae08a6367fd88ccdb8769",
+  "frozen_candidate_sha": "20fcbeab4e3ce48e767d288f1881048199f4bf03",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v7.json",
@@ -210,7 +213,7 @@
         "prior_sha256": "35ce624a8b089f52b228f24b1e235000c315389f9523ec8308bafd6694baddc4"
       },
       "docs/architecture/decisions/0029-provider-independent-shadow-decision-preview.md": {
-        "current_sha256": "4b05d693cfa6b5cb546f3dfe998f5310f29abb18dd9442c9d2d0ba0bf1656e19",
+        "current_sha256": "681461f400baf106424a7dc68c8213f9dd7afe9d554c1a54830573c5e43f61ab",
         "prior_sha256": null
       },
       "docs/architecture/security.md": {
@@ -246,11 +249,11 @@
         "prior_sha256": null
       },
       "src/mechanical_librarian/adapters/evidence_extractors/epub_local.py": {
-        "current_sha256": "41d0ada8f2297c8ac41774a0c37d4ce9011a908e2828aea2b3f66a1a9dc2bb74",
+        "current_sha256": "7b35009a0e9f89d7864906ba04ba5a2d15d8a97bb3d61f71e7ca06e439105e39",
         "prior_sha256": "c5003f5d9087ecb0e5f4a733c7a1574ea9013392804fc03f1976ee1de130e62a"
       },
       "src/mechanical_librarian/adapters/evidence_extractors/epub_opening.py": {
-        "current_sha256": "85236153fd21882a171e2e81cf0d5ed27b86e8f024803f407570fb1e9e1f1255",
+        "current_sha256": "756aee448b1ce7715209bdce04ec1873da2f9accddbe27cc03a5834eb749cb7f",
         "prior_sha256": "4fd31872aac7c6941ad33ec0c0a7ede6f4d18c7cbeffd0f617b0a631e20ab264"
       },
       "src/mechanical_librarian/adapters/persistence/review_sql.py": {
@@ -278,7 +281,7 @@
         "prior_sha256": "420af0cdb3932b8851f40eb89cb56cb210397b84862d8f84b7cd1e60157c3d8e"
       },
       "src/mechanical_librarian/domain/shadow_decision.py": {
-        "current_sha256": "d80614f4eb94f80dfd046660df889707d7c398a44e3f2bce96c1ee0f7530079c",
+        "current_sha256": "a48dda5bfe43501b36bfbae1db8d99882c5cd2809aa66d19c4dc9cc8012c4781",
         "prior_sha256": "8d6fcff5b4af8a71d76a46efb3e6131caeb7cd7d06a03a027f95447f0850502f"
       },
       "tests/architecture/test_import_boundaries.py": {
@@ -306,11 +309,11 @@
         "prior_sha256": "7a26990f7273d545f5bd8124007cbedf3be837a3ae979abd7764127082bbe608"
       },
       "tests/integration/test_review_case_lifecycle.py": {
-        "current_sha256": "cea65e257929fadacf7529a96c88d7d202bf0db0f71eda7eebc4be34cdd98032",
+        "current_sha256": "f74a101143e478e00da25baacbc70aaa5051b99012ccc7e83a4fb425beb8182e",
         "prior_sha256": "a5837bf99c00f76b2ef8b774ed9ac44d1ea5f6c9e67dc255769c315d6fb9bc61"
       },
       "tests/support/author_evidence.py": {
-        "current_sha256": "cea91a2fa2a3651218dbb63018abe82e61d130b8866d313a55a0c243f2fc4d70",
+        "current_sha256": "72419db53cc83e8dcc286734fa1e016d75817f27cdbebb760b0d809f209b2b43",
         "prior_sha256": null
       },
       "tests/support/metadata_report_schemas.py": {
@@ -326,11 +329,11 @@
         "prior_sha256": "01cec32a47aeb831985e8ae5f2cf1081cb7d7e26750e3afda41da8532f78401c"
       },
       "tests/unit/test_epub_child.py": {
-        "current_sha256": "5125186104095062992b5e37eb6ea5e1154e3f3b4f750c6476ddb925efa28f8f",
+        "current_sha256": "535a0bfa6f5366b15bb01006ff011b1524d099c44662c0101327a2aa84fb3121",
         "prior_sha256": null
       },
       "tests/unit/test_epub_opening.py": {
-        "current_sha256": "a958febbc7da9fdef0c29539795888ea170a00a1cdcb4c3c672a4dd5f12993cf",
+        "current_sha256": "611a2c83c597891f91b07f6b8c74209f63e7d2d6f6cfcf91fbdd0a3453cf8366",
         "prior_sha256": null
       },
       "tests/unit/test_inventaire_metadata.py": {
@@ -370,7 +373,7 @@
         "prior_sha256": "49f609d4dfd18955e43303331ab94ecc5961187d492e87b00e5edb600b031261"
       },
       "tests/unit/test_shadow_decision.py": {
-        "current_sha256": "01db6307be30277276b3773accfb303999398a44615b89bb4610d3b58a13a21c",
+        "current_sha256": "c4b367838396b5891d97495f16672c6bd697011a7f05b18b89f2c958c6ccecc0",
         "prior_sha256": "eb07eddd3878840aea7c21a4d27d9948ff0dca215c2ec824b6c08710fd7ff614"
       }
     },
@@ -636,7 +639,7 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "3eb4fc953ca711f3c16ae08a6367fd88ccdb8769",
+    "current_source_sha": "20fcbeab4e3ce48e767d288f1881048199f4bf03",
     "introduced_sources": {
       "frontend/src/queryWork.ts": {
         "current_sha256": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
@@ -920,7 +923,7 @@
     "CONTRIBUTING.md": "c57b0ac08c7ab42e438227a428bdc7ed562194596a80aaa908709473a06fe9e7",
     "Dockerfile": "c94301cb66ff88149f117cefa3f129d53a5675234aa09de0a92dbfa72a0270ae",
     "README.md": "3e229e43335d39199d97979f271c44ca3973de5515506dc137e85d63e1070d1d",
-    "docs/architecture/decisions/0029-provider-independent-shadow-decision-preview.md": "4b05d693cfa6b5cb546f3dfe998f5310f29abb18dd9442c9d2d0ba0bf1656e19",
+    "docs/architecture/decisions/0029-provider-independent-shadow-decision-preview.md": "681461f400baf106424a7dc68c8213f9dd7afe9d554c1a54830573c5e43f61ab",
     "docs/architecture/decisions/0059-deterministic-cover-election.md": "b5f1e4c1b37d6029bbdda0caca202a97c210f18db2bc0f4423e37b128df6756e",
     "docs/architecture/decisions/0061-audiobook-provider-posture.md": "230acf3e386985d053fe428ce61f1301e857c70237f97d5bea5484ab132b7acd",
     "docs/architecture/decisions/0071-book-media-guarded-application.md": "325c5c20e4b7f41a4fe4149c0d225e0d025837571b2265cacc35faecbb448b14",
@@ -1005,8 +1008,8 @@
     "src/mechanical_librarian/adapters/evidence_extractors/__init__.py": "dcde2d6a130f016a250c494f44cf6aaf9fb2846a1dd9178c3ad57dda05fa2e35",
     "src/mechanical_librarian/adapters/evidence_extractors/audio_local.py": "daebcaadf6b1f51e99a2330dddd5fd2a4d071168439cd2bbf6d0ff71877c60b9",
     "src/mechanical_librarian/adapters/evidence_extractors/epub_cover.py": "d0f41fa1c0d4224d3df63cba245f4e336720e30521397212c67aff7127764d4d",
-    "src/mechanical_librarian/adapters/evidence_extractors/epub_local.py": "41d0ada8f2297c8ac41774a0c37d4ce9011a908e2828aea2b3f66a1a9dc2bb74",
-    "src/mechanical_librarian/adapters/evidence_extractors/epub_opening.py": "85236153fd21882a171e2e81cf0d5ed27b86e8f024803f407570fb1e9e1f1255",
+    "src/mechanical_librarian/adapters/evidence_extractors/epub_local.py": "7b35009a0e9f89d7864906ba04ba5a2d15d8a97bb3d61f71e7ca06e439105e39",
+    "src/mechanical_librarian/adapters/evidence_extractors/epub_opening.py": "756aee448b1ce7715209bdce04ec1873da2f9accddbe27cc03a5834eb749cb7f",
     "src/mechanical_librarian/adapters/evidence_extractors/epub_package.py": "56e6ba6149052e13cc901cb0c7bb6372f1f0eeb2036f5760cf4f82153b880a2e",
     "src/mechanical_librarian/adapters/evidence_extractors/epub_package_model.py": "70d5eb80a41ca93ce334c4d9e6f38275845c08d6eed76c01bb88a505142f7ce9",
     "src/mechanical_librarian/adapters/evidence_extractors/process.py": "a5b4053981f3d82fcca0e64d23667ca2f71fb2049b6144bef614b11434291bd2",
@@ -1132,8 +1135,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "04c5baac3d0bf6811564c3baae022d94aef5f3d4598cd8449463db96de9d4bcb",
-    "src/mechanical_librarian/domain/automatic_decision.py": "6480ad9d03ba2c8a3bdc1b9f8a350af2dd2bd71d35498124a491f49b31fed558",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "b43d1dd3822938560f1b5c004a2dd1208177b12133c31d68ee1a3d438ac64a45",
+    "src/mechanical_librarian/domain/automatic_decision.py": "c4fa4cd819cfc222507db581d8be7bed4c03e0b3111797dd5c52e80d37557620",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -1164,9 +1167,9 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "5fa9d16b825f53aaa0b654895f0519467d28966f1ec8e0cff580dc506cb1ecbd",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "2dac8f50cda8ca7ffb1e7d38810f0b255bb55e129b178f00b097bc55f6d13bd8",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
-    "src/mechanical_librarian/domain/shadow_decision.py": "d80614f4eb94f80dfd046660df889707d7c398a44e3f2bce96c1ee0f7530079c",
+    "src/mechanical_librarian/domain/shadow_decision.py": "a48dda5bfe43501b36bfbae1db8d99882c5cd2809aa66d19c4dc9cc8012c4781",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
     "src/mechanical_librarian/domain/shadow_review.py": "fdf606718d5473ec06aed2b95cdf34b9c199b457214685afed2a1c6388ce952a",
     "src/mechanical_librarian/domain/shadow_review_actions.py": "6daf6f1e610ac5ecd38c063f5ae1a2395d7cc568e5f5c685518771092598a64f",
@@ -1207,7 +1210,7 @@
     "tests/integration/test_database_crash_recovery.py": "285eb4cb629482f192426f61b11f306c352f53a8b40fbdea9d2b1452041619f0",
     "tests/integration/test_owner_responsiveness.py": "5dba461576e003616db48b87502fa3c25c25fe38c529a6bfe302f8987461c872",
     "tests/integration/test_preparation_claim_recovery.py": "877e9ab0c0265c8f9577304fb6a3a416bb7bec6bf6120c73cc4779f4a4e837cd",
-    "tests/integration/test_review_case_lifecycle.py": "cea65e257929fadacf7529a96c88d7d202bf0db0f71eda7eebc4be34cdd98032",
+    "tests/integration/test_review_case_lifecycle.py": "f74a101143e478e00da25baacbc70aaa5051b99012ccc7e83a4fb425beb8182e",
     "tests/slow/test_owner_browser_responsiveness.py": "69e68df24c18bd1d601ea3a08b7c9ec70bcd15a81552717956b1eff895c8d3b7",
     "tests/slow/test_owner_responsiveness.py": "6edeee7f7d1336232ac3590e7f08574872d56ba2e071948094e22b86542e314c",
     "tests/support/audiobook_covers.py": "c2df1ff212ef459f966da8d6be5b484a55d190c85aac2dc0c3077c01fe5e1d50",
@@ -1221,7 +1224,7 @@
     "tests/support/audiobook_provider_payloads/open_library_original_date.json": "4e43f6f15d127afcc5ed1675a4d30933743375510c4dddad093559c83e58f34c",
     "tests/support/audiobook_reports.py": "7e402cb013429e5d5f06e1840d0927c9d26ab36cac91eda64af325739348c02b",
     "tests/support/audiobookshelf_targets.py": "96b31682b9022c4e45d9910b688559d035594d950b82fe141ae18271ddec66b6",
-    "tests/support/author_evidence.py": "cea91a2fa2a3651218dbb63018abe82e61d130b8866d313a55a0c243f2fc4d70",
+    "tests/support/author_evidence.py": "72419db53cc83e8dcc286734fa1e016d75817f27cdbebb760b0d809f209b2b43",
     "tests/support/automatic_decision_predecessors/before-dependency-provenance.json": "1b7d8be53cfda89cb9873c4c6c6b5d5abed058c1fa2a4772554f9d77cd33e91b",
     "tests/support/continuous_review_scale.py": "d5aae5f70d9f16271232081b8b50521b5e73fd49996878560d4256102447850b",
     "tests/support/cover_images.py": "c2de1c554de8b008bc9d0ccbf62dd2a8321f4977cd4e244f3ad86f9dee206ee7",
@@ -1258,8 +1261,8 @@
     "tests/unit/test_dependency_qualification_history.py": "fbc7f88f1e3d560054154e80604f079e20c1d13f2a22222b5d93bc4119a67a3d",
     "tests/unit/test_description_advice_activation.py": "f9f6e91eacc328a924fe308bda780fabd7557188d1825254f94bf63e09139ec7",
     "tests/unit/test_description_advice_persistence.py": "1b27d74957ea916965386325e56b2f73db7deb7ad0193c22f77376b7db4cb2ef",
-    "tests/unit/test_epub_child.py": "5125186104095062992b5e37eb6ea5e1154e3f3b4f750c6476ddb925efa28f8f",
-    "tests/unit/test_epub_opening.py": "a958febbc7da9fdef0c29539795888ea170a00a1cdcb4c3c672a4dd5f12993cf",
+    "tests/unit/test_epub_child.py": "535a0bfa6f5366b15bb01006ff011b1524d099c44662c0101327a2aa84fb3121",
+    "tests/unit/test_epub_opening.py": "611a2c83c597891f91b07f6b8c74209f63e7d2d6f6cfcf91fbdd0a3453cf8366",
     "tests/unit/test_exact_artifact_qualification.py": "dcde11bd16a98a3ebb4651c49a8b694aa615e4ed84c29abfdab8c138e8c267cb",
     "tests/unit/test_field_effects.py": "281076bfe44918a608760e8a9f359eca68aa1d91aaa059ad25ca93a1e4259f3a",
     "tests/unit/test_field_value_comparison.py": "0945ed5934d9823a0aae764c5953bde69dd3b3ecf3e8a06aac899baf17dd8b90",
@@ -1303,7 +1306,7 @@
     "tests/unit/test_security_scanning_contract.py": "15cdc7cbc61ca9975c04f610cdd9ade28febdb57f715765adc5f5bfa589e1c1e",
     "tests/unit/test_setup_state_store.py": "f69347e23008015821c87eee2550bb1595d061985ee0baef30f4d0a04ebc9afe",
     "tests/unit/test_setup_web.py": "4aca217f13fa09f6b61c7950afa3214b16942381c107315161fbc7a93e76f137",
-    "tests/unit/test_shadow_decision.py": "01db6307be30277276b3773accfb303999398a44615b89bb4610d3b58a13a21c",
+    "tests/unit/test_shadow_decision.py": "c4b367838396b5891d97495f16672c6bd697011a7f05b18b89f2c958c6ccecc0",
     "tests/unit/test_shadow_outcome_persistence.py": "d4ba1210795e165324bda214a44bd15d553f8d968a67fba6d1b036b67948a6c0",
     "tests/unit/test_shadow_review_packets.py": "cc6a9b23ffc04c150bdb0522bf5cad6930fd8d6a34543909290e7db7efadfb56",
     "tests/unit/test_sqlite_row_delta_audit.py": "013e6a009bdff0208e11cdb9abf36eb240fec76b035f079801fc7580962a8221",
