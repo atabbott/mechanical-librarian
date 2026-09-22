@@ -773,3 +773,110 @@ def test_publication_winning_gate_transfers_owner_before_stop_linearizes(
     assert root._connection.execute(
         "SELECT stage,state,attempt,report_id FROM review_preparation_work"
     ).fetchone() == ("proposal", "running", 1, _report().report_id)
+
+
+@pytest.mark.parametrize("dormant", [False, True])
+@pytest.mark.parametrize("boundary", ["observation", "recovery"])
+def test_actual_supervisor_startup_failure_latches_closed_admission(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dormant: bool,
+    boundary: str,
+) -> None:
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPreparationSupervisor,
+    )
+
+    path = tmp_path / "application.sqlite3"
+    pipeline = _pipeline(root, path)
+    pipeline._observation_repository_factory = lambda: open_repository(
+        path, authority=root.authority, cross_thread=True
+    )
+    before = root._connection.execute(
+        "SELECT stage,state,attempt FROM review_preparation_work"
+    ).fetchall()
+
+    def fail(*_args):
+        raise RuntimeError("private startup failure detail")
+
+    if boundary == "observation":
+        pipeline._observation_repository_factory = fail
+    else:
+        monkeypatch.setattr(
+            SQLiteMetadataReportRepository, "recover_review_pipeline", fail
+        )
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    try:
+        if dormant and boundary == "recovery":
+            supervisor.start_dormant()
+            supervisor.admit()
+            assert pipeline._recovery_stop.wait(5)
+        else:
+            with pytest.raises((ReviewPipelineError, RuntimeError)):
+                (supervisor.start_dormant if dormant else supervisor.start)()
+        assert supervisor.recovery_required
+        supervisor.resume_admission()
+        assert not pipeline.run_next()
+        assert pipeline.owned_claims == ()
+        assert (
+            root._connection.execute(
+                "SELECT stage,state,attempt FROM review_preparation_work"
+            ).fetchall()
+            == before
+        )
+        assert pipeline.recovery_incidents
+        for incident in pipeline.recovery_incidents:
+            assert incident.stage == "discovery"
+            assert incident.code == "persistence"
+            assert incident.scope == "runtime"
+            assert "private" not in str(incident.to_data())
+    finally:
+        supervisor.stop()
+
+
+def test_actual_supervisor_timeout_retains_exact_active_claim_before_close(
+    root: SQLiteMetadataReportRepository, tmp_path: Path
+) -> None:
+    import threading
+    import time
+
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPreparationSupervisor,
+    )
+
+    path = tmp_path / "application.sqlite3"
+    pipeline = _pipeline(root, path)
+    pipeline._observation_repository_factory = lambda: open_repository(
+        path, authority=root.authority, cross_thread=True
+    )
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocked(*_args):
+        started.set()
+        assert release.wait(5)
+        raise ReviewPipelineError("parser_refused")
+
+    pipeline._extract = blocked
+    supervisor = ReviewPreparationSupervisor(pipeline, graceful_shutdown_seconds=1)
+    try:
+        supervisor.start()
+        assert started.wait(5)
+        (owner,) = pipeline.owned_claims
+        with pytest.raises(ReviewPipelineError, match="shutdown_timeout"):
+            supervisor.stop(deadline=time.monotonic())
+        assert pipeline.owned_claims == (owner,)
+        assert owner.stage == "extraction"
+        assert pipeline._observation_repository is not None
+        assert root._connection.execute(
+            "SELECT stage,state,attempt FROM review_preparation_work"
+        ).fetchone() == (owner.stage, "running", owner.attempt)
+    finally:
+        release.set()
+        supervisor.stop()
+    assert pipeline.owned_claims == ()
+    assert pipeline._observation_repository is None
+    assert root._connection.execute(
+        "SELECT stage,state FROM review_preparation_work"
+    ).fetchone() == ("extraction", "failed")
