@@ -6283,7 +6283,7 @@ def test_description_retry_retains_real_selected_choice(state):
 @pytest.mark.parametrize("width", [1440, 390, 320])
 @pytest.mark.parametrize("theme", ["light", "dark"])
 def test_preparation_stop_preserves_browse_and_requires_service_restart(
-    width: int, theme: str
+    width: int, theme: Literal["light", "dark"]
 ) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)

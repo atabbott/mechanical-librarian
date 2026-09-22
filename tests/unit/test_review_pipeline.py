@@ -9545,8 +9545,12 @@ def reports_path() -> Iterator[Path]:
         yield Path(directory) / "reports.sqlite3"
 
 
+@pytest.mark.parametrize(
+    "heartbeat_fault", [None, "initial", "owned", "successor", "settlement"]
+)
 def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
     reports_path: Path,
+    heartbeat_fault: str | None,
 ) -> None:
     predecessor = _report(
         title="Visible predecessor", content_digest="a", file_identity="b"
@@ -9557,6 +9561,9 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
     repository = open_repository(reports_path)
     repository.enter_shadow_preview(1)
     repository.close()
+
+    proposals: list[str] = []
+    provider_stages: list[str] = []
 
     def pipeline_for(report: MetadataReport, now: int) -> ReviewPreparationPipeline:
         proposal = evaluate_report(report)
@@ -9574,8 +9581,13 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
             return report.report_id, True
 
         def propose(bound, _: str) -> str:
+            proposals.append(report.report_id)
             bound.publish_proposal(proposal)
             return proposal.proposal_set_id
+
+        def providers(_bound, report_id: str):
+            provider_stages.append(report_id)
+            return ()
 
         def admit(bound, _: str) -> tuple[str, str | None]:
             value = json.loads(bound.admit_review_case(proposal))
@@ -9596,7 +9608,7 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
                 (replace(_entry("item-1", report.file.identity), library="ebooks"),),
             ),
             extract=extract,
-            providers=lambda *_: (),
+            providers=providers,
             propose=propose,
             admit=admit,
             project=project,
@@ -9635,7 +9647,73 @@ def test_recovery_successor_uses_normal_projection_and_atomic_package_cutover(
     repository.close()
 
     recovery = pipeline_for(successor, 30)
+    if heartbeat_fault is not None:
+        beats = 0
+        reader = sqlite3.connect(reports_path)
+        factory = recovery._repository_factory
+
+        def short_wait_repository():
+            bound = factory()
+            cast(SQLiteMetadataReportRepository, bound)._connection.execute(
+                "PRAGMA busy_timeout=1"
+            )
+            return bound
+
+        recovery._repository_factory = short_wait_repository
+
+        def heartbeat() -> None:
+            nonlocal beats
+            beats += 1
+            boundary = {"initial": 1, "owned": 2, "successor": 3, "settlement": 3}[
+                heartbeat_fault
+            ]
+            if beats == boundary:
+                if heartbeat_fault == "settlement":
+                    reader.execute("BEGIN")
+                    reader.execute("SELECT * FROM review_preparation_work").fetchall()
+                raise RuntimeError("synthetic heartbeat interruption")
+
+        try:
+            with pytest.raises(
+                RuntimeError if heartbeat_fault == "initial" else ReviewPipelineError
+            ):
+                recovery.run_recovery_successor(successor.report_id, heartbeat)
+            stage, state, attempt = reader.execute(
+                "SELECT stage,state,attempt FROM review_preparation_work WHERE report_id=?",
+                (successor.report_id,),
+            ).fetchone()
+            assert stage == (
+                "proposal"
+                if heartbeat_fault in {"successor", "settlement"}
+                else "provider"
+            )
+            assert state == (
+                "queued"
+                if heartbeat_fault == "initial"
+                else "running"
+                if heartbeat_fault == "settlement"
+                else "failed"
+            )
+            assert attempt == (0 if heartbeat_fault == "initial" else 1)
+            if heartbeat_fault == "settlement":
+                (owned,) = recovery.owned_claims
+                assert (owned.stage, owned.attempt) == (stage, attempt)
+                assert recovery.recovery_required
+                assert recovery.recovery_incidents[0].settlement_code == "persistence"
+                recovery.resume_claiming()
+                assert not recovery.run_next()
+            else:
+                assert not recovery.owned_claims and not recovery.recovery_required
+        finally:
+            reader.rollback()
+            reader.close()
+        if heartbeat_fault != "settlement":
+            return
+        recovery = pipeline_for(successor, 30)
+        recovery.recover()
     assert recovery.run_recovery_successor(successor.report_id)
+    assert proposals.count(successor.report_id) == 1
+    assert provider_stages.count(successor.report_id) == 1
     repository = open_repository(reports_path)
     current = repository.current_review_package("primary", "ebooks", "item-1")
     assert current is not None

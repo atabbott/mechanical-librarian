@@ -198,7 +198,11 @@ def test_closed_event_loop_cannot_fail_publish_registration_or_shutdown() -> Non
     healthy = channel.subscribe(0)
     loop = asyncio.new_event_loop()
     loop.close()
-    broken.wake_with(lambda: loop.call_soon_threadsafe(lambda: None))
+
+    def wake_closed_loop() -> None:
+        loop.call_soon_threadsafe(lambda: None)
+
+    broken.wake_with(wake_closed_loop)
     wakes: list[bool] = []
     healthy.wake_with(lambda: wakes.append(True))
 

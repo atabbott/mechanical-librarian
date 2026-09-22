@@ -1531,7 +1531,7 @@ class ReviewPreparationSupervisor:
 
     def _schedule_due(self) -> None:
         with self._schedule_lock:
-            if getattr(self._pipeline, "recovery_required", False):
+            if self._pipeline.recovery_required:
                 return
             if self._polling_interval_seconds is None:
                 return

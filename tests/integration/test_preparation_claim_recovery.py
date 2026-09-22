@@ -198,7 +198,12 @@ def test_unsettled_committed_successor_restarts_without_repeating_extraction(
         AssertionError("committed extraction must not repeat")
     )
     providers: list[str] = []
-    restarted._providers = lambda _, report: providers.append(report) or ()
+
+    def record_provider(_, report):
+        providers.append(report)
+        return ()
+
+    restarted._providers = record_provider
     restarted.recover()
     assert restarted.run_next(maximum_actions=1)
     assert providers == [_report().report_id]
@@ -451,6 +456,7 @@ def test_actual_report_application_and_stage_faults_use_committed_owner(
 ) -> None:
     import threading
 
+    from mechanical_librarian.application.catalogue import CatalogueReader
     from mechanical_librarian.application.configuration import (
         ApplicationConfiguration,
         LibraryConfiguration,
@@ -463,6 +469,9 @@ def test_actual_report_application_and_stage_faults_use_committed_owner(
         InspectionResult,
         TargetFile,
         TargetSnapshot,
+    )
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        ProviderFailureObserver,
     )
     from mechanical_librarian.application.review_pipeline_stages import (
         ReviewPipelineStages,
@@ -581,7 +590,7 @@ def test_actual_report_application_and_stage_faults_use_committed_owner(
     stages = ReviewPipelineStages(
         configuration=ApplicationConfiguration((), (), (), ()),
         catalogue=unused,
-        catalogue_reader=cast(object, None),
+        catalogue_reader=cast(CatalogueReader, None),
         probe_connection=unused,
         connections=frozenset(),
         repository_factory=unused,
@@ -590,7 +599,7 @@ def test_actual_report_application_and_stage_faults_use_committed_owner(
         create_proposal_set=unused,
         admit_review_case=unused,
         cover_considerations=unused,
-        recovery_observer=cast(object, None),
+        recovery_observer=cast(ProviderFailureObserver, None),
         drain_outbox=unused,
         discovery_lock=threading.Lock(),
         clock=lambda: 10,
@@ -712,7 +721,9 @@ def test_publication_gate_and_existing_output_writer_cannot_invert_locks(
 
 
 def test_publication_winning_gate_transfers_owner_before_stop_linearizes(
-    root: SQLiteMetadataReportRepository, tmp_path: Path
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import threading
 
@@ -731,7 +742,7 @@ def test_publication_winning_gate_transfers_owner_before_stop_linearizes(
             observed.append(action)
             transferred.set()
 
-    pipeline._own = own
+    monkeypatch.setattr(pipeline, "_own", own)
 
     def stop() -> None:
         stop_started.set()
@@ -875,7 +886,7 @@ def test_actual_supervisor_timeout_retains_exact_active_claim_before_close(
     finally:
         release.set()
         supervisor.stop()
-    assert pipeline.owned_claims == ()
+    assert not pipeline.owned_claims
     assert pipeline._observation_repository is None
     assert root._connection.execute(
         "SELECT stage,state FROM review_preparation_work"
