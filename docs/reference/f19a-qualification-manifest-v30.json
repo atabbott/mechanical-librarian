@@ -1,9 +1,9 @@
 {
   "audiobook_activation": {
     "clean_rebuild_required": true,
-    "frozen_candidate_sha": "6815ebfaa7f61ba9af3ea6e4620bed9649153a09",
+    "frozen_candidate_sha": "3b59f6a678463a5ae69d43a4acdb96242bf4ec9a",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v13.json",
-    "manifest_sha256": "66cf051bc5825f77f8c8b1e724376094540599ea105b92e94fb0631f513ea914",
+    "manifest_sha256": "66c8547a5092ec3665aaa566a75599bf22ba7b634d18e6927ae39b813db03489",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -93,6 +93,7 @@
     "production_writes": 0,
     "provider_threshold_durable_controls": 5,
     "provider_threshold_shadow_controls": 2,
+    "recording_author_compatibility_controls": 16,
     "typed_credit_container_controls": 36
   },
   "base_sha": "f9ca341c651732dead04ed9f88948ed129753757",
@@ -110,7 +111,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "6815ebfaa7f61ba9af3ea6e4620bed9649153a09"
+    "source_sha": "3b59f6a678463a5ae69d43a4acdb96242bf4ec9a"
   },
   "build_provenance_paths": [
     "frontend/package-lock.json",
@@ -126,7 +127,7 @@
     "retained_controls": 2,
     "source_reconstructions": 2
   },
-  "frozen_candidate_sha": "6815ebfaa7f61ba9af3ea6e4620bed9649153a09",
+  "frozen_candidate_sha": "3b59f6a678463a5ae69d43a4acdb96242bf4ec9a",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f19a-qualification-manifest-v24.json",
@@ -218,7 +219,7 @@
         "prior_sha256": "35ce624a8b089f52b228f24b1e235000c315389f9523ec8308bafd6694baddc4"
       },
       "docs/architecture/decisions/0029-provider-independent-shadow-decision-preview.md": {
-        "current_sha256": "681461f400baf106424a7dc68c8213f9dd7afe9d554c1a54830573c5e43f61ab",
+        "current_sha256": "744f8a75b5e5118afdda1746ecc652c3ca7de63ee3fe89f702a5e8bb966c29c5",
         "prior_sha256": null
       },
       "docs/architecture/security.md": {
@@ -286,7 +287,7 @@
         "prior_sha256": "420af0cdb3932b8851f40eb89cb56cb210397b84862d8f84b7cd1e60157c3d8e"
       },
       "src/mechanical_librarian/domain/shadow_decision.py": {
-        "current_sha256": "a48dda5bfe43501b36bfbae1db8d99882c5cd2809aa66d19c4dc9cc8012c4781",
+        "current_sha256": "3ebd6b660ae2a4ecdc93067819b35c098f4629e802e024df2e41f5e0b983195b",
         "prior_sha256": "8d6fcff5b4af8a71d76a46efb3e6131caeb7cd7d06a03a027f95447f0850502f"
       },
       "tests/architecture/test_import_boundaries.py": {
@@ -644,7 +645,7 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "6815ebfaa7f61ba9af3ea6e4620bed9649153a09",
+    "current_source_sha": "3b59f6a678463a5ae69d43a4acdb96242bf4ec9a",
     "introduced_sources": {
       "frontend/src/queryWork.ts": {
         "current_sha256": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
@@ -834,7 +835,7 @@
     "CONTRIBUTING.md": "c57b0ac08c7ab42e438227a428bdc7ed562194596a80aaa908709473a06fe9e7",
     "Dockerfile": "c94301cb66ff88149f117cefa3f129d53a5675234aa09de0a92dbfa72a0270ae",
     "README.md": "3e229e43335d39199d97979f271c44ca3973de5515506dc137e85d63e1070d1d",
-    "docs/architecture/decisions/0029-provider-independent-shadow-decision-preview.md": "681461f400baf106424a7dc68c8213f9dd7afe9d554c1a54830573c5e43f61ab",
+    "docs/architecture/decisions/0029-provider-independent-shadow-decision-preview.md": "744f8a75b5e5118afdda1746ecc652c3ca7de63ee3fe89f702a5e8bb966c29c5",
     "docs/architecture/decisions/0059-deterministic-cover-election.md": "b5f1e4c1b37d6029bbdda0caca202a97c210f18db2bc0f4423e37b128df6756e",
     "docs/architecture/decisions/0061-audiobook-provider-posture.md": "230acf3e386985d053fe428ce61f1301e857c70237f97d5bea5484ab132b7acd",
     "docs/architecture/decisions/0071-book-media-guarded-application.md": "325c5c20e4b7f41a4fe4149c0d225e0d025837571b2265cacc35faecbb448b14",
@@ -1046,8 +1047,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "7cedc2eb94eace7785fa78b0864dd5c2eca8ac475d1fc53bbce9970c814c3be7",
-    "src/mechanical_librarian/domain/automatic_decision.py": "fa752af47c0c00ff1242630b915b1d24fc8369b2699b95566f1c8f18dffaa3b9",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "72f89c319200278614ac7f7286ce9e63474e86c3976042ba3321c58ec1f4d088",
+    "src/mechanical_librarian/domain/automatic_decision.py": "0f6060bc551a8a988b4e7d5af447e361c0d5c183644d034b9a3ab4cfc1ae2d19",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -1078,9 +1079,9 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "e11e225cf4ec69dcb32ba8f3c060258b297759e3662e6bf40897d3d0a6bb02a4",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "3bd96e953f45152e9a752205564c1aac1ff1f3751e59a7c05b8b776f5d913b44",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
-    "src/mechanical_librarian/domain/shadow_decision.py": "a48dda5bfe43501b36bfbae1db8d99882c5cd2809aa66d19c4dc9cc8012c4781",
+    "src/mechanical_librarian/domain/shadow_decision.py": "3ebd6b660ae2a4ecdc93067819b35c098f4629e802e024df2e41f5e0b983195b",
     "src/mechanical_librarian/domain/shadow_outcome.py": "e9393bded0bc22b776522229543e03bde7fd8100582fa1ce071835102e9a96ef",
     "src/mechanical_librarian/domain/shadow_review.py": "fdf606718d5473ec06aed2b95cdf34b9c199b457214685afed2a1c6388ce952a",
     "src/mechanical_librarian/domain/shadow_review_actions.py": "6daf6f1e610ac5ecd38c063f5ae1a2395d7cc568e5f5c685518771092598a64f",
