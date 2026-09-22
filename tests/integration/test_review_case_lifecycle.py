@@ -699,13 +699,14 @@ def test_generated_authors_cross_persistence_owner_projection_and_guarded_fake_e
 
 @pytest.mark.parametrize("rear", (False, True))
 @pytest.mark.parametrize("recovered", (False, True))
+@pytest.mark.parametrize("scenario", ("mixed", "copyright_notice"))
 def test_mixed_author_indicia_cannot_fill_empty_target_automatically(
-    tmp_path, rear, recovered
+    tmp_path, rear, recovered, scenario
 ):
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
     from tests.support.author_evidence import author_report, publish_author_case
 
-    report = author_report(tmp_path / "media", "mixed", rear=rear, recovered=recovered)
+    report = author_report(tmp_path / "media", scenario, rear=rear, recovered=recovered)
     repository = open_repository(tmp_path / "mixed.sqlite")
     try:
         case_id, proposal = publish_author_case(repository, report)

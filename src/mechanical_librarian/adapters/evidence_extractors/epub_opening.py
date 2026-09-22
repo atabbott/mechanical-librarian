@@ -3171,7 +3171,7 @@ _AUTHOR_BYLINE = re.compile(r"^(?:by|written by)\s+(.+)$", re.I)
 # the original anchored patterns still govern their own evidence extraction.
 _AUTHOR_COMPETING_INDICIA = re.compile(
     rf"(?<!\w)(?:{_BIBLIOGRAPHIC_INDICIA_LABEL_CUE.pattern}|"
-    rf"{_NON_BIBLIOGRAPHIC_INDICIA.pattern.removeprefix('^')})",
+    rf"{_NON_BIBLIOGRAPHIC_INDICIA.pattern.removeprefix('^')}|all rights reserved\b)",
     re.I,
 )
 
