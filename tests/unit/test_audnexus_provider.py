@@ -863,3 +863,46 @@ def test_actual_isbn_source_reasons_preserve_earlier_policy_precedence(
         for candidate in provider.candidates
     )
     assert d.MetadataReport.from_json(report.to_json()).to_json() == report.to_json()
+
+
+@pytest.mark.parametrize("key", ["title", "subtitle"])
+@pytest.mark.parametrize("value", ["Example\u200b Book", "Café — 日本語!"])
+def test_http_title_isolation_preserves_candidate_evidence(
+    key: str, value: str
+) -> None:
+    from mechanical_librarian.domain.metadata_report import FieldState
+
+    document = payload("audnexus_book")
+    document[key] = value
+    _seen, handle = _recorder(book=_json(document))
+    observation = _provider(handle).observe(asin_plan()).observation
+    assert observation.status is ProviderStatus.CANDIDATES
+    kind = ClaimKind.SUBTITLE if key == "subtitle" else ClaimKind.TITLE
+    claims = [
+        claim for candidate in observation.candidates for claim in candidate.claims
+    ]
+    from mechanical_librarian.adapters.providers.audnexus_metadata import _candidate
+
+    physical = _candidate(
+        "audnexus",
+        document,
+        asin_plan().local_claims,
+        marketplace="us",
+        chapters=None,
+        schema_rejections=lambda _: None,
+    )
+    if key == "subtitle" and "\u200b" in value:
+        assert not any(claim.kind is ClaimKind.SUBTITLE for claim in claims)
+    selected = [claim for claim in physical.claims if claim.kind is kind]
+    assert selected
+    expected = FieldState.MALFORMED if "\u200b" in value else FieldState.VALID
+    assert any(
+        claim.state is expected
+        and claim.value == (None if expected is FieldState.MALFORMED else value)
+        for claim in selected
+    )
+    assert any(
+        claim.kind is ClaimKind.CREATOR and claim.state is FieldState.VALID
+        for claim in claims
+    )
+    assert all(claim.value is None or "\u200b" not in claim.value for claim in claims)

@@ -184,7 +184,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v46"
+    assert report.schema_version == "metadata-report-v47"
     assert report == MetadataReport.from_json(report.to_json())
 
 
@@ -1323,3 +1323,56 @@ def test_incomplete_or_different_p50_authors_cannot_become_single_author(
         assert len(authors) == 2
         assert all(claim.role == "author" for claim in authors)
         assert sum(claim.state is FieldState.ABSENT for claim in authors) == 1
+
+
+@pytest.mark.parametrize("key", ["wdt:P1476", "wdt:P1680"])
+def test_http_title_rejection_retains_identifier(key: str) -> None:
+    entity = {
+        "uri": "inv:edition-one",
+        "labels": {"en": "Example Book"},
+        "claims": {"wdt:P212": ["9780306406157"], key: ["Example\u200b Book"]},
+    }
+    observation = (
+        _provider(
+            httpx.MockTransport(
+                lambda _: httpx.Response(
+                    200,
+                    json={
+                        "entities": {"inv:edition-one": entity},
+                        "redirects": {"isbn:9780306406157": "inv:edition-one"},
+                    },
+                )
+            )
+        )
+        .observe(_lookup())
+        .observation
+    )
+    assert observation.status is ProviderStatus.CANDIDATES
+    claims = observation.candidates[0].claims
+    kind = ClaimKind.TITLE if key == "wdt:P1476" else ClaimKind.SUBTITLE
+    assert any(
+        claim.kind is kind
+        and claim.state is FieldState.MALFORMED
+        and claim.value is None
+        for claim in claims
+    )
+    assert any(
+        claim.kind is ClaimKind.ISBN and claim.value == "9780306406157"
+        for claim in claims
+    )
+
+
+def test_entity_label_title_rejection_uses_same_ingress() -> None:
+    from mechanical_librarian.adapters.providers.inventaire_metadata import (
+        _work_candidate,
+    )
+
+    candidate = _work_candidate(
+        "inventaire",
+        {"uri": "wd:Q100", "claims": {}},
+        (),
+        {"wd:Q100": "Example\u200b Book"},
+    )
+    assert candidate.claims[0].kind is ClaimKind.TITLE
+    assert candidate.claims[0].state is FieldState.MALFORMED
+    assert candidate.claims[0].value is None

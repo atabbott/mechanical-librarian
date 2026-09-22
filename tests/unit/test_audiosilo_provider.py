@@ -373,3 +373,34 @@ def test_series_keeps_ordered_pairs_and_malformed_companions(companion):
     assert claims[3].value == ("7" if companion.get("sequence") == 7 else None)
     if not companion or type(companion.get("sequence")) is list:
         assert any(claim.state.value == "malformed" for claim in claims[2:])
+
+
+@pytest.mark.parametrize("key", ["title"])
+@pytest.mark.parametrize("value", ["Example\u200b Book", "Café — 日本語!"])
+def test_http_title_isolation_preserves_candidate_evidence(
+    key: str, value: str
+) -> None:
+    from mechanical_librarian.domain.metadata_report import FieldState
+
+    document = payload("audiosilo_work")
+    document[key] = value
+    _seen, handle = _recorder(work=_json(document))
+    observation = _provider(handle).observe(asin_plan()).observation
+    assert observation.status is ProviderStatus.CANDIDATES
+    kind = ClaimKind.SUBTITLE if key == "subtitle" else ClaimKind.TITLE
+    claims = [
+        claim for candidate in observation.candidates for claim in candidate.claims
+    ]
+    selected = [claim for claim in claims if claim.kind is kind]
+    assert selected
+    expected = FieldState.MALFORMED if "\u200b" in value else FieldState.VALID
+    assert any(
+        claim.state is expected
+        and claim.value == (None if expected is FieldState.MALFORMED else value)
+        for claim in selected
+    )
+    assert any(
+        claim.kind is ClaimKind.CREATOR and claim.state is FieldState.VALID
+        for claim in claims
+    )
+    assert all(claim.value is None or "\u200b" not in claim.value for claim in claims)

@@ -1015,3 +1015,47 @@ def test_incompatible_product_canonical_id_cannot_block_plausible_cast() -> None
         x.destination == "narrators" and x.recommendation == "recommend_candidate"
         for x in decisions
     )
+
+
+@pytest.mark.parametrize("key", ["title", "subtitle"])
+@pytest.mark.parametrize("value", ["Example\u200b Book", "Café — 日本語!"])
+def test_http_title_isolation_preserves_candidate_evidence(
+    key: str, value: str
+) -> None:
+    from mechanical_librarian.domain.metadata_report import FieldState
+
+    document = payload("audible_lookup")
+    document["product"][key] = value
+    _seen, handle = _recorder(default=_json(document))
+    observation = _provider(handle).observe(asin_plan()).observation
+    assert observation.status is ProviderStatus.CANDIDATES
+    kind = ClaimKind.SUBTITLE if key == "subtitle" else ClaimKind.TITLE
+    claims = [
+        claim for candidate in observation.candidates for claim in candidate.claims
+    ]
+    from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
+        _candidate,
+    )
+
+    physical = _candidate(
+        "audible_catalog",
+        document["product"],
+        asin_plan().local_claims,
+        marketplace="us",
+        schema_rejections=lambda _: None,
+    )
+    if key == "subtitle" and "\u200b" in value:
+        assert not any(claim.kind is ClaimKind.SUBTITLE for claim in claims)
+    selected = [claim for claim in physical.claims if claim.kind is kind]
+    assert selected
+    expected = FieldState.MALFORMED if "\u200b" in value else FieldState.VALID
+    assert any(
+        claim.state is expected
+        and claim.value == (None if expected is FieldState.MALFORMED else value)
+        for claim in selected
+    )
+    assert any(
+        claim.kind is ClaimKind.CREATOR and claim.state is FieldState.VALID
+        for claim in claims
+    )
+    assert all(claim.value is None or "\u200b" not in claim.value for claim in claims)

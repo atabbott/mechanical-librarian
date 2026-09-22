@@ -2445,3 +2445,39 @@ def test_incumbent_paragraph_roundtrip_keeps_source_fingerprint_exact() -> None:
         "description", changed
     )
     assert values_match(TargetDestination.DESCRIPTION, current, changed)
+
+
+@pytest.mark.parametrize("kind", [ClaimKind.TITLE, ClaimKind.SUBTITLE])
+@pytest.mark.parametrize("value", ["Example\u200b Book", "\u200b", "Example\u2060Book"])
+def test_valid_provider_title_requires_comparison_safe_text(
+    kind: ClaimKind, value: str
+) -> None:
+    with pytest.raises(ReportValueError, match="title is invalid"):
+        ProviderClaim.create(
+            provider="catalogue",
+            candidate="edition-1",
+            kind=kind,
+            value=value,
+            state=FieldState.VALID,
+            scope=ClaimScope.WORK,
+            applicability="not_applicable",
+        )
+
+
+@pytest.mark.parametrize("kind", [ClaimKind.TITLE, ClaimKind.SUBTITLE])
+@pytest.mark.parametrize(
+    "value", ["Café — 日本語!", "Cafe\u0301", "A: Different Title"]
+)
+def test_valid_provider_title_retains_exact_unicode(
+    kind: ClaimKind, value: str
+) -> None:
+    claim = ProviderClaim.create(
+        provider="catalogue",
+        candidate="edition-1",
+        kind=kind,
+        value=value,
+        state=FieldState.VALID,
+        scope=ClaimScope.WORK,
+        applicability="not_applicable",
+    )
+    assert claim.value == value

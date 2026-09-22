@@ -567,3 +567,47 @@ def test_every_admitted_artwork_shard_is_acquired(shard: int) -> None:
     assert (
         f"https://is{shard}-ssl.mzstatic.com/image/thumb/a/600x600bb.jpg",
     ) == tuple(set(_descriptor_urls(document)))
+
+
+@pytest.mark.parametrize("key", ["collectionName"])
+@pytest.mark.parametrize("value", ["Example\u200b Book", "Café — 日本語!"])
+def test_http_title_isolation_preserves_candidate_evidence(
+    key: str, value: str
+) -> None:
+    from mechanical_librarian.domain.metadata_report import FieldState
+
+    document = payload("itunes_search")
+    document["results"][0][key] = value
+    _seen, handle = _recorder(search=_store(document))
+    observation = _provider(handle).observe(work_plan()).observation
+    assert observation.status is ProviderStatus.CANDIDATES
+    kind = ClaimKind.SUBTITLE if key == "subtitle" else ClaimKind.TITLE
+    claims = [
+        claim for candidate in observation.candidates for claim in candidate.claims
+    ]
+    from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+        _candidate,
+    )
+
+    physical = _candidate(
+        "itunes",
+        document["results"][0],
+        work_plan().local_claims,
+        schema_rejections=lambda _: None,
+    )
+    assert all(
+        candidate.identity != physical.identity for candidate in observation.candidates
+    )
+    selected = [claim for claim in physical.claims if claim.kind is kind]
+    assert selected
+    expected = FieldState.MALFORMED if "\u200b" in value else FieldState.VALID
+    assert any(
+        claim.state is expected
+        and claim.value == (None if expected is FieldState.MALFORMED else value)
+        for claim in selected
+    )
+    assert any(
+        claim.kind is ClaimKind.CREATOR and claim.state is FieldState.VALID
+        for claim in claims
+    )
+    assert all(claim.value is None or "\u200b" not in claim.value for claim in claims)
