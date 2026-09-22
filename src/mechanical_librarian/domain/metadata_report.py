@@ -52,6 +52,7 @@ from mechanical_librarian.domain.epub_inspection import (
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    validate_incumbent_description,
     validate_projection_text,
     validate_role_projection,
 )
@@ -77,7 +78,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v44"
+REPORT_SCHEMA = "metadata-report-v45"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -399,13 +400,15 @@ class TargetField:
             return
         if type(self.value) is not str or not self.value:
             raise ReportValueError("target scalar field is invalid")
-        _projection_text(
-            self.value,
-            "target scalar value",
-            MAX_DESCRIPTION_CHARACTERS
-            if self.destination is TargetDestination.DESCRIPTION
-            else MAX_SCALAR_CHARACTERS,
-        )
+        if self.destination is TargetDestination.DESCRIPTION:
+            try:
+                validate_incumbent_description(
+                    self.value, "target scalar value", MAX_DESCRIPTION_CHARACTERS
+                )
+            except EvidenceValueError as error:
+                raise ReportValueError("target scalar value is invalid") from error
+        else:
+            _projection_text(self.value, "target scalar value", MAX_SCALAR_CHARACTERS)
 
     def to_data(self) -> dict[str, object]:
         value: object = self.value

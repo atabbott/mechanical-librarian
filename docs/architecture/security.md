@@ -752,7 +752,7 @@ deadline, byte, and request-count authority. Attempt records are bounded and
 process-local. Provider adapters also count optional parser/schema rejections
 at their actual rejection points. The application canonically merges those
 counts once with the attempt categories and incomplete-outcome mapping for
-`metadata-report-v44`; provider, attempt ordinal, delay, elapsed time,
+`metadata-report-v45`; provider, attempt ordinal, delay, elapsed time,
 headers, bodies, and exception text are dropped. Application-created
 query-limit outcomes follow the same closed mapping and persist
 provider/lookup_construction/lookup without constructing or invoking a
@@ -1505,3 +1505,17 @@ or ISBN. Bounded ASIN acquisition and matched-runtime vetoes retain their
 separate roles. A lookup hint or runtime alone grants no work or recording
 authority. Existing provider
 limits, isolated probe limits, read-only media and explicit retry stay unchanged.
+
+## Incumbent description paragraphs
+
+Report v45 retains exact Audiobookshelf incumbent description text (#1080),
+including LF/CRLF paragraphs and space/tab boundary whitespace. This field-only
+vocabulary preserves original character/byte bounds, exact string types, and
+control/Unicode, private-path and credential refusal; lone CR, internal tabs and
+blank text remain malformed. Intake checks safety before oversized classification;
+domain admission checks original bounds before controls, paths and credentials.
+Provider descriptions and generic scalar admission are unchanged. NFC, whitespace
+collapse and case folding are comparison-only: fingerprints, field-effect versions,
+optimistic preconditions and read-back remain exact. A populated value cannot become
+fill-empty. Owner-final, Ask/Ignore, consent, backup and verification authority are
+unchanged. The report/SQL successor requires a clean rebuild, never migration.

@@ -168,6 +168,8 @@ def _write_facts(
         summary = (
             "Split title and subtitle"
             if confirmed
+            else "Paired title and subtitle change unconfirmed"
+            if state == "reconciling"
             else "Paired title and subtitle change pending"
             if not failure
             else "Paired title and subtitle change stopped"
@@ -193,10 +195,18 @@ def _write_facts(
         ]
     change = set_change(destination, previous, desired)
     chosen = chooser_label(origin)
+    if state == "reconciling":
+        return ReadableChange("Change not confirmed yet", "Change not confirmed yet"), [
+            {"label": "Selected value", "value": value_text(destination, desired)},
+            {"label": "Chosen by", "value": chosen},
+            {"label": "Confirmed in Audiobookshelf", "value": "Not confirmed yet"},
+            {
+                "label": "What happens next",
+                "value": "Mechanical Librarian checks the current value again",
+            },
+        ]
     if failure:
-        # A write that stopped never applied a value, so it states what it had
-        # prepared and why it stopped rather than a before and an after that
-        # the library never saw.
+        # A closed preparation may follow a write whose outcome was not confirmed.
         facts = [
             {"label": "Prepared value", "value": value_text(destination, desired)},
             {"label": "Why it stopped", "value": failure_reason(failure)},
@@ -213,7 +223,10 @@ def _write_facts(
                 "Prepared change paused", "Prepared change paused"
             ), facts
         facts.append(
-            {"label": "Confirmed in Audiobookshelf", "value": "No write was applied"}
+            {
+                "label": "Confirmed in Audiobookshelf",
+                "value": "The selected change was not confirmed",
+            }
         )
         return ReadableChange("Prepared change closed", "Prepared change closed"), facts
     facts = [

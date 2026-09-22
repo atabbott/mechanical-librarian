@@ -779,3 +779,40 @@ def test_publication_date_transport_and_report_reader_define_the_supported_shape
         TargetFieldState.VALUE if readable else TargetFieldState.MALFORMED
     )
     assert observed.value == (value if readable else None)
+
+
+@pytest.mark.parametrize("current", ("First\n\nSecond", " \tFirst\r\n\r\nSecond\t "))
+def test_multiline_description_effect_keeps_exact_currentness_and_readback(
+    case: _Case, current: str
+) -> None:
+    case.detail["media"]["metadata"]["description"] = current
+    desired = "Selected description."
+    plan = _plan(
+        "description", current, desired, field_value_version("description", current)
+    )
+    observed = case.target.read(plan)
+    assert observed.value == current
+    assert observed.version == field_value_version("description", current)
+    assert case.target.apply(plan).outcome == "accepted"
+    assert case.target.read(plan).value == desired
+    patches = [request for request in case.requests if request.method == "PATCH"]
+    assert len(patches) == 1
+    assert json.loads(patches[0].content) == {"metadata": {"description": desired}}
+
+
+def test_description_formatting_drift_is_not_an_effect_precondition_match(
+    case: _Case,
+) -> None:
+    current = "First\r\nSecond"
+    case.detail["media"]["metadata"]["description"] = current.replace("\r\n", "\n")
+    plan = _plan(
+        "description",
+        current,
+        "Selected description.",
+        field_value_version("description", current),
+    )
+    observed = case.target.read(plan)
+    assert observed.version != plan.target_version
+    assert observed.value != plan.pre_value
+    assert case.target.apply(plan).outcome == "conflict"
+    assert not any(request.method == "PATCH" for request in case.requests)

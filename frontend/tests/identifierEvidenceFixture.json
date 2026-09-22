@@ -96,7 +96,7 @@
         ],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_de670ea19ae8c227a8fdcc432bff98757bb8ecbfd455785f9cc18126b96bac48",
+        "proposal_id": "review_proposal_3d51eda4b802b17e787a4b0b51bedcaa3b58d9092993133260a5dd4d0b6e244e",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": ["competing_evidence"],
         "cover_consideration": null,
@@ -179,7 +179,7 @@
         ],
         "preservation_only": true,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_b5bddb8371ad2d705c94e14ef8651400fca70435f55f0bae48b02bc14feb0efd",
+        "proposal_id": "review_proposal_1ae88b88523b92e3e3b9d2109c2125d5be6578f4c95ade679efa8ce91838dff5",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -223,7 +223,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_bb91162662d224f0003860a0597849464a6e01c90e38b400d802b1bd57893011",
+        "proposal_id": "review_proposal_3eb3020ec9bb7be537699ca147c4ab704628b31cc8a0e4e9eac1c608b371a627",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -306,7 +306,7 @@
         ],
         "preservation_only": true,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_e5ebc565e4e7e0cca4e2170940b46f2117ce65da04f6487002955831e803d714",
+        "proposal_id": "review_proposal_96dac753d0c13a60c6c89d6f91da13144c37b7b75041e57507812c4f598e189e",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -350,7 +350,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_883e1810976d21293862d3b725a625398b52026e775c6e6c525f57f5b0fdb6a1",
+        "proposal_id": "review_proposal_5ff79cd33d513673901d45505eac219ba13395dc2253ca033b46e8ee4aa90eb6",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -394,7 +394,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_8a5c274765c89107b1277f7bb5253f6e6a3398fb59575a4dfa1c3becccd4fe82",
+        "proposal_id": "review_proposal_4554661862fdb30e81e64c64d36a77fdc6f26e032d810afd0252458e6d7f58cf",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -438,7 +438,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_2705ce50d5e41771e26eec16b9b8e477e37691f10103c4fd7308d76c93caa4eb",
+        "proposal_id": "review_proposal_46da5b54135a6c343da7afe93caffc998a62b52fa1a13aa621ba9da1d2b0e7ea",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -482,7 +482,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_0b18b1121fdf20c53e77a854fef072377356581bcdc147f440773efe2c849925",
+        "proposal_id": "review_proposal_38665d3fbae94bce0000be0c9634f35e6a8575391f619046f3e00851f0a3c470",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -526,7 +526,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_88f7c70185456f648f591de20d6c9f64ed1f6c85c81fb60779ca146d9efcc16d",
+        "proposal_id": "review_proposal_60f47a4f07b1c5be5b70cd6b29d44eb2802254ed14f176bde44453f9c1d1ee8e",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -570,7 +570,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_1bb905ba3457d0c326d548408aa09e0bbfceaf5c3a9f884d1a2c4b0791d9af5b",
+        "proposal_id": "review_proposal_774633fdc273886111a9559c6d576815052baec07e8866a81fe2c1b572de8630",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -614,7 +614,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_afc5564ccc113be1502b4df6b433754e3147774feec2ae7c183a66378adf1256",
+        "proposal_id": "review_proposal_0486f5027059846357d313500bbe6613df2fa5446c9a429038ae0c40fbbada00",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -658,7 +658,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_c2629e6d4917578ceb7efab6645a7d316753e55bc2c80a1e826073ea142f2d50",
+        "proposal_id": "review_proposal_09562a5898b10f90b5a10e8086e227dfb680ff1a734c4e1c4b42423504d3303c",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -702,7 +702,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_e1df0fe5f9a85a9aa0cd2b48c0545300b59601e2411716bc48b1e6d6041b8c1f",
+        "proposal_id": "review_proposal_566187dd7b6d4c0621988926eac1339e395a224538c38c54d8be4627c763f993",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -746,7 +746,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_100d2ab816a8995a9bfe9cee7584c722bd2cb1fb3478ed84e8d3244fe64dff5e",
+        "proposal_id": "review_proposal_d07cf0c59d82ee2615fe9fca9c5fd5d3917e75621ad0e2d6a590d964251ba9e3",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -790,7 +790,7 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_0b09350b1f84ebc9b172359f4378418599c17c98339d457606bde705de92e09c",
+        "proposal_id": "review_proposal_dcdc028ca7d4b03a854ddad410d79ef45019840e06c69c7d7d71685407e68359",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
@@ -798,7 +798,7 @@
       }
     ],
     "media_health": [],
-    "review_case_id": "review_case_9ba1aa09086902b667a856843dac77514b08f6eac4e1e7b8fc9240d2f2132b0d",
+    "review_case_id": "review_case_88f91f039be2d755cbb1ed591e38b2d617fcfc921b6e932f789bfd1732bf9cb7",
     "schema_version": "review-case-detail-v4",
     "target": {
       "authors": ["Example Author"],
@@ -814,15 +814,15 @@
     "items": [
       {
         "destinations": ["asin"],
-        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audible-product-B000000002. Reference: provider_0c17fd8454d8cded359e2ad0aa7aff007ca275eb1527ada788a3dcb0344694c4.",
         "role": "external_observation",
-        "source": "Audible"
+        "source": "Audible",
+        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audible-product-B000000002. Reference: provider_0c17fd8454d8cded359e2ad0aa7aff007ca275eb1527ada788a3dcb0344694c4."
       },
       {
         "destinations": ["isbn"],
-        "observation": "ISBN: 9780593135204. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown. Source record: audnexus-book-B000000002. Reference: provider_1cc10628ca1712ecbc28228be457622c2321f19e348091848cb6e49158c4ba94.",
         "role": "external_observation",
-        "source": "Audnexus"
+        "source": "Audnexus",
+        "observation": "ISBN: 9780593135204. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown. Source record: audnexus-book-B000000002. Reference: provider_1cc10628ca1712ecbc28228be457622c2321f19e348091848cb6e49158c4ba94."
       },
       {
         "destinations": ["title"],
@@ -832,9 +832,9 @@
       },
       {
         "destinations": ["asin"],
-        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audible-product-B000000001. Reference: provider_36011ab5d005b4f4d2ce8a5554cd358b14faa3bbc34c1da1c56a6db0fea0501c.",
         "role": "external_observation",
-        "source": "Audible"
+        "source": "Audible",
+        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audible-product-B000000001. Reference: provider_36011ab5d005b4f4d2ce8a5554cd358b14faa3bbc34c1da1c56a6db0fea0501c."
       },
       {
         "destinations": ["narrators"],
@@ -844,9 +844,9 @@
       },
       {
         "destinations": ["asin"],
-        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audnexus-book-B000000001. Reference: provider_732cacaa908d33b4cc1d54d4acb394c78516f2ed66dcfdbd7ee6389472581668.",
         "role": "external_observation",
-        "source": "Audnexus"
+        "source": "Audnexus",
+        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audnexus-book-B000000001. Reference: provider_732cacaa908d33b4cc1d54d4acb394c78516f2ed66dcfdbd7ee6389472581668."
       },
       {
         "destinations": ["narrators"],
@@ -856,9 +856,9 @@
       },
       {
         "destinations": ["isbn"],
-        "observation": "ISBN: 9781250077004. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown. Source record: audnexus-book-B000000001. Reference: provider_8537575d1d60a6fca24731ce91262af05836f0db33a77f0d2ae487543c7c7af8.",
         "role": "external_observation",
-        "source": "Audnexus"
+        "source": "Audnexus",
+        "observation": "ISBN: 9781250077004. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown. Source record: audnexus-book-B000000001. Reference: provider_8537575d1d60a6fca24731ce91262af05836f0db33a77f0d2ae487543c7c7af8."
       },
       {
         "destinations": ["narrators"],
@@ -886,9 +886,9 @@
       },
       {
         "destinations": ["asin"],
-        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audnexus-book-B000000002. Reference: provider_f42fbcfc015b05af721e7cc6a9c45e63dc71c6c82829dabdd722036899783bcc.",
         "role": "external_observation",
-        "source": "Audnexus"
+        "source": "Audnexus",
+        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audnexus-book-B000000002. Reference: provider_f42fbcfc015b05af721e7cc6a9c45e63dc71c6c82829dabdd722036899783bcc."
       },
       {
         "destinations": ["narrators"],
@@ -899,7 +899,7 @@
     ],
     "missing_lineage_count": 0,
     "next_cursor": null,
-    "review_case_id": "review_case_9ba1aa09086902b667a856843dac77514b08f6eac4e1e7b8fc9240d2f2132b0d",
+    "review_case_id": "review_case_88f91f039be2d755cbb1ed591e38b2d617fcfc921b6e932f789bfd1732bf9cb7",
     "schema_version": "review-case-evidence-v4",
     "source_ledger": [
       {

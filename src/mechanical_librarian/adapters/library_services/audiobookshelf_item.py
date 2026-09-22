@@ -42,6 +42,7 @@ from mechanical_librarian.domain.audio_inspection import (
 )
 from mechanical_librarian.domain.evidence_bounds import (
     EvidenceValueError,
+    validate_incumbent_description,
     validate_projection_text,
 )
 from mechanical_librarian.domain.metadata_report import (
@@ -386,10 +387,14 @@ def _target_field(
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(destination, TargetFieldState.VALUE, value)
         if destination is TargetDestination.DESCRIPTION:
-            value, oversized = _target_projection_text(
-                raw, "target description", MAX_DESCRIPTION_CHARACTERS
+            value = validate_incumbent_description(
+                raw,
+                "target description",
+                max(len(raw), MAX_DESCRIPTION_CHARACTERS)
+                if type(raw) is str
+                else MAX_DESCRIPTION_CHARACTERS,
             )
-            if oversized:
+            if len(value) > MAX_DESCRIPTION_CHARACTERS:
                 return TargetField(destination, TargetFieldState.OVERSIZED)
             return TargetField(
                 destination,

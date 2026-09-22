@@ -1237,3 +1237,27 @@ def test_declared_cover_locations_share_exact_reader_contract(location, value, s
             assert value not in snapshot.cover.path
     finally:
         target.close()
+
+
+@pytest.mark.parametrize(
+    "description",
+    (
+        "First paragraph.\n\nSecond paragraph.",
+        " \tFirst paragraph.\r\n\r\nSecond paragraph.\t ",
+    ),
+)
+def test_audiobook_incumbent_description_retains_paragraphs(description: str) -> None:
+    snapshot = _audiobook_snapshot(
+        {
+            "metadata": {"title": "Recorded title", "description": description},
+            "audioFiles": [_audio_file("book.m4b")],
+        }
+    )
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert snapshot.media_kind == "audiobook"
+    assert field.state is TargetFieldState.VALUE
+    assert field.value == description

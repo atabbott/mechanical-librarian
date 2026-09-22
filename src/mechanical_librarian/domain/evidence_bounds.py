@@ -111,6 +111,29 @@ def validate_excerpt(value: object, label: str = "evidence excerpt") -> str:
 
 def validate_projection_text(value: object, label: str, maximum: int) -> str:
     text = validate_text(value, label, maximum)
+    return _validate_projection_safety(text, label)
+
+
+def validate_incumbent_description(value: object, label: str, maximum: int) -> str:
+    """Admit exact paragraph text without changing scalar or provider contracts."""
+    if type(value) is not str or not value.strip():
+        raise EvidenceValueError(f"{label} must be non-empty text")
+    if (
+        len(value) > maximum
+        or len(value.encode("utf-8", errors="surrogatepass")) > maximum * 4
+    ):
+        raise EvidenceValueError(f"{label} exceeds its size limit")
+    controls = value.replace("\r\n", "\n").strip(" \t\n")
+    if controls != controls.strip() or any(
+        _forbidden_codepoint(ord(character))
+        for character in controls.replace("\n", " ")
+    ):
+        raise EvidenceValueError(f"{label} contains forbidden control or Unicode text")
+    _validate_projection_safety(value.strip(" \t\r\n"), label)
+    return value
+
+
+def _validate_projection_safety(text: str, label: str) -> str:
     lowered = text.casefold()
     if (
         text.startswith("\\")

@@ -1,0 +1,172 @@
+"""Exact incumbent paragraph admission through the supported target reader."""
+
+import pytest
+
+from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.metadata_report import (
+    TargetDestination,
+    TargetFieldState,
+)
+from tests.support.audiobookshelf_targets import target_snapshot
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "First paragraph.\n\nSecond paragraph.",
+        "First paragraph.\r\n\r\nSecond paragraph.",
+        " \tCafé description.\t ",
+        "\r\n\tText\t\r\n",
+        "\n \tText\t \n",
+    ),
+)
+def test_incumbent_description_retains_exact_text(value: str) -> None:
+    snapshot = target_snapshot({"title": "Title", "description": value})
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert field.state is TargetFieldState.VALUE
+    assert field.value == value
+
+
+def test_incumbent_description_comparison_is_not_source_identity() -> None:
+    assert values_match(
+        TargetDestination.DESCRIPTION,
+        " Café\r\nSecond paragraph. ",
+        "CAFE\u0301 second paragraph.",
+    )
+    assert not values_match(
+        TargetDestination.DESCRIPTION, "First\nparagraph.", "Changed paragraph."
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    (
+        "First\rSecond",
+        "First\tSecond",
+        " \t\r\n ",
+        "Text\x00",
+        "Text\x85",
+        "Text\u202e",
+        "Text\u2028",
+        "Text\ufdd0",
+        "Text\uffff",
+        "Text /home/private/book",
+        "Text api_key=synthetic",
+        " \t\\private\t ",
+        " \tsecret: synthetic\t ",
+        "\u00a0",
+        "\u00a0Text",
+        "Text\u00a0",
+        " \n\u2003Text\t\r\n",
+        "\rText",
+        "Text\r",
+    ),
+)
+def test_incumbent_description_rejects_unsafe_or_blank_text(value: str) -> None:
+    snapshot = target_snapshot({"title": "Title", "description": value})
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert (field.state, field.value) == (TargetFieldState.MALFORMED, None)
+
+
+@pytest.mark.parametrize(
+    "suffix", ("\x00", " /home/private/book", " api_key=synthetic")
+)
+def test_intake_safety_refusal_precedes_oversized(suffix: str) -> None:
+    snapshot = target_snapshot({"title": "Title", "description": "a" * 16385 + suffix})
+    field = next(
+        field
+        for field in snapshot.fields
+        if field.destination is TargetDestination.DESCRIPTION
+    )
+    assert field.state is TargetFieldState.MALFORMED
+
+
+@pytest.mark.parametrize(
+    "suffix", ("\x00", " /home/private/book", " api_key=synthetic")
+)
+def test_domain_bounds_precede_safety(suffix: str) -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        EvidenceValueError,
+        validate_incumbent_description,
+    )
+
+    with pytest.raises(EvidenceValueError, match="size limit"):
+        validate_incumbent_description("a" * 16385 + suffix, "description", 16384)
+
+
+@pytest.mark.parametrize(
+    "value,message",
+    (
+        ("/home/private/book api_key=synthetic", "production path"),
+        ("Text\x00 /home/private/book", "forbidden control"),
+    ),
+)
+def test_domain_safety_precedence(value: str, message: str) -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        EvidenceValueError,
+        validate_incumbent_description,
+    )
+
+    with pytest.raises(EvidenceValueError, match=message):
+        validate_incumbent_description(value, "description", 16384)
+
+
+class Text(str):
+    pass
+
+
+@pytest.mark.parametrize("value", (Text("Description"), None, 123, "Text\ud800"))
+def test_description_exact_type_and_unicode(value: object) -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        EvidenceValueError,
+        validate_incumbent_description,
+    )
+
+    with pytest.raises(EvidenceValueError):
+        validate_incumbent_description(value, "description", 16384)
+
+
+def test_description_original_bounds() -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        EvidenceValueError,
+        validate_incumbent_description,
+    )
+
+    text = " " + "a" * 16382 + "\n"
+    assert validate_incumbent_description(text, "description", 16384) == text
+    with pytest.raises(EvidenceValueError, match="size limit"):
+        validate_incumbent_description(text + " ", "description", 16384)
+
+
+@pytest.mark.parametrize("value", ("First\nSecond", " padded ", "\tboundary"))
+def test_scalar_contract_unchanged(value: str) -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        EvidenceValueError,
+        validate_projection_text,
+    )
+
+    with pytest.raises(EvidenceValueError):
+        validate_projection_text(value, "scalar", 16384)
+
+
+def test_report_valid_multibyte_description_cannot_exceed_effect_byte_bound() -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        validate_incumbent_description,
+    )
+    from mechanical_librarian.domain.field_effect import (
+        FieldEffectError,
+        validate_effect_value,
+    )
+
+    value = "語" * 12000
+    assert validate_incumbent_description(value, "description", 16384) == value
+    with pytest.raises(FieldEffectError, match="invalid_value"):
+        validate_effect_value("description", value)

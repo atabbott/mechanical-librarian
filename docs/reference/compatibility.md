@@ -6,12 +6,19 @@ version and digest. Compatibility is field-local and demonstrated for metadata/
 tags and multipart cover endpoints; a service version alone is not capability
 proof.
 
+Report v45 preserves exact incumbent LF/CRLF description paragraphs and ordinary
+boundary spaces/tabs for ebooks and audiobooks (#1080). **Clean rebuild required**
+under ADR-0013: v44 reports and the prior SQL contract are refused without migration
+or adoption. Review and shadow-packet envelope versions remain unchanged; their
+embedded targets are validated through the current report contract. Comparison
+normalization does not change stored text, fingerprints or effect preconditions.
+
 The current installed contract is intentionally narrow:
 
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v44` plus `proposal-set-v8` under
+  `metadata-report-v45` plus `proposal-set-v8` under
   `fixed-conservative-v27`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under

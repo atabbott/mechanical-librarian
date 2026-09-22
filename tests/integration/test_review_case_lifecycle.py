@@ -6,6 +6,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+import pytest
+
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeAuthorityCurrentness,
     FakeBackupReadiness,
@@ -368,3 +370,224 @@ def test_description_advice_uses_real_persisted_admission_and_guarded_installed_
         assert advice["failure"] == "unavailable"
         assert advice["selection"]["decision_id"] == decision.decision_id
         reopened.close()
+
+
+@pytest.mark.parametrize(
+    "effect", ("verified", "formatting_drift", "wrong_readback", "keep_current")
+)
+@pytest.mark.parametrize("media_kind", ("ebook", "audiobook"))
+@pytest.mark.parametrize("newline", ("\n", "\r\n"), ids=("lf", "crlf"))
+def test_multiline_incumbent_description_persists_and_applies(
+    tmp_path, effect, media_kind, newline
+):
+    """Real intake, current SQL/review replay and guarded owner choice for both media."""
+    import httpx
+
+    from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
+        AudiobookshelfItemReader,
+    )
+    from mechanical_librarian.domain.field_effect import field_value_version
+    from mechanical_librarian.domain.metadata_report import TargetDestination
+    from tests.support.audiobookshelf_targets import synthetic_audio_file
+    from tests.support.metadata_report_doubles import single_track_audio_facts
+    from tests.support.proposal_evidence import (
+        _local_description,
+        consensus_local_title,
+    )
+
+    root = tmp_path / f"{media_kind}-{len(newline)}"
+    root.mkdir(mode=0o700)
+    current = f" \tFirst paragraph.{newline}{newline}Second paragraph.\t "
+    desired = "A different description from local metadata."
+    metadata = {"title": "Current title", "description": current}
+    media: dict[str, object] = {"metadata": metadata}
+    if media_kind == "audiobook":
+        media["audioFiles"] = [synthetic_audio_file("book.m4b")]
+    else:
+        media["ebookFile"] = {
+            "ebookFormat": "epub",
+            "ino": "inode-1",
+            "metadata": {
+                "relPath": "book.epub",
+                "path": "/library/book.epub",
+                "size": 1,
+            },
+        }
+    payload = {
+        "id": "item-1",
+        "libraryId": "library-id",
+        "isInvalid": False,
+        "isMissing": False,
+        "mediaType": "book",
+        "media": media,
+    }
+    reader = AudiobookshelfItemReader(
+        client_factory=lambda: httpx.Client(
+            transport=httpx.MockTransport(lambda _: httpx.Response(200, json=payload))
+        ),
+        endpoint="https://example.invalid",
+        library_id="library-id",
+        service_path="/library",
+        maximum_bytes=65536,
+    )
+    snapshot = reader.read("item-1")
+    assert snapshot.media_kind == media_kind
+    audio = single_track_audio_facts() if media_kind == "audiobook" else None
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item-1", snapshot.fields),
+        file=FileFacts(
+            0,
+            "a" * 64,
+            "b" * 64,
+            "m4b" if audio else "epub",
+        ),
+        local_claims=(
+            consensus_local_title("Candidate title"),
+            _local_description(desired),
+        ),
+        local_reasons=("opening_matter_title",),
+        providers=(),
+        audio=audio,
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
+    repository = open_repository(root / "reviews.sqlite")
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    result = next(
+        item
+        for item in proposal.to_data()["results"]
+        if item["destination"] == "description"
+    )
+    assert result["outcome"] == "unresolved_choice"
+    assert result["alternatives"][0]["assessment"] == "replaces_target"
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    repository.close()
+    repository = open_repository(root / "reviews.sqlite", create=False)
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(case_id))["case"]
+    )
+    assert (
+        next(
+            field.value
+            for field in TargetFacts.from_data(case.target).fields
+            if field.destination is TargetDestination.DESCRIPTION
+        )
+        == current
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    projected = InspectCurrentReviewCase(repository).run(case_id)
+    assert (
+        next(
+            field
+            for field in projected["fields"]
+            if field["destination"] == "description"
+        )["current"]["value"]
+        == current
+    )
+    decision = _audiobook_accept(case, "description", "paragraph-replacement-0001")
+    if effect == "keep_current":
+        decision = HumanDecision.create(
+            case,
+            proposal_id=decision.proposal_id,
+            target_fingerprint=case.target_fingerprint,
+            destination="description",
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="paragraph-keep-current-0001",
+            occurred_at=1000,
+        )
+    repository.record_human_decision(decision)
+    assert decision.application == "apply"
+    target = FakeTargetService()
+    writes = []
+    target.before_apply = lambda plan: writes.append(plan.plan_id)
+    authority = FakeAuthorityCurrentness()
+    consent = FakeConsentCurrentness(repository.field_effect_consent_envelope_identity)
+    version = field_value_version("description", current)
+    if effect != "keep_current":
+        authority.bind(
+            decision,
+            connection="primary",
+            library="ebooks",
+            work_id="item-1",
+            target_version=version,
+        )
+    consent.allow(connection="primary", library="ebooks", destination="description")
+    service = GuardedFieldApplication(
+        repository,
+        target,
+        FakeBackupReadiness(),
+        FakeCapabilityObserver("c" * 64),
+        authority,
+        FakeDependencyCurrentness(),
+        consent,
+        PrivateCoverRecoveryStore(root / "recovery", lambda _: b"old-cover"),
+        FakeForwardReevaluation(),
+        lambda: 1001,
+    )
+    operation = service.plan(
+        decision,
+        connection="primary",
+        library="ebooks",
+        work_id="item-1",
+        destination="description",
+        pre_value=current,
+        desired_value=decision.selected_value,
+        target_fingerprint=case.target_fingerprint,
+        target_version=version,
+        dependency_digests=("d" * 64,),
+        capability_digest="c" * 64,
+    )
+    if effect == "keep_current":
+        assert operation is None
+        assert writes == []
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+        assert (
+            json.loads(repository.get_review_case(case_id))["case"]["target"]
+            == case.target
+        )
+        assert decision.outcome == "keep_current"
+        repository.close()
+        return
+    assert operation is not None
+    assert operation.plan.pre_value == current
+    target.seed(operation.plan)
+    if effect == "formatting_drift":
+        drifted = (
+            current.replace("\r\n", "\n")
+            if newline == "\r\n"
+            else current.replace("\n", "\r\n")
+        )
+        target.drift(operation.plan, drifted)
+    elif effect == "wrong_readback":
+        target.after_apply = lambda plan: target.drift(
+            plan, "Wrong read-back description."
+        )
+    verified = service.apply(operation.plan.plan_id)
+    if effect != "verified":
+        assert (verified.state, verified.failure) == (
+            ("stale", "target_changed")
+            if effect == "formatting_drift"
+            else ("reconciling", "readback")
+        )
+        audit = [
+            json.loads(value)
+            for value in repository.field_effect_event_documents(operation.plan.plan_id)
+        ]
+        assert not any(event["kind"] == "verified" for event in audit)
+        repository.close()
+        return
+    assert (verified.state, verified.failure) == ("verified", None)
+    assert target.read(operation.plan).value == desired
+    assert service.apply(operation.plan.plan_id) == verified
+    audit = [
+        json.loads(value)
+        for value in repository.field_effect_event_documents(operation.plan.plan_id)
+    ]
+    assert (audit[0]["kind"], audit[-1]["kind"]) == ("planned", "verified")
+    repository.close()
