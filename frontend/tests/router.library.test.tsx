@@ -8872,35 +8872,49 @@ it.each([
     onTestFinished(unsubscribe)
     const query = await screen.findByRole('searchbox')
     expect(screen.getByText('Loading works…')).toBeVisible()
-    const user = userEvent.setup()
-    if (draft) await user.type(query, draft)
-    else await user.clear(query)
-    expect(query).toHaveValue(draft)
-    await act(async () => releaseInitial(library))
-    if (action !== 'default') {
-      if (action === 'selection')
-        fireEvent.click(await screen.findByRole('button', { name: /^A Book\./ }))
-      else act(() => router.history.back())
-      await waitFor(() =>
-        expect(router.state.location.search.preview).toBe(
-          action === 'selection' ? 'case-1' : 'prior-case',
-        ),
+    if (action === 'default') {
+      const user = userEvent.setup()
+      if (draft) await user.type(query, draft)
+      else await user.clear(query)
+      expect(query).toHaveValue(draft)
+      await act(async () => releaseInitial(library))
+      await waitFor(() => expect(router.state.location.search.q).toBe(draft || undefined))
+      expect(query).toHaveValue(draft)
+      expect(query).toHaveFocus()
+      expect(query).toHaveProperty('selectionStart', draft.length)
+      await waitFor(() => expect(router.state.location.search.preview).toBe('filtered-case'))
+      expect(selected).not.toContain('case-1')
+      return
+    }
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: draft } })
+      expect(query).toHaveValue(draft)
+      await act(async () => releaseInitial(library))
+      await vi.waitFor(
+        () => expect(screen.getByRole('button', { name: /^A Book\./ })).toBeVisible(),
+        { interval: 0 },
       )
-      await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 200))
-      })
+      // Selection and Back must precede the pending draft's debounce deadline.
+      expect(router.state.location.search.q).toBeUndefined()
+      expect(router.state.location.search.preview).toBeUndefined()
+      if (action === 'selection') fireEvent.click(screen.getByRole('button', { name: /^A Book\./ }))
+      else act(() => router.history.back())
+      await vi.waitFor(
+        () =>
+          expect(router.state.location.search.preview).toBe(
+            action === 'selection' ? 'case-1' : 'prior-case',
+          ),
+        { interval: 0 },
+      )
+      await act(() => vi.advanceTimersByTimeAsync(150))
       expect(router.state.location.search.q).toBe(action === 'selection' ? undefined : 'prior')
       expect(query).toHaveValue(action === 'selection' ? '' : 'prior')
       expect(router.state.location.search.preview).toBe(
         action === 'selection' ? 'case-1' : 'prior-case',
       )
-      return
+    } finally {
+      vi.useRealTimers()
     }
-    await waitFor(() => expect(router.state.location.search.q).toBe(draft || undefined))
-    expect(query).toHaveValue(draft)
-    expect(query).toHaveFocus()
-    expect(query).toHaveProperty('selectionStart', draft.length)
-    await waitFor(() => expect(router.state.location.search.preview).toBe('filtered-case'))
-    expect(selected).not.toContain('case-1')
   },
 )
