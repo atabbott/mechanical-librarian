@@ -906,3 +906,28 @@ def test_http_title_isolation_preserves_candidate_evidence(
         for claim in claims
     )
     assert all(claim.value is None or "\u200b" not in claim.value for claim in claims)
+
+
+def test_malformed_recording_title_survives_report_proposal_and_packet() -> None:
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
+
+    document = payload("audnexus_book")
+    document["title"] = "Example\u200b Book"
+    _seen, handle = _recorder(book=_json(document))
+    observation = _provider(handle).observe(asin_plan()).observation
+    report = admitted_audiobook_report(
+        asin_plan().local_claims, additional_providers=(observation,)
+    )
+    restored = d.MetadataReport.from_json(report.to_json())
+    proposal = evaluate_report(restored)
+    case = ReviewCase.create(proposal, restored)
+    packet = ShadowReviewPacket.create(case, proposal, restored)
+    assert "\\u200b" not in packet.to_json()
+    assert "\u200b" not in report.to_json()
+    assert observation.status is ProviderStatus.CANDIDATES
+    assert any(
+        claim.kind is ClaimKind.ASIN and claim.state is FieldState.VALID
+        for claim in observation.candidates[0].claims
+    )
+    assert len(restored.providers) == 2
