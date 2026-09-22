@@ -3167,6 +3167,13 @@ _NON_AUTHOR_SCOPES = {
 _ATTRIBUTION_BLOCKS = {"p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "dt", "dd"}
 _AUTHOR_LABEL = re.compile(r"^authors?\s*:\s*(.+)$", re.I)
 _AUTHOR_BYLINE = re.compile(r"^(?:by|written by)\s+(.+)$", re.I)
+# Whole-owner rejection uses the existing cue vocabulary at word boundaries;
+# the original anchored patterns still govern their own evidence extraction.
+_AUTHOR_COMPETING_INDICIA = re.compile(
+    rf"(?<!\w)(?:{_BIBLIOGRAPHIC_INDICIA_LABEL_CUE.pattern}|"
+    rf"{_NON_BIBLIOGRAPHIC_INDICIA.pattern.removeprefix('^')})",
+    re.I,
+)
 
 
 def _attribution_owner(
@@ -3210,9 +3217,9 @@ def _author_attribution(
     text = element.exact_text
     if (
         _indicia_credits(text)
-        or _bibliographic_indicia(element.semantics, text, ())
+        or _bibliographic_indicia(element.semantics, text)
         or _indicia_dates(text)
-        or _NON_BIBLIOGRAPHIC_INDICIA.match(text)
+        or _AUTHOR_COMPETING_INDICIA.search(text)
         or element.semantics
         & {"title", "fulltitle", "subtitle", "publisher", "imprint", "contributor"}
         or text.casefold().endswith(" imprint")

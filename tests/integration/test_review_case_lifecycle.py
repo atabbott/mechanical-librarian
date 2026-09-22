@@ -695,3 +695,38 @@ def test_generated_authors_cross_persistence_owner_projection_and_guarded_fake_e
         )
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize("rear", (False, True))
+@pytest.mark.parametrize("recovered", (False, True))
+def test_mixed_author_indicia_cannot_fill_empty_target_automatically(
+    tmp_path, rear, recovered
+):
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from tests.support.author_evidence import author_report, publish_author_case
+
+    report = author_report(tmp_path / "media", "mixed", rear=rear, recovered=recovered)
+    repository = open_repository(tmp_path / "mixed.sqlite")
+    try:
+        case_id, proposal = publish_author_case(repository, report)
+        authors = next(
+            result.to_data()
+            for result in proposal.results
+            if result.destination.value == "authors"
+        )
+        assert authors["alternatives"] == []
+        field = next(
+            value
+            for value in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if value["destination"] == "authors"
+        )
+        assert field["current"]["state"] == "missing"
+        assert field["automatic_decision"] is None
+        assert field["decision_actions"] == []
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE destination='authors'"
+        ).fetchone() == (0,)
+        repository.persist_shadow_outcome(case_id, 5)
+        assert repository.get_review_case_decisions(case_id) == ()
+    finally:
+        repository.close()

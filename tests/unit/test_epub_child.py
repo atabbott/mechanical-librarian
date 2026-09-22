@@ -70,7 +70,12 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
     default_target_fields,
 )
-from tests.support.author_evidence import AUTHOR_STATEMENTS, author_epub
+from tests.support.author_evidence import (
+    AUTHOR_STATEMENTS,
+    LEGITIMATE_AUTHOR_STATEMENTS,
+    MIXED_AUTHOR_STATEMENTS,
+    author_epub,
+)
 from tests.support.epub_packages import (
     EPUB2_PACKAGE,
     EPUB3_PACKAGE,
@@ -3074,3 +3079,20 @@ def test_whole_author_context_keeps_inline_name_and_explicit_role(rear: bool) ->
     assert [
         (fact.canonical_value, fact.role, fact.supporting_context) for fact in creators
     ] == [("Ada Example", "author", "Authors: Ada Example")]
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [(body, None) for body in MIXED_AUTHOR_STATEMENTS]
+    + list(LEGITIMATE_AUTHOR_STATEMENTS),
+)
+@pytest.mark.parametrize("rear", (False, True))
+@pytest.mark.parametrize("recovered", (False, True))
+def test_whole_author_mixed_indicia_refuses_authority(body, expected, rear, recovered):
+    report = _inspect_in_child(author_epub(body, rear=rear, recovered=recovered))
+    creators = [
+        fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
+    ]
+    assert [(fact.canonical_value, fact.role) for fact in creators] == (
+        [] if expected is None else [(expected, "author")]
+    )

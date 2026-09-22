@@ -50,7 +50,12 @@ from mechanical_librarian.domain.identifiers import (
     SchemaVersion,
     TargetId,
 )
-from tests.support.author_evidence import AUTHOR_STATEMENTS, author_epub
+from tests.support.author_evidence import (
+    AUTHOR_STATEMENTS,
+    LEGITIMATE_AUTHOR_STATEMENTS,
+    MIXED_AUTHOR_STATEMENTS,
+    author_epub,
+)
 from tests.support.epub_packages import (
     MATERIALIZED_RECIPES,
     _opening_epub,
@@ -3928,4 +3933,18 @@ def test_whole_author_statement_requires_structural_context(
     authors = [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
     assert [(claim.normalized_value, claim.role) for claim in authors] == (
         [] if expected is None else [(expected, role)]
+    )
+
+
+@pytest.mark.parametrize(
+    "body, expected",
+    [(body, None) for body in MIXED_AUTHOR_STATEMENTS]
+    + list(LEGITIMATE_AUTHOR_STATEMENTS),
+)
+@pytest.mark.parametrize("recovered", (False, True))
+def test_whole_author_mixed_indicia_refuses_authority(body, expected, recovered):
+    report = _extract(author_epub(body, recovered=recovered))
+    creators = [claim for claim in report.claims if claim.field is OpeningField.CREATOR]
+    assert [(claim.normalized_value, claim.role) for claim in creators] == (
+        [] if expected is None else [(expected, "author")]
     )

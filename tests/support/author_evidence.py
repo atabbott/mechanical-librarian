@@ -60,6 +60,27 @@ AUTHOR_STATEMENTS = (
 )
 
 
+MIXED_AUTHOR_STATEMENTS = (
+    "<p>Author: Ada Example; Publisher: Example House</p>",
+    "<p>Authors: Ada Example; Subtitle: A Clockwork Story</p>",
+    "<p>Author: Ada Example;Imprint: Example House</p>",
+    "<p>Author: Ada Example; Copyright by Example House</p>",
+    "<p>Author: Ada Example; Copyright: Example House</p>",
+    "<p>Author: Ada Example; © Example House</p>",
+    '<p epub:type="creator">Written by Ada Example; Publisher: Example House</p>',
+    '<section epub:type="titlepage"><p>By Ada Example; Subtitle: Clockwork</p></section>',
+    "<p>Author: <em>Ada Example</em>; <span>Publisher: Example House</span></p>",
+    "<p>Authors: Ada Example; <span>Copyright <em>by Example House</em></span></p>",
+)
+
+LEGITIMATE_AUTHOR_STATEMENTS = (
+    ("<p>Authors: The Imprint Collective</p>", "The Imprint Collective"),
+    ("<p>Author: The Copyright Collective</p>", "The Copyright Collective"),
+    ("<p>Author: Ada Publisher</p>", "Ada Publisher"),
+    ("<p>Author: Élodie O’Neill-Smith</p>", "Élodie O’Neill-Smith"),
+)
+
+
 def author_epub(
     body: str,
     *,
@@ -157,7 +178,9 @@ def fragment_author_epub(
     )
 
 
-def author_report(root, scenario: str = "supported"):
+def author_report(
+    root, scenario: str = "supported", *, rear: bool = True, recovered: bool = False
+):
     """Real isolated extraction and canonical report for durable/UI consumers."""
     from mechanical_librarian.adapters.persistence.cover_artifacts import (
         CoverArtifactStore,
@@ -194,10 +217,11 @@ def author_report(root, scenario: str = "supported"):
         "local_fill": "<p>Authors: Ada Example</p>",
         "local_replace": "<p>Authors: Ada Example</p>",
         "none": "<p>Ordinary prose.</p>",
+        "mixed": MIXED_AUTHOR_STATEMENTS[0],
     }[scenario]
     if long_names:
         body = "<p>Author photograph by Patricia Example of the Northern Portrait and Archival Photography Collective, with image preparation for the Clockwork Illustrated Edition</p>"
-    payload = author_epub(body, rear=True)
+    payload = author_epub(body, rear=rear, recovered=recovered)
     root.mkdir(parents=True, exist_ok=True)
     (root / "book.epub").write_bytes(payload)
     inspection = _IsolatedEpubInspector(CoverArtifactStore(root / "artifacts")).inspect(
@@ -229,7 +253,7 @@ def author_report(root, scenario: str = "supported"):
         if scenario in {"supported", "conflict"}
         else ()
     )
-    current = None if scenario == "local_fill" else ("Current Writer",)
+    current = None if scenario in {"local_fill", "mixed"} else ("Current Writer",)
     report = MetadataReport.create(
         target=TargetFacts(
             "primary",
