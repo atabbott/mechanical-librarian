@@ -2417,3 +2417,31 @@ def test_actual_audiobook_predecessors_refuse_current_document_consumers() -> No
         ShadowReviewPacket.from_json(
             (root / "packet.json").read_text(), report, proposal
         )
+
+
+def test_incumbent_paragraph_roundtrip_keeps_source_fingerprint_exact() -> None:
+    from mechanical_librarian.domain.field_effect import field_value_version
+    from mechanical_librarian.domain.field_value_comparison import values_match
+    from mechanical_librarian.domain.metadata_report import TargetDestination
+    from tests.support.audiobookshelf_targets import target_snapshot
+
+    current = " \tCafé first paragraph.\r\n\r\nSecond paragraph.\t "
+    changed = current.replace("\r\n", "\n")
+    first = TargetFacts(
+        "primary",
+        "ebooks",
+        "item-1",
+        target_snapshot({"title": "Title", "description": current}).fields,
+    )
+    second = TargetFacts(
+        "primary",
+        "ebooks",
+        "item-1",
+        target_snapshot({"title": "Title", "description": changed}).fields,
+    )
+    assert TargetFacts.from_data(first.to_data()) == first
+    assert first.fingerprint != second.fingerprint
+    assert field_value_version("description", current) != field_value_version(
+        "description", changed
+    )
+    assert values_match(TargetDestination.DESCRIPTION, current, changed)

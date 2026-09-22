@@ -749,3 +749,31 @@ def test_actual_v25_work_subtitle_producer_is_rejected() -> None:
         ProposalSet.from_json(predecessor)
     current = evaluate_report(_report())
     assert ProposalSet.from_json(current.to_json()) == current
+
+
+@pytest.mark.parametrize(
+    "current", ("First\n\nparagraph.", " \tFirst\r\nparagraph.\t ")
+)
+@pytest.mark.parametrize(
+    "candidate,assessment",
+    (
+        ("FIRST paragraph.", "preserves_target"),
+        ("Changed description.", "replaces_target"),
+    ),
+)
+def test_multiline_populated_description_never_becomes_fill_empty(
+    current, candidate, assessment
+):
+    from tests.support.proposal_evidence import _local_description
+
+    report = _report(
+        fields=_fields(
+            description=TargetField(
+                TargetDestination.DESCRIPTION, TargetFieldState.VALUE, current
+            )
+        ),
+        local_claims=(_local_description(candidate),),
+    )
+    result = _result(evaluate_report(report), TargetDestination.DESCRIPTION)
+    assert result.alternatives[0].assessment.value == assessment
+    assert all(value.assessment.value != "fills_empty" for value in result.alternatives)

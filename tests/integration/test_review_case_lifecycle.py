@@ -396,7 +396,7 @@ def test_multiline_incumbent_description_persists_and_applies(
     )
 
     root = tmp_path / f"{media_kind}-{len(newline)}"
-    root.mkdir()
+    root.mkdir(mode=0o700)
     current = f" \tFirst paragraph.{newline}{newline}Second paragraph.\t "
     desired = "A different description from local metadata."
     metadata = {"title": "Current title", "description": current}
@@ -473,6 +473,17 @@ def test_multiline_incumbent_description_persists_and_applies(
             for field in TargetFacts.from_data(case.target).fields
             if field.destination is TargetDestination.DESCRIPTION
         )
+        == current
+    )
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
+    projected = InspectCurrentReviewCase(repository).run(case_id)
+    assert (
+        next(
+            field
+            for field in projected["fields"]
+            if field["destination"] == "description"
+        )["current"]["value"]
         == current
     )
     decision = _audiobook_accept(case, "description", "paragraph-replacement-0001")

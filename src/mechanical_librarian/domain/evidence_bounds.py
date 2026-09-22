@@ -116,7 +116,7 @@ def validate_projection_text(value: object, label: str, maximum: int) -> str:
 
 def validate_incumbent_description(value: object, label: str, maximum: int) -> str:
     """Admit exact paragraph text without changing scalar or provider contracts."""
-    if type(value) is not str or not value.strip(" \t\r\n"):
+    if type(value) is not str or not value.strip():
         raise EvidenceValueError(f"{label} must be non-empty text")
     if (
         len(value) > maximum
@@ -126,7 +126,8 @@ def validate_incumbent_description(value: object, label: str, maximum: int) -> s
     controls = value.strip(" \t").replace("\r\n", "\n").replace("\n", " ")
     if any(_forbidden_codepoint(ord(character)) for character in controls):
         raise EvidenceValueError(f"{label} contains forbidden control or Unicode text")
-    return _validate_projection_safety(value, label)
+    _validate_projection_safety(value.strip(" \t\r\n"), label)
+    return value
 
 
 def _validate_projection_safety(text: str, label: str) -> str:

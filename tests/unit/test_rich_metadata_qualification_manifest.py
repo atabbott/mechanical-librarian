@@ -2908,11 +2908,11 @@ def _dependency_qualification_documents():
 
 
 CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v11.json"
+    "f46-audiobook-qualification-candidate-v12.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v28.json")
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v29.json")
 CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v42.json"
+    "f20-rich-metadata-qualification-candidate-v43.json"
 )
 
 
@@ -3230,6 +3230,10 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
             assert delta["current_sha256"] == document["source_closure"][name]
             assert delta["measured_sha256"] != delta["current_sha256"]
         assert set(continuity["changed_admission_sources"]) == {
+            "src/mechanical_librarian/adapters/library_services/audiobookshelf_item.py",
+            "src/mechanical_librarian/domain/evidence_bounds.py",
+            "src/mechanical_librarian/domain/metadata_report.py",
+            "src/mechanical_librarian/domain/field_value_comparison.py",
             "src/mechanical_librarian/infrastructure/first_boot.py",
             "src/mechanical_librarian/bootstrap/container.py",
             "src/mechanical_librarian/domain/proposal_set.py",
@@ -3408,3 +3412,43 @@ def test_dependency_and_responsiveness_origins_remain_historical_only(family, di
 )
 def test_preparation_recovery_predecessors_remain_byte_frozen(name, digest):
     assert hashlib.sha256(MANIFEST.with_name(name).read_bytes()).hexdigest() == digest
+
+
+def test_paragraph_successors_preserve_prior_closure_and_option_authority():
+    for current, prior in zip(
+        _current_qualification_documents(),
+        (
+            "f46-audiobook-qualification-candidate-v11.json",
+            "f19a-qualification-manifest-v28.json",
+            "f20-rich-metadata-qualification-candidate-v42.json",
+        ),
+        strict=True,
+    ):
+        historical = json.loads(MANIFEST.with_name(prior).read_bytes())
+        assert len(historical["source_closure"]) == 379
+        assert set(historical["source_closure"]) < set(current["source_closure"])
+        assert current["versions"]["report"] == "metadata-report-v45"
+        assert current["issue"] == 1080
+        assert current["clean_rebuild_required"] is True
+        assert (
+            current["binding_only_source_equivalence"]["excluded_binding_assignments"]
+            == historical["binding_only_source_equivalence"][
+                "excluded_binding_assignments"
+            ]
+        )
+        for key in (
+            "passing_automatic_options",
+            "passing_paired_options",
+            "qualified_policy_options",
+            "current_measurement",
+            "historical_measurements",
+            "measurement_artifacts",
+        ):
+            if key in historical:
+                assert current[key] == historical[key]
+        assert {
+            "tests/unit/test_incumbent_description_text.py",
+            "tests/integration/test_review_case_lifecycle.py",
+            "tests/fixtures/metadata-report-v44/report-v44.json",
+            "tests/fixtures/metadata-report-v44/reports-v44.sql",
+        } <= set(current["source_closure"])

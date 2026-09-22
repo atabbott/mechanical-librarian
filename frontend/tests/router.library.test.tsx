@@ -3075,7 +3075,9 @@ describe('Library route', () => {
 
   it('opens a long description without recording a choice', async () => {
     const user = userEvent.setup()
-    const description = 'A complete retained paragraph.\r\n\r\nEscaped <text> & a long word: '.repeat(8) + 'unbroken'.repeat(50)
+    const description =
+      'A complete retained paragraph.\r\n\r\nEscaped <text> & a long word: '.repeat(8) +
+      'unbroken'.repeat(50)
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('description fixture requires a field')
     const field = { ...titleField, destination: 'description', currentValue: description }

@@ -54,6 +54,9 @@ def test_incumbent_description_comparison_is_not_source_identity() -> None:
         "Text\uffff",
         "Text /home/private/book",
         "Text api_key=synthetic",
+        " \t\\private\t ",
+        " \tsecret: synthetic\t ",
+        "\u00a0",
     ),
 )
 def test_incumbent_description_rejects_unsafe_or_blank_text(value: str) -> None:
@@ -118,3 +121,18 @@ def test_description_original_bounds_exact_type_and_scalar_contract() -> None:
     for value in ("First\nSecond", " padded ", "\tboundary"):
         with pytest.raises(EvidenceValueError):
             validate_projection_text(value, "scalar", 16384)
+
+
+def test_report_valid_multibyte_description_cannot_exceed_effect_byte_bound() -> None:
+    from mechanical_librarian.domain.evidence_bounds import (
+        validate_incumbent_description,
+    )
+    from mechanical_librarian.domain.field_effect import (
+        FieldEffectError,
+        validate_effect_value,
+    )
+
+    value = "語" * 12000
+    assert validate_incumbent_description(value, "description", 16384) == value
+    with pytest.raises(FieldEffectError, match="invalid_value"):
+        validate_effect_value("description", value)
