@@ -2117,7 +2117,13 @@ def test_composition_uses_one_application_owner_for_worker_threads(
             8443,
         )
     assert opened.call_args_list == [
-        call(database, create=True, cross_thread=True, admission=admission),
+        call(
+            database,
+            create=True,
+            cross_thread=True,
+            admission=admission,
+            recover_stale_bindings=True,
+        ),
     ]
 
 

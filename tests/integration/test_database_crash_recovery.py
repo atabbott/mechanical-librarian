@@ -264,3 +264,101 @@ def test_active_root_and_borrowed_authority_never_gain_recovery(tmp_path: Path) 
         assert _snapshot((path,)) == before
     finally:
         root.close()
+
+
+@pytest.mark.parametrize("fault", ["mkdir", "open", "cleanup"])
+def test_partial_scratch_failure_preserves_source_and_primary_refusal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    from mechanical_librarian.adapters.persistence import crash_recovery
+
+    path = tmp_path / "application.sqlite3"
+    alias, journal = _crash(path, "single")
+    before = _snapshot((path, alias, journal))
+    scratch = tmp_path / (".metadata-report-recovery-" + "d" * 32)
+    monkeypatch.setattr(crash_recovery.secrets, "token_hex", lambda _: "d" * 32)
+    original_open = crash_recovery.os.open
+    original_mkdir = crash_recovery.os.mkdir
+    if fault == "mkdir":
+
+        def collision(name: str, mode: int, *, dir_fd: int) -> None:
+            original_mkdir(name, mode, dir_fd=dir_fd)
+            (scratch / "foreign").write_text("preserve collision")
+            raise FileExistsError("synthetic collision")
+
+        monkeypatch.setattr(crash_recovery.os, "mkdir", collision)
+    elif fault == "open":
+
+        def fail_open(name, flags, *args, **kwargs):
+            if name == scratch.name:
+                raise OSError("synthetic scratch open failure")
+            return original_open(name, flags, *args, **kwargs)
+
+        monkeypatch.setattr(crash_recovery.os, "open", fail_open)
+    else:
+
+        def fail_copy(*_args):
+            raise MetadataReportError("primary copy refusal")
+
+        def fail_cleanup(*_args, **_kwargs):
+            raise RuntimeError("secondary cleanup refusal")
+
+        monkeypatch.setattr(crash_recovery, "_digest", fail_copy)
+        monkeypatch.setattr(crash_recovery, "_cleanup_scratch", fail_cleanup)
+    with pytest.raises(MetadataReportError) as failure:
+        open_repository(path, recover_stale_bindings=True)
+    if fault == "cleanup":
+        assert str(failure.value) == "primary copy refusal"
+    assert _snapshot((path, alias, journal)) == before
+    assert scratch.is_dir()
+    if fault == "mkdir":
+        assert (scratch / "foreign").read_text() == "preserve collision"
+    else:
+        monkeypatch.undo()
+        # A subsequent ordinary root recognizes only the closed scratch inventory.
+        recovered = open_repository(path, recover_stale_bindings=True)
+        recovered.close()
+        assert not scratch.exists()
+        assert not alias.exists()
+        assert not journal.exists()
+
+
+@pytest.mark.parametrize("fault", ["configured_path", "parent", "alias"])
+def test_copy_admission_rechecks_original_path_and_parent_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fault: str
+) -> None:
+    from mechanical_librarian.adapters.persistence import crash_recovery
+
+    parent = tmp_path / "bound"
+    parent.mkdir(mode=0o700)
+    path = parent / "application.sqlite3"
+    alias, journal = _crash(path, "single")
+    before = _snapshot((path, alias, journal))
+    native = crash_recovery._native_rollback
+    retained = [path, alias, journal]
+    copies = []
+
+    def replace_after_private_replay(candidate: Path, descriptor: int) -> None:
+        assert candidate.name == "database.sqlite", "source replay after binding drift"
+        copies.append(candidate)
+        native(candidate, descriptor)
+        if fault == "parent":
+            moved = tmp_path / "retained"
+            parent.rename(moved)
+            parent.mkdir(mode=0o700)
+            retained[:] = [moved / value.name for value in retained]
+        else:
+            selected = path if fault == "configured_path" else alias
+            moved = parent / "retained.sqlite3"
+            selected.rename(moved)
+            selected.write_bytes(moved.read_bytes())
+            selected.chmod(0o600)
+            retained[0 if fault == "configured_path" else 1] = moved
+
+    monkeypatch.setattr(
+        crash_recovery, "_native_rollback", replace_after_private_replay
+    )
+    with pytest.raises(MetadataReportError):
+        open_repository(path, recover_stale_bindings=True)
+    assert len(copies) == 1
+    assert _snapshot(tuple(retained)) == before

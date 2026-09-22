@@ -848,6 +848,66 @@ def _qualify_first_run(
         _remove_owned("volume", data_volume, run_id)
 
 
+def _qualify_retained_recovery(image: str, run_id: str) -> dict[str, object]:
+    """Run native kill/preservation fixtures against this image's installed code."""
+    import pytest
+
+    if pytest.__version__ != "9.1.1":
+        raise QualificationError("recovery_fixture_toolchain_mismatch")
+    dependencies = Path(pytest.__file__).resolve().parents[1]
+    proof = _run(
+        [
+            "docker",
+            "run",
+            "--rm",
+            "--label",
+            f"{OWNERSHIP_LABEL}={run_id}",
+            "--network",
+            "none",
+            "--read-only",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges:true",
+            "--tmpfs",
+            "/tmp:rw,mode=1777",
+            "--mount",
+            f"type=bind,src={ROOT},dst=/qualification-source,readonly",
+            "--mount",
+            f"type=bind,src={dependencies},dst=/qualification-deps,readonly",
+            "--env",
+            "PYTHONPATH=/qualification-source",
+            "--env",
+            "PYTHONDONTWRITEBYTECODE=1",
+            "--workdir",
+            "/qualification-source",
+            "--entrypoint",
+            "/opt/mechanical-librarian/bin/python",
+            image,
+            "-c",
+            "import json,sqlite3,sys; import mechanical_librarian; "
+            "assert mechanical_librarian.__file__.startswith('/opt/mechanical-librarian/'); "
+            "sys.path.append('/qualification-deps'); import pytest; "
+            "assert pytest.__version__ == '9.1.1'; "
+            "print(json.dumps({'python':sys.version.split()[0],'sqlite':sqlite3.sqlite_version,'installed_origin':True}),flush=True); "
+            "raise SystemExit(pytest.main(['--disable-plugin-autoload','-p','no:cacheprovider','-q',"
+            "'tests/integration/test_database_crash_recovery.py',"
+            "'tests/integration/test_preparation_claim_recovery.py']))",
+        ]
+    )
+    identity = json.loads(proof.splitlines()[0])
+    if (
+        identity.get("python") != "3.14.7"
+        or identity.get("installed_origin") is not True
+    ):
+        raise QualificationError("recovery_runtime_identity_mismatch")
+    return {
+        **identity,
+        "native_kill_and_preservation_fixtures": True,
+        "proof_stdout_sha256": hashlib.sha256(proof.encode()).hexdigest(),
+    }
+
+
 def _configuration() -> dict[str, object]:
     return {
         "schema_version": "config-v9",
@@ -1206,6 +1266,7 @@ def main() -> None:
             second_hash = _sha256(second)
         if first_hash != second_hash:
             raise QualificationError("container_restart_state_changed")
+        retained_recovery = _qualify_retained_recovery(image, run_id)
         first_run = {
             "https": _qualify_first_run(image, run_id, suffix),
             "http": _qualify_first_run(image, run_id, suffix + "-http", scheme="http"),
@@ -1232,6 +1293,7 @@ def main() -> None:
                     "image_revision": image_revision,
                     "installed_artifact": "container-image",
                     "first_run": first_run,
+                    "retained_recovery": retained_recovery,
                     "liveness": True,
                     "non_root": True,
                     "read_only_root": True,

@@ -6384,6 +6384,9 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 expect(page.locator(".preparation-summary")).to_contain_text(
                     "Preparation stopped"
                 )
+                back = page.get_by_role("button", name="Back to works", exact=True)
+                if back.is_visible():
+                    back.click()
                 page.locator(".library-work-row").first.click()
                 page.wait_for_url(f"**/library?*preview={case_id}*")
                 expect(page.locator(".selected-work-header")).to_be_visible()
@@ -6399,5 +6402,6 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                     page.get_by_role("button", name="Preparation stopped", exact=True)
                 ).to_have_count(0)
             finally:
+                page.unroute_all(behavior="wait")
                 context.close()
                 browser.close()
