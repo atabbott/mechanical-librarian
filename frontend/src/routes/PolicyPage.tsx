@@ -824,7 +824,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         tone: 'success',
         message:
           action === 'automatic-safety/recover'
-            ? 'Suspension recovered. Eligible completed titles are queued for re-evaluation. Other pauses and suspensions still apply.'
+            ? 'Suspension recovered. Any queued title work remains subject to other pauses and suspensions.'
             : 'Policy state updated from the authoritative server.',
       })
       if (action === 'automatic-safety/recover') safetySummaryRef.current?.focus()
