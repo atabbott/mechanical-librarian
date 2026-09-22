@@ -5,6 +5,20 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Incumbent paragraph source successor (#1080)
+
+[F46 v12](../reference/f46-audiobook-qualification-candidate-v12.json),
+[F19a v29](../reference/f19a-qualification-manifest-v29.json) and
+[F20 v43](../reference/f20-rich-metadata-qualification-candidate-v43.json) bind
+exact multiline incumbent description admission and comparison to the current
+consumer closure. This is a behavioral successor, not whole-source equivalence or
+new quality measurement. Historical manifests, evaluators, measurement artifacts
+and qualified option sets remain unchanged. Report v45 and its exact SQL contract
+require a clean rebuild under ADR-0013; no migration or adoption is supplied.
+Synthetic adapter, persistence, decision and guarded-effect proof checks exact
+retention, populated-value protection and source-sensitive currentness for both
+media. No production library, provider or model measurement is claimed.
+
 ## Preparation recovery source successor (#1085)
 
 [F46 v11](../reference/f46-audiobook-qualification-candidate-v11.json),

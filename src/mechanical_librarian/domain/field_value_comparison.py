@@ -6,7 +6,7 @@ import unicodedata
 from collections.abc import Sequence
 from typing import cast
 
-from mechanical_librarian.domain.evidence_bounds import validate_projection_text
+from mechanical_librarian.domain.evidence_bounds import validate_incumbent_description
 from mechanical_librarian.domain.field_outcomes import language_outcomes_compatible
 from mechanical_librarian.domain.metadata_report import (
     MAX_DESCRIPTION_CHARACTERS,
@@ -23,7 +23,7 @@ def canonical_text(destination: TargetDestination, value: str) -> str:
         return " ".join(
             unicodedata.normalize(
                 "NFC",
-                validate_projection_text(
+                validate_incumbent_description(
                     value,
                     "proposal value",
                     MAX_DESCRIPTION_CHARACTERS,

@@ -196,7 +196,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "current report schema with stale proposal policy",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v44",
+                "metadata-report-v45",
                 "fixed-conservative-v6",
             ),
         ),
@@ -330,7 +330,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v3",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v44",
+                "metadata-report-v45",
                 "fixed-conservative-v3",
             ),
         ),
@@ -338,7 +338,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v4",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v44",
+                "metadata-report-v45",
                 "fixed-conservative-v4",
             ),
         ),
@@ -346,7 +346,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "previous proposal policy v5",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v44",
+                "metadata-report-v45",
                 "fixed-conservative-v5",
             ),
         ),
@@ -354,7 +354,7 @@ def test_slow_external_currentness_does_not_hold_the_publication_lock() -> None:
             "immediate previous proposal policy v7",
             lambda connection: create_prior_schema(
                 connection,
-                "metadata-report-v44",
+                "metadata-report-v45",
                 "fixed-conservative-v7",
             ),
         ),
@@ -505,7 +505,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("shadow_outcome_field_facts",),
         ]
         assert len(rows) == 2
-        assert schema_version == ("metadata-report-v44",)
+        assert schema_version == ("metadata-report-v45",)
         assert current == (second.report_id,)
 
         reopened = open_repository(path)
@@ -1803,7 +1803,7 @@ def test_inventaire_cover_outcome_survives_publication_and_reopen(
         restored = MetadataReport.from_json(reopened.get(report.report_id))
         assert restored == report
         assert restored.cover_sources == (source,)
-        assert restored.schema_version == "metadata-report-v44"
+        assert restored.schema_version == "metadata-report-v45"
     finally:
         reopened.close()
 
@@ -1925,7 +1925,7 @@ def test_a_v39_producer_document_is_refused_rather_than_read_as_current() -> Non
 
     published = _current_audio_report()
     current = json.loads(published.to_json())
-    assert current["schema_version"] == "metadata-report-v44"
+    assert current["schema_version"] == "metadata-report-v45"
     assert MetadataReport.from_json(published.to_json()) == published
 
     previous = json.loads(json.dumps(current))
@@ -2017,3 +2017,32 @@ def test_actual_v41_producer_is_refused_without_lookup_adoption() -> None:
     )
     with pytest.raises(ReportValueError):
         MetadataReport.from_json(old.read_text())
+
+
+def test_actual_v44_producer_artifacts_refuse_without_mutation(tmp_path: Path) -> None:
+    from mechanical_librarian.domain.metadata_report import ReportValueError
+
+    fixtures = Path(__file__).parents[1] / "fixtures" / "metadata-report-v44"
+    report = (fixtures / "report-v44.json").read_bytes()
+    sql = (fixtures / "reports-v44.sql").read_bytes()
+    assert (
+        hashlib.sha256(report).hexdigest()
+        == "21aacba76100f6dad54855f639683a755ab9ea206bb241f66d8c463770c01f9e"
+    )
+    assert (
+        hashlib.sha256(sql).hexdigest()
+        == "f030510d00d1d3bee5ac2ac67eb68b6bd5f194eed7b518baa97eac0e8d7a7a43"
+    )
+    with pytest.raises(ReportValueError):
+        MetadataReport.from_json(report.decode())
+    database = tmp_path / "prior.sqlite"
+    connection = sqlite3.connect(database)
+    connection.execute(sql.decode())
+    connection.commit()
+    connection.close()
+    before = database.read_bytes()
+    with pytest.raises(MetadataReportError):
+        open_repository(database)
+    assert database.read_bytes() == before
+    assert (fixtures / "report-v44.json").read_bytes() == report
+    assert (fixtures / "reports-v44.sql").read_bytes() == sql

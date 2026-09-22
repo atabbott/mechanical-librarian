@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Preserve multiline current Audiobookshelf descriptions in ebook and audiobook
+  review, including exact paragraph breaks and boundary whitespace (#1080).
+  Report v45 requires a clean rebuild of prior development state; comparison
+  equivalence never relaxes exact write preconditions or read-back verification.
+
 - Preparation keeps ownership across committed stages and reports a stopped
   runtime when failure settlement cannot finish. Ready books remain browsable;
   an ordinary service restart resumes retained checkpoints. Linux startup safely

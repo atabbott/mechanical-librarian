@@ -3118,18 +3118,23 @@ def test_google_description_requires_transform_and_authority() -> None:
         assert "option_evidence_unavailable" == field.reason
 
 
-def test_description_preserves_populated_and_abstains_on_ambiguity_or_absence() -> None:
+@pytest.mark.parametrize(
+    "current", ("Owner description", " \tOwner\r\ndescription.\t ")
+)
+def test_description_preserves_populated_and_abstains_on_ambiguity_or_absence(
+    current: str,
+) -> None:
     populated = _report(
         fields=_fields(
             description=TargetField(
                 TargetDestination.DESCRIPTION,
                 TargetFieldState.VALUE,
-                "Owner description",
+                current,
             )
         )
     )
     preserved = _preview_field(populated, "description_fill", "google_visible_text")
-    assert ("no_op", "Owner description", "target_preserved") == (
+    assert ("no_op", current, "target_preserved") == (
         preserved.outcome,
         preserved.desired_value,
         preserved.reason,
