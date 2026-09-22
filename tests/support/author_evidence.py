@@ -184,7 +184,8 @@ def author_report(root, scenario: str = "supported"):
         if scenario == "long"
         else ("Ada Example",)
     )
-    if scenario == "long":
+    long_names = scenario == "long"
+    if long_names:
         scenario = "supported"
     body = {
         "supported": "<p>Author photograph by Pat Example</p>",
@@ -194,6 +195,8 @@ def author_report(root, scenario: str = "supported"):
         "local_replace": "<p>Authors: Ada Example</p>",
         "none": "<p>Ordinary prose.</p>",
     }[scenario]
+    if long_names:
+        body = "<p>Author photograph by Patricia Example of the Northern Portrait and Archival Photography Collective, with image preparation for the Clockwork Illustrated Edition</p>"
     payload = author_epub(body, rear=True)
     root.mkdir(parents=True, exist_ok=True)
     (root / "book.epub").write_bytes(payload)
@@ -282,7 +285,8 @@ def publish_author_case(repository, report, destination: str = "automatic"):
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         2,
     )
-    repository.activate_qualified_automatic(3)
+    if destination == "automatic":
+        repository.activate_qualified_automatic(3)
     proposal = evaluate_report(
         report, resolved.resolved_id, human_review_destinations(resolved)
     )

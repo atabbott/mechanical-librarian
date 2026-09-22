@@ -6419,7 +6419,7 @@ def test_preparation_stop_preserves_browse_and_requires_service_restart(
                 browser.close()
 
 
-@pytest.mark.parametrize("scenario", ("supported", "conflict", "long"))
+@pytest.mark.parametrize("scenario", ("supported", "conflict", "long", "ask", "ignore"))
 def test_generated_authors_fixture_reaches_library_choice_and_evidence(
     scenario: str,
 ) -> None:
@@ -6442,12 +6442,33 @@ def test_generated_authors_fixture_reaches_library_choice_and_evidence(
                     key=root / "unused.key",
                     port=port,
                     transport_mode="http",
-                    author_fixture=scenario,
+                    author_fixture="supported"
+                    if scenario in {"ask", "ignore"}
+                    else scenario,
+                    author_destination=scenario
+                    if scenario in {"ask", "ignore"}
+                    else "automatic",
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
                 _login(page, origin)
                 page.goto(f"{origin}/library?lens=all&preview={case_id}&field=authors")
+                if scenario == "ignore":
+                    expect(
+                        page.get_by_role(
+                            "button", name="Choose proposed value: Ada Example"
+                        )
+                    ).to_have_count(0)
+                    page.get_by_text("Inspect context", exact=True).click()
+                    expect(page.get_by_text("Authors", exact=True)).to_be_visible()
+                    expect(
+                        page.get_by_text(
+                            "No eligible change · Current Writer", exact=False
+                        )
+                    ).to_be_visible()
+                    context.close()
+                    browser.close()
+                    return
                 choice = page.locator(".direct-choice").first
                 expect(choice).to_be_visible()
                 expect(choice).to_contain_text(

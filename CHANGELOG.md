@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+- Authors routed to Ask remain available for owner review and choice. (#1083)
+
 - Photo credits and incidental EPUB text no longer replace book authors.
   Complete corroborated author sets can qualify without a local byline;
   competing authors remain for owner review. Report v46 requires a clean rebuild.
