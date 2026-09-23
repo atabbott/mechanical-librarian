@@ -8716,7 +8716,8 @@ def test_title_recovery_excludes_ineligible_completed_work(tmp_path, excluded):
     repository.close()
 
 
-def test_title_recovery_rolls_back_safety_work_and_presentation(tmp_path):
+@pytest.mark.parametrize("release", ["title", "pause", "global"])
+def test_title_recovery_rolls_back_safety_work_and_presentation(tmp_path, release):
     from mechanical_librarian.application.metadata_policy import (
         AutomaticSafetyControls,
         MetadataPolicyApplicationError,
@@ -8725,11 +8726,13 @@ def test_title_recovery_rolls_back_safety_work_and_presentation(tmp_path):
 
     repository = open_repository(tmp_path / "state.sqlite")
     safety = AutomaticSafetyState(
-        True,
-        "global_failure",
-        (
-            ("publisher_preference", "other_failure"),
-            ("title_layout", "automatic_admission_failed"),
+        release == "pause",
+        "global_failure" if release == "global" else None,
+        (("publisher_preference", "other_failure"),)
+        + (
+            (("title_layout", "automatic_admission_failed"),)
+            if release == "title"
+            else ()
         ),
     )
     complete_title_work(
@@ -8752,29 +8755,39 @@ def test_title_recovery_rolls_back_safety_work_and_presentation(tmp_path):
             else sqlite3.SQLITE_OK
         )
     )
+
+    def unblock(at: int) -> AutomaticSafetyState:
+        controls = AutomaticSafetyControls(repository)
+        return (
+            controls.pause(False, at)
+            if release == "pause"
+            else controls.recover(at, "title_layout" if release == "title" else None)
+        )
+
     with pytest.raises(MetadataPolicyApplicationError):
-        AutomaticSafetyControls(repository).recover(30, "title_layout")
+        unblock(30)
     repository._connection.set_authorizer(None)
     assert [
         repository._connection.execute("SELECT * FROM " + table).fetchall()
         for table in tables
     ] == before
-    state = AutomaticSafetyControls(repository).recover(31, "title_layout")
+    state = unblock(31)
     assert state == AutomaticSafetyState(
-        True, "global_failure", (("publisher_preference", "other_failure"),)
+        False, None, (("publisher_preference", "other_failure"),)
     )
     action = repository.claim_review_pipeline_action(32)
     assert action is not None and action.stage == "projection"
     repository.persist_shadow_outcome(action.review_case_id, 33, staged_action=action)
     repository.advance_review_pipeline_action(action, None, 34)
-    assert repository.get_review_case_decisions(action.review_case_id) == ()
+    assert len(repository.get_review_case_decisions(action.review_case_id)) == 1
     repository.close()
 
 
 @pytest.mark.parametrize("recover_first", [False, True])
+@pytest.mark.parametrize("release", ["title", "pause", "global"])
 @pytest.mark.parametrize("actor", ["owner", "publication", "policy"])
 def test_title_recovery_commit_order_revalidates_later_authority(
-    tmp_path, actor, recover_first
+    tmp_path, actor, recover_first, release
 ):
     from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
     from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
@@ -8785,11 +8798,23 @@ def test_title_recovery_commit_order_revalidates_later_authority(
         repository,
         report,
         safety=AutomaticSafetyState(
-            False, None, (("title_layout", "automatic_admission_failed"),)
+            release == "pause",
+            "global_failure" if release == "global" else None,
+            (("title_layout", "automatic_admission_failed"),)
+            if release == "title"
+            else (),
         ),
     )
+
+    def unblock(at: int) -> None:
+        controls = AutomaticSafetyControls(repository)
+        if release == "pause":
+            controls.pause(False, at)
+        else:
+            controls.recover(at, "title_layout" if release == "title" else None)
+
     if recover_first:
-        AutomaticSafetyControls(repository).recover(30, "title_layout")
+        unblock(30)
     if actor == "owner":
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
@@ -8829,7 +8854,7 @@ def test_title_recovery_commit_order_revalidates_later_authority(
             31,
         )
     if not recover_first:
-        AutomaticSafetyControls(repository).recover(32, "title_layout")
+        unblock(32)
     if recover_first and actor != "policy":
         action = repository.claim_review_pipeline_action(33)
         assert action is not None and action.stage == "projection"
@@ -9002,12 +9027,16 @@ def test_two_supported_current_titles_and_replay_do_not_disable_the_category(tmp
 
 
 @pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+@pytest.mark.parametrize("release", ["title", "pause", "global"])
+@pytest.mark.parametrize("nested", [False, True])
 @pytest.mark.parametrize("mode", ["retained", "dismissed", "unrelated_terminal"])
 def test_title_recovery_rolls_back_an_interrupted_preparation_callback(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     failure: type[BaseException],
     mode: str,
+    release: str,
+    nested: bool,
 ) -> None:
     from tests.support.evidence_led_titles import (
         complete_title_work,
@@ -9017,7 +9046,9 @@ def test_title_recovery_rolls_back_an_interrupted_preparation_callback(
 
     repository = open_repository(tmp_path / "state.sqlite")
     safety = AutomaticSafetyState(
-        False, None, (("title_layout", "automatic_admission_failed"),)
+        release == "pause",
+        "global_failure" if release == "global" else None,
+        (("title_layout", "automatic_admission_failed"),) if release == "title" else (),
     )
     complete_title_work(
         repository, isbn_title_report(current="Example Title"), safety=safety
@@ -9033,9 +9064,16 @@ def test_title_recovery_rolls_back_an_interrupted_preparation_callback(
     monkeypatch.setattr(
         repository._decisions, "_requeue_title_projections", fail_after_requeue
     )
+    if nested:
+        repository._connection.execute("BEGIN IMMEDIATE")
     with pytest.raises(failure):
-        repository.recover_automatic_safety(30, "title_layout")
-    assert not repository._connection.in_transaction
+        if release == "pause":
+            repository.pause_automatic_safety(False, 30)
+        else:
+            repository.recover_automatic_safety(
+                30, "title_layout" if release == "title" else None
+            )
+    assert repository._connection.in_transaction is nested
     assert repository.automatic_safety_state() == safety
     assert repository.preparation_presentation(30) == before
     assert repository._connection.execute(
@@ -9126,4 +9164,162 @@ def test_title_recovery_attaches_only_its_cohort_to_current_presentation(
     repository.close()
     repository = open_repository(path, create=False)
     assert repository.preparation_presentation(35) == settled
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "release_order",
+    [
+        ("title",),
+        ("title", "pause"),
+        ("pause", "title"),
+        ("title", "global"),
+        ("global", "title"),
+        ("title", "pause", "global"),
+        ("title", "global", "pause"),
+        ("pause", "title", "global"),
+        ("pause", "global", "title"),
+        ("global", "title", "pause"),
+        ("global", "pause", "title"),
+    ],
+)
+def test_title_recovery_waits_for_last_explicit_safety_release(
+    tmp_path: Path, release_order: tuple[str, ...]
+) -> None:
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    path = tmp_path / "state.sqlite"
+    repository = open_repository(path)
+    case_id, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Title"),
+        safety=AutomaticSafetyState(
+            "pause" in release_order,
+            "retained_global" if "global" in release_order else None,
+            (("publisher", "retained_publisher"), ("title_layout", "admission_failed")),
+        ),
+    )
+    for index, release in enumerate(release_order):
+        controls = AutomaticSafetyControls(repository)
+        at = 30 + index
+        if release == "pause":
+            state = controls.pause(False, at)
+        else:
+            state = controls.recover(at, "title_layout" if release == "title" else None)
+        assert ("publisher", "retained_publisher") in state.category_suspensions
+        if index < len(release_order) - 1:
+            assert not state.permits("title_layout")
+            assert repository.claim_review_pipeline_action(at) is None
+            assert repository._connection.execute(
+                "SELECT stage,state FROM review_preparation_work"
+            ).fetchone() == ("complete", "complete")
+        else:
+            assert state.permits("title_layout")
+            assert repository._connection.execute(
+                "SELECT stage,state FROM review_preparation_work"
+            ).fetchone() == ("projection", "queued")
+        repository.close()
+        repository = open_repository(path, create=False)
+    action = repository.claim_review_pipeline_action(40)
+    assert action is not None and action.stage == "projection"
+    repository.persist_shadow_outcome(case_id, 41, staged_action=action)
+    repository.advance_review_pipeline_action(action, None, 42)
+    assert repository.claim_review_pipeline_action(43) is None
+    assert len(repository.get_review_case_decisions(case_id)) == 1
+    controls = AutomaticSafetyControls(repository)
+    controls.pause(False, 44)
+    controls.recover(45)
+    controls.recover(46, "title_layout")
+    assert repository.claim_review_pipeline_action(47) is None
+    assert len(repository.get_review_case_decisions(case_id)) == 1
+    repository.close()
+
+
+def test_automatic_resume_preserves_suspension_committed_by_projection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    path = tmp_path / "state.sqlite"
+    repository = open_repository(path, cross_thread=True)
+    case_id, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Title"),
+        safety=AutomaticSafetyState(True, None, ()),
+    )
+    sibling = open_repository(path, create=False, authority=repository.authority)
+    sibling._connection.execute("BEGIN IMMEDIATE")
+    started = threading.Event()
+    errors: list[BaseException] = []
+    repository._connection.set_trace_callback(
+        lambda sql: started.set() if sql == "BEGIN IMMEDIATE" else None
+    )
+
+    def reject_authority(*args: object) -> None:
+        raise AutomaticDecisionError("synthetic authority failure")
+
+    monkeypatch.setattr(sibling, "_record_automatic_outcomes", reject_authority)
+
+    def resume() -> None:
+        try:
+            AutomaticSafetyControls(repository).pause(False, 40)
+        except BaseException as error:
+            errors.append(error)
+
+    thread = threading.Thread(target=resume)
+    thread.start()
+    try:
+        assert started.wait(3)
+        sibling.persist_shadow_outcome(case_id, 39)
+        assert (
+            sibling.automatic_safety_state().global_suspension
+            == "automatic_authority_failed"
+        )
+        sibling._connection.commit()
+    finally:
+        if sibling._connection.in_transaction:
+            sibling._connection.rollback()
+        thread.join(5)
+        sibling.close()
+    assert not thread.is_alive() and not errors
+    assert repository.automatic_safety_state() == AutomaticSafetyState(
+        False, "automatic_authority_failed", ()
+    )
+    assert repository.claim_review_pipeline_action(41) is None
+    assert repository.get_review_case_decisions(case_id) == ()
+    repository.close()
+
+
+def test_title_recovery_reblocked_projection_is_reconsidered_on_resume(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    repository = open_repository(tmp_path / "state.sqlite")
+    case_id, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Title"),
+        safety=AutomaticSafetyState(
+            False, None, (("title_layout", "admission_failed"),)
+        ),
+    )
+    controls = AutomaticSafetyControls(repository)
+    controls.recover(30, "title_layout")
+    controls.pause(True, 31)
+    action = repository.claim_review_pipeline_action(32)
+    assert action is not None and action.stage == "projection"
+    repository.persist_shadow_outcome(case_id, 33, staged_action=action)
+    repository.advance_review_pipeline_action(action, None, 34)
+    assert repository.claim_review_pipeline_action(35) is None
+    assert repository.get_review_case_decisions(case_id) == ()
+    controls.pause(False, 36)
+    action = repository.claim_review_pipeline_action(37)
+    assert action is not None and action.stage == "projection"
+    repository.persist_shadow_outcome(case_id, 38, staged_action=action)
+    repository.advance_review_pipeline_action(action, None, 39)
+    assert repository.claim_review_pipeline_action(40) is None
+    assert len(repository.get_review_case_decisions(case_id)) == 1
     repository.close()

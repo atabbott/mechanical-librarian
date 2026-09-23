@@ -1175,9 +1175,16 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   expect(screen.getByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
 })
 
-it.each(['missing', 'terminal'] as const)(
-  'refreshes cached %s preparation after recovery before same-session Library navigation',
-  async (prior) => {
+it.each([
+  ['missing', 'title'],
+  ['terminal', 'title'],
+  ['missing', 'pause'],
+  ['terminal', 'pause'],
+  ['missing', 'global'],
+  ['terminal', 'global'],
+] as const)(
+  'refreshes cached %s preparation after %s release before same-session Library navigation',
+  async (prior, release) => {
     const user = userEvent.setup()
     let recovered = false
     const presentation = {
@@ -1233,9 +1240,10 @@ it.each(['missing', 'terminal'] as const)(
             : presentation,
       })),
       getAutomaticSafety: vi.fn(async () => ({
-        paused: false,
-        global_suspension: null,
-        category_suspensions: recovered ? {} : { title_layout: 'automatic_admission_failed' },
+        paused: !recovered && release === 'pause',
+        global_suspension: !recovered && release === 'global' ? 'retained_global' : null,
+        category_suspensions:
+          !recovered && release === 'title' ? { title_layout: 'automatic_admission_failed' } : {},
       })),
       policyCommand: async <T,>() => {
         recovered = true
@@ -1252,8 +1260,21 @@ it.each(['missing', 'terminal'] as const)(
     const summary = screen.getByText('Safety').closest('summary')
     if (!summary) throw new Error('Safety summary missing')
     await user.click(summary)
-    await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
-    await screen.findByText(/Suspension recovered/u)
+    await user.click(
+      screen.getByRole('button', {
+        name:
+          release === 'pause'
+            ? 'Resume automatic decisions'
+            : release === 'global'
+              ? /Recover global suspension/iu
+              : /Recover .*title.* suspension/iu,
+      }),
+    )
+    await screen.findByText(
+      release === 'pause'
+        ? /Policy state updated from the authoritative server/u
+        : /Suspension recovered/u,
+    )
     await user.click(screen.getByRole('link', { name: 'Library' }))
     await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
     expect(await screen.findByText('Title recovery requested')).toBeVisible()

@@ -2563,8 +2563,9 @@ def test_shadow_sample_response_refuses_genuine_predecessor_outcome():
     )
 
 
+@pytest.mark.parametrize("release", ["title", "pause", "global"])
 def test_owner_title_recovery_route_requeues_actual_completed_work(
-    tmp_path, web: ReviewWebContext[FakeReviewRepository]
+    tmp_path, web: ReviewWebContext[FakeReviewRepository], release: str
 ):
     from mechanical_librarian.application.live_updates import LiveUpdateChannel
     from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
@@ -2575,7 +2576,11 @@ def test_owner_title_recovery_route_requeues_actual_completed_work(
         repository,
         isbn_title_report(current="Example Title"),
         safety=AutomaticSafetyState(
-            False, None, (("title_layout", "automatic_admission_failed"),)
+            release == "pause",
+            "retained_global" if release == "global" else None,
+            (("title_layout", "automatic_admission_failed"),)
+            if release == "title"
+            else (),
         ),
     )
     web.client.close()
@@ -2594,18 +2599,21 @@ def test_owner_title_recovery_route_requeues_actual_completed_work(
     )
     context = web
     try:
-        route = "/api/v1/metadata-policy/automatic-safety/recover"
+        route = "/api/v1/metadata-policy/automatic-safety/" + (
+            "pause" if release == "pause" else "recover"
+        )
+        body = (
+            {"paused": False}
+            if release == "pause"
+            else {"category": "title_layout" if release == "title" else None}
+        )
         assert (
-            context.client.post(
-                route, headers=context.origin, json={"category": "title_layout"}
-            ).status_code
+            context.client.post(route, headers=context.origin, json=body).status_code
             == 401
         )
         login = context.login()
         assert (
-            context.client.post(
-                route, headers=context.origin, json={"category": "title_layout"}
-            ).status_code
+            context.client.post(route, headers=context.origin, json=body).status_code
             == 403
         )
         published: list[str] = []
@@ -2621,7 +2629,7 @@ def test_owner_title_recovery_route_requeues_actual_completed_work(
             response = context.client.post(
                 route,
                 headers={**context.origin, "x-csrf-token": login["csrf_token"]},
-                json={"category": "title_layout"},
+                json=body,
             )
         assert published == ["preparation"]
         assert response.status_code == 200

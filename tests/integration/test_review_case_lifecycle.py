@@ -765,8 +765,9 @@ def test_one_author_provider_remains_owner_review_without_automatic_authority(
 
 
 @pytest.mark.parametrize("mode", ["retained", "dismissed", "unrelated_terminal"])
+@pytest.mark.parametrize("blocker", [None, "pause", "global"])
 def test_completed_title_recovery_restarts_as_one_durable_no_change(
-    tmp_path: Path, mode: str
+    tmp_path: Path, mode: str, blocker: str | None
 ) -> None:
     from types import SimpleNamespace
 
@@ -787,11 +788,22 @@ def test_completed_title_recovery_restarts_as_one_durable_no_change(
         repository,
         isbn_title_report(current="Example Title"),
         safety=AutomaticSafetyState(
-            False, None, (("title_layout", "automatic_admission_failed"),)
+            blocker == "pause",
+            "retained_global" if blocker == "global" else None,
+            (("title_layout", "automatic_admission_failed"),),
         ),
     )
     replace_title_presentation(repository, mode)
     AutomaticSafetyControls(repository).recover(30, "title_layout")
+    if blocker is not None:
+        assert repository.claim_review_pipeline_action(30) is None
+        repository.close()
+        repository = open_repository(path, create=False)
+        controls = AutomaticSafetyControls(repository)
+        if blocker == "pause":
+            controls.pause(False, 30)
+        else:
+            controls.recover(30)
     queued = repository.preparation_presentation(30)
     assert queued is not None and queued.state.value == "running"
     assert queued.total == (2 if mode == "unrelated_terminal" else 1)

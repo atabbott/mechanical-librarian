@@ -802,7 +802,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     onSettled: async (_data, _error, { action }) => {
       await Promise.all([
         refresh(),
-        ...(action === 'automatic-safety/recover'
+        ...(['automatic-safety/recover', 'automatic-safety/pause'].includes(action)
           ? [invalidateBackgroundQueries(queryClient, { queryKey: ['review-preparation'] })]
           : []),
       ])
@@ -831,7 +831,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         tone: 'success',
         message:
           action === 'automatic-safety/recover'
-            ? 'Suspension recovered. Any queued title work remains subject to other pauses and suspensions.'
+            ? 'Suspension recovered. Title work resumes when its category suspension, automatic pause and global suspension are all cleared.'
             : 'Policy state updated from the authoritative server.',
       })
       if (action === 'automatic-safety/recover') safetySummaryRef.current?.focus()

@@ -23,7 +23,7 @@ The current installed contract is intentionally narrow:
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v15`,
-  `shadow-review-action-policy-v4`, `shadow-outcome-set-v6`,
+  `shadow-review-action-policy-v4`, `shadow-outcome-set-v7`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
   these successors require a clean rebuild and do not adopt prior state;
 - `review-session-v1`, `review-library-v2`, `review-case-detail-v4`,

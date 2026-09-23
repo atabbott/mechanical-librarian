@@ -2023,6 +2023,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> None:
         self._decisions.set_automatic_safety_state(state, updated_at)
 
+    def pause_automatic_safety(
+        self, paused: bool, updated_at: int
+    ) -> AutomaticSafetyState:
+        return self._decisions.pause_automatic_safety(paused, updated_at)
+
     def recover_automatic_safety(
         self, updated_at: int, category: str | None
     ) -> AutomaticSafetyState:

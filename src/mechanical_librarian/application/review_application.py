@@ -369,6 +369,8 @@ class AutomaticSafetyOperations:
         self._gate(
             lambda: self._controls.pause(cast(bool, paused), cast(int, changed_at))
         )
+        if paused is False:
+            self._updates.publish("preparation")
 
     def recover(self, changed_at: object, category: object = None) -> None:
         self._gate(
@@ -376,7 +378,7 @@ class AutomaticSafetyOperations:
                 cast(int, changed_at), cast("str | None", category)
             )
         )
-        if category == "title_layout":
+        if category in (None, "title_layout"):
             self._updates.publish("preparation")
 
     def suspend(

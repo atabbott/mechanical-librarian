@@ -833,6 +833,32 @@ class SQLiteDecisionRepository(ConnectionScoped):
             ) from error
 
     @local_operation
+    def pause_automatic_safety(
+        self, paused: bool, updated_at: int
+    ) -> AutomaticSafetyState:
+        if type(paused) is not bool or type(updated_at) is not int or updated_at < 0:
+            raise MetadataReportError("automatic safety state is invalid")
+        transaction = self._transaction("pause_automatic_safety")
+        try:
+            transaction.begin()
+            current = self.automatic_safety_state()
+            result = AutomaticSafetyState(
+                paused, current.global_suspension, current.category_suspensions
+            )
+            self._set_automatic_safety_state(result, updated_at)
+            if not current.permits("title_layout") and result.permits("title_layout"):
+                self._requeue_title_projections(updated_at)
+            transaction.commit()
+            return result
+        except BaseException as error:
+            transaction.rollback()
+            if isinstance(error, (sqlite3.Error, MetadataReportError)):
+                raise MetadataReportError(
+                    "automatic safety state is unavailable"
+                ) from error
+            raise
+
+    @local_operation
     def recover_automatic_safety(
         self, updated_at: int, category: str | None
     ) -> AutomaticSafetyState:
@@ -856,9 +882,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 ),
             )
             self._set_automatic_safety_state(result, updated_at)
-            if category == "title_layout" and category in dict(
-                current.category_suspensions
-            ):
+            if not current.permits("title_layout") and result.permits("title_layout"):
                 self._requeue_title_projections(updated_at)
             transaction.commit()
             return result

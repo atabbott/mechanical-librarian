@@ -322,7 +322,9 @@ and [the recovery decision](../architecture/decisions/0078-preparation-claim-and
 
 ## Recovering title decisions
 
-In Policy, expand Safety and recover the title suspension. Eligible completed
+In Policy, expand Safety and recover the title suspension. If automatic decisions
+remain paused or globally suspended, completed work stays unchanged until the
+last blocking control is explicitly cleared. Eligible completed
 books are queued for re-evaluation of retained evidence; Library history records
 the decision and Activity records a supported unchanged title as no change.
 Library preparation shows “Title recovery requested” and the queued or running
