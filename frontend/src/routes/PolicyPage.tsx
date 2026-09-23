@@ -1239,9 +1239,10 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               </div>
               {safety.category_suspensions.title_layout ? (
                 <p>
-                  Recovering title decisions queues eligible completed books for re-evaluation using
-                  their retained evidence. A supported unchanged title records no change; recovery
-                  does not write to your library. Other pauses and suspensions still apply.
+                  Eligible completed books are re-evaluated from retained evidence once the title
+                  suspension, automatic pause and global suspension are all cleared. A supported
+                  unchanged title records no change; recovery does not write to your library.
+                  Unrelated category suspensions remain in place.
                 </p>
               ) : null}
               {Object.keys(safety.category_suspensions).map((category) => (

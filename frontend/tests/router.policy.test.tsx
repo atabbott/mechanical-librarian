@@ -1160,7 +1160,9 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   if (!summary) throw new Error('Safety summary missing')
   await user.click(summary)
   expect(
-    screen.getByText(/Recovering title decisions queues eligible completed books/u),
+    screen.getByText(
+      /Eligible completed books are re-evaluated from retained evidence once the title suspension, automatic pause and global suspension are all cleared/u,
+    ),
   ).toBeVisible()
   await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
   expect(await screen.findByText(/Nothing changed. Review the current server state/u)).toBeVisible()
