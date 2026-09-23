@@ -31,7 +31,9 @@ high-water marks. A missing recovered enrollment is attached from authoritative
 work and scan records; if the owner dismissed the run, recovery starts a visible
 run. The closed `title_recovery` trigger records one accepted request per nonempty
 cohort, without inventing a scan or replaying acquisition. Queued and running
-projection work remains visible until the ordinary pipeline settles it.
+projection work remains visible until the ordinary pipeline settles it. Successful
+title recovery announces preparation invalidation to other sessions; the owner
+command also refreshes its cached preparation snapshot without waiting for work.
 
 SQLite serializes recovery with completion, report publication, policy activation
 and owner decisions. Claim/projection currentness and final decision uniqueness

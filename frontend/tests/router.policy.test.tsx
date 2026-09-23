@@ -3,7 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
-import type { PolicyStateView, ReviewHttp, ShadowPostureView } from '../src/api/http'
+import type {
+  PolicyStateView,
+  PreparationView,
+  ReviewHttp,
+  ShadowPostureView,
+} from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, inertAudiobookQualification, renderRoute } from './fixtures'
 import { view } from './settingsFixtures'
@@ -1151,7 +1156,8 @@ it('explains title re-evaluation, retains retry, and restores focus after recove
   }
   renderRoute('/policy', http)
   await screen.findByRole('heading', { name: 'Library policy' })
-  const summary = screen.getByText('Safety').closest('summary')!
+  const summary = screen.getByText('Safety').closest('summary')
+  if (!summary) throw new Error('Safety summary missing')
   await user.click(summary)
   expect(
     screen.getByText(/Recovering title decisions queues eligible completed books/u),
@@ -1198,7 +1204,7 @@ it.each(['missing', 'terminal'] as const)(
     }
     const http: ReviewHttp = {
       ...createHttp(),
-      getPreparation: vi.fn(async () => ({
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
         schema_version: 'review-preparation-v2',
         recovery_required: false,
         active: recovered,
@@ -1243,10 +1249,12 @@ it.each(['missing', 'terminal'] as const)(
         presentation: prior === 'missing' ? null : { state: 'completed_clean' },
       }),
     )
-    await user.click(screen.getByText('Safety').closest('summary')!)
+    const summary = screen.getByText('Safety').closest('summary')
+    if (!summary) throw new Error('Safety summary missing')
+    await user.click(summary)
     await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
     await screen.findByText(/Suspension recovered/u)
-    await user.click(screen.getByRole('link', { name: 'Library', exact: true }))
+    await user.click(screen.getByRole('link', { name: 'Library' }))
     await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
     expect(await screen.findByText('Title recovery requested')).toBeVisible()
     expect(queryClient.getQueryData(['review-preparation'])).toMatchObject({
