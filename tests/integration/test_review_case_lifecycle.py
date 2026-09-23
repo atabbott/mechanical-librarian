@@ -762,3 +762,89 @@ def test_one_author_provider_remains_owner_review_without_automatic_authority(
         ).fetchone() == (0,)
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize("mode", ["retained", "dismissed", "unrelated_terminal"])
+@pytest.mark.parametrize("blocker", [None, "pause", "global"])
+def test_completed_title_recovery_restarts_as_one_durable_no_change(
+    tmp_path: Path, mode: str, blocker: str | None
+) -> None:
+    from types import SimpleNamespace
+
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
+    )
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+    from tests.support.evidence_led_titles import (
+        complete_title_work,
+        isbn_title_report,
+        replace_title_presentation,
+    )
+
+    path = tmp_path / "recovery.sqlite"
+    repository = open_repository(path)
+    case_id, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Title"),
+        safety=AutomaticSafetyState(
+            blocker == "pause",
+            "retained_global" if blocker == "global" else None,
+            (("title_layout", "automatic_admission_failed"),),
+        ),
+    )
+    replace_title_presentation(repository, mode)
+    AutomaticSafetyControls(repository).recover(30, "title_layout")
+    if blocker is not None:
+        assert repository.claim_review_pipeline_action(30) is None
+        repository.close()
+        repository = open_repository(path, create=False)
+        controls = AutomaticSafetyControls(repository)
+        if blocker == "pause":
+            controls.pause(False, 30)
+        else:
+            controls.recover(30)
+    queued = repository.preparation_presentation(30)
+    assert queued is not None and queued.state.value == "running"
+    assert queued.total == (2 if mode == "unrelated_terminal" else 1)
+    repository.close()
+    repository = open_repository(path, create=False)
+    action = repository.claim_review_pipeline_action(31)
+    assert action is not None and action.stage == "projection"
+    running = repository.preparation_presentation(31)
+    assert running is not None and len(running.active_books) == 1
+    repository.persist_shadow_outcome(case_id, 32, staged_action=action)
+    repository.advance_review_pipeline_action(action, None, 33)
+    assert repository.claim_review_pipeline_action(34) is None
+    settled = repository.preparation_presentation(34)
+    assert settled is not None and settled.passage.ready == 1
+    assert settled.state.value == (
+        "completed_with_failures" if mode == "unrelated_terminal" else "completed_clean"
+    )
+    scheduler = ContinuousGuardedApplication(
+        repository,
+        {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+        {("primary", "ebooks"): SimpleNamespace()},
+        SimpleNamespace(),
+        (("primary", "ebooks"),),
+        lambda: 35,
+        lambda *_: None,
+    )
+    assert scheduler.schedule() == scheduler.schedule() == 0
+    assert repository._connection.execute(
+        "SELECT count(*) FROM field_effect_no_changes"
+    ).fetchone() == (1,)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM field_effects"
+    ).fetchone() == (0,)
+    assert repository.pending_field_effect_decision_documents(100) == ()
+    repository.close()
+    repository = open_repository(path, create=False)
+    assert repository.preparation_presentation(34) == settled
+    assert repository._connection.execute(
+        "SELECT count(*) FROM automatic_decisions WHERE destination='title'"
+    ).fetchone() == (1,)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM field_effect_no_changes"
+    ).fetchone() == (1,)
+    repository.close()

@@ -666,6 +666,33 @@ describe('Library route', () => {
       '1 ready',
     )
     expect(screen.getByText('Started by an owner scan')).toBeVisible()
+    act(() => {
+      queryClient.setQueryData(['review-preparation'], {
+        ...running,
+        presentation: {
+          ...runningPresentation,
+          triggers: [
+            ...runningPresentation.triggers,
+            {
+              trigger: 'title_recovery',
+              accepted_count: 1,
+              first_accepted_at: 101,
+              last_accepted_at: 101,
+            },
+          ],
+          passage: { ...runningPresentation.passage, failed: 1 },
+          recent_completions: [
+            { name: 'Unrelated unfinished title', outcome: 'failed', completed_at: 101 },
+          ],
+        },
+      })
+    })
+    expect(
+      await screen.findByText('Started by an owner scan · Title recovery requested'),
+    ).toBeVisible()
+    expect(screen.getByText('Active title')).toBeVisible()
+    expect(screen.getByText('Unrelated unfinished title')).toBeVisible()
+    expect(screen.getByText('1 ready · 1 could not finish · 1 in progress')).toBeVisible()
 
     act(() => {
       queryClient.setQueryData(['review-preparation'], {

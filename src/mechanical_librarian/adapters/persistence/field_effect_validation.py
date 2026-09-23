@@ -23,8 +23,8 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
-    audiobook_title_preservation_bundle,
     audiobook_title_subtitle_bundle,
+    title_preservation_bundle,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
@@ -206,7 +206,7 @@ def _validate_automatic_decision_authority(
                 ).encode("utf-8")
             ).hexdigest()
             if source.combination_ids
-            else audiobook_title_preservation_bundle(source)
+            else title_preservation_bundle(source)
         )
         if expected_bundle is None or decision.bundle_id != expected_bundle:
             raise FieldEffectError("authority_binding")

@@ -298,8 +298,8 @@ _REVIEW_PREPARATION_PRESENTATION_SQL = (
     "row_id TEXT PRIMARY KEY NOT NULL, row_kind TEXT NOT NULL CHECK(row_kind IN ('run','trigger','enrollment','deferred_enrollment','work')), "
     "run_id TEXT NOT NULL CHECK(run_id GLOB 'preparation_run_[0-9a-f]*' AND length(run_id)=80), "
     "state TEXT CHECK(state IS NULL OR state IN ('starting','running','blocked','completed_clean','completed_with_failures','dismissed')), "
-    "trigger TEXT CHECK(trigger IS NULL OR trigger IN ('initial_setup','manual_scan','library_added')), "
-    "scan_id TEXT, connection_name TEXT, library_name TEXT, cycle_id TEXT CHECK(cycle_id IS NULL OR (substr(cycle_id,1,18)='preparation_cycle_' AND length(cycle_id)=82 AND substr(cycle_id,19) NOT GLOB '*[^0-9a-f]*')), pending_cycle_id TEXT CHECK(pending_cycle_id IS NULL OR (substr(pending_cycle_id,1,18)='preparation_cycle_' AND length(pending_cycle_id)=82 AND substr(pending_cycle_id,19) NOT GLOB '*[^0-9a-f]*')), cycle_state TEXT CHECK(cycle_state IS NULL OR cycle_state IN ('queued','discovering','processing','completed','completed_with_failures')), work_id TEXT, ordinal INTEGER CHECK(ordinal IS NULL OR ordinal>=0), trigger_ordinal INTEGER CHECK(trigger_ordinal IS NULL OR trigger_ordinal BETWEEN 0 AND 2), enrollment_ordinal INTEGER CHECK(enrollment_ordinal IS NULL OR enrollment_ordinal>=0), "
+    "trigger TEXT CHECK(trigger IS NULL OR trigger IN ('initial_setup','manual_scan','library_added','title_recovery')), "
+    "scan_id TEXT, connection_name TEXT, library_name TEXT, cycle_id TEXT CHECK(cycle_id IS NULL OR (substr(cycle_id,1,18)='preparation_cycle_' AND length(cycle_id)=82 AND substr(cycle_id,19) NOT GLOB '*[^0-9a-f]*')), pending_cycle_id TEXT CHECK(pending_cycle_id IS NULL OR (substr(pending_cycle_id,1,18)='preparation_cycle_' AND length(pending_cycle_id)=82 AND substr(pending_cycle_id,19) NOT GLOB '*[^0-9a-f]*')), cycle_state TEXT CHECK(cycle_state IS NULL OR cycle_state IN ('queued','discovering','processing','completed','completed_with_failures')), work_id TEXT, ordinal INTEGER CHECK(ordinal IS NULL OR ordinal>=0), trigger_ordinal INTEGER CHECK(trigger_ordinal IS NULL OR trigger_ordinal BETWEEN 0 AND 3), enrollment_ordinal INTEGER CHECK(enrollment_ordinal IS NULL OR enrollment_ordinal>=0), "
     "display_name TEXT CHECK(display_name IS NULL OR (typeof(display_name)='text' AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 2048)), "
     "work_stage TEXT CHECK(work_stage IS NULL OR work_stage IN ('extraction','provider','proposal','admission','projection')), "
     "current_work_state TEXT CHECK(current_work_state IS NULL OR current_work_state IN ('queued','delayed','running','complete','failed','stale')), work_outcome TEXT CHECK(work_outcome IS NULL OR work_outcome IN ('ready','failed')), recovery_high_water_stage TEXT CHECK(recovery_high_water_stage IS NULL OR recovery_high_water_stage IN ('extraction','provider','proposal','admission','projection')), recovery_high_water_outcome TEXT CHECK(recovery_high_water_outcome IS NULL OR recovery_high_water_outcome IN ('ready','failed')), completion_sequence INTEGER CHECK(completion_sequence IS NULL OR completion_sequence>0), completion_count INTEGER CHECK(completion_count IS NULL OR completion_count>=0), "
@@ -584,7 +584,7 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "resolved_policy_id TEXT NOT NULL CHECK(resolved_policy_id GLOB 'resolved_policy_[0-9a-f]*' AND length(resolved_policy_id)=80), "
     "source_decision_set_id TEXT NOT NULL, evaluated_at INTEGER NOT NULL CHECK(evaluated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
-    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v6'))"
+    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v7'))"
 )
 _SHADOW_OUTCOME_FIELD_FACTS_SQL = (
     "CREATE TABLE shadow_outcome_field_facts ("

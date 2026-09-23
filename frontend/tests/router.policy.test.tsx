@@ -3,7 +3,12 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
-import type { PolicyStateView, ReviewHttp, ShadowPostureView } from '../src/api/http'
+import type {
+  PolicyStateView,
+  PreparationView,
+  ReviewHttp,
+  ShadowPostureView,
+} from '../src/api/http'
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, inertAudiobookQualification, renderRoute } from './fixtures'
 import { view } from './settingsFixtures'
@@ -1126,5 +1131,158 @@ it.each([
         within(cover).getByRole('combobox', { name: 'Cover representation' }),
       ).toHaveTextContent('Fill from confirmed order')
     }
+  },
+)
+
+it('explains title re-evaluation, retains retry, and restores focus after recovery', async () => {
+  const user = userEvent.setup()
+  let recovered = false
+  let fail = true
+  const command = vi.fn(async () => {
+    if (fail) throw new ApiError(503, 'persistence')
+    recovered = true
+    return {}
+  })
+  const http: ReviewHttp = {
+    ...createHttp(),
+    getAutomaticSafety: vi.fn(async () => ({
+      paused: true,
+      global_suspension: null,
+      category_suspensions: recovered
+        ? { publisher_preference: 'other_failure' }
+        : { title_layout: 'automatic_admission_failed', publisher_preference: 'other_failure' },
+    })),
+    policyCommand: <T,>() => command() as Promise<T>,
+  }
+  renderRoute('/policy', http)
+  await screen.findByRole('heading', { name: 'Library policy' })
+  const summary = screen.getByText('Safety').closest('summary')
+  if (!summary) throw new Error('Safety summary missing')
+  await user.click(summary)
+  expect(
+    screen.getByText(
+      /Eligible completed books are re-evaluated from retained evidence once the title suspension, automatic pause and global suspension are all cleared/u,
+    ),
+  ).toBeVisible()
+  await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
+  expect(await screen.findByText(/Nothing changed. Review the current server state/u)).toBeVisible()
+  expect(screen.getByRole('button', { name: /Recover .*title.* suspension/iu })).toBeEnabled()
+  fail = false
+  await user.click(screen.getByRole('button', { name: /Recover .*title.* suspension/iu }))
+  await waitFor(() =>
+    expect(screen.queryByRole('button', { name: /Recover .*title.* suspension/iu })).toBeNull(),
+  )
+  expect(summary).toHaveFocus()
+  expect(screen.getByRole('button', { name: /Recover .*publisher.* suspension/iu })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Resume automatic decisions' })).toBeVisible()
+})
+
+it.each([
+  ['missing', 'title'],
+  ['terminal', 'title'],
+  ['missing', 'pause'],
+  ['terminal', 'pause'],
+  ['missing', 'global'],
+  ['terminal', 'global'],
+] as const)(
+  'refreshes cached %s preparation after %s release before same-session Library navigation',
+  async (prior, release) => {
+    const user = userEvent.setup()
+    let recovered = false
+    const presentation = {
+      run_id: `preparation_run_${'a'.repeat(64)}`,
+      state: 'completed_clean' as const,
+      triggers: [
+        {
+          trigger: 'manual_scan' as const,
+          accepted_count: 1,
+          first_accepted_at: 100,
+          last_accepted_at: 100,
+        },
+      ],
+      passage: { read: 1, searches_finished: 1, compared: 1, checked: 1, ready: 1, failed: 0 },
+      active_books: [],
+      active_overflow: 0,
+      recent_completions: [],
+      throughput_per_minute: 0,
+      started_at: 100,
+      updated_at: 101,
+      completed_at: 101,
+      total: 1,
+      dismissible: true,
+    }
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getPreparation: vi.fn(async (): Promise<PreparationView> => ({
+        schema_version: 'review-preparation-v2',
+        recovery_required: false,
+        active: recovered,
+        actionable: false,
+        paused: false,
+        libraries: [],
+        connections: [],
+        presentation: recovered
+          ? {
+              ...presentation,
+              state: 'running',
+              completed_at: null,
+              updated_at: 102,
+              dismissible: false,
+              triggers: [
+                {
+                  trigger: 'title_recovery',
+                  accepted_count: 1,
+                  first_accepted_at: 102,
+                  last_accepted_at: 102,
+                },
+              ],
+            }
+          : prior === 'missing'
+            ? null
+            : presentation,
+      })),
+      getAutomaticSafety: vi.fn(async () => ({
+        paused: !recovered && release === 'pause',
+        global_suspension: !recovered && release === 'global' ? 'retained_global' : null,
+        category_suspensions:
+          !recovered && release === 'title' ? { title_layout: 'automatic_admission_failed' } : {},
+      })),
+      policyCommand: async <T,>() => {
+        recovered = true
+        return {} as T
+      },
+    }
+    const { queryClient } = renderRoute('/policy', http)
+    await screen.findByRole('heading', { name: 'Library policy' })
+    await waitFor(() =>
+      expect(queryClient.getQueryData(['review-preparation'])).toMatchObject({
+        presentation: prior === 'missing' ? null : { state: 'completed_clean' },
+      }),
+    )
+    const summary = screen.getByText('Safety').closest('summary')
+    if (!summary) throw new Error('Safety summary missing')
+    await user.click(summary)
+    await user.click(
+      screen.getByRole('button', {
+        name:
+          release === 'pause'
+            ? 'Resume automatic decisions'
+            : release === 'global'
+              ? /Recover global suspension/iu
+              : /Recover .*title.* suspension/iu,
+      }),
+    )
+    await screen.findByText(
+      release === 'pause'
+        ? /Policy state updated from the authoritative server/u
+        : /Suspension recovered/u,
+    )
+    await user.click(screen.getByRole('link', { name: 'Library' }))
+    await user.click(await screen.findByRole('button', { name: /Preparing your library/u }))
+    expect(await screen.findByText('Title recovery requested')).toBeVisible()
+    expect(queryClient.getQueryData(['review-preparation'])).toMatchObject({
+      presentation: { state: 'running', total: 1, passage: { ready: 1 } },
+    })
+    expect(http.getPreparation).toHaveBeenCalledTimes(2)
   },
 )

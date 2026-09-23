@@ -1,0 +1,25 @@
+[
+  {
+    "bundle_id": null,
+    "candidate_id": "alternative_37a2130f7373c33b061669c1f6119bb0f3773032f5b52ebc773129b630e359d8",
+    "decision_id": "automatic_decision_c5eaa449ca5cd5becfbea133396c87c461c1e9efe31ea556e5bb957c4dd03f67",
+    "destination": "title",
+    "idempotency_digest": "401b4ddc7532cb82546bff6c620a692a70a85531ff9a72d5a4911b0cf945f5f2",
+    "occurred_at": 4,
+    "origin": "automatic_policy",
+    "outcome": "candidate",
+    "policy_category": "title",
+    "policy_generation": 2,
+    "policy_option": "replace_target:isbn_creator_supported",
+    "proposal_id": "review_proposal_2cc1e1c0538d7d9fd279052fcb73814dbefa52bee30d236518907b872d97029b",
+    "proposal_set_id": "proposal_set_07bcd922f36592970407363852329f00ca5776b8c9d575e4bc8a952488fd274c",
+    "qualification_manifest_sha256": "78aa429a9827e6fc23aa0d4eac30e6242f4f08b99326f3852e403199e99c2337",
+    "report_id": "report_ab29a7d73dfc0f264d2adf9c532f7fd2440892197d87a9146c8f2fb16075e84c",
+    "resolved_policy_id": "resolved_policy_17943f2180e4fb82490b6bcca7e260d4a8bb4b3b5b3e467604610a4cbacc7002",
+    "review_case_id": "review_case_621f406d9a6a86d803b171ee091d29b2f9621cc41ddec740befcb0859f58fe92",
+    "rule_id": "shadow_rule_172022f105a8b4efcdb4c1081e328e9370a885cfd5aedbe68d5dd60207b71dbd",
+    "schema_version": "automatic-decision-v1",
+    "source_outcome_id": "shadow_outcome_a479833fcd50c7ed343a892a5fc1bd968c3da0cdb21d7e0dec8643e253791373",
+    "target_fingerprint": "d6dc5f30698f178f4b6befe42d7b6f0e0c546248ac1fb22c2bbbc882c5d237ee"
+  }
+]

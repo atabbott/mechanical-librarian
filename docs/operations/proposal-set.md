@@ -365,3 +365,11 @@ The `fixed-conservative-v28` Authors proposal requires complete creator sets. A 
 ## Malformed provider titles
 
 Title and subtitle admission rejects text that the unchanged closed comparison cannot consume. Proposal evaluation ignores typed nonvalid claims while preserving admissible local, same-candidate and sibling-provider evidence. Existing work/recording admission remains authoritative: an unadmitted candidate or recording field does not acquire authority merely because its rejection is typed. Report v47 changes report-derived bindings, while proposal policy `fixed-conservative-v28`, comparison v5 and shadow policy v15 remain unchanged (#1084).
+
+## Unchanged title authority
+
+A supported title preservation can legitimately carry citations without a
+bibliographic combination. The qualified no-change witness binds that exact
+outcome; it cannot select a replacement. Existing combinations and paired-title
+rules continue to govern changes. Explicit title recovery reuses the current
+ProposalSet and report rather than acquiring new evidence (#1073).

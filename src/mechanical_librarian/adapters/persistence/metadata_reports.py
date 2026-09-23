@@ -380,6 +380,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._decisions = SQLiteDecisionRepository(
             connection,
             binding,
+            requeue_title_projections=(
+                lambda updated_at: self._review_preparation._requeue_title_projections(
+                    updated_at
+                )
+            ),
             get_review_case=(
                 lambda review_case_id: self.get_review_case(review_case_id)
             ),
@@ -2017,6 +2022,16 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self, state: AutomaticSafetyState, updated_at: int
     ) -> None:
         self._decisions.set_automatic_safety_state(state, updated_at)
+
+    def pause_automatic_safety(
+        self, paused: bool, updated_at: int
+    ) -> AutomaticSafetyState:
+        return self._decisions.pause_automatic_safety(paused, updated_at)
+
+    def recover_automatic_safety(
+        self, updated_at: int, category: str | None
+    ) -> AutomaticSafetyState:
+        return self._decisions.recover_automatic_safety(updated_at, category)
 
     def _set_automatic_safety_state(
         self, state: AutomaticSafetyState, updated_at: int

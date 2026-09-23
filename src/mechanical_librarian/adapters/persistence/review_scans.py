@@ -667,14 +667,14 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 authorities
             ):
                 self._connection.execute(
-                    "UPDATE review_preparation_presentation SET ordinal=?,updated_at=? WHERE row_id=?",
-                    (ordinal, updated_at, row_id),
+                    "UPDATE review_preparation_presentation SET ordinal=? WHERE row_id=? AND ordinal<>?",
+                    (ordinal, row_id, ordinal),
                 )
                 if row_kind == "enrollment" and cycle_id is not None:
                     self._connection.execute(
                         "UPDATE review_preparation_presentation SET enrollment_ordinal=? "
-                        "WHERE row_kind='work' AND scan_id=? AND cycle_id=?",
-                        (ordinal, scan_id, cycle_id),
+                        "WHERE row_kind='work' AND scan_id=? AND cycle_id=? AND enrollment_ordinal<>?",
+                        (ordinal, scan_id, cycle_id, ordinal),
                     )
         if clear_pause:
             self._connection.execute(

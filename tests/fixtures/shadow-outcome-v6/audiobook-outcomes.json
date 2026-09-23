@@ -1,0 +1,230 @@
+[
+  {
+    "authority": "none",
+    "catalogue_sha256": "76103b2569017244dca4a3d9fbdd23d71dc519131b819f362846010a861be87e",
+    "decision_policy_sha256": "4f94b5acecc4bee972325fb4bf18fb509dea00c50a60bf3f743cbee1e70648c1",
+    "decision_policy_version": "deterministic-shadow-decision-policy-v15",
+    "outcome_set_id": "shadow_outcome_set_f6357719ec0ff39cfa8204f2324595131ceb0f1bd7c9d519561dc70f49242124",
+    "outcomes": [
+      {
+        "action_id": "action_ca1603ccc2b26215b17a7ac4299e0d69762d0cc5f7279c951f263f498c5da153",
+        "candidate_id": "alternative_d56a1b6e78029d06d207c3f4ede77a160bcf1cee0b31db88b27188ebb1333d8b",
+        "citation_ids": [
+          "provider_27c52f8f3fadd58f695d333b03c54fb1dfee5cd5113b95a5e76ef7c291f11155",
+          "provider_9f42d3ba431c5d0dfd71d710386870fbc5f0821a2aa1beaa53ea98f36ec783e2"
+        ],
+        "combination_ids": [],
+        "destination": "narrators",
+        "disposition": "candidate",
+        "outcome_id": "shadow_outcome_b0bf102052d1e887f865baa15b80813cbc93a12d91202143a0bc7dd48af5c6d3",
+        "policy_category": "contributor_names",
+        "policy_destination": "automatic",
+        "policy_option": "canonical:audiobook_narrators_fill",
+        "proposal_id": "review_proposal_0f7907d054e5f3662364d474cd38c3bbdc14df80fd61ff7e1bea06b8b4a91607",
+        "qualification_candidate_id": "qualification_candidate_1c3e006da751a420f40be8b4fe6bb5c64837d0aaebe9293c1e61b46b26788e29",
+        "reason_code": "unique_supported_candidate",
+        "rule_id": "shadow_rule_873bbd8f94fd6dd895c58ec434eaa1708d833a5a2b9377d401fd4143398bf377"
+      },
+      {
+        "action_id": "action_ba989cfbc4ac47524b374f9e412c17401d21f18fab20941c0189f5ea13c8daf3",
+        "candidate_id": null,
+        "citation_ids": [
+          "provider_27c52f8f3fadd58f695d333b03c54fb1dfee5cd5113b95a5e76ef7c291f11155",
+          "provider_9f42d3ba431c5d0dfd71d710386870fbc5f0821a2aa1beaa53ea98f36ec783e2",
+          "provider_a993d61f3d3bbd9e8cc1c19af7f758ef99cda91fee4b238f9b7e69966252ef97",
+          "provider_b63e13fd68d05fe9e84483dab3b32b6dc54e8330d9103c04c12b6448e93c7da7"
+        ],
+        "combination_ids": [],
+        "destination": "authors",
+        "disposition": "keep_current",
+        "outcome_id": "shadow_outcome_1c2be3070355ff18950b7c032b92ae99e081a6ac225afa426bb734405852f129",
+        "policy_category": "contributor_names",
+        "policy_destination": "automatic",
+        "policy_option": "canonical:audiobook_authors_preserve",
+        "proposal_id": "review_proposal_31d9e1a6cf00c5b2062ede9b67119f5a8fa601292dcfac833a30134c0d8fa239",
+        "qualification_candidate_id": "qualification_candidate_a7748577a00aeec13b70b4bee0959188ad7805b10e90f01c7e36d2687625fa5b",
+        "reason_code": "unique_supported_preservation",
+        "rule_id": "shadow_rule_853cb4689cb001da8d8b4af1471cf6e230d71c65ebeaaf61ec97a68765c44217"
+      },
+      {
+        "action_id": "action_a5999f8c691564b1ab6790c511f33d27df2b5c86a18c0a8c65647b1ff794ca9c",
+        "candidate_id": null,
+        "citation_ids": [
+          "local_41d77f25ecf5ab3f1a9b77e66f32e79810345f18dfc08cf62a5785a4be39ae91",
+          "provider_0128a56fe3e5f21fea85ab55a20ac22256f731a4b51a68361cf0c332543b049e",
+          "provider_16aec288588482ea100ab57d12ca562adbad89864385a7031bed86687fa2f9c1",
+          "provider_1fc275d4905298e355573c08757f301af57a3933fa45c1dac28b85f16bd521ed",
+          "provider_546dfe47a5c93a0300a4e6422b7750a3b1118f3fdbb870958d7eeb22b968d866",
+          "provider_9721cc0abe0a2e9a81302f871f425c3eae898c5c1654a9ef95358359b7473d48",
+          "provider_ac1cc579f46e6ecdabd8b69a4cf0cd82ee0934e8edf0e7c6cd036242c8343595"
+        ],
+        "combination_ids": [
+          "bibliographic_combination_d92fbf5b1e05905a272da3104051017ef789cd94b2fdee89cef823df4dc8ec92"
+        ],
+        "destination": "title",
+        "disposition": "keep_current",
+        "outcome_id": "shadow_outcome_7897fc743768ef470174676be2e787d06bbf4cf299679842f2f5db296b93f92c",
+        "policy_category": "title_layout",
+        "policy_destination": "automatic",
+        "policy_option": "title_and_subtitle:audiobook_title_preserve",
+        "proposal_id": "review_proposal_a3cc66385a62139f10e6935dd9143d5288ca4122dcd87c6cf90f57e468c79f8e",
+        "qualification_candidate_id": "qualification_candidate_8ad44d1032e76457e339e5fb7112d3529b7836cee5ca173385913c5a52adbe9a",
+        "reason_code": "unique_supported_preservation",
+        "rule_id": "shadow_rule_699d78872e110d0719e77efe9b8a4e432f6f7827481a4bca798ecd2e9b413943"
+      },
+      {
+        "action_id": "action_5f37d01619106bf4c91b542ef2d98573e535bd6a46c6348156da50c0898f7fce",
+        "candidate_id": "alternative_a5d6b5e9fbaf3f4e1d22afbb29f29f4d76373b360f6a08d22847f0c673e647a8",
+        "citation_ids": [
+          "provider_0128a56fe3e5f21fea85ab55a20ac22256f731a4b51a68361cf0c332543b049e",
+          "provider_16aec288588482ea100ab57d12ca562adbad89864385a7031bed86687fa2f9c1",
+          "provider_9721cc0abe0a2e9a81302f871f425c3eae898c5c1654a9ef95358359b7473d48",
+          "provider_ac1cc579f46e6ecdabd8b69a4cf0cd82ee0934e8edf0e7c6cd036242c8343595"
+        ],
+        "combination_ids": [
+          "bibliographic_combination_d92fbf5b1e05905a272da3104051017ef789cd94b2fdee89cef823df4dc8ec92"
+        ],
+        "destination": "series",
+        "disposition": "manual",
+        "outcome_id": "shadow_outcome_554f56961c61328b332ae6491bc0fec0feb80b96fe91f3d01bef30d8b25ca1ef",
+        "policy_category": "series",
+        "policy_destination": "ask",
+        "policy_option": "primary_narrative:audiobook_series_fill",
+        "proposal_id": "review_proposal_d9dca1e1fc3bec8371425a114dfad05aaa5e6d8539a5f45ef29e4d5825747b3e",
+        "qualification_candidate_id": "qualification_candidate_35f5f277bc7204a245c987e1a235fe960617fbb9b4b56660ad535afece3d0b37",
+        "reason_code": "no_eligible_action",
+        "rule_id": "shadow_rule_0124ee0a958ac103e16b4da83f88886cb19ed2a2e6cea8193d6b6b7fecd9063e"
+      },
+      {
+        "action_id": "action_47f3745b543dc3ee32edb76de17e83c4196807292a9ff6d52ea5a83086e81eb4",
+        "candidate_id": null,
+        "citation_ids": [],
+        "combination_ids": [],
+        "destination": "genres",
+        "disposition": "manual",
+        "outcome_id": "shadow_outcome_3f2455976de8ff4d13bfb1063a08f42fb57c58c0b2f9a1c03094389b021e40a6",
+        "policy_category": "genres",
+        "policy_destination": "ask",
+        "policy_option": "fill_empty:audiobook_genres_preserve",
+        "proposal_id": "review_proposal_cac24d7fda93d59b95a7815e02ba5eebfc74c5e758dee075654b60a3ebefabb7",
+        "qualification_candidate_id": "qualification_candidate_b587f7d5a666fc76c4abe270d6f9c166a9e2f48cd7a6d673b2820fe4f9852cdb",
+        "reason_code": "no_eligible_action",
+        "rule_id": "shadow_rule_0610560eff7245cd5b5f7fd5be04cc66c2a58582472a1e12852c0baab72ed324"
+      },
+      {
+        "action_id": "action_037137d3a376f57169ffca7f8d833043346af88ae8ed15d53814d94c98409029",
+        "candidate_id": null,
+        "citation_ids": [],
+        "combination_ids": [],
+        "destination": "tags",
+        "disposition": "manual",
+        "outcome_id": "shadow_outcome_23922d37f3b75430ff25c56120a881ce65e71329a4acd1e4a51deb6442b7ff66",
+        "policy_category": "tags",
+        "policy_destination": "ask",
+        "policy_option": "off",
+        "proposal_id": "review_proposal_87a53327e02ab46e6ab3efde15da138130ab1153e73204561faf6d5735315800",
+        "qualification_candidate_id": "qualification_candidate_b7c495eb21eab51f5eafb101a689fe0c4c0588d8157a48c54603cf9bc17f650d",
+        "reason_code": "no_eligible_action",
+        "rule_id": "shadow_rule_2658a07a4904c78049c85228d186049a984841e7892000dff081d4b0a6804e18"
+      },
+      {
+        "action_id": "action_7918507432ddb26d6618908dc0f53ad63c35271f6b41162b7af726136c214f68",
+        "candidate_id": null,
+        "citation_ids": [],
+        "combination_ids": [],
+        "destination": "description",
+        "disposition": "manual",
+        "outcome_id": "shadow_outcome_ed965df63d9cf149c00e18d2122654fc6f252f85872b8b8e81446d3f7a9744ed",
+        "policy_category": "description_fill",
+        "policy_destination": "ask",
+        "policy_option": "safe_plain_text:audiobook_description_preserve",
+        "proposal_id": "review_proposal_34ecc06db02c3bbb123bd46d8904773fbbf152f6729168312c53dd6ae53353ad",
+        "qualification_candidate_id": "qualification_candidate_054e5ee5bc9398a52da0e368bb87fe3a0d84e876ec1dc50146fb71a108f54188",
+        "reason_code": "no_eligible_action",
+        "rule_id": "shadow_rule_2b1625011e57dbe91301e06523076bfa2dc603a016cf9e79312c3bbf6c1b4533"
+      },
+      {
+        "action_id": "action_25c030024573fb3eafc20e5a7ac0b2743d672399d4f7ae3e37a194b9a54fcad4",
+        "candidate_id": null,
+        "citation_ids": [],
+        "combination_ids": [],
+        "destination": "isbn",
+        "disposition": "manual",
+        "outcome_id": "shadow_outcome_574a8387e30932868a4fd1d23f1cb92bbcd487da4a6eaf11745a84c3f5132005",
+        "policy_category": "isbn_form",
+        "policy_destination": "ask",
+        "policy_option": "preserve_exact:audiobook_isbn_preserve",
+        "proposal_id": "review_proposal_b135bb4b10ecbf0ad8834e216c0d97ad275b88151d78e3295c47a3e3f2a2ebc6",
+        "qualification_candidate_id": "qualification_candidate_24b32935252892f4d8610d691a0fa5e66c1ee7349bbf2f5aeeb3efbf565947ae",
+        "reason_code": "no_eligible_action",
+        "rule_id": "shadow_rule_d3b651957e0b8b2f8ffb28e42e6bebca72e941a5bd0acad10829d64400fbbfd5"
+      },
+      {
+        "action_id": "action_bdc56374cf1c0c6fbaded60841eb54dce2ab8e4c9bf7a99493b40dae96c49d99",
+        "candidate_id": "alternative_ef7dcc352c3fbc4f7ce42655ae9f15ad804d9faa54f3c9302f65db2e8283d143",
+        "citation_ids": [
+          "provider_20d090484478c0c5fa8be1b28d53e2836e45de21e0b95371cb7537fcc1501587",
+          "provider_70ba764c4a38121a4413f0f51daef28944017e0c045f67ae828d6773609c7159"
+        ],
+        "combination_ids": [],
+        "destination": "asin",
+        "disposition": "manual",
+        "outcome_id": "shadow_outcome_67e80cd22e10fc0c516245e05dafa6d0cf05e2c2de1f9ac0db4f6f8aadc970a0",
+        "policy_category": "asin",
+        "policy_destination": "ask",
+        "policy_option": "preserve_exact:audiobook_asin_fill",
+        "proposal_id": "review_proposal_193d400f24601cb36ad25297dc5c7d6fef1449c852a2596feccc69772538b61c",
+        "qualification_candidate_id": "qualification_candidate_08b1724eb7fe191988da8a83bae6453756976acfde3a78c9f699f3be12b7ac04",
+        "reason_code": "no_eligible_action",
+        "rule_id": "shadow_rule_929263496e7c34c18ae1e3640a6ffe2119d39582741a5b800be5db6063c3d024"
+      },
+      {
+        "action_id": "action_ad820918400035f4a634a9408f31b7f14e40a0b5a3e9cf79cb62f139aff66a37",
+        "candidate_id": null,
+        "citation_ids": [],
+        "combination_ids": [],
+        "destination": "explicit",
+        "disposition": "unsupported",
+        "outcome_id": "shadow_outcome_b32ff3236eb48c29c0db6895846bf18827c6d53a0819e95e09ace3c21c2cca05",
+        "policy_category": "explicit",
+        "policy_destination": "unsupported",
+        "policy_option": "unsupported",
+        "proposal_id": "review_proposal_5eabeb71cc108e6ba44164a8341576f86cc7190be04953d0831027c8842652ea",
+        "qualification_candidate_id": "qualification_candidate_26c0aa66ecb58ed9ef47d0659bf9a424adefc7430ecd86d5fe2ad220a3db6a62",
+        "reason_code": "unsupported_destination",
+        "rule_id": "shadow_rule_a97dc625e779228be7f05f1021bb8019b49a16f2efc0afe78aa7376b4ed04a22"
+      },
+      {
+        "action_id": "action_01a2debfb4dc5c6c52226fd6bea3f3c0974de407c10e5f53a2c308a522ce7653",
+        "candidate_id": null,
+        "citation_ids": [
+          "provider_0128a56fe3e5f21fea85ab55a20ac22256f731a4b51a68361cf0c332543b049e",
+          "provider_16aec288588482ea100ab57d12ca562adbad89864385a7031bed86687fa2f9c1",
+          "provider_9721cc0abe0a2e9a81302f871f425c3eae898c5c1654a9ef95358359b7473d48",
+          "provider_ac1cc579f46e6ecdabd8b69a4cf0cd82ee0934e8edf0e7c6cd036242c8343595"
+        ],
+        "combination_ids": [],
+        "destination": "subtitle",
+        "disposition": "manual",
+        "outcome_id": "shadow_outcome_68f46eae7566c176308f77ec3b15e8415fcdec4eb1a8e45987fa2bd1b8d245fc",
+        "policy_category": "title_layout",
+        "policy_destination": "ask",
+        "policy_option": "title_and_subtitle",
+        "proposal_id": "review_proposal_e8c06e4d8b5a090cc954316f7cee2afb7cdd0d607824926e7368dc4f62247409",
+        "qualification_candidate_id": "qualification_candidate_88e91064b9bf9bc52b4f051e60b1c6615bb479e106c28cfe414f965fbe22b0fc",
+        "reason_code": "unsupported_destination",
+        "rule_id": "shadow_rule_b479f8460c1b8146943d487579cfbff805197578290da61072fd38fcbe3ce793"
+      }
+    ],
+    "policy_generation": 2,
+    "policy_profile_id": "policy_1af81cdb4d58e3e2dede226cad07ce89470a567b88b4f300815792eab4c46c89",
+    "posture": "preview",
+    "proposal_set_id": "proposal_set_3e777d5d16f86cc7fbc2d3dab0f2db1e366f4806557e7a0e7f011ac21aabf04c",
+    "report_id": "report_00182381a483b446a90430e38525689d505e0074370f31c1fa0fba848596454a",
+    "resolved_policy_id": "resolved_policy_774c5049bd26bfe02c410c95e107dd031af987db5df04072ca8c3e37a0fd2198",
+    "review_case_id": "review_case_26cec629a8209967f5ea15c551b8c9a9a124e597d92926a5c797f979104be2da",
+    "schema_version": "shadow-outcome-set-v6",
+    "source_decision_set_id": "shadow_decision_set_14b20c9fe35dda9a6908fa7bc3540ec8a87aac755489085c9317ffb25efb3b10",
+    "target_fingerprint": "12a6fa1a29bf2d0fbbb07e09c96538aca49065000805a3d3f82bf35ded044a4c"
+  }
+]

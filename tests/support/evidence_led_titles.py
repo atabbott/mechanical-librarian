@@ -365,3 +365,110 @@ def isbn_title_report(
         local_claims=tuple(local),
         providers=tuple(reversed(providers) if reverse else providers),
     )
+
+
+def complete_title_work(
+    repository,
+    report: MetadataReport,
+    mode="automatic",
+    safety=None,
+    before_projection=None,
+):
+    """Finish an actual synthetic scan and retain its projection for owner recovery."""
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+    from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
+
+    case_id, proposal = publish_title_case(repository, report, mode, safety)
+    repository.request_review_scan(
+        report.target.connection,
+        report.target.library,
+        "lib-1",
+        "f" * 64,
+        10,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(11)
+    assert discovery is not None and discovery.stage == "discovery"
+    entry = CatalogueEntry(
+        report.target.connection,
+        report.target.library,
+        "lib-1",
+        report.target.item,
+        1,
+        "Example Title",
+        ("Ada Author",),
+        True,
+        False,
+        "singular-supported",
+        report.file.identity,
+        "/synthetic.epub",
+        "epub",
+        "books",
+    )
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (entry,), 12)
+    for at, stage, output in (
+        (13, "extraction", report.report_id),
+        (15, "provider", None),
+        (17, "proposal", proposal.proposal_set_id),
+        (19, "admission", case_id),
+        (21, "projection", None),
+    ):
+        action = repository.claim_review_pipeline_action(at)
+        assert action is not None and action.stage == stage
+        if stage == "projection":
+            if before_projection is not None:
+                before_projection()
+            repository.persist_shadow_outcome(case_id, at, staged_action=action)
+        repository.advance_review_pipeline_action(action, output, at + 1)
+    assert repository.claim_review_pipeline_action(23) is None
+    return case_id, proposal
+
+
+def replace_title_presentation(repository, mode: str):
+    """Exercise retained work after its original visible preparation run is gone."""
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+    from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
+
+    if mode == "retained":
+        return None
+    current = repository.preparation_presentation(24)
+    assert current is not None
+    if mode == "dismissed":
+        repository.dismiss_preparation_presentation(current.run_id, 24)
+        assert repository.preparation_presentation(24) is None
+        return None
+    assert mode in {"unrelated_active", "unrelated_terminal"}
+    repository.request_review_scan(
+        "primary",
+        "other",
+        "lib-other",
+        "f" * 64,
+        24,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(25)
+    assert discovery is not None and discovery.stage == "discovery"
+    entry = CatalogueEntry(
+        "primary",
+        "other",
+        "lib-other",
+        "other-item",
+        1,
+        "Unrelated work",
+        (),
+        True,
+        False,
+        "singular-supported",
+        "b" * 64,
+        "/unrelated.epub",
+        "epub",
+        "books",
+    )
+    repository.complete_review_discovery(discovery, 1, "b" * 64, (entry,), 26)
+    action = repository.claim_review_pipeline_action(27)
+    assert action is not None and action.stage == "extraction"
+    if mode == "unrelated_terminal":
+        repository.fail_review_pipeline_action(action, "failed", False, 28)
+        assert repository.claim_review_pipeline_action(29) is None
+        return None
+    return action

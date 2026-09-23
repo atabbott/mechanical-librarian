@@ -23,12 +23,13 @@ from mechanical_librarian.domain.rich_metadata_qualification import (
 )
 
 
-def audiobook_title_preservation_bundle(source: ShadowFieldOutcome) -> str | None:
-    """Name only citation-backed audiobook title preservation, never a change."""
+def title_preservation_bundle(source: ShadowFieldOutcome) -> str | None:
+    """Bind citation-backed unchanged titles; retain audiobook witness identities."""
     if (
         source.destination != "title"
         or source.policy_category != "title_layout"
         or source.policy_option not in {
+            "preserve", "title_and_subtitle",
             "preserve:audiobook_title_preserve",
             "title_and_subtitle:audiobook_title_preserve",
         }
@@ -40,7 +41,9 @@ def audiobook_title_preservation_bundle(source: ShadowFieldOutcome) -> str | Non
     ):
         return None
     return "automatic_bundle_" + _digest({
-        "kind": "audiobook_title_preservation_v1",
+        "kind": ("ordinary_title_preservation_v1"
+                 if source.policy_option in {"preserve", "title_and_subtitle"}
+                 else "audiobook_title_preservation_v1"),
         "source_outcome_id": source.outcome_id,
         "citation_ids": list(source.citation_ids),
     })
@@ -78,7 +81,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "78aa429a9827e6fc23aa0d4eac30e6242f4f08b99326f3852e403199e99c2337"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "715bdf440093ae0857825f6cc465e94d8b12f773bf1543866e49018240ccda86"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -110,6 +113,7 @@ QUALIFIED_POLICY_OPTIONS = (
     | F46_QUALIFIED_POLICY_OPTIONS
 )
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    ("78aa429a9827e6fc23aa0d4eac30e6242f4f08b99326f3852e403199e99c2337", F19A_QUALIFIED_POLICY_OPTIONS),
     ("e337a843d95b3bb6198824e2678323a00f5a6d47c2ec518396a473aecbb1c192", F19A_QUALIFIED_POLICY_OPTIONS),
     ("3624130f46e4f198a97d8892b9a950693d6b383b942a0466e8190b216ad226a5", F19A_QUALIFIED_POLICY_OPTIONS),
     ("e793f56547d815b069738deb19326ef6817c514478ef7f5b56dcb15413203d12", F19A_QUALIFIED_POLICY_OPTIONS),
@@ -251,6 +255,7 @@ _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
 })
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    ("27f2f2084177ee6f66f5d4458ba571adbbc17b0839806ebb1b558bee1ccdbc44", F20_PASSING_AUTOMATIC_OPTIONS),
     ("a67054686441dcc3430b028bce328c877ec83d5a27c5e23f43c954c00dd119a1", F20_PASSING_AUTOMATIC_OPTIONS),
     ("a07c6b156773d9d51938c7d6b72e95cb1868348de953df94da59da7b76c87723", F20_PASSING_AUTOMATIC_OPTIONS),
     ("c2f4639cb975690dac83f790d543190576f2b34385e81136ae0ff78afd604680", F20_PASSING_AUTOMATIC_OPTIONS),
@@ -507,6 +512,7 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
 )
 # Retained published audiobook authority remains decodable, never current.
 _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("88f79b6038765c0a0932e6bd9893ada5f9d390ec2dd224555c9133182766a851", F46_QUALIFIED_POLICY_OPTIONS),
     ("66c8547a5092ec3665aaa566a75599bf22ba7b634d18e6927ae39b813db03489", F46_QUALIFIED_POLICY_OPTIONS),
     ("d49a0313ac599b9db55f6fe7e9eb15bf2dd7df01c4ecb707013b6115b6ac7aaa", F46_QUALIFIED_POLICY_OPTIONS),
     ("ef836f9cdc6b45d208bf05f406ffb3037864abf78a0e7262d471050a7b394b26", F46_QUALIFIED_POLICY_OPTIONS),

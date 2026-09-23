@@ -70,6 +70,15 @@ def _automatic_no_change_inputs(
     scenario: str,
 ) -> tuple[MetadataReport, str, str, str]:
     """Build one naturally qualified, equal automatic policy outcome."""
+    if scenario == "ordinary_title":
+        from tests.support.evidence_led_titles import isbn_title_report
+
+        return (
+            isbn_title_report(current="Example Title"),
+            "title_layout",
+            "preserve",
+            "title",
+        )
     if scenario in {
         "series_source_order",
         "series_all_qualified",

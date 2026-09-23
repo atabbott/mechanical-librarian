@@ -2102,7 +2102,10 @@ def test_predecessor_title_successors_bind_frozen_consumer_source_inventory() ->
     assert (
         title["measurement_artifacts"]["synthetic-report-builder"]["sha256"]
         == hashlib.sha256(
-            (MANIFEST.parents[2] / "tests/support/evidence_led_titles.py").read_bytes()
+            (
+                MANIFEST.parents[2]
+                / "tests/fixtures/shadow-outcome-v6/evidence-led-titles.py.txt"
+            ).read_bytes()
         ).hexdigest()
     )
     assert title["new_title_measurement"]["synthetic"]["candidate_predictions"] == 25
@@ -2908,11 +2911,11 @@ def _dependency_qualification_documents():
 
 
 CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v14.json"
+    "f46-audiobook-qualification-candidate-v15.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v31.json")
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v32.json")
 CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v45.json"
+    "f20-rich-metadata-qualification-candidate-v46.json"
 )
 
 
@@ -3522,7 +3525,14 @@ def test_author_successors_retain_all_386_paths_and_bind_new_consumers():
 
 def test_provider_title_successors_preserve_closure_and_authority():
     for current, prior_name in zip(
-        _current_qualification_documents(),
+        [
+            json.loads(MANIFEST.with_name(name).read_bytes())
+            for name in (
+                "f46-audiobook-qualification-candidate-v14.json",
+                "f19a-qualification-manifest-v31.json",
+                "f20-rich-metadata-qualification-candidate-v45.json",
+            )
+        ],
         (
             "f46-audiobook-qualification-candidate-v13.json",
             "f19a-qualification-manifest-v30.json",
@@ -3573,4 +3583,48 @@ def test_provider_title_successors_preserve_closure_and_authority():
         ].items():
             assert delta["prior_sha256"] == prior["source_closure"].get(name)
             assert delta["current_sha256"] == current["source_closure"][name]
+
+
+def test_title_preservation_successors_retain_404_sources_and_frozen_authority():
+    for current, prior_name in zip(
+        _current_qualification_documents(),
+        (
+            "f46-audiobook-qualification-candidate-v14.json",
+            "f19a-qualification-manifest-v31.json",
+            "f20-rich-metadata-qualification-candidate-v45.json",
+        ),
+        strict=True,
+    ):
+        prior_path = MANIFEST.with_name(prior_name)
+        prior = json.loads(prior_path.read_bytes())
+        assert len(prior["source_closure"]) == 404
+        assert set(prior["source_closure"]) < set(current["source_closure"])
+        assert (
+            current["prior_manifest_sha256"]
+            == hashlib.sha256(prior_path.read_bytes()).hexdigest()
+        )
+        assert current["versions"] == prior["versions"] | {
+            "outcome": "shadow-outcome-set-v7"
+        }
+        assert (
+            current["binding_only_source_equivalence"]["excluded_binding_assignments"]
+            == prior["binding_only_source_equivalence"]["excluded_binding_assignments"]
+        )
+        for key in (
+            "qualified_policy_options",
+            "passing_automatic_options",
+            "passing_paired_options",
+            "historical_measurements",
+            "current_measurement",
+            "current_ebook_measurement",
+        ):
+            if key in prior:
+                assert current[key] == prior[key]
+        assert {
+            "tests/support/evidence_led_titles.py",
+            "tests/support/automatic_no_change.py",
+            "tests/fixtures/shadow-outcome-v6/preservation-v6.sql",
+            "tests/integration/test_review_case_lifecycle.py",
+            "docs/architecture/decisions/0079-supported-title-preservation-and-recovery.md",
+        } <= set(current["source_closure"])
         _assert_live_source_closure(current)

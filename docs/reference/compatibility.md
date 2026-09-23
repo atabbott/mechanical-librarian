@@ -23,7 +23,7 @@ The current installed contract is intentionally narrow:
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v15`,
-  `shadow-review-action-policy-v4`, `shadow-outcome-set-v6`,
+  `shadow-review-action-policy-v4`, `shadow-outcome-set-v7`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
   these successors require a clean rebuild and do not adopt prior state;
 - `review-session-v1`, `review-library-v2`, `review-case-detail-v4`,
@@ -219,3 +219,11 @@ v8, packet v9, outcome v6 and package-parser identities are unchanged.
 ## Provider title report successor
 
 Report `metadata-report-v47` and its exact SQLite discriminator require a **clean rebuild** (#1084). Prior v46 reports may contain falsely VALID title text that cannot reach comparison. Both old persisted schemas and forged current documents remain refused; no adoption or compatibility parser is supplied.
+
+## Title preservation and recovery (#1073)
+
+The current shadow outcome document and SQL contract is `shadow-outcome-set-v7`.
+F19a v32, F20 v46 and F46 v15 retain the previous option sets and historical
+measurement evidence. Report v47, proposal policy v28, action policy v4 and
+decision policy v15 are unchanged. Prior application stores require a clean
+rebuild; historical decision documents remain history only.

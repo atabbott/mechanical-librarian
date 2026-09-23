@@ -44,10 +44,10 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
-    audiobook_title_preservation_bundle,
     audiobook_title_subtitle_bundle,
     automatic_safety_category,
     qualification_manifest_sha256,
+    title_preservation_bundle,
 )
 from mechanical_librarian.domain.cover_automatic_decision import (
     parse_automatic_authority,
@@ -122,6 +122,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         binding: _LinuxDatabaseBinding | None = None,
         *,
         get_review_case: Callable[[str], str],
+        requeue_title_projections: Callable[[int], None],
         review_case_accepts_authority: Callable[[str], bool],
         current_resolved_policy_id: Callable[[str], str],
         record_cover_decision_outcome: Callable[[HumanDecision, str | None], None],
@@ -132,6 +133,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         ],
     ) -> None:
         super().__init__(connection, binding)
+        self._requeue_title_projections = requeue_title_projections
         self.get_review_case = get_review_case
         self._review_case_accepts_authority = review_case_accepts_authority
         self.current_resolved_policy_id = current_resolved_policy_id
@@ -163,6 +165,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 field
                 for field in outcome.outcomes
                 if field.policy_category == category
+                and field.policy_destination == "automatic"
                 and field.destination in destinations
             )
             all_automatic = bool(members) and all(
@@ -182,7 +185,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 and bool(evidence_ids[0])
             )
             witness = (
-                audiobook_title_preservation_bundle(members[0])
+                title_preservation_bundle(members[0])
                 if category == "title_layout" and len(members) == 1 and all_automatic
                 else None
             )
@@ -828,6 +831,68 @@ class SQLiteDecisionRepository(ConnectionScoped):
             raise MetadataReportError(
                 "automatic safety state is unavailable"
             ) from error
+
+    @local_operation
+    def pause_automatic_safety(
+        self, paused: bool, updated_at: int
+    ) -> AutomaticSafetyState:
+        if type(paused) is not bool or type(updated_at) is not int or updated_at < 0:
+            raise MetadataReportError("automatic safety state is invalid")
+        transaction = self._transaction("pause_automatic_safety")
+        try:
+            transaction.begin()
+            current = self.automatic_safety_state()
+            result = AutomaticSafetyState(
+                paused, current.global_suspension, current.category_suspensions
+            )
+            self._set_automatic_safety_state(result, updated_at)
+            if not current.permits("title_layout") and result.permits("title_layout"):
+                self._requeue_title_projections(updated_at)
+            transaction.commit()
+            return result
+        except BaseException as error:
+            transaction.rollback()
+            if isinstance(error, (sqlite3.Error, MetadataReportError)):
+                raise MetadataReportError(
+                    "automatic safety state is unavailable"
+                ) from error
+            raise
+
+    @local_operation
+    def recover_automatic_safety(
+        self, updated_at: int, category: str | None
+    ) -> AutomaticSafetyState:
+        if (
+            type(updated_at) is not int
+            or updated_at < 0
+            or (category is not None and (type(category) is not str or not category))
+        ):
+            raise MetadataReportError("automatic safety state is invalid")
+        transaction = self._transaction("recover_automatic_safety")
+        try:
+            transaction.begin()
+            current = self.automatic_safety_state()
+            result = AutomaticSafetyState(
+                current.paused,
+                None if category is None else current.global_suspension,
+                tuple(
+                    value
+                    for value in current.category_suspensions
+                    if value[0] != category
+                ),
+            )
+            self._set_automatic_safety_state(result, updated_at)
+            if not current.permits("title_layout") and result.permits("title_layout"):
+                self._requeue_title_projections(updated_at)
+            transaction.commit()
+            return result
+        except BaseException as error:
+            transaction.rollback()
+            if isinstance(error, (sqlite3.Error, MetadataReportError)):
+                raise MetadataReportError(
+                    "automatic safety state is unavailable"
+                ) from error
+            raise
 
     def _set_automatic_safety_state(
         self, state: AutomaticSafetyState, updated_at: int

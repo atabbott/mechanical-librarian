@@ -356,9 +356,11 @@ class AutomaticSafetyOperations:
         self,
         controls: AutomaticSafetyControls,
         gate: SerializedGate,
+        updates: LiveUpdateChannel,
     ) -> None:
         self._controls = controls
         self._gate = gate
+        self._updates = updates
 
     def state(self) -> AutomaticSafetyState:
         return self._gate(self._controls.state)
@@ -367,6 +369,8 @@ class AutomaticSafetyOperations:
         self._gate(
             lambda: self._controls.pause(cast(bool, paused), cast(int, changed_at))
         )
+        if paused is False:
+            self._updates.publish("preparation")
 
     def recover(self, changed_at: object, category: object = None) -> None:
         self._gate(
@@ -374,6 +378,8 @@ class AutomaticSafetyOperations:
                 cast(int, changed_at), cast("str | None", category)
             )
         )
+        if category in (None, "title_layout"):
+            self._updates.publish("preparation")
 
     def suspend(
         self, reason: object, changed_at: object, category: object = None
@@ -445,7 +451,7 @@ class ReviewApplication:
         self._gate = operation_lock or gate
         self._policy = PolicyOperations(policy, self.serialized)
         self._automatic_safety = AutomaticSafetyOperations(
-            automatic_safety, self.serialized
+            automatic_safety, self.serialized, updates
         )
         self._clock = clock
         self._graceful_shutdown_seconds = graceful_shutdown_seconds
