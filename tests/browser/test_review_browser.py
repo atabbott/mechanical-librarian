@@ -545,11 +545,15 @@ def _server(
         from mechanical_librarian.domain.metadata_policy import (
             human_review_destinations,
         )
-        from mechanical_librarian.domain.proposal_set import evaluate_report
         from tests.support.audiobook_reports import publish_audiobook_preview
         from tests.support.same_name_series import same_name_series_report
 
-        report = same_name_series_report(series_fixture)
+        report = same_name_series_report(
+            "ebook" if series_fixture == "long" else series_fixture,
+            ebook_title=("First Journey through the Long Valley " * 6).strip()
+            if series_fixture == "long"
+            else "First Journey",
+        )
         case_id, series_policy = publish_audiobook_preview(
             repository,
             report,
@@ -6827,7 +6831,7 @@ def test_same_name_series_owner_journey(media, destination):
             ).to_be_visible()
             if destination != "ignore":
                 expect(
-                    page.get_by_text("Series membership: " + title, exact=False)
+                    page.get_by_text("Series membership: " + title, exact=False).first
                 ).to_be_visible()
                 page.get_by_role("link", name="History", exact=True).click()
                 expect(page.get_by_text("To " + title, exact=False)).to_be_visible()

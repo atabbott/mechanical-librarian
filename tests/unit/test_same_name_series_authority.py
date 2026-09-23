@@ -44,6 +44,16 @@ def test_same_name_series_keeps_title_and_persists_exact_series_authority(
         selected = {value.destination: value for value in outcomes.outcomes}
         assert selected["title"].disposition == "keep_current"
         assert selected["series"].disposition == "candidate"
+        assert selected["title"].reason_code == "unique_supported_preservation"
+        assert selected["series"].reason_code == "unique_supported_candidate"
+        assert set(selected["series"].citation_ids) == {
+            claim.reference
+            for provider in report.providers
+            for candidate in provider.candidates
+            for claim in candidate.claims
+            if claim.kind.value in {"series", "series_sequence"}
+        }
+        assert repository.automatic_safety_state().category_suspensions == ()
         documents = repository.get_review_case_decisions(case_id)
         assert repository._connection.execute(
             "SELECT count(*) FROM field_effects"
@@ -225,10 +235,10 @@ def test_same_name_series_effect_retains_guards_and_real_activity(
             for raw in repository.get_review_case_decisions(case_id)
             if json.loads(raw)["destination"] == "series"
         )
-        authority = repository.field_effect_authority_source(decision)
+        authority = PersistedFieldEffectAuthority(repository).resolve(decision)
         if guard != "no_consent":
             repository.grant_field_effect_consents(
-                authority["connection"], (authority["library"],), ("series",), 5
+                authority.connection, (authority.library,), ("series",), 5
             )
         target = FakeTargetService()
         backup = FakeBackupReadiness()
@@ -259,15 +269,15 @@ def test_same_name_series_effect_retains_guards_and_real_activity(
         ):
             plan = service.plan(
                 decision,
-                connection=authority["connection"],
-                library=authority["library"],
-                work_id=authority["work_id"],
+                connection=authority.connection,
+                library=authority.library,
+                work_id=authority.work_id,
                 destination="series",
-                pre_value=authority["pre_value"],
-                desired_value=authority["decision_value"],
-                target_fingerprint=authority["target_fingerprint"],
-                target_version=authority["target_version"],
-                dependency_digests=authority["dependency_digests"],
+                pre_value=authority.pre_value,
+                desired_value=authority.decision_value,
+                target_fingerprint=authority.target_fingerprint,
+                target_version=authority.target_version,
+                dependency_digests=authority.dependency_digests,
                 capability_digest="c" * 64,
             )
         if guard == "no_consent":

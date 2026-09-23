@@ -954,12 +954,15 @@ def test_same_name_exception_is_confined_to_supported_empty_series_name(mutation
             TargetDestination.TITLE, TargetFieldState.VALUE, "First Journey 1"
         )
     elif mutation == "sequence_equal":
+        targets[TargetDestination.TITLE] = TargetField(
+            TargetDestination.TITLE, TargetFieldState.VALUE, "1984"
+        )
         series = results[TargetDestination.SERIES]
         alternative = series.alternatives[0]
         changed = type(alternative).create(
             replace(
                 alternative.value,
-                value=(TargetSeries("First Journey", "First Journey"),),
+                value=(TargetSeries("1984", "1984"),),
             ),
             alternative.assessment,
             alternative.evidence_references,

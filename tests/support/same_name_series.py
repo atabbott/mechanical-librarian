@@ -28,13 +28,14 @@ def same_name_series_report(
     media: str,
     *,
     name: str | None = None,
+    ebook_title: str = "First Journey",
     state: TargetFieldState = TargetFieldState.MISSING,
     positions: tuple[str, ...] = ("1",),
     independent_title: bool = True,
     source_author: str | None = None,
 ) -> MetadataReport:
     """One actual discovery/adapter report; positions are distinct candidates."""
-    title = "Synthetic Journey" if media == "audiobook" else "First Journey"
+    title = "Synthetic Journey" if media == "audiobook" else ebook_title
     name = title if name is None else name
     if media == "audiobook":
         products: tuple[dict[str, object], ...] = tuple(
