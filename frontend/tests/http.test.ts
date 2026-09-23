@@ -2059,6 +2059,26 @@ describe('ReviewApiClient', () => {
       presentation,
     }
     expect(mapPreparation(base).presentation?.passage.ready).toBe(1)
+    const fourTriggers = ['initial_setup', 'manual_scan', 'library_added', 'title_recovery'].map(
+      (trigger) => ({ ...presentation.triggers[0], trigger }),
+    )
+    expect(
+      mapPreparation({ ...base, presentation: { ...presentation, triggers: fourTriggers } })
+        .presentation?.triggers,
+    ).toHaveLength(4)
+    expect(
+      mapPreparation({ ...base, presentation: { ...presentation, triggers: [fourTriggers[3]] } })
+        .presentation?.triggers[0]?.trigger,
+    ).toBe('title_recovery')
+    for (const triggers of [
+      [...fourTriggers, { ...fourTriggers[0], trigger: 'unknown' }],
+      [{ ...fourTriggers[0], trigger: 'unknown' }],
+      [fourTriggers[3], fourTriggers[3]],
+    ])
+      expect(() =>
+        mapPreparation({ ...base, presentation: { ...presentation, triggers } }),
+      ).toThrow(ApiError)
+
     const maximumName = 'x'.repeat(2048)
     expect(
       mapPreparation({

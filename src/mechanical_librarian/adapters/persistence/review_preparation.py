@@ -53,6 +53,7 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     refresh_preparation_presentation,
     refresh_preparation_run_state,
     refresh_preparation_work,
+    reopen_preparation_projection,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -1657,6 +1658,9 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
                 (updated_at, scan_id),
             )
         if rows:
+            reopen_preparation_projection(
+                self._connection, tuple(row[0] for row in rows), updated_at
+            )
             refresh_preparation_presentation(self._connection, updated_at)
 
     def _restart_metadata_policy_work(

@@ -42,6 +42,7 @@ class PreparationTrigger(StrEnum):
     INITIAL_SETUP = "initial_setup"
     MANUAL_SCAN = "manual_scan"
     LIBRARY_ADDED = "library_added"
+    TITLE_RECOVERY = "title_recovery"
 
 
 TERMINAL_PREPARATION_STATES = frozenset(

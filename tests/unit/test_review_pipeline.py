@@ -11606,3 +11606,60 @@ def test_startup_drain_preserves_completed_presentation_times_and_compacts_order
     )
     reopened.close()
     open_repository(application_path, create=False).close()
+
+
+def test_title_recovery_preserves_unrelated_enrollment_and_completion_high_water(
+    application_path: Path,
+) -> None:
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+    from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
+    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+
+    path = application_path
+    repository = open_repository(path)
+    repository.set_review_pipeline_paused(True, 1)
+    repository.request_library_addition("primary", "history", "lib-2", "f" * 64, 2)
+    repository.set_review_pipeline_paused(False, 3)
+    repository.request_review_scan(
+        "primary",
+        "unrelated",
+        "lib-other",
+        "f" * 64,
+        4,
+        trigger=PreparationTrigger.MANUAL_SCAN,
+    )
+    discovery = repository.claim_review_pipeline_action(5)
+    assert discovery is not None and discovery.stage == "discovery"
+    repository.complete_review_discovery(discovery, 1, "a" * 64, (), 6)
+    assert repository.claim_review_pipeline_action(7) is None
+    complete_title_work(
+        repository,
+        isbn_title_report(current="Example Title"),
+        safety=AutomaticSafetyState(
+            False, None, (("title_layout", "automatic_admission_failed"),)
+        ),
+    )
+    before = repository.preparation_presentation(30)
+    untouched = repository._connection.execute(
+        "SELECT * FROM review_preparation_presentation WHERE library_name IN ('unrelated','history') ORDER BY row_id"
+    ).fetchall()
+    AutomaticSafetyControls(repository).recover(30, "title_layout")
+    queued = repository.preparation_presentation(30)
+    assert before is not None and queued is not None
+    assert queued.run_id == before.run_id and queued.passage == before.passage
+    assert queued.state.value == "blocked" and queued.completed_at is None
+    assert (
+        repository._connection.execute(
+            "SELECT * FROM review_preparation_presentation WHERE library_name IN ('unrelated','history') ORDER BY row_id"
+        ).fetchall()
+        == untouched
+    )
+    repository.close()
+    reopened = open_repository(path, create=False)
+    action = reopened.claim_review_pipeline_action(31)
+    assert action is not None and action.stage == "projection"
+    running = reopened.preparation_presentation(31)
+    assert running is not None and len(running.active_books) == 1
+    assert running.passage == before.passage
+    reopened.close()

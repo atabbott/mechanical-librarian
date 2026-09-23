@@ -25,7 +25,13 @@ that same connection. Eligibility requires current report, file, proposal and
 case lineage, current policy generation/resolution, an Automatic title outcome,
 and no final title decision or active manual hold. Running and queued work stay
 under their current owner. No acquisition, extraction or model work is queued.
-Terminal scans and preparation presentation refresh in the same transaction.
+Terminal scans and preparation presentation reopen in the same transaction.
+The visible run retains its identity, unrelated enrollments and completion
+high-water marks. A missing recovered enrollment is attached from authoritative
+work and scan records; if the owner dismissed the run, recovery starts a visible
+run. The closed `title_recovery` trigger records one accepted request per nonempty
+cohort, without inventing a scan or replaying acquisition. Queued and running
+projection work remains visible until the ordinary pipeline settles it.
 
 SQLite serializes recovery with completion, report publication, policy activation
 and owner decisions. Claim/projection currentness and final decision uniqueness
@@ -41,7 +47,8 @@ without another suspension creates no cohort. Any transaction failure retains
 both suspension and completed work.
 
 Shadow outcome v7 and F19a v32/F20 v46/F46 v15 require a **clean rebuild** of
-predecessor application stores under ADR-0013. Existing v6 stores remain untouched;
+predecessor application stores under ADR-0013. The added `title_recovery`
+trigger and fourth trigger ordinal also change the exact presentation table DDL. Existing v6 stores remain untouched;
 the recovery control is not a migration. Historical qualification documents remain
 readable as history and grant no current authority. Report v47, proposal policy
 v28, action policy v4 and decision policy v15 remain unchanged.

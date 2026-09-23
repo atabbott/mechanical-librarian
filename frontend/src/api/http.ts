@@ -2057,13 +2057,13 @@ const preparationPresentation = (value: unknown) => {
     passage.ready > passage.checked
   )
     throw new ApiError(502, 'invalid_preparation_passage_order')
-  if (value.triggers.length < 1 || value.triggers.length > 3)
+  if (value.triggers.length < 1 || value.triggers.length > 4)
     throw new ApiError(502, 'invalid_preparation_trigger')
   const triggerFamilies = new Set<string>()
   for (const trigger of value.triggers) {
     if (!record(trigger)) throw new ApiError(502, 'invalid_preparation_trigger')
     if (
-      !['initial_setup', 'manual_scan', 'library_added'].includes(
+      !['initial_setup', 'manual_scan', 'library_added', 'title_recovery'].includes(
         stringValue(trigger.trigger, 'preparation_trigger'),
       )
     )

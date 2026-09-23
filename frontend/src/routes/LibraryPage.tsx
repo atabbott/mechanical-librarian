@@ -145,6 +145,7 @@ const preparationTriggerCopy: Record<
   initial_setup: 'Started by initial setup',
   manual_scan: 'Started by an owner scan',
   library_added: 'Started when a library was added',
+  title_recovery: 'Title recovery requested',
 }
 // A request accepted once is just how the run began; a number there would be
 // noise on every ordinary run. Repeats are the case worth counting, so only
@@ -156,6 +157,7 @@ const preparationRepeatedTriggerCopy: Record<
   initial_setup: 'Initial setup requested',
   manual_scan: 'Owner scan requested',
   library_added: 'Library addition requested',
+  title_recovery: 'Title recovery requested',
 }
 const preparationTriggerLine = (trigger: PreparationPresentation['triggers'][number]) =>
   trigger.accepted_count > 1

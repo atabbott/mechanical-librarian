@@ -8546,6 +8546,8 @@ def test_title_recovery_requeues_real_completed_projection_atomically(tmp_path):
         repository, isbn_title_report(current="Example Title"), safety=safety
     )
     assert repository.get_review_case_decisions(case_id) == ()
+    completed = repository.preparation_presentation(23)
+    assert completed is not None and completed.state.value == "completed_clean"
     original = repository._connection.execute(
         "SELECT work_id,report_id,proposal_set_id,review_case_id,source_revision,source_fingerprint FROM review_preparation_work"
     ).fetchone()
@@ -8554,6 +8556,14 @@ def test_title_recovery_requeues_real_completed_projection_atomically(tmp_path):
     ).fetchone() == ("completed",)
     state = AutomaticSafetyControls(repository).recover(30, "title_layout")
     assert state.category_suspensions == ()
+    queued = repository.preparation_presentation(30)
+    assert queued is not None and queued.state.value == "running"
+    assert queued.completed_at is None and queued.active_books == ()
+    assert queued.passage == completed.passage
+    assert queued.run_id == completed.run_id
+    assert repository._connection.execute(
+        "SELECT current_work_state FROM review_preparation_presentation WHERE row_kind='work'"
+    ).fetchone() == ("queued",)
     assert repository._connection.execute(
         "SELECT stage,state FROM review_preparation_work"
     ).fetchone() == ("projection", "queued")
@@ -8572,6 +8582,10 @@ def test_title_recovery_requeues_real_completed_projection_atomically(tmp_path):
     action = repository.claim_review_pipeline_action(32)
     assert action is not None and action.stage == "projection"
     assert action.proposal_set_id == proposal.proposal_set_id
+    running = repository.preparation_presentation(32)
+    assert running is not None and running.state.value == "running"
+    assert len(running.active_books) == 1
+    assert running.passage == completed.passage
     repository.persist_shadow_outcome(case_id, 33, staged_action=action)
     repository.advance_review_pipeline_action(action, None, 34)
     assert repository.claim_review_pipeline_action(35) is None
@@ -8579,10 +8593,16 @@ def test_title_recovery_requeues_real_completed_projection_atomically(tmp_path):
     assert repository._connection.execute(
         "SELECT state FROM review_preparation_scans"
     ).fetchone() == ("completed",)
+    settled = repository.preparation_presentation(35)
+    assert settled is not None and settled.state.value == "completed_clean"
+    assert settled.active_books == () and settled.completed_at == 35
+    assert settled.passage == completed.passage
     AutomaticSafetyControls(repository).recover(36, "title_layout")
     assert repository.claim_review_pipeline_action(37) is None
     repository.close()
-    open_repository(path, create=False).close()
+    reopened = open_repository(path, create=False)
+    assert reopened.preparation_presentation(35) == settled
+    reopened.close()
 
 
 @pytest.mark.parametrize("mode", ["automatic", "ask", "ignore"])
@@ -8982,10 +9002,18 @@ def test_two_supported_current_titles_and_replay_do_not_disable_the_category(tmp
 
 
 @pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt])
+@pytest.mark.parametrize("mode", ["retained", "dismissed", "unrelated_terminal"])
 def test_title_recovery_rolls_back_an_interrupted_preparation_callback(
-    tmp_path, monkeypatch, failure
-):
-    from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: type[BaseException],
+    mode: str,
+) -> None:
+    from tests.support.evidence_led_titles import (
+        complete_title_work,
+        isbn_title_report,
+        replace_title_presentation,
+    )
 
     repository = open_repository(tmp_path / "state.sqlite")
     safety = AutomaticSafetyState(
@@ -8994,9 +9022,11 @@ def test_title_recovery_rolls_back_an_interrupted_preparation_callback(
     complete_title_work(
         repository, isbn_title_report(current="Example Title"), safety=safety
     )
+    replace_title_presentation(repository, mode)
+    before = repository.preparation_presentation(30)
     original = repository._decisions._requeue_title_projections
 
-    def fail_after_requeue(updated_at):
+    def fail_after_requeue(updated_at: int) -> None:
         original(updated_at)
         raise failure("synthetic interruption")
 
@@ -9007,7 +9037,93 @@ def test_title_recovery_rolls_back_an_interrupted_preparation_callback(
         repository.recover_automatic_safety(30, "title_layout")
     assert not repository._connection.in_transaction
     assert repository.automatic_safety_state() == safety
+    assert repository.preparation_presentation(30) == before
     assert repository._connection.execute(
-        "SELECT stage,state FROM review_preparation_work"
+        "SELECT stage,state FROM review_preparation_work WHERE report_id IS NOT NULL"
     ).fetchone() == ("complete", "complete")
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "mode", ["dismissed", "unrelated_active", "unrelated_terminal"]
+)
+def test_title_recovery_attaches_only_its_cohort_to_current_presentation(
+    tmp_path: Path, mode: str
+) -> None:
+    from mechanical_librarian.application.metadata_policy import AutomaticSafetyControls
+    from tests.support.evidence_led_titles import (
+        complete_title_work,
+        isbn_title_report,
+        replace_title_presentation,
+    )
+
+    path = tmp_path / "state.sqlite"
+    repository = open_repository(path)
+    case_id, _ = complete_title_work(
+        repository,
+        isbn_title_report(current="Example Title"),
+        safety=AutomaticSafetyState(
+            False, None, (("title_layout", "automatic_admission_failed"),)
+        ),
+    )
+    replace_title_presentation(repository, mode)
+    prior = repository.preparation_presentation(30)
+    untouched = repository._connection.execute(
+        "SELECT * FROM review_preparation_presentation WHERE library_name='other' OR (row_kind='work' AND display_name='Unrelated work') ORDER BY row_id"
+    ).fetchall()
+    AutomaticSafetyControls(repository).recover(30, "title_layout")
+    queued = repository.preparation_presentation(30)
+    assert (
+        queued is not None
+        and queued.state.value == "running"
+        and queued.completed_at is None
+    )
+    assert queued.total == (1 if prior is None else 2)
+    assert [
+        (t.trigger.value, t.accepted_count)
+        for t in queued.triggers
+        if t.trigger.value == "title_recovery"
+    ] == [("title_recovery", 1)]
+    if prior is not None:
+        assert queued.run_id == prior.run_id
+        assert queued.passage.failed == prior.passage.failed
+        assert queued.recent_completions == prior.recent_completions
+        assert (
+            repository._connection.execute(
+                "SELECT * FROM review_preparation_presentation WHERE library_name='other' OR (row_kind='work' AND display_name='Unrelated work') ORDER BY row_id"
+            ).fetchall()
+            == untouched
+        )
+    assert repository._connection.execute(
+        "SELECT ordinal FROM review_preparation_presentation WHERE row_kind='enrollment' ORDER BY ordinal"
+    ).fetchall() == ([(0,)] if prior is None else [(0,), (1,)])
+    AutomaticSafetyControls(repository).recover(31, "title_layout")
+    assert repository.preparation_presentation(30) == queued
+    repository.close()
+    repository = open_repository(path, create=False)
+    action = repository.claim_review_pipeline_action(32)
+    assert (
+        action is not None
+        and action.stage == "projection"
+        and action.review_case_id == case_id
+    )
+    running = repository.preparation_presentation(32)
+    assert running is not None and len(running.active_books) == (
+        2 if mode == "unrelated_active" else 1
+    )
+    repository.persist_shadow_outcome(case_id, 33, staged_action=action)
+    repository.advance_review_pipeline_action(action, None, 34)
+    assert repository.claim_review_pipeline_action(35) is None
+    settled = repository.preparation_presentation(35)
+    assert settled is not None and settled.passage.ready == 1
+    assert settled.state.value == (
+        "running"
+        if mode == "unrelated_active"
+        else "completed_with_failures"
+        if mode == "unrelated_terminal"
+        else "completed_clean"
+    )
+    repository.close()
+    repository = open_repository(path, create=False)
+    assert repository.preparation_presentation(35) == settled
     repository.close()

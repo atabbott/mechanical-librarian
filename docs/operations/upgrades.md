@@ -181,6 +181,8 @@ build. No migration, automatic repair or qualification-bridge refresh is supplie
 
 #1073 advances the exact shadow outcome store to `shadow-outcome-set-v7` and
 qualification bindings to F19a v32, F20 v46 and F46 v15. **Clean rebuild required**
-for earlier application state, including v6. Startup refuses the predecessor
+for earlier application state, including v6. The exact preparation table also
+adds the closed `title_recovery` trigger and fourth trigger ordinal; stores with
+the prior three-trigger DDL are incompatible. Startup refuses the predecessor
 without mutation; no adoption or migration is supplied. The Policy recovery
 control works only on exact-current state and does not upgrade an older store.

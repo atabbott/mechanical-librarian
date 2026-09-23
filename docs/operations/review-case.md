@@ -325,6 +325,9 @@ and [the recovery decision](../architecture/decisions/0078-preparation-claim-and
 In Policy, expand Safety and recover the title suspension. Eligible completed
 books are queued for re-evaluation of retained evidence; Library history records
 the decision and Activity records a supported unchanged title as no change.
+Library preparation shows “Title recovery requested” and the queued or running
+re-evaluation, retaining unrelated work and earlier completion counts. Recovery
+creates a visible run if the earlier one was dismissed.
 Recovery does not apply metadata. Pause, global suspensions and other category
 suspensions still apply. Books with owner decisions, manual holds, stale evidence,
 Ask/Ignore policy or work already in progress are not requeued. An empty eligible

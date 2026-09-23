@@ -530,6 +530,102 @@ def record_preparation_names(
     _refresh_run_state(connection, run_id, updated_at)
 
 
+def reopen_preparation_projection(
+    connection: sqlite3.Connection, work_ids: tuple[str, ...], updated_at: int
+) -> None:
+    """Attach recovered projections without losing unrelated or completed history."""
+    run = connection.execute(
+        "SELECT run_id FROM review_preparation_presentation WHERE row_id='run'"
+    ).fetchone()
+    run_id = (
+        cast(str, run[0])
+        if run is not None
+        else _visible_preparation_run(
+            connection, PreparationTrigger.TITLE_RECOVERY, work_ids[0], updated_at
+        )[0]
+    )
+    connection.execute(
+        "UPDATE review_preparation_presentation SET state='starting',completed_at=NULL,updated_at=? "
+        "WHERE row_id='run'",
+        (updated_at,),
+    )
+    _record_preparation_trigger(
+        connection, run_id, PreparationTrigger.TITLE_RECOVERY, updated_at
+    )
+    scans: set[str] = set()
+    for work_id in work_ids:
+        row = connection.execute(
+            "SELECT w.scan_id,w.ordinal,s.connection_name,s.library_name,"
+            "(SELECT json_extract(field.value,'$.value') FROM json_each(r.document,'$.target.fields') field "
+            "WHERE json_extract(field.value,'$.destination')='title' LIMIT 1) "
+            "FROM review_preparation_work w JOIN review_preparation_scans s ON s.scan_id=w.scan_id "
+            "JOIN metadata_reports r ON r.report_id=w.report_id WHERE w.work_id=?",
+            (work_id,),
+        ).fetchone()
+        if row is None:
+            raise MetadataReportError("review preparation persistence failed")
+        scan_id, ordinal, connection_name, library_name, title = row
+        enrollment = connection.execute(
+            "SELECT cycle_id,ordinal FROM review_preparation_presentation "
+            "WHERE row_kind='enrollment' AND scan_id=?",
+            (scan_id,),
+        ).fetchone()
+        if enrollment is None:
+            enrollment_ordinal = connection.execute(
+                "SELECT COUNT(*) FROM review_preparation_presentation "
+                "WHERE row_kind IN ('enrollment','deferred_enrollment')"
+            ).fetchone()[0]
+            material = f"preparation-cycle-v1\0{run_id}\0{scan_id}\0{updated_at}\0title_recovery"
+            cycle_id = (
+                "preparation_cycle_" + hashlib.sha256(material.encode()).hexdigest()
+            )
+            connection.execute(
+                "INSERT INTO review_preparation_presentation("
+                "row_id,row_kind,run_id,scan_id,connection_name,library_name,cycle_id,cycle_state,ordinal,updated_at) "
+                "VALUES(?,'enrollment',?,?,?,?,?,'processing',?,?)",
+                (
+                    "enrollment:" + hashlib.sha256(scan_id.encode()).hexdigest(),
+                    run_id,
+                    scan_id,
+                    connection_name,
+                    library_name,
+                    cycle_id,
+                    enrollment_ordinal,
+                    updated_at,
+                ),
+            )
+        else:
+            cycle_id, enrollment_ordinal = enrollment
+            connection.execute(
+                "UPDATE review_preparation_presentation SET cycle_state='processing',updated_at=? "
+                "WHERE row_kind='enrollment' AND scan_id=?",
+                (updated_at, scan_id),
+            )
+        connection.execute(
+            "INSERT INTO review_preparation_presentation("
+            "row_id,row_kind,run_id,scan_id,cycle_id,work_id,ordinal,enrollment_ordinal,display_name,work_stage,current_work_state,updated_at) "
+            "VALUES(?,'work',?,?,?,?,?,?,?,'projection','queued',?) ON CONFLICT(row_id) DO NOTHING",
+            (
+                "work:" + work_id,
+                run_id,
+                scan_id,
+                cycle_id,
+                work_id,
+                ordinal,
+                enrollment_ordinal,
+                title if _preparation_display_name(title) else "Untitled work",
+                updated_at,
+            ),
+        )
+        scans.add(scan_id)
+    for scan_id in sorted(scans):
+        mark_preparation_recovery(connection, scan_id)
+    connection.execute(
+        "UPDATE review_preparation_presentation SET total=MAX(total,("
+        "SELECT COUNT(*) FROM review_preparation_presentation WHERE row_kind='work')) WHERE row_id='run'"
+    )
+
+
 def refresh_preparation_presentation(
     connection: sqlite3.Connection, updated_at: int
 ) -> None:
@@ -745,8 +841,8 @@ def _adopt_enrollment_states(connection: sqlite3.Connection, updated_at: int) ->
                 _reconcile_terminal_preparation_recovery(connection, scan_id, cycle_id)
                 _clear_preparation_recovery(connection, scan_id, cycle_id)
             connection.execute(
-                "UPDATE review_preparation_presentation SET cycle_state=?,updated_at=? WHERE row_id=?",
-                (scan_state, updated_at, row_id),
+                "UPDATE review_preparation_presentation SET cycle_state=?,updated_at=? WHERE row_id=? AND cycle_state<>?",
+                (scan_state, updated_at, row_id, scan_state),
             )
 
 
