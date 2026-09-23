@@ -244,12 +244,12 @@ def _policy_changes(
                     "previous": (
                         ABSENT
                         if previous_value is None
-                        else policy_option_label(previous_value)
+                        else policy_option_label(previous_value, field)
                     ),
                     "next": (
                         ABSENT
                         if next_value is None
-                        else policy_option_label(next_value)
+                        else policy_option_label(next_value, field)
                     ),
                 }
             )

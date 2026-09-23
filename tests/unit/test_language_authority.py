@@ -619,3 +619,351 @@ def test_audio_provider_aliases_remain_one_correlation_beside_local_source():
         "independent_provider_correlations": 1,
         "target_only_preservation": 0,
     }
+
+
+@pytest.mark.parametrize("audio", (False, True))
+@pytest.mark.parametrize(
+    "destination,current,values,eligible",
+    (
+        ("ask", None, ("English", "en", "UND"), True),
+        ("ask", "UND", ("English", "en", "UND"), True),
+        ("ask", None, ("UND", "und"), False),
+        ("ask", "eng", ("English", "en"), False),
+        ("ignore", None, ("English", "en"), False),
+        ("ask", None, ("English", "fr"), True),
+        ("ask", None, ("qqq",), True),
+    ),
+)
+def test_language_manual_attention_agrees_with_actual_actions(
+    tmp_path, audio, destination, current, values, eligible
+):
+    from mechanical_librarian.application.review_web import (
+        BrowseReviewLibrary,
+        InspectCurrentReviewCase,
+    )
+    from tests.support.language_reports import publish_language_case
+
+    with closing(open_repository(tmp_path / "attention.sqlite")) as repository:
+        case_id, _ = publish_language_case(
+            repository, language_report(values, current, audio=audio), destination
+        )
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        language = next(f for f in detail["fields"] if f["destination"] == "language")
+        assert language["editable"] is eligible
+        assert language["needs_attention"] is eligible
+        assert bool(language["decision_actions"]) is eligible
+        browser = BrowseReviewLibrary(repository)
+        attention = browser.attention(search=None, limit=50, cursor=None)
+        # Assert Language membership itself: the companion Description cannot
+        # make a false-positive work-level attention count pass this proof.
+        assert (
+            any(i["destination"] == "language" for i in attention["items"]) is eligible
+        )
+        library = browser.library(lens="all", search=None, limit=50, cursor=None)
+        assert library["items"][0]["attention_count"] == attention["total"]
+        assert type(attention["total"]) is int
+        assert library["counts"]["needs_attention"] == int(attention["total"] > 0)
+        assert language["automatic_decision"] is None
+        assert not any(
+            json.loads(d)["destination"] == "language"
+            for d in repository.get_review_case_decisions(case_id)
+        )
+
+
+@pytest.mark.parametrize("audio", (False, True))
+@pytest.mark.parametrize("outcome", ("accept", "keep_current"))
+def test_language_ask_owner_command_retires_attention_and_survives_reopen(
+    tmp_path, audio, outcome
+):
+    from mechanical_librarian.application.review_web import (
+        BrowseReviewLibrary,
+        InspectCurrentReviewCase,
+        RecordHumanDecision,
+    )
+    from tests.support.language_reports import publish_language_case
+
+    path = tmp_path / "owner-ask.sqlite"
+    with closing(open_repository(path)) as repository:
+        case_id, _ = publish_language_case(
+            repository,
+            language_report(("English", "en", "UND"), "UND", audio=audio),
+            "ask",
+        )
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "language"
+        )
+        selected = field["proposed_values"][0] if outcome == "accept" else None
+        RecordHumanDecision(repository, clock=lambda: 10).run(
+            case_id,
+            proposal_id=field["proposal_id"],
+            target_fingerprint=field["target_fingerprint"],
+            destination="language",
+            actor="owner",
+            outcome=outcome,
+            selected_value=selected,
+            idempotency_key="ask-language-owner-choice",
+        )
+        repository.persist_shadow_outcome(case_id, 11)
+    with closing(open_repository(path)) as repository:
+        inspector = InspectCurrentReviewCase(repository)
+        field = next(
+            f
+            for f in inspector.run(case_id)["fields"]
+            if f["destination"] == "language"
+        )
+        assert field["classification"] == "human_recorded"
+        assert field["human_decision"]["outcome"] == outcome
+        assert field["human_decision"]["selected_value"] == selected
+        assert field["automatic_decision"] is None
+        assert not any(
+            i["destination"] == "language"
+            for i in BrowseReviewLibrary(repository).attention(
+                search=None, limit=50, cursor=None
+            )["items"]
+        )
+        event = next(
+            i
+            for i in inspector.history(case_id)["items"]
+            if i.get("decision_id") == field["human_decision"]["decision_id"]
+        )
+        assert event["selected_value"] == (selected or {"kind": "text", "value": "UND"})
+
+
+@pytest.mark.parametrize("audio", (False, True))
+def test_language_ask_authenticated_command_refuses_forged_values(tmp_path, audio):
+    from argon2 import PasswordHasher
+    from fastapi.testclient import TestClient
+
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from tests.support.language_reports import publish_language_case
+    from tests.unit.review_app_fixture import (
+        TEST_REACT_BUILD_IDENTITY,
+        create_transport_test_app,
+    )
+
+    with closing(
+        open_repository(tmp_path / "api.sqlite", cross_thread=True)
+    ) as repository:
+        case_id, _ = publish_language_case(
+            repository, language_report(("English", "en", "UND"), audio=audio), "ask"
+        )
+        password = tmp_path / "owner.hash"
+        password.write_text(PasswordHasher().hash("synthetic owner"))
+        password.chmod(0o600)
+        app = create_transport_test_app(
+            repository,
+            ReviewWebConfiguration(
+                tls_certificate_file="/synthetic/review.crt",
+                tls_private_key_file="/synthetic/review.key",
+                canonical_origin="https://review.test",
+                owner_password_hash_file=str(password),
+                session_lifetime_seconds=600,
+            ),
+            clock=lambda: 10,
+        )
+        with TestClient(app, base_url="https://review.test") as client:
+            url = f"/api/v1/review-cases/{case_id}/decisions"
+            assert client.get(f"/api/v1/review-cases/{case_id}").status_code == 401
+            headers = {
+                "Origin": "https://review.test",
+                "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+                "Idempotency-Key": "language-owner-api",
+            }
+            login = client.post(
+                "/api/v1/session/login",
+                json={"password": "synthetic owner"},
+                headers=headers,
+            )
+            assert login.status_code == 200
+            field = next(
+                f
+                for f in client.get(f"/api/v1/review-cases/{case_id}").json()["fields"]
+                if f["destination"] == "language"
+            )
+            assert field["editable"] and field["needs_attention"]
+            payload = {
+                "destination": "language",
+                "outcome": "accept",
+                "proposal_id": field["proposal_id"],
+                "target_fingerprint": field["target_fingerprint"],
+                "selected_value": field["proposed_values"][0],
+            }
+            before = repository.get_review_case_decisions(case_id)
+            assert client.post(url, json=payload, headers=headers).status_code == 422
+            headers["X-CSRF-Token"] = login.json()["csrf_token"]
+            for forged in ("UND", "German"):
+                response = client.post(
+                    url,
+                    json=payload
+                    | {"selected_value": {"kind": "text", "value": forged}},
+                    headers=headers,
+                )
+                assert response.status_code == 422, response.text
+                assert repository.get_review_case_decisions(case_id) == before
+            accepted = client.post(url, json=payload, headers=headers)
+            assert accepted.status_code == 200, accepted.text
+            assert accepted.json()["outcome"] == "accept"
+            refreshed = client.get(f"/api/v1/review-cases/{case_id}").json()
+            language = next(
+                f for f in refreshed["fields"] if f["destination"] == "language"
+            )
+            assert (
+                language["human_decision"]["decision_id"]
+                == accepted.json()["decision_id"]
+            )
+            assert not language["needs_attention"]
+            assert language["automatic_decision"] is None
+
+
+@pytest.mark.parametrize("audio", (False, True))
+def test_language_ask_stays_case_bound_then_retires_with_report_replacement(
+    tmp_path, audio
+):
+    from mechanical_librarian.application.review_web import (
+        BrowseReviewLibrary,
+        InspectCurrentReviewCase,
+        RecordHumanDecision,
+        ReviewWebError,
+    )
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from tests.support.language_reports import publish_language_case
+
+    with closing(open_repository(tmp_path / "replacement.sqlite")) as repository:
+        report = language_report(("English", "en"), audio=audio)
+        case_id, _ = publish_language_case(repository, report, "ask")
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "language"
+        )
+        original = MetadataPolicyProfile.from_data(
+            json.loads(repository.active_metadata_policy())
+        )
+        replacement = MetadataPolicyProfile.create(
+            "Skip language",
+            dict(original.options),
+            dict(original.destinations) | {"language_rendering": "ignore"},
+        )
+        resolved = resolve_policy(replacement, report.target.library)
+        repository.create_metadata_policy_draft(replacement.canonical_json)
+        repository.activate_metadata_policy(
+            replacement.policy_id,
+            original.policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            5,
+        )
+        # The old case retains its original Ask resolution, not the new profile.
+        assert next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "language"
+        )["needs_attention"]
+        successor = language_report(("English", "en", "UND"), audio=audio)
+        repository.publish(successor, lambda: True, expected_current=report.report_id)
+        proposal = evaluate_report(
+            successor, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        repository.publish_proposal(proposal)
+        next_case = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        repository.persist_shadow_outcome(next_case, 6)
+        assert not any(
+            i["destination"] == "language"
+            for i in BrowseReviewLibrary(repository).attention(
+                search=None, limit=50, cursor=None
+            )["items"]
+        )
+        assert not next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(next_case)["fields"]
+            if f["destination"] == "language"
+        )["editable"]
+        before = repository.get_review_case_decisions(case_id)
+        with pytest.raises(ReviewWebError):
+            RecordHumanDecision(repository, clock=lambda: 7).run(
+                case_id,
+                proposal_id=field["proposal_id"],
+                target_fingerprint=field["target_fingerprint"],
+                destination="language",
+                actor="owner",
+                outcome="accept",
+                selected_value=field["proposed_values"][0],
+                idempotency_key="stale-language-owner",
+            )
+        assert repository.get_review_case_decisions(case_id) == before
+
+
+@pytest.mark.parametrize("audio", (False, True))
+def test_language_preserve_label_in_persisted_automatic_and_policy_activity(
+    tmp_path, audio
+):
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
+    )
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from tests.support.language_reports import publish_language_case
+
+    path = tmp_path / "activity.sqlite"
+    with closing(open_repository(path)) as repository:
+        report = language_report(("English", "en"), audio=audio)
+        case_id, _ = publish_language_case(repository, report, option="preserve")
+        original = MetadataPolicyProfile.from_data(
+            json.loads(repository.active_metadata_policy())
+        )
+        replacement = MetadataPolicyProfile.create(
+            "Language display",
+            dict(original.options) | {"language_rendering": "display_name"},
+            dict(original.destinations),
+        )
+        resolved = resolve_policy(replacement, report.target.library)
+        repository.create_metadata_policy_draft(replacement.canonical_json)
+        repository.activate_metadata_policy(
+            replacement.policy_id,
+            original.policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            5,
+        )
+    with closing(open_repository(path)) as repository:
+        decision = next(
+            json.loads(d)
+            for d in repository.get_review_case_decisions(case_id)
+            if json.loads(d)["destination"] == "language"
+        )
+        activity = ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            ((report.target.connection, report.target.library),),
+            lambda: 6,
+            lambda *_: None,
+            activity_only=True,
+        )
+        event = next(
+            i
+            for i in activity.activity()["events"]
+            if i["event_id"] == decision["decision_id"]
+        )
+        facts = {i["label"]: i["value"] for i in event["evidence"]}
+        assert facts["Policy setting"] == "Language rendering: Preserve supported form"
+        assert facts["New value"] == "en"
+        changes = repository.field_effect_activity_page(
+            search=None, event_type="policy", occurred_after=0, page=1, page_size=25
+        )["events"][0]["record"]["policy_changes"]
+        assert {
+            "field": "Language rendering",
+            "setting": "Representation",
+            "previous": "Preserve supported form",
+            "next": "Display name",
+        } in changes

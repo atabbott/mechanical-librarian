@@ -136,7 +136,10 @@ populated values. Series Add retains current associations; complete-set
 replacement requires its separate choice and refuses conflicting sequence facts.
 Language comparison recognizes equivalent ISO codes and the observed English
 display name without discarding region or script. Both language options retain
-the admitted source string; neither renders a new display name.
+the admitted source string; neither renders a new display name. `Ask me` exposes
+Language in remaining fields whenever its existing owner actions admit a choice;
+recording that choice retires its attention. Unknown-only evidence and an
+equivalent current value do not create a choice, and Ignore remains excluded.
 
 Audiobook subtitles may fill an empty value or replace a recognized whole-field
 award, bestseller or adaptation announcement with supported descriptive text.
