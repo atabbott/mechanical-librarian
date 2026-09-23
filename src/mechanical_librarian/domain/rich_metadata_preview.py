@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Final, cast
+from typing import Final, TypeGuard, cast
 
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     identity_for_effect,
     qualified_policy_bases,
 )
-from mechanical_librarian.domain.field_value_comparison import values_match
+from mechanical_librarian.domain.field_value_comparison import canonical_text, values_match
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     MAX_TAGS,
@@ -331,7 +331,7 @@ def _project(
                 or any(alt.value.value == current for alt in result.alternatives)
             )
         )
-        or (field == "description_fill" and option != "replace_safe_plain_text")
+        or (field == "description_fill" and option != "replace_safe_plain_text" and proposal.media_kind != "audiobook")
         or (field == "asin" and proposal.media_kind != "audiobook")
         or (field in {"genres", "tags"} and option == "fill_empty")
         or (
@@ -378,6 +378,15 @@ def _project(
     if field == "subtitle" and option == "corroborated_split":
         return _subtitle_bundle(field, option, target, result, proposal, report)
     if field == "description_fill":
+        if proposal.media_kind == "audiobook" and target.state is TargetFieldState.VALUE:
+            if not _plain_audiobook_synopsis(current):
+                return _abstain(field, option, target, current, "target_state_unusable")
+            if automatic_work is not None:
+                refusal = _audiobook_description_refusal(automatic_work, retained_claims)
+                if refusal is not None:
+                    return _abstain(field, option, target, current, refusal)
+            if option != "replace_safe_plain_text" or not _recognized_synopsis_placeholder(current):
+                return _preserved(field, option, target, current)
         return _description(
             field,
             option,
@@ -1016,11 +1025,29 @@ def _one_typed_candidate(
     return None, "ambiguous_evidence" if len(alternatives) > 1 else "no_candidate"
 
 
-def _automatic_description_candidate(
-    result: ProposalResult,
-    evidence: _AutomaticWorkEvidence,
-    retained_claims: dict[str, _RetainedClaim],
-) -> tuple[ProposalAlternative | None, tuple[str, ...], str | None]:
+def _recognized_synopsis_placeholder(value: str) -> bool:
+    """Compare only the closed marker vocabulary; never rewrite retained text."""
+    return re.fullmatch(
+        r"(?:(?:chapter|track) [0-9]+|no (?:description|synopsis)(?: available)?|(?:description|synopsis) unavailable)\.?",
+        canonical_text(TargetDestination.DESCRIPTION, value),
+    ) is not None
+
+
+def _plain_audiobook_synopsis(value: object) -> TypeGuard[str]:
+    """Admit plain incumbent/candidate text before any replacement comparison."""
+    if type(value) is not str:
+        return False
+    try:
+        canonical_text(TargetDestination.DESCRIPTION, value)
+    except ValueError:
+        return False
+    return "<" not in value and ">" not in value and not value.rstrip().endswith(_DESCRIPTION_VISIBLE_CUTOFFS)
+
+
+def _audiobook_description_refusal(
+    evidence: _AutomaticWorkEvidence, retained_claims: dict[str, _RetainedClaim],
+) -> str | None:
+    """Preserve complete-source safety and conflicts before marker filtering."""
     if evidence.audiobook:
         for source in evidence.sources:
             for claim in source.claims:
@@ -1032,7 +1059,22 @@ def _automatic_description_candidate(
                     audiobook_work=type(retained.provider) is ProviderObservation
                     and retained.provider.authority in {"audnexus", "audible_catalog"},
                 ) or (type(claim.value) is str and claim.value.rstrip().endswith(_DESCRIPTION_VISIBLE_CUTOFFS)):
-                    return None, (), "description_quality_floor_not_met"
+                    return "description_quality_floor_not_met"
+        for source in evidence.sources:
+            descriptions = {canonical_text(TargetDestination.DESCRIPTION, claim.value) for claim in source.claims if claim.kind is ClaimKind.DESCRIPTION and claim.state is FieldState.VALID and type(claim.value) is str}
+            if len(descriptions) > 1:
+                return "ambiguous_evidence"
+    return None
+
+
+def _automatic_description_candidate(
+    result: ProposalResult,
+    evidence: _AutomaticWorkEvidence,
+    retained_claims: dict[str, _RetainedClaim],
+) -> tuple[ProposalAlternative | None, tuple[str, ...], str | None]:
+    refusal = _audiobook_description_refusal(evidence, retained_claims)
+    if refusal is not None:
+        return None, (), refusal
     candidates: list[tuple[ProposalAlternative, tuple[str, ...]]] = []
     for alternative in evidence.alternatives:
         if alternative.value.kind is not ProposalValueKind.TEXT:
@@ -1052,6 +1094,7 @@ def _automatic_description_candidate(
             for candidate, references in candidates
             if type(candidate.value.value) is str
             and candidate.value.value.strip()
+            and not _recognized_synopsis_placeholder(candidate.value.value)
             and not candidate.value.value.rstrip().endswith(
                 _DESCRIPTION_VISIBLE_CUTOFFS
             )
@@ -1664,6 +1707,17 @@ def project_audiobook_automatic_decision_value(
         if candidate_value["kind"] != "boolean" or candidate_value["value"] is not True or (current_value is not None and type(current_value) is not bool):
             raise RichMetadataPreviewError("rich automatic projection is invalid")
         projected = {"kind": "boolean", "value": True}
+    elif field == "description_fill":
+        value = candidate_value["value"]
+        if candidate_value["kind"] != "text" or not _plain_audiobook_synopsis(value) or _recognized_synopsis_placeholder(value):
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        if current_value not in (None, "", value) and (
+            option != "replace_safe_plain_text"
+            or not _plain_audiobook_synopsis(current_value)
+            or not _recognized_synopsis_placeholder(current_value)
+        ):
+            raise RichMetadataPreviewError("rich automatic projection is invalid")
+        projected = {"kind": "text", "value": value}
     elif field == "subtitle" and option == "replace_descriptive":
         value = candidate_value["value"]
         if candidate_value["kind"] != "text" or type(value) is not str or _promotional_subtitle(value):

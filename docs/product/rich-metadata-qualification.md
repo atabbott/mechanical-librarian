@@ -5,7 +5,26 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Current same-name series successor (#1075)
+## Current audiobook synopsis successor (#1070)
+
+[F46 v19](../reference/f46-audiobook-qualification-candidate-v19.json),
+[F19a v36](../reference/f19a-qualification-manifest-v36.json) and
+[F20 v50](../reference/f20-rich-metadata-qualification-candidate-v50.json) retain
+all 486 prior source members and 73 prior operations, adding preservation under
+both synopsis options and empty fill under replacement. Shadow policy v17 binds
+these semantics; clean rebuild required for old derived stores. Historical
+measurements are unchanged, and focused synthetic proof is not library scoring.
+
+Fill-only preserves populated audiobook prose. Replacement also fills empty
+values, but replaces only whole `chapter`/`track` plus ASCII digits, or
+`no description`, `no description available`, `description unavailable`,
+`no synopsis`, `no synopsis available`, `synopsis unavailable`, optionally ending
+in one full stop. Comparison uses canonical whitespace/case only; retained text
+is unchanged. Other safe plain incumbents are preserved. Safety, identity and
+same-record conflict refusals precede this rule. Preferred source authority and
+stable source-record identity determine the original text; length does not.
+
+## Same-name series successor (#1075)
 
 [F46 v18](../reference/f46-audiobook-qualification-candidate-v18.json),
 [F19a v35](../reference/f19a-qualification-manifest-v35.json) and

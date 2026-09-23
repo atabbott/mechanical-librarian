@@ -23,7 +23,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v16"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v17"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -49,6 +49,23 @@ _REASON_CODES = frozenset(
     }
 )
 _RULE_TABLE = {
+    "audiobook_synopsis": {
+        "execution": "rich_metadata_preview",
+        "comparison": "canonical_description_whole_value",
+        "placeholders": [
+            "chapter_ascii_digits",
+            "track_ascii_digits",
+            "no description",
+            "no description available",
+            "description unavailable",
+            "no synopsis",
+            "no synopsis available",
+            "synopsis unavailable",
+        ],
+        "optional_final_full_stop": True,
+        "preserve_other_safe_plain_incumbents": True,
+        "safety_and_identity_precede_comparison": True,
+    },
     "audiobook_recording": {
         "report_derived_candidate_binding": True,
         "minimum_independent_authorities": 1,

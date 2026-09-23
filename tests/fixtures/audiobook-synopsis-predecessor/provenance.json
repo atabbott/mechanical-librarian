@@ -1,0 +1,29 @@
+{
+  "files": {
+    "ebook-policy.json": "c967a7d5d4020539da7e9652b84ba90676dbc04a967f622cea21337482d921c5",
+    "ebook-preview.json": "ac3c82474f5bc665f9548a1a5f798dd54275abcd00cc8668a53081f4d6efd6f7",
+    "ebook-proposal.json": "df4c2e7fa59aa3ad5179cb5562bde55f0ca0e81f5fb1d259c29495e8a996249a",
+    "ebook-report.json": "9ebfc62ee6f17daa53ceb42fe4d864b215b50b7f0498b96b390122b2d8908bac",
+    "marker-automatic-0.json": "23db802fb897b10a87bc5d8072374e028d11edeaa1d414eea4bfa258e4d523a1",
+    "marker-automatic-1.json": "634f715429522f3a73168efb2eb9dfd1089e9f3b52162b22f57c4a8319379b85",
+    "marker-case.json": "c91626b20fbd2634f937048e8ea19c9dfb4cdaa947867bda7e02114a9e833a3e",
+    "marker-outcome.json": "9149e1d3e253cbc100eb085f28692980f4eef19319f4280ff2c7bc1935b21d1d",
+    "marker-packet.json": "f8c0ee7553d153b2a6d2c842a85bbd93db6192e69dd042d4dd5acdabb67f00c5",
+    "marker-policy.json": "967ef1a56672496362b5752d6338bf85d51d584526f2989d0f023c1c499ea08b",
+    "marker-proposal.json": "71819c467c474dd8d8fa4bb16bfd377693db4e2192a2b18889d873fa8018976a",
+    "marker-report.json": "66abc6df2a5dbeb7792174af57a1c5e821905329ef6c9e7d2b47167dc428d404",
+    "marker-shadow-decision.json": "ff6dcce0c7ee4864e5128897a8a8ddc8703d0179617cc0618346d6490c1e8527",
+    "marker-store.sql": "bee1b8a04326c44686573f9364261a03d53b417f1e46da924e3c953866b1155f",
+    "useful-automatic-0.json": "74e2d0149d10ce423ea3ed71f005c6d78b68c52b61b4da0004d97686e6e4c2dc",
+    "useful-automatic-1.json": "32ca037b0c90b35047e4295fc5209a9737bca08819205e780f3f007ac0d0976a",
+    "useful-case.json": "378932a79cde4cb671d55158cde1ce5f01101bf98ab40662c31e5f991f1e22f0",
+    "useful-outcome.json": "51ad337b82b0516f232a2cc0ff8af67e78c6cd4e1a21886fec96a9ea4cc4f38b",
+    "useful-packet.json": "87bff8b7d9ab70b174bbd4e6b7f5e66bea83a276418a7e5da5cec04210c3e673",
+    "useful-policy.json": "967ef1a56672496362b5752d6338bf85d51d584526f2989d0f023c1c499ea08b",
+    "useful-proposal.json": "fcd9a83290b9ac983af61edb3d45f37d667cd16ba3b110952736f392fa4bfcd6",
+    "useful-report.json": "6811ec14e67b665ea4a477938e36ededdae8bc18d9612858a60a5249df824239",
+    "useful-shadow-decision.json": "d9d9c0ac7acc7136bb6ee8a1a03c49bc54785a961be4bc5414b49573c7776e01",
+    "useful-store.sql": "cf0599629a3f29f9fb78bc30192772515674c823c98d4e518cbe77fc32155d27"
+  },
+  "source_sha": "79dbbf4c3eb58365e266655c32a0f6de3c784e51"
+}

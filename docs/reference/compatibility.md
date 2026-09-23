@@ -22,7 +22,7 @@ The current installed contract is intentionally narrow:
   `fixed-conservative-v31`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v16`,
+  `deterministic-shadow-decision-policy-v17`,
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v8`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
   these successors require a clean rebuild and do not adopt prior state;
@@ -265,3 +265,13 @@ association, competing positions and independent title evidence retain their
 existing authority. Ask, Ignore and owner-final decisions remain authoritative.
 Proposal policy v31 requires a clean rebuild; report v49 remains readable and
 can be re-evaluated. Old proposal/store state is rejected before mutation.
+
+## Audiobook synopsis preservation (#1070)
+
+Shadow decision policy v17 and F46 v19/F19a v36/F20 v50 require a **clean rebuild**
+of prior derived stores. Report v49, proposal policy v31, action policy v5,
+proposal shape v8, packet v9, outcome shape v8 and Automatic schema v1 are unchanged.
+Prior reports/proposals remain readable; old Automatic documents are historical,
+not current scheduling authority. The closed whole-value placeholder comparison
+preserves useful plain incumbents and exact original source text. It does not
+score general writing quality or detect semantic contradictions.

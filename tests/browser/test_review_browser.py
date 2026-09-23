@@ -364,6 +364,8 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    synopsis_fixture: str | None = None,
+    synopsis_destination: str = "automatic",
     series_fixture: str | None = None,
     series_destination: str = "automatic",
     genre_fixture: tuple[str, ...] | None = None,
@@ -541,7 +543,31 @@ def _server(
         )
     else:
         report = _report()
-    if series_fixture is not None:
+    if synopsis_fixture is not None:
+        from mechanical_librarian.domain.metadata_policy import (
+            human_review_destinations,
+        )
+        from tests.support.audiobook_reports import publish_audiobook_preview
+        from tests.support.audiobook_synopsis import synopsis_report
+
+        report = synopsis_report(synopsis_fixture)
+        case_id, synopsis_policy = publish_audiobook_preview(
+            repository,
+            report,
+            ("tags",),
+            selected_options={
+                "description_fill": "replace_safe_plain_text",
+                "tags": "fill_empty",
+            },
+            selected_destinations={"description_fill": synopsis_destination},
+        )
+        proposal_set = evaluate_report(
+            report,
+            synopsis_policy.resolved_id,
+            human_review_destinations(synopsis_policy),
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+    elif series_fixture is not None:
         from mechanical_librarian.domain.metadata_policy import (
             human_review_destinations,
         )
@@ -1080,7 +1106,8 @@ def _server(
                 assert target.read(operation.plan).value == candidate.output.description
     language_activity = None
     if (
-        language_fixture is not None
+        synopsis_fixture is not None
+        or language_fixture is not None
         or genre_fixture is not None
         or series_fixture is not None
     ):
@@ -1117,7 +1144,8 @@ def _server(
         close_repository=True,
         field_application=(
             _BrowserActivityApplication()
-            if language_fixture is None
+            if synopsis_fixture is None
+            and language_fixture is None
             and genre_fixture is None
             and series_fixture is None
             else None
@@ -6841,6 +6869,79 @@ def test_same_name_series_owner_journey(media, destination):
                 ).wait_for()
                 expect(
                     page.get_by_role("article").filter(has_text=title).first
+                ).to_be_visible()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
+@pytest.mark.parametrize("destination", ("automatic", "ask", "ignore"))
+def test_audiobook_synopsis_owner_journey(destination):
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash(_PASSWORD))
+        password.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "synopsis.sqlite",
+                hash_path=password,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                synopsis_fixture="Chapter 1",
+                synopsis_destination=destination,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=description")
+            page.get_by_role("heading", name="Synthetic Journey", exact=True).wait_for()
+            choice = page.get_by_role(
+                "button",
+                name="Choose proposed value: A voyage reveals a hidden city.",
+                exact=True,
+            )
+            if destination == "ignore":
+                expect(choice).to_have_count(0)
+            else:
+                expect(choice).to_be_enabled()
+                if destination == "ask":
+                    choice.focus()
+                    choice.press("Space")
+                expect(choice).to_have_attribute("aria-pressed", "true")
+                page.reload()
+                expect(choice).to_have_attribute("aria-pressed", "true")
+            page.get_by_role("link", name="Evidence", exact=True).click()
+            expect(
+                page.get_by_role("heading", name="Description", exact=True)
+            ).to_be_visible()
+            if destination != "ignore":
+                page.get_by_role("link", name="History", exact=True).click()
+                expect(
+                    page.get_by_text("To A voyage reveals a hidden city.", exact=True)
+                ).to_be_visible()
+                page.get_by_role("link", name="Activity", exact=True).click()
+                page.get_by_role(
+                    "heading", name="Activity and recovery", exact=True
+                ).wait_for()
+                event = (
+                    page.get_by_role("article")
+                    .filter(
+                        has_text="Owner choice"
+                        if destination == "ask"
+                        else "Automatic choice"
+                    )
+                    .filter(has_text="Description")
+                )
+                event.get_by_role("button", name="Details").click()
+                expect(
+                    event.get_by_text("A voyage reveals a hidden city.", exact=True)
                 ).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()

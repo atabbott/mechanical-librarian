@@ -1576,3 +1576,15 @@ title replacement, sequence exemption or series-identity merge. Existing
 association, title-witness, policy, owner-final, consent, backup, currentness,
 read-back and audit checks remain mandatory. Proposal policy v31 requires a
 clean rebuild; report v49 remains unchanged. No new egress or write scope exists.
+
+## Audiobook synopsis authority (#1070)
+
+The closed whole-value chapter/track and no-description/no-synopsis vocabulary
+is comparison-only. It grants replacement only for recognized safe plain
+placeholders; useful incumbents remain unchanged. Source safety, identity and
+same-record conflict refusals remain prior checks, and persisted value authority
+reconstructs the same restriction. This is no semantic quality classifier.
+Owner-final, Ask/Ignore, consent, backup, currentness, optimistic preconditions,
+read-back and audit remain mandatory. Shared shadow policy v17 and successor
+qualification bindings require a clean rebuild of prior derived stores; no new
+provider, parser, model, egress or write capability is introduced.

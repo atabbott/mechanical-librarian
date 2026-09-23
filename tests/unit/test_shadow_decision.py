@@ -845,7 +845,7 @@ def test_the_decoration_tidy_rule_states_its_own_closed_thresholds() -> None:
 
 
 def test_v14_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v16" == DECISION_POLICY_VERSION
+    assert "deterministic-shadow-decision-policy-v17" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"
