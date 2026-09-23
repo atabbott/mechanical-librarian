@@ -271,7 +271,9 @@ can be re-evaluated. Old proposal/store state is rejected before mutation.
 Shadow decision policy v17 and F46 v19/F19a v36/F20 v50 require a **clean rebuild**
 of prior derived stores. Report v49, proposal policy v31, action policy v5,
 proposal shape v8, packet v9, outcome shape v8 and Automatic schema v1 are unchanged.
-Prior reports/proposals remain readable; old Automatic documents are historical,
+The existing outcome SQL CHECK binds the exact shared policy version and digest;
+exact-schema validation refuses old stores before mutation. Prior reports/proposals
+remain readable; old Automatic documents are historical,
 not current scheduling authority. The closed whole-value placeholder comparison
 preserves useful plain incumbents and exact original source text. It does not
 score general writing quality or detect semantic contradictions.

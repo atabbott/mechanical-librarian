@@ -316,8 +316,22 @@ def test_actual_predecessor_artifacts_and_ebook_comparison(tmp_path):
                 parser.from_json(
                     (root / f"{scenario}-{kind}.json").read_text().removesuffix("\n")
                 )
+        from mechanical_librarian.domain.automatic_decision import (
+            qualification_manifest_is_current,
+        )
+
         for file in root.glob(f"{scenario}-automatic-*.json"):
-            AutomaticDecision.from_json(file.read_text().removesuffix("\n"))
+            decision = AutomaticDecision.from_json(file.read_text().removesuffix("\n"))
+            from mechanical_librarian.application.field_effects import (
+                authority_from_decision,
+            )
+
+            assert authority_from_decision(decision) is None
+            assert not qualification_manifest_is_current(
+                decision.policy_category,
+                decision.policy_option,
+                decision.qualification_manifest_sha256,
+            )
         directory = tmp_path / scenario
         directory.mkdir(mode=0o700)
         database = directory / "state.sqlite"
@@ -328,7 +342,7 @@ def test_actual_predecessor_artifacts_and_ebook_comparison(tmp_path):
         database.chmod(0o600)
         before = database.read_bytes()
         with pytest.raises(MetadataReportError):
-            open_repository(database)
+            open_repository(database, create=False)
         assert database.read_bytes() == before
     report = MetadataReport.from_json(
         (root / "ebook-report.json").read_text().removesuffix("\n")
@@ -345,7 +359,17 @@ def test_actual_predecessor_artifacts_and_ebook_comparison(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "guard", (None, "backup", "target", "readback", "mismatch", "consent", "authority")
+    "guard",
+    (
+        None,
+        "backup",
+        "target",
+        "readback",
+        "mismatch",
+        "consent",
+        "authority",
+        "missing_consent",
+    ),
 )
 def test_synopsis_replacement_uses_persisted_guarded_effect(
     effects,
@@ -370,9 +394,10 @@ def test_synopsis_replacement_uses_persisted_guarded_effect(
     decision = AutomaticDecision.from_json(document)
     authority = PersistedFieldEffectAuthority(effects.repository)
     snapshot = authority.resolve(decision)
-    effects.repository.grant_field_effect_consents(
-        snapshot.connection, (snapshot.library,), ("description",), 5
-    )
+    if guard != "missing_consent":
+        effects.repository.grant_field_effect_consents(
+            snapshot.connection, (snapshot.library,), ("description",), 5
+        )
     service = GuardedFieldApplication(
         effects.repository,
         effects.target,
@@ -388,8 +413,7 @@ def test_synopsis_replacement_uses_persisted_guarded_effect(
         effects.claim_hook,
         effects.recovery_hook,
     )
-    result = service.plan(
-        decision,
+    plan_arguments = dict(
         connection=snapshot.connection,
         library=snapshot.library,
         work_id=snapshot.work_id,
@@ -401,6 +425,18 @@ def test_synopsis_replacement_uses_persisted_guarded_effect(
         dependency_digests=snapshot.dependency_digests,
         capability_digest=CAPABILITY,
     )
+    if guard == "missing_consent":
+        from mechanical_librarian.application.field_effects import (
+            GuardedApplicationError,
+        )
+
+        with pytest.raises(GuardedApplicationError, match="consent"):
+            service.plan(decision, **plan_arguments)
+        assert effects.repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+        return
+    result = service.plan(decision, **plan_arguments)
     assert result is not None
     assert result.plan.authority.origin == "automatic_policy"
     effects.target.seed(result.plan)
@@ -457,3 +493,164 @@ def test_synopsis_replacement_uses_persisted_guarded_effect(
     assert (
         effects.target._values[next(iter(changed))] == "A voyage reveals a hidden city."
     )
+
+
+@pytest.mark.parametrize(
+    "member,value",
+    [
+        ("decision_policy_version", None),
+        ("decision_policy_version", 17),
+        ("decision_policy_version", "deterministic-shadow-decision-policy-v16"),
+        ("decision_policy_sha256", None),
+        ("decision_policy_sha256", 17),
+        ("decision_policy_sha256", "0" * 64),
+    ],
+)
+def test_sql_refuses_missing_or_substituted_semantic_bindings(tmp_path, member, value):
+    import sqlite3
+
+    from tests.unit.test_review_read_indexes import _representative_database
+
+    connection = _representative_database(tmp_path / "state.sqlite", works=8)
+    try:
+        row = connection.execute(
+            "SELECT review_case_id,report_id,proposal_set_id,resolved_policy_id,source_decision_set_id,evaluated_at,document FROM shadow_decision_outcomes LIMIT 1"
+        ).fetchone()
+        document = json.loads(row[6])
+        if value is None:
+            document.pop(member)
+        else:
+            document[member] = value
+        identifier = "shadow_outcome_set_" + "a" * 64
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO shadow_decision_outcomes(outcome_set_id,review_case_id,report_id,proposal_set_id,resolved_policy_id,source_decision_set_id,evaluated_at,document) VALUES(?,?,?,?,?,?,?,?)",
+                (identifier, *row[:6], json.dumps(document)),
+            )
+        for table in ("shadow_decision_outcomes", "shadow_outcome_field_facts"):
+            assert connection.execute(
+                f"SELECT count(*) FROM {table} WHERE outcome_set_id=?", (identifier,)
+            ).fetchone() == (0,)
+    finally:
+        connection.close()
+
+
+@pytest.mark.parametrize(
+    "summaries",
+    [("Chapter 1", "Track 2."), ("No synopsis", "No description available.")],
+)
+def test_placeholder_only_sources_do_not_create_description_authority(
+    tmp_path, summaries
+):
+    with closing(open_repository(tmp_path / "markers.sqlite")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            synopsis_report("Chapter 3", summaries),
+            ("tags", "description_fill"),
+            selected_options={
+                "tags": "fill_empty",
+                "description_fill": "replace_safe_plain_text",
+            },
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        assert all(
+            json.loads(doc)["destination"] != "description"
+            for doc in repository.get_review_case_decisions(case_id)
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    "state,value", [("missing", None), ("null", None), ("empty", None)]
+)
+def test_replacement_option_fills_each_empty_target_state(tmp_path, state, value):
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.metadata_report import (
+        MetadataReport,
+        TargetField,
+        TargetFieldState,
+    )
+
+    report = synopsis_report()
+    report = MetadataReport.create(
+        target=replace(
+            report.target,
+            fields=tuple(
+                TargetField(field.destination, TargetFieldState(state), value)
+                if field.destination.value == "description"
+                else field
+                for field in report.target.fields
+            ),
+        ),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        audio=report.audio,
+    )
+    with closing(open_repository(tmp_path / "empty.sqlite")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("description_fill",),
+            selected_options={"description_fill": "replace_safe_plain_text"},
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        decision = next(
+            json.loads(doc)
+            for doc in repository.get_review_case_decisions(case_id)
+            if json.loads(doc)["destination"] == "description"
+        )
+        assert (
+            decision["policy_option"]
+            == "replace_safe_plain_text:audiobook_description_fill"
+        )
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if f["destination"] == "description"
+        )
+        assert (
+            field["automatic_decision"]["selected_value"]["value"]
+            == "A voyage reveals a hidden city."
+        )
+
+
+def test_historical_automatic_queue_cannot_reach_scheduler_authority(effects):
+    from pathlib import Path
+
+    root = Path(__file__).parents[1] / "fixtures/audiobook-synopsis-predecessor"
+    documents = tuple(
+        p.read_text().removesuffix("\n")
+        for p in sorted(root.glob("useful-automatic-*.json"))
+    )
+    assert len(documents) == 2
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    lane = ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "audio"): effects.service},
+        {("primary", "audio"): effects.capabilities},
+        authority,
+        (("primary", "audio"),),
+        effects.clock,
+        lambda *_: None,
+    )
+    with (
+        patch.object(
+            effects.repository,
+            "pending_field_effect_decision_documents",
+            return_value=documents,
+        ),
+        patch.object(
+            authority,
+            "resolve",
+            side_effect=AssertionError("historical decision reached authority"),
+        ),
+    ):
+        assert lane.schedule() == 0
+    assert effects.repository._connection.execute(
+        "SELECT count(*) FROM field_effects"
+    ).fetchone() == (0,)
