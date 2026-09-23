@@ -27,7 +27,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "1051b86941ab608a317751dd7cdd0688fdd63574"
+    "source_sha": "ad857685854a42e13b411ef2736230f46f06baeb"
   },
   "build_provenance_paths": [
     "frontend/package-lock.json",
@@ -71,7 +71,7 @@
       "verified_abs_effects": 32
     }
   },
-  "frozen_candidate_sha": "1051b86941ab608a317751dd7cdd0688fdd63574",
+  "frozen_candidate_sha": "ad857685854a42e13b411ef2736230f46f06baeb",
   "historical_measurements": {
     "fresh_quality_scoring": false,
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v7.json",
@@ -574,7 +574,7 @@
         "measured_sha256": "8131f03ee35a88e7ea6720d6075e35522db6e9041419e09e8af74d766eea9f72"
       },
       "frontend/src/routes/PolicyPage.tsx": {
-        "current_sha256": "832158af65b3769215646832293fecd08773975f1ddb365e8f4948e51060aad2",
+        "current_sha256": "ef4d19ac18de0766b51d352e2f16afa73f045d9ae82381786c1edbd5957d2df4",
         "measured_sha256": "0cf3f0986db6003337f98d0fefc34fbfa60299ca84e73d3875dd6f981487d4ba"
       },
       "frontend/src/routes/SettingsPage.tsx": {
@@ -642,7 +642,7 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "1051b86941ab608a317751dd7cdd0688fdd63574",
+    "current_source_sha": "ad857685854a42e13b411ef2736230f46f06baeb",
     "introduced_sources": {
       "frontend/src/queryWork.ts": {
         "current_sha256": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
@@ -878,7 +878,7 @@
         "prior_sha256": "ae29b8365b912a380b0d0389b7b2dcc612506884e4b15de5562b552bcbbff691"
       },
       "frontend/src/routes/PolicyPage.tsx": {
-        "current_sha256": "832158af65b3769215646832293fecd08773975f1ddb365e8f4948e51060aad2",
+        "current_sha256": "ef4d19ac18de0766b51d352e2f16afa73f045d9ae82381786c1edbd5957d2df4",
         "prior_sha256": "24f04d687595fdbb900193fce1c29350235ebeeefbb8ee34cfc8593d653fe12a"
       },
       "frontend/tests/http.test.ts": {
@@ -890,7 +890,7 @@
         "prior_sha256": "26e1f49e8e090fca35dc7f309a2f27906f71fc27498b944e45568187a1b1d796"
       },
       "frontend/tests/router.policy.test.tsx": {
-        "current_sha256": "643d9fe324d7ef4a54baf2b10d6907aebfd7f58d7a45c69837c82a8fd28ca38e",
+        "current_sha256": "e60e77057e8ef941ab7ff05f7ab7ac2d6b44bbe33d16d8eb9a5db157cb93fc07",
         "prior_sha256": "3c0a03e3682790a99f779fc12c509a5ac7fad5c1d8068951a362164387694ccd"
       },
       "src/mechanical_librarian/adapters/persistence/decisions.py": {
@@ -930,11 +930,11 @@
         "prior_sha256": "0203b001fc03e13567a45a9123c06e692a30d4bba2f760f977d40a038dd3c0ba"
       },
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": {
-        "current_sha256": "d6c4a072466b75d3ceb27b79be7c9b27802cd0874b50a8037dc4ff722e2cc79a",
+        "current_sha256": "80f34b4e56618447551cdb3197b7b28fc518c5bd91fed9c2cdee764d5b381dfa",
         "prior_sha256": "1c99e3e2d2ea96b261b37c0baaca65b3582435ab30ea8bc3a6abda6ebe3da1fc"
       },
       "src/mechanical_librarian/domain/automatic_decision.py": {
-        "current_sha256": "506de84363c2f5632f945bda3ef8e9edcc167eb0e1ddca1cbcceb41e31457505",
+        "current_sha256": "56235dffc2ee74691ae9f658e6c61060077248725cb8ceb4537892759f6fadee",
         "prior_sha256": "23c68f6bee719c2f85c7ba090a59615fdb038ec92a6d151444b4fb6287a8663b"
       },
       "src/mechanical_librarian/domain/preparation_presentation.py": {
@@ -942,7 +942,7 @@
         "prior_sha256": "9ccb36a9eb569825ca01be5a40e795784232057c70dab4dc24dfe01a798142fa"
       },
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": {
-        "current_sha256": "924d2a00a7fc03315eeeb3768c0432cccda008b2058c3b689cbb2c5835efc951",
+        "current_sha256": "3038e105dddab949fc81ff5abe2dc0729cd74eb9e633e8111eb7fd1101ca417e",
         "prior_sha256": "986758a18525a283aee966f619fdb8c8ccbef78e419e43caa974e865a39ae5fb"
       },
       "src/mechanical_librarian/domain/shadow_outcome.py": {
@@ -1352,7 +1352,7 @@
     "frontend/src/routes/AttentionPage.tsx": "1bcd37f01d111c68c105bfd55f7c3f15cf5e5e80ae6411b4975662f781505652",
     "frontend/src/routes/DetailPage.tsx": "2dcfcc91eeaf338ffa2bd99acc6963898613332b9d723feb05ca7dc27cab586b",
     "frontend/src/routes/LibraryPage.tsx": "c67595b52d095c9db7050267ca248b7490087e3d03afea1f7236729caa5c6c94",
-    "frontend/src/routes/PolicyPage.tsx": "832158af65b3769215646832293fecd08773975f1ddb365e8f4948e51060aad2",
+    "frontend/src/routes/PolicyPage.tsx": "ef4d19ac18de0766b51d352e2f16afa73f045d9ae82381786c1edbd5957d2df4",
     "frontend/src/routes/SettingsPage.tsx": "20c5bc4d175d60b3095f9589294bb9400619ea13603ce2b23c436fc8369ae82a",
     "frontend/src/styles.css": "b4182ddb9912875186db40978e4c5517683415561d592305759ea662b9d3c1ad",
     "frontend/tests/decisionCaseOwnership.test.ts": "b287a134927c341fe9f47b6a616d9be3c3e3119af1b86ea9a4d9227c56a20f07",
@@ -1369,7 +1369,7 @@
     "frontend/tests/router.activity.test.tsx": "1d95fbb79c873d90371973e5707f6274e429411f5186bf056d148bcec5eb99ce",
     "frontend/tests/router.detail.test.tsx": "5c169261479ffe895bbc0a3bf27b2ba88ce4c10d93a9565498846a718d3dbf7a",
     "frontend/tests/router.library.test.tsx": "d8f8fb70dda0f6eb0dec118eb6038e61a3b88324d45237f52fdc3b1a8ff62126",
-    "frontend/tests/router.policy.test.tsx": "643d9fe324d7ef4a54baf2b10d6907aebfd7f58d7a45c69837c82a8fd28ca38e",
+    "frontend/tests/router.policy.test.tsx": "e60e77057e8ef941ab7ff05f7ab7ac2d6b44bbe33d16d8eb9a5db157cb93fc07",
     "frontend/tests/router.settings.test.tsx": "bca19478faf91f44e2055890ac84d6985d81c9bb70d3985d6934f626e4541cd1",
     "frontend/tests/router.shell.test.tsx": "c8069ca379f6f595af1b46bedcfe0b83df8031ef8f95615ad192e48bd58fd025",
     "scripts/audit_sqlite_row_deltas.py": "f4d14606f3aff0915f3f467d197f7cf37296c3b18b1dcf4a369d6fdb283d52a0",
@@ -1515,8 +1515,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "d6c4a072466b75d3ceb27b79be7c9b27802cd0874b50a8037dc4ff722e2cc79a",
-    "src/mechanical_librarian/domain/automatic_decision.py": "506de84363c2f5632f945bda3ef8e9edcc167eb0e1ddca1cbcceb41e31457505",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "80f34b4e56618447551cdb3197b7b28fc518c5bd91fed9c2cdee764d5b381dfa",
+    "src/mechanical_librarian/domain/automatic_decision.py": "56235dffc2ee74691ae9f658e6c61060077248725cb8ceb4537892759f6fadee",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -1547,7 +1547,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "924d2a00a7fc03315eeeb3768c0432cccda008b2058c3b689cbb2c5835efc951",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "3038e105dddab949fc81ff5abe2dc0729cd74eb9e633e8111eb7fd1101ca417e",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "3ebd6b660ae2a4ecdc93067819b35c098f4629e802e024df2e41f5e0b983195b",
     "src/mechanical_librarian/domain/shadow_outcome.py": "080b3e4a346d9f398000835da5cc3a89266d8c950d4b600c379875e00695e9fe",
