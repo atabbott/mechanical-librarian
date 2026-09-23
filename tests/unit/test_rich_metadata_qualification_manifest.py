@@ -3387,7 +3387,13 @@ def test_dependency_and_responsiveness_origins_remain_historical_only(family, di
         ),
         "audio": (
             _PRIOR_F46_QUALIFICATION_MANIFESTS,
-            F46_PASSING_AUTOMATIC_OPTIONS,
+            frozenset(
+                json.loads(
+                    MANIFEST.with_name(
+                        "f46-audiobook-qualification-candidate-v10.json"
+                    ).read_bytes()
+                )["passing_automatic_options"]
+            ),
             F46_QUALIFICATION_MANIFEST_SHA256,
         ),
     }[family]
