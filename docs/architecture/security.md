@@ -1556,3 +1556,13 @@ references. Local audiobook facts use the same single-source correlation in
 proposal and packet summaries, including creator roles, without granting
 recording identity. Consent, currentness, backup and effect guards are unchanged.
 The report/proposal/action/decision/outcome version rotation requires a clean rebuild.
+
+
+## Genre creator applicability
+
+Accepted creator display equivalence removes only false negative identity vetoes
+under existing title-query overlap (#1074). It never grants positive WORK admission.
+Explicit Ask exposes only case-bound genre actions already admitted by the domain;
+Ignore, owner-final, stale/forged-choice refusal and effect guards are unchanged.
+Report v49/proposal policy v30 require a clean rebuild; old pruned evidence is not
+recoverable or current authority. No egress, provider, credential or write scope is added.

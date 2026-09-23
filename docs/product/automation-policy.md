@@ -7,8 +7,9 @@ This document defines product intent. Exact thresholds remain versioned configur
 ## Operating posture
 
 The current title qualification is
-[F19a v15](../reference/f19a-qualification-manifest-v15.json) (#1007).
-Its new ISBN-and-creator title option is measured separately: twenty-five synthetic
+[F19a v34](../reference/f19a-qualification-manifest-v34.json) (#1074).
+The ISBN-and-creator title option introduced by
+[F19a v15](../reference/f19a-qualification-manifest-v15.json) (#1007) is measured separately: twenty-five synthetic
 positive opportunities and two independently labelled retained real positives
 reach correct candidates and durable Automatic decisions; twenty-five synthetic
 negative controls are withheld. All fifty-two cases remain owner-reachable.
@@ -609,3 +610,15 @@ values stay unchanged. When filling, Preserve prefers an observed code and
 Display name prefers an observed English name, falling back only to another
 form in the elected evidence. Base/script disagreements and unsupported forms
 remain manual; no language is inferred or synthesized.
+
+
+## Genre work applicability (#1074)
+
+Automatic genre fill accepts existing closed creator display equivalence,
+including a singleton surname-comma-given inversion, as absence of contradiction.
+This does not establish positive work identity or broaden provider admission.
+Unavailable, failed and no-match providers cast no dissenting genre vote;
+genuine competing alternatives abstain and populated genres remain fill-empty
+preservation. Explicit Ask exposes existing eligible owner actions, while Ignore
+creates no automatic decision. Owner-final choices supersede automatic authority.
+The existing consent, currentness, backup, read-back and audit guards still apply.

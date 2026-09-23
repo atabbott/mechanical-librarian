@@ -18,8 +18,8 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v48` plus `proposal-set-v8` under
-  `fixed-conservative-v29`, or the separate `catalogue-v2` schema;
+  `metadata-report-v49` plus `proposal-set-v8` under
+  `fixed-conservative-v30`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v16`,
@@ -244,3 +244,11 @@ values stay unchanged; filling selects only an actually admitted form according
 to the policy preference. Genuine base, script and unsupported-value conflicts
 remain manual through compiler and recording admission. Local audio facts count
 as one source, including creator roles; this grants no recording identity.
+
+
+Genre applicability (#1074) advances reports to v49 and proposal policy to v30.
+Inventaire's early negative filtering can change retained candidates, overflow
+status and request accounting, even though final positive WORK admission remains
+unchanged. Prior v48 reports cannot recover pruned evidence from replay.
+**Clean rebuild required** under ADR-0013; no migration or predecessor adoption.
+Historical automatic decisions remain readable history, not current authority.

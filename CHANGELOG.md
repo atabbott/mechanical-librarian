@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Accepted author display inversion no longer blocks an eligible automatic genre
+  fill. Ask exposes eligible genre choices; Ignore and owner-final choices remain
+  authoritative. Genuine genre conflicts still abstain. Earlier application state
+  requires a clean rebuild. (#1074)
+
 - Equivalent English names and language codes no longer create false choices.
   Undetermined language remains readable evidence without automatic authority.
   Language preferences select an observed form and preserve equivalent current

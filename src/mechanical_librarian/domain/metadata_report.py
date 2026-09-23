@@ -78,7 +78,7 @@ from mechanical_librarian.domain.work_identity import (
     work_title_transformation_lineage_from_data,
 )
 
-REPORT_SCHEMA = "metadata-report-v48"
+REPORT_SCHEMA = "metadata-report-v49"
 COMPARISON_VERSION = "closed-title-creator-publication-work-identity-v5"
 # The physical SQLite schema separately fingerprints this exact report shape,
 # so any earlier development database fails closed under the clean-schema rule.
@@ -2911,7 +2911,10 @@ def provider_candidate_work_identity_contradiction(
     return (
         WorkIdentityContradiction.UNAVAILABLE
         if target_queries & candidate_queries
-        and closed_creator_display_possibility(target_authors, authors)
+        and (
+            creator_sequence_methods(authors, target_authors)
+            or closed_creator_display_possibility(target_authors, authors)
+        )
         else WorkIdentityContradiction.EXPLICIT
     )
 

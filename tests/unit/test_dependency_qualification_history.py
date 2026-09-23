@@ -80,3 +80,23 @@ def test_actual_v47_language_decision_remains_historical():
         AutomaticDecision.create(
             **cast("dict[str, Any]", decision._core()), occurred_at=decision.occurred_at
         )
+
+
+def test_actual_v48_genre_decision_remains_historical():
+    path = (
+        Path(__file__).parents[1]
+        / "fixtures/genre-applicability-predecessor/automatic-v48.json"
+    )
+    raw = path.read_text().strip()
+    decision = AutomaticDecision.from_json(raw)
+    assert decision.to_json() == raw
+    assert decision.destination == "genres"
+    assert not qualification_manifest_is_current(
+        decision.policy_category,
+        decision.policy_option,
+        decision.qualification_manifest_sha256,
+    )
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(
+            **cast("dict[str, Any]", decision._core()), occurred_at=decision.occurred_at
+        )

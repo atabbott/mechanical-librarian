@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v29` policy. It does not construct or contact a metadata or
+`fixed-conservative-v30` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -41,10 +41,10 @@ not qualify a replacement; distinct alternatives retain their own dimensions.
 The packet producer revision is part of consideration replay authority, so an
 older same-schema result is historical and receives one current successor.
 
-Success is exactly one canonical `proposal-set-v7` JSON document plus a
+Success is exactly one canonical `proposal-set-v8` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v7` documents under `fixed-conservative-v26` and the exact current
+Only `proposal-set-v8` documents under `fixed-conservative-v30` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
@@ -377,3 +377,10 @@ bibliographic combination. The qualified no-change witness binds that exact
 outcome; it cannot select a replacement. Existing combinations and paired-title
 rules continue to govern changes. Explicit title recovery reuses the current
 ProposalSet and report rather than acquiring new evidence (#1073).
+
+
+Genre applicability now uses accepted closed creator display equivalence only to
+remove false explicit contradictions (#1074). Publication-date votes share this
+negative-only classification. Exact current report v49/proposal policy v30 state
+is required; report v48 and proposal policy v29 are historical and cannot be
+replayed as current authority. **Clean rebuild required**, with no adoption.

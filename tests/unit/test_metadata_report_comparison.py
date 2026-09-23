@@ -169,6 +169,18 @@ def test_work_identity_contradiction_requires_complete_unambiguous_evidence(
 @pytest.mark.parametrize(
     ("target_authors", "provider_authors", "expected"),
     (
+        (("Ada Example",), ("Example, Ada",), WorkIdentityContradiction.UNAVAILABLE),
+        (("Example, Ada",), ("Ada Example",), WorkIdentityContradiction.UNAVAILABLE),
+        (
+            ("Ada Example", "Bob Example"),
+            ("Example, Ada", "Example, Bob"),
+            WorkIdentityContradiction.EXPLICIT,
+        ),
+        (
+            ("Ada Example", "Ada Example"),
+            ("Ada Example", "Ada Example"),
+            WorkIdentityContradiction.UNAVAILABLE,
+        ),
         (("Ada Example",), ("Ada L Example",), WorkIdentityContradiction.UNAVAILABLE),
         (("Ada L Example",), ("Ada Example",), WorkIdentityContradiction.UNAVAILABLE),
         (
@@ -195,6 +207,10 @@ def test_work_identity_contradiction_requires_complete_unambiguous_evidence(
         ),
     ),
     ids=(
+        "provider_inversion",
+        "target_inversion",
+        "multi_author_inversion",
+        "duplicate_authors",
         "target_omits_middle",
         "provider_omits_middle",
         "optional_period",

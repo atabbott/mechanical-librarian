@@ -41,6 +41,8 @@ _POLICY_ASK_ATTENTION_SQL = (
     "json_extract(policy_resolution.document,'$.destinations.contributor_names')='ask') OR "
     "(result.destination='series' AND "
     "json_extract(policy_resolution.document,'$.destinations.series')='ask') OR "
+    "(result.destination='genres' AND result.has_owner_decision_actions=1 AND "
+    "json_extract(policy_resolution.document,'$.destinations.genres')='ask') OR "
     "(result.destination='language' AND result.has_owner_decision_actions=1 AND "
     "json_extract(policy_resolution.document,'$.destinations.language_rendering')='ask') OR "
     "(result.destination='subtitle' AND "

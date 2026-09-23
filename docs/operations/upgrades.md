@@ -186,3 +186,15 @@ adds the closed `title_recovery` trigger and fourth trigger ordinal; stores with
 the prior three-trigger DDL are incompatible. Startup refuses the predecessor
 without mutation; no adoption or migration is supplied. The Policy recovery
 control works only on exact-current state and does not upgrade an older store.
+
+
+## Genre applicability (#1074)
+
+**Clean rebuild required.** Report v49 and proposal policy v30 invalidate the
+exact prior report/proposal SQLite contract before mutation. Do not relabel,
+import or migrate report v48 or proposal policy v29 state: Inventaire's revised
+negative filtering changes acquisition accounting and overflow evidence that
+an old report cannot reconstruct. F19a v34, F20 v48 and F46 v17 retain historical
+options and measurements while binding current consumers. Historical automatic
+documents remain history only. Other schema and decision-policy versions stay
+unchanged; consent and supported effect guards are unchanged.
