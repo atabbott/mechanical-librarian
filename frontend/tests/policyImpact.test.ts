@@ -323,8 +323,6 @@ describe('policy impact projections', () => {
     for (const key of [
       'contributor_names:preserve',
       'contributor_names:canonical',
-      'language_rendering:preserve',
-      'language_rendering:display_name',
       'date_precision:year',
       'date_precision:full_date',
       'publisher_preference:publisher',
@@ -345,6 +343,19 @@ describe('policy impact projections', () => {
       } else {
         expect(guidance.fallback).toContain('no decision is qualified')
       }
+    }
+    for (const [option, preferred, fallback] of [
+      ['preserve', 'an observed code', 'uses another admitted form when no code is present'],
+      ['display_name', 'an observed English name', 'uses an admitted code when no name is present'],
+    ] as const) {
+      const guidance = policyRepresentationGuidance[`language_rendering:${option}`]
+      if (!guidance) throw new Error(`missing language guidance: ${option}`)
+      expect(guidance.admitted).toContain('already-produced exact candidate')
+      expect(guidance.transformation).toBe(
+        `keeps an equivalent current value; when filling, prefers ${preferred}`,
+      )
+      expect(guidance.effect).toBe('Automatic writes only a form present in the selected evidence')
+      expect(guidance.fallback).toBe(`${fallback}; undetermined values provide no authority`)
     }
     expect(policyRepresentationGuidance['date_precision:year']?.effect).toContain(
       'Publication date or Publication year destination value',
