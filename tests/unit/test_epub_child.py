@@ -3121,3 +3121,19 @@ def test_typed_credit_containers_preserve_roles_without_authors(
     assert not [
         fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
     ]
+
+
+@pytest.mark.parametrize("language", ("en", "UND", "und"))
+def test_isolated_language_acquisition_retains_raw_unknown(language):
+    package = EPUB3_PACKAGE.replace(
+        b"<dc:language>en-GB</dc:language>",
+        f"<dc:language>{language}</dc:language>".encode(),
+    )
+    report = _inspect_in_child(epub_bytes(package=package))
+    assert report.outcome is EpubInspectionOutcome.SUCCESS
+    facts = [
+        fact for fact in report.facts if fact.field is EpubInspectionField.LANGUAGE
+    ]
+    assert len(facts) == 1
+    assert facts[0].canonical_value == language
+    assert facts[0].observed_value == language

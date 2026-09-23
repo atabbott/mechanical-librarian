@@ -874,12 +874,13 @@ def _cast_report(
     reverse: bool = False,
     third_language: str | None = None,
     third_first: bool = False,
+    local_language: str = "en",
 ) -> MetadataReport:
     base = asserted_asin_report(provider_duration="58200.000")
     target = audio_target("The Synthetic Journey", ("Example Author",))
     local: tuple[d.LocalClaim, ...] = (target_title_claim("The Synthetic Journey"),)
     if third_language is not None:
-        local += (audio_claim(d.ClaimKind.LANGUAGE, "en", 2),)
+        local += (audio_claim(d.ClaimKind.LANGUAGE, local_language, 2),)
     plan = m.audiobook_discovery_plan(target, local, audio=base.audio)
     products: list[dict[str, Any]] = [
         {
@@ -1059,3 +1060,90 @@ def test_http_title_isolation_preserves_candidate_evidence(
         for claim in claims
     )
     assert all(claim.value is None or "\u200b" not in claim.value for claim in claims)
+
+
+@pytest.mark.parametrize(
+    "local_language, provider_language, conflict",
+    (
+        ("English", "fr", True),
+        ("English", "en", False),
+        ("UND", "fr", False),
+        ("en", "und", False),
+    ),
+)
+def test_actual_work_producer_language_controls_recording_cast(
+    local_language, provider_language, conflict
+):
+    report = _cast_report(
+        [{"name": "Different Reader"}],
+        third_language=provider_language,
+        local_language=local_language,
+    )
+    candidate = next(
+        candidate
+        for observation in report.providers
+        for candidate in (
+            *observation.candidates,
+            *observation.recording_lookup_candidates,
+        )
+        if any(
+            claim.kind is d.ClaimKind.LANGUAGE and claim.value == provider_language
+            for claim in candidate.claims
+        )
+    )
+    assert d.recording_variant_conflict(
+        candidate, report.local_claims, report.target.current_title or ""
+    ) == ("recording_language_conflict" if conflict else None)
+    result = next(
+        value
+        for value in p.evaluate_report(report).results
+        if value.destination is d.TargetDestination.NARRATORS
+    )
+    references = {
+        reference
+        for value in result.alternatives
+        for reference in value.evidence_references
+    }
+    narrator_references = {
+        claim.reference
+        for claim in candidate.claims
+        if claim.kind is d.ClaimKind.CONTRIBUTOR and claim.role == "narrator"
+    }
+    assert narrator_references.isdisjoint(references) is conflict
+
+
+@pytest.mark.parametrize(
+    "language,conflict", (("fr", True), ("en", False), ("und", False))
+)
+def test_actual_asin_producer_binds_supported_name_language_conflict(
+    language, conflict
+):
+    local = local_claims() + (audio_claim(ClaimKind.LANGUAGE, "English", 9),)
+    base = asserted_asin_report(provider_duration="58200.000")
+    plan = m.audiobook_discovery_plan(audio_target(), local, audio=base.audio)
+    document = copy.deepcopy(payload("audible_lookup"))
+    document["product"]["language"] = language
+    provider = _provider(lambda request: _json(document))
+    try:
+        observation = m.observe_provider(
+            "audible", "audible_catalog", provider, plan
+        ).observation
+    finally:
+        provider._client.close()
+    candidates = (*observation.candidates, *observation.recording_lookup_candidates)
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert d.recording_variant_conflict(candidate, local, "Project Hail Mary") == (
+        "recording_language_conflict" if conflict else None
+    )
+    assert any(
+        claim.kind is ClaimKind.LANGUAGE and claim.value == language
+        for claim in candidate.claims
+    )
+    assert (
+        any(
+            value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+            for value in candidate.evidence
+        )
+        is not conflict
+    )

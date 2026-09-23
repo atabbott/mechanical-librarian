@@ -221,24 +221,33 @@ def test_unknown_candidate_fails_closed_with_stable_exclusion_identity() -> None
     assert first_catalogue.actions[0].action_id == second_catalogue.actions[0].action_id
 
 
-def test_language_keep_current_uses_compatible_cited_source_evidence() -> None:
+@pytest.mark.parametrize("language, eligible", (("en-US", True), ("EN-US", False)))
+def test_language_keep_current_uses_compatible_cited_source_evidence(
+    language, eligible
+) -> None:
     data = _packet_data()
     proposal = data["proposals"][0]
     proposal["destination"] = "language"
     proposal["current"] = {
         "destination": "language",
         "state": "value",
-        "value": "EN-US",
+        "value": language,
     }
     candidate = proposal["candidates"][0]
     candidate["assessment"] = "replaces_target"
     candidate["scope"] = "edition"
-    candidate["value"] = {"kind": "text", "value": "EN-US"}
+    candidate["value"] = {"kind": "text", "value": language}
     candidate["decision_summary"]["evidence_scope"] = "edition"
     candidate["decision_summary"]["selected_manifestation_binding"] = "established"
 
     catalogue = compile_shadow_review_actions(_packet(data))
 
+    if not eligible:
+        assert all(value.recommendation == "manual" for value in catalogue.actions)
+        assert any(
+            "field_policy_conflict" in value.reasons for value in catalogue.exclusions
+        )
+        return
     keep = next(
         value
         for value in catalogue.actions
@@ -381,6 +390,8 @@ def test_admission_is_crossed_with_destination_not_historical_frequency(
     proposal = data["proposals"][0]
     proposal["destination"] = destination
     candidate = proposal["candidates"][0]
+    if destination == "language":
+        candidate["value"] = {"kind": "text", "value": "en"}
     candidate["scope"] = scope
     candidate["decision_summary"]["evidence_scope"] = scope
     candidate["decision_summary"]["selected_manifestation_binding"] = binding

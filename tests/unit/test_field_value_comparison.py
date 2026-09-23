@@ -41,7 +41,7 @@ def test_values_match_keeps_a_near_match_actionable() -> None:
         ("zh-Hans", "zh-Hant", False),
         ("zh", "zh-Hans", False),
         ("en", "fr", False),
-        ("english", "english", False),
+        ("unsupported-language", "unsupported-language", False),
     ),
     ids=(
         "region-stripped",

@@ -31,6 +31,7 @@ from mechanical_librarian.domain.proposal_set import (
     PROVIDER_CONSENSUS_TITLE_REASONS,
     ProposalSet,
     canonical_target_fields,
+    select_language_representation,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.rich_metadata_preview import (
@@ -47,7 +48,7 @@ from mechanical_librarian.domain.shadow_decision import (
 )
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v7"
+SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v8"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
@@ -590,6 +591,15 @@ class ShadowOutcomeSet:
                         None if selected is None else selected.value.to_data()["value"]
                     )
                 )
+                if (
+                    decision.destination == "language"
+                    and selected is not None
+                    and decision.recommendation == "recommend_candidate"
+                    and type(policy_option) is str
+                ):
+                    desired = select_language_representation(
+                        report, selected, policy_option
+                    )
                 identity = _audiobook_policy_identity(
                     decision.destination, category, policy_option, current, desired
                 )

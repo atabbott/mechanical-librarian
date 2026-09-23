@@ -11,7 +11,10 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Final, Mapping, Sequence, cast
 
-from mechanical_librarian.domain.field_outcomes import language_identity
+from mechanical_librarian.domain.field_outcomes import (
+    language_identity,
+    language_is_unknown,
+)
 from mechanical_librarian.domain.field_value_comparison import values_match
 from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
@@ -21,7 +24,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "44a590388d697fb9d61faaea4e96010d4ccf23ea50577ae9af62e8446e872eb1"
+    "bbfda492d6c48438a15135d2e276e45680fdcb71b0a3a9da5441ccb02f0f1739"
 )
 
 _FIELD_OPTIONS: Final = {
@@ -144,7 +147,11 @@ def identity_for_effect(
         == list(cast(Sequence[object], desired))
     ):
         operation = "preserve"
-    elif current in (None, "", [], ()):
+    elif current in (None, "", [], ()) or (
+        destination == "language"
+        and type(current) is str
+        and language_is_unknown(current)
+    ):
         operation = "fill"
     elif (
         destination == "isbn"

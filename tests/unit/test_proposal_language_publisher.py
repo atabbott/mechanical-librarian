@@ -318,7 +318,7 @@ _LANGUAGE_CONFLICT_CONTROLS = (
     ("different_base", "fr", "eng"),
     ("different_script", "en-Latn", "en-Cyrl"),
     ("unspecified_script", "en", "en-Latn"),
-    ("malformed", "en", "english"),
+    ("malformed", "en", "unsupported-language"),
 )
 
 
@@ -381,7 +381,7 @@ def test_language_policy_rejects_base_script_and_malformed_conflicts(
                 "alpha",
                 "alpha-edition",
                 ClaimKind.LANGUAGE,
-                "english",
+                "unsupported-language",
                 scope=ClaimScope.EDITION,
             ),
         ),

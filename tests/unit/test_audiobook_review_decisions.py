@@ -1572,6 +1572,21 @@ def test_audiosilo_complete_sets_survive_or_refuse_at_reopened_effect_boundary(
     ]
     for field in ("authors", "narrators", "series"):
         matching = [decision for decision in decisions if decision.destination == field]
+        if field == "authors":
+            # Valid competing complete sets stay manual; malformed provider authors
+            # supply no competing set and cannot erase the explicit local author.
+            if malformed == "authors" and not populated:
+                assert len(matching) == 1
+                assert _automatic_decision_value(
+                    matching[0], case, report, proposal, outcome
+                ) == {"kind": "list", "value": ["Synthetic Author"]}
+            else:
+                assert not matching
+                author_outcome = next(
+                    item for item in outcome.outcomes if item.destination == "authors"
+                )
+                assert author_outcome.disposition not in {"candidate", "keep_current"}
+            continue
         if field == malformed or (malformed == "authors" and field != "series"):
             assert not matching
             continue
@@ -1760,12 +1775,12 @@ def test_target_only_incomplete_authors_do_not_gain_recording_authority():
 
 @pytest.mark.parametrize("option", ("preserve", "canonical"))
 def test_final_author_target_precedes_lookup_and_normalization_authority(
-    tmp_path, monkeypatch, option
+    tmp_path, option
 ):
     from contextlib import closing
 
-    from mechanical_librarian.adapters.field_effect_authority import (
-        PersistedFieldEffectAuthority,
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _automatic_decision_value,
     )
     from mechanical_librarian.adapters.persistence.metadata_reports import (
         open_repository,
@@ -1775,17 +1790,23 @@ def test_final_author_target_precedes_lookup_and_normalization_authority(
         audiobook_asin_feed_plan,
         audiobook_discovery_plan,
     )
-    from mechanical_librarian.domain import (
-        audiobook_decision_qualification as qualification,
-    )
     from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+    from mechanical_librarian.domain.metadata_policy import human_review_destinations
     from mechanical_librarian.domain.proposal_set import (
         provider_candidate_represents_target_work,
     )
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
     from tests.support.audiobook_reports import publish_audiobook_preview
     from tests.unit.test_audnexus_provider import _json, _provider
 
     base = _audiosilo_consumer_report(populated=False, independent_asin=False)
+    from tests.support.audiobook_providers import audio_claim
+
+    # Normalization requires a coherent complete set; competing-set refusal is
+    # covered by the Audiosilo persistence matrix above.
+    local_claims = base.local_claims + (
+        audio_claim(ClaimKind.CREATOR, "Second Author", 5, role="author"),
+    )
     target = replace(
         base.target,
         fields=tuple(
@@ -1802,7 +1823,7 @@ def test_final_author_target_precedes_lookup_and_normalization_authority(
     snapshot = TargetSnapshot(
         "audiobook", target.current_title, (), fields=target.fields
     )
-    discovery = audiobook_discovery_plan(snapshot, base.local_claims, audio=base.audio)
+    discovery = audiobook_discovery_plan(snapshot, local_claims, audio=base.audio)
     feed = audiobook_asin_feed_plan(snapshot, discovery, ())
     assert feed is not None
     raw = {
@@ -1826,7 +1847,7 @@ def test_final_author_target_precedes_lookup_and_normalization_authority(
     report = MetadataReport.create(
         target=target,
         file=base.file,
-        local_claims=base.local_claims,
+        local_claims=local_claims,
         local_reasons=base.local_reasons,
         providers=(observed,),
         audio=base.audio,
@@ -1841,30 +1862,25 @@ def test_final_author_target_precedes_lookup_and_normalization_authority(
     assert provider_candidate_represents_target_work(
         report, observed, observed.candidates[0]
     )
-    identity = f"contributor_names:{option}:audiobook_authors_normalize"
-    monkeypatch.setattr(
-        qualification,
-        "F46_PASSING_AUTOMATIC_OPTIONS",
-        qualification.F46_PASSING_AUTOMATIC_OPTIONS | {identity},
-    )
     database = tmp_path / "normalization.sqlite"
     with closing(open_repository(database)) as repository:
-        case_id, _ = publish_audiobook_preview(
+        case_id, resolved = publish_audiobook_preview(
             repository,
             report,
             ("contributor_names",),
             selected_options={"contributor_names": option},
         )
-        outcome = json.loads(repository.persist_shadow_outcome(case_id, 4))
+        raw_outcome = repository.persist_shadow_outcome(case_id, 4)
+        outcome = json.loads(raw_outcome)
         selected = next(
             member
             for member in outcome["outcomes"]
             if member["destination"] == "authors"
         )
-        assert selected["disposition"] == "candidate"
+        assert selected["disposition"] == "keep_current"
         assert set(selected["citation_ids"]) == {
             claim.reference
-            for claim in observed.candidates[0].claims
+            for claim in (*observed.candidates[0].claims, *local_claims)
             if claim.kind in {ClaimKind.CREATOR, ClaimKind.CONTRIBUTOR}
         }
         documents = repository.get_review_case_decisions(case_id)
@@ -1875,10 +1891,18 @@ def test_final_author_target_precedes_lookup_and_normalization_authority(
             for document in documents
             if json.loads(document)["destination"] == "authors"
         )
-        assert decision.policy_option == f"{option}:audiobook_authors_normalize"
-        authority = PersistedFieldEffectAuthority(repository).resolve(decision)
-        assert authority.pre_value == ["SYNTHETIC AUTHOR", "SECOND AUTHOR"]
-        assert authority.decision_value == {
-            "kind": "list",
-            "value": ["Synthetic Author", "Second Author"],
-        }
+        assert decision.policy_option == f"{option}:audiobook_authors_preserve"
+        proposal = evaluate_report(
+            report, resolved.resolved_id, human_review_destinations(resolved)
+        )
+        case = ReviewCase.create(proposal, report)
+        assert (
+            _automatic_decision_value(
+                decision,
+                case,
+                report,
+                proposal,
+                ShadowOutcomeSet.from_json(raw_outcome),
+            )
+            is None
+        )

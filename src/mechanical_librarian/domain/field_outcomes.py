@@ -69,6 +69,8 @@ class LanguageIdentity:
 
 def language_identity(value: str) -> LanguageIdentity | None:
     """Parse the closed canonical ISO/BCP 47 subset used by proposal policy."""
+    if value.casefold() == "english":
+        return LanguageIdentity("en", None, None)
     match = _LANGUAGE_TAG.fullmatch(value)
     if match is None:
         return None
@@ -84,10 +86,17 @@ def language_identity(value: str) -> LanguageIdentity | None:
     return LanguageIdentity(base, script, region)
 
 
+def language_is_unknown(value: str) -> bool:
+    """Recognize undetermined evidence without granting language authority."""
+    return value.casefold() == "und" or (
+        (identity := language_identity(value)) is not None and identity.base == "und"
+    )
+
+
 def language_equivalence_class(value: str) -> tuple[str, str | None] | None:
     """Return the base-and-script class used for language decisions."""
     identity = language_identity(value)
-    if identity is None:
+    if identity is None or language_is_unknown(value):
         return None
     return identity.base, identity.script
 

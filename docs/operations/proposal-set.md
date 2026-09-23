@@ -219,14 +219,18 @@ grants no decision, apply, or write action.
 The policy is deliberately conservative:
 
 - populated values need positive preservation evidence for `keep`;
-- canonical ISO 639-1/639-2 aliases and regional variants form one
+- The supported name `English` (case-insensitive), canonical ISO 639-1/639-2
+  aliases and regional variants form one
   base-and-exact-optional-script equivalence class before alternatives are
   grouped. The representative retains admitted candidate bytes and merges every
   evidence reference and correlation; the immutable report remains the
   provenance authority for every original representation. The deprecated `bh`
   alias resolves to LoC's favored `bih` identity. Different base languages,
   specified scripts, absent-versus-specified scripts, and malformed or
-  noncanonical tags remain unresolved;
+  noncanonical tags remain unresolved. `und`/`UND` provides no positive language
+  authority; its raw facts remain readable. `mul` and `zxx` remain distinct.
+  On a fill, policy prefers an actually admitted English name or code and falls
+  back to an admitted form; equivalent populated values remain unchanged;
 - valid edition-bound publisher and imprint observations may each be an
   acceptable publisher-field outcome. Provider observations must also pass
   an exact `accepted` identifier relation for an ISBN claim on that same

@@ -18,12 +18,12 @@ The current installed contract is intentionally narrow:
 - Python 3.13 or 3.14;
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
-  `metadata-report-v47` plus `proposal-set-v8` under
-  `fixed-conservative-v28`, or the separate `catalogue-v2` schema;
+  `metadata-report-v48` plus `proposal-set-v8` under
+  `fixed-conservative-v29`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v15`,
-  `shadow-review-action-policy-v4`, `shadow-outcome-set-v7`,
+  `deterministic-shadow-decision-policy-v16`,
+  `shadow-review-action-policy-v5`, `shadow-outcome-set-v8`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
   these successors require a clean rebuild and do not adopt prior state;
 - `review-session-v1`, `review-library-v2`, `review-case-detail-v4`,
@@ -222,8 +222,25 @@ Report `metadata-report-v47` and its exact SQLite discriminator require a **clea
 
 ## Title preservation and recovery (#1073)
 
-The current shadow outcome document and SQL contract is `shadow-outcome-set-v7`.
+The #1073 shadow outcome document and SQL contract was `shadow-outcome-set-v7`.
 F19a v32, F20 v46 and F46 v15 retain the previous option sets and historical
 measurement evidence. Report v47, proposal policy v28, action policy v4 and
 decision policy v15 are unchanged. Prior application stores require a clean
 rebuild; historical decision documents remain history only.
+
+## Language evidence equivalence (#1071)
+
+Current report `metadata-report-v48`, proposal policy `fixed-conservative-v29`,
+action policy `shadow-review-action-policy-v5`, decision policy
+`deterministic-shadow-decision-policy-v16` and outcome `shadow-outcome-set-v8`
+require a **clean rebuild** under ADR-0013. Proposal shape v8, packet v9 and
+automatic document v1 are unchanged. Earlier reports, proposals and outcomes
+are rejected before mutation; retained automatic documents are history only.
+No migration, adoption or relabelling grants current authority.
+
+English names and supported equivalent codes group before election. Undetermined
+`UND`/`und` facts remain readable without positive authority. Equivalent current
+values stay unchanged; filling selects only an actually admitted form according
+to the policy preference. Genuine base, script and unsupported-value conflicts
+remain manual through compiler and recording admission. Local audio facts count
+as one source, including creator roles; this grants no recording identity.

@@ -1382,7 +1382,9 @@ def test_complete_evidence_projection_is_page_bounded_and_case_bound() -> None:
             {"destination": "authors", "provenance": [provider_claim_reference]},
         ],
     }
-    report = SimpleNamespace(audio=None, providers=(), to_data=lambda: data)
+    report = SimpleNamespace(
+        audio=None, local_claims=(), providers=(), to_data=lambda: data
+    )
     cases = InspectCurrentReviewCase(Mock())
     with patch.object(cases, "_read", return_value=(detail, report, ())):
         first = cases.evidence("review_case_" + "c" * 64, limit=50)

@@ -829,3 +829,10 @@ EPUB author evidence now uses whole attribution statements and their structural 
 ## Provider title admission
 
 Provider title and subtitle claims must satisfy the existing public-safe and closed comparison validation. Unsupported format characters, including U+200B, become value-free MALFORMED claims; overlong input remains OVERSIZED. Safe Unicode is retained exactly, never stripped into agreement. Rejection references bind the rejected state and absent value; valid sibling references are unchanged. Existing work and recording admission still determines which claims survive. A Hardcover overflow witness requires a valid work title and fails as a malformed provider result otherwise. Report `metadata-report-v47` requires a **clean rebuild**, without migration or adoption (#1084).
+
+Language evidence remains verbatim, including `UND`/`und`. Report v48 binds
+English/code equivalence and excludes undetermined language from positive
+recording identity; real base or script conflicts still withhold recording
+authority. Local audio facts share one selected-audio correlation, including
+author evidence. This does not itself establish a recording match. Prior report
+and SQL state require a clean rebuild under ADR-0013 (#1071).

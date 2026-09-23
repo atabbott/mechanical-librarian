@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from mechanical_librarian.domain.field_outcomes import (
+    language_equivalence_class,
     language_outcomes_compatible,
 )
 from mechanical_librarian.domain.metadata_report import TargetDestination
@@ -17,7 +18,7 @@ if TYPE_CHECKING:
 
 
 ACTION_CATALOGUE_SCHEMA = "shadow-review-action-catalogue-v1"
-ACTION_POLICY_VERSION = "shadow-review-action-policy-v4"
+ACTION_POLICY_VERSION = "shadow-review-action-policy-v5"
 _ACTION_KINDS = frozenset({"manual", "recommend_candidate", "recommend_keep_current"})
 _ASSESSMENTS = frozenset({"fills_empty", "preserves_target", "replaces_target"})
 _BIBLIOGRAPHIC_DESTINATIONS = frozenset({"title", "subtitle", "series"})
@@ -418,6 +419,15 @@ def _candidate_action(
     if type(candidate_id) is not str:
         raise PolicyActionCompilationError("packet candidate identity is invalid")
     reasons: set[str] = set()
+    if destination == "language" and (
+        (
+            type(proposal.get("reasons")) is list
+            and "field_policy_conflict" in cast("list[object]", proposal["reasons"])
+        )
+        or (text := _text_value(candidate.get("value"))) is None
+        or language_equivalence_class(text) is None
+    ):
+        reasons.add("field_policy_conflict")
     raw_references = candidate.get("evidence_references")
     references = (
         {value for value in raw_references if type(value) is str}
@@ -525,9 +535,7 @@ def _text_value(value: object) -> str | None:
 
 
 def _language_compatible(left: str, right: str) -> bool:
-    return left.casefold() == right.casefold() or language_outcomes_compatible(
-        left, right
-    )
+    return language_outcomes_compatible(left, right)
 
 
 def _keep_action(
@@ -545,6 +553,15 @@ def _keep_action(
     reasons: set[str] = set()
     references: set[str] = set()
     current_text = _text_value(current.get("value")) if type(current) is dict else None
+    if destination == "language" and (
+        current_text is None
+        or language_equivalence_class(current_text) is None
+        or (
+            type(proposal.get("reasons")) is list
+            and "field_policy_conflict" in cast("list[object]", proposal["reasons"])
+        )
+    ):
+        reasons.add("field_policy_conflict")
     rejected_preservation_reasons: set[str] = set()
     for candidate in cast("list[dict[str, object]]", proposal["candidates"]):
         candidate_text = _text_value(candidate.get("value"))

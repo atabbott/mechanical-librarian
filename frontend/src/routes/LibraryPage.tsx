@@ -1231,6 +1231,14 @@ const selectedAutomaticSynopsis = (field: ReviewField, mediaKind: string) =>
     sameSelectedValue(value, field.automaticDecision?.selected_value),
   )
 
+const selectedAutomaticLanguageForm = (field: ReviewField) =>
+  field.destination === 'language' &&
+  field.humanDecision === null &&
+  field.automaticDecision?.outcome === 'candidate' &&
+  !field.proposedValues.some((value) =>
+    sameSelectedValue(value, field.automaticDecision?.selected_value),
+  )
+
 function RecordedOutcome({
   field,
   mediaKind,
@@ -1249,13 +1257,15 @@ function RecordedOutcome({
   )
   const selectedProposed =
     (decision.outcome === 'accept' || decision.outcome === 'candidate') && proposed >= 0
-  const context = selectedProposed
-    ? choiceContext(
-        field,
-        field.choiceContexts.filter((item) => item.selection === 'proposed')[proposed]
-          ?.alternativeId ?? null,
-      )
-    : choiceContext(field, null)
+  const context = selectedAutomaticLanguageForm(field)
+    ? field.choiceContexts.find((item) => item.recommendation === 'recommended')
+    : selectedProposed
+      ? choiceContext(
+          field,
+          field.choiceContexts.filter((item) => item.selection === 'proposed')[proposed]
+            ?.alternativeId ?? null,
+        )
+      : choiceContext(field, null)
   const combinedTags = combinedAutomaticTags(field, mediaKind)
   const evidenceId = `recorded-evidence-${field.destination}`
   const accepted = decision.outcome === 'accept' || decision.outcome === 'candidate'
@@ -1284,6 +1294,9 @@ function RecordedOutcome({
           </div>
         )}
       </dl>
+      {selectedAutomaticLanguageForm(field) ? (
+        <p>The policy chose this observed form of the equivalent language evidence.</p>
+      ) : null}
       {combinedTags ? (
         <p>Compatible source tags were combined, retaining any existing tags.</p>
       ) : null}
@@ -3661,7 +3674,8 @@ export default function LibraryPage({
                       >
                         {selectedRevisitable ? (
                           <>
-                            {combinedAutomaticTags(selected, detail.data.target.mediaKind) ? (
+                            {combinedAutomaticTags(selected, detail.data.target.mediaKind) ||
+                            selectedAutomaticLanguageForm(selected) ? (
                               <RecordedOutcome
                                 field={selected}
                                 mediaKind={detail.data.target.mediaKind}

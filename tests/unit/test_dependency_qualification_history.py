@@ -60,3 +60,23 @@ def test_actual_v45_author_decisions_remain_historical():
                 **cast("dict[str, Any]", decision._core()),
                 occurred_at=decision.occurred_at,
             )
+
+
+def test_actual_v47_language_decision_remains_historical():
+    path = (
+        Path(__file__).parents[1]
+        / "fixtures/language-policy-predecessor/automatic-v47.json"
+    )
+    raw = path.read_text().strip()
+    decision = AutomaticDecision.from_json(raw)
+    assert decision.to_json() == raw
+    assert decision.destination == "language"
+    assert not qualification_manifest_is_current(
+        decision.policy_category,
+        decision.policy_option,
+        decision.qualification_manifest_sha256,
+    )
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(
+            **cast("dict[str, Any]", decision._core()), occurred_at=decision.occurred_at
+        )

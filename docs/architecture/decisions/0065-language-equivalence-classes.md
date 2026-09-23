@@ -22,7 +22,9 @@ language outcomes, while script and base-language differences are.
 
 The language decision equivalence class is the favored ISO 639 base plus its
 exact optional script. ISO aliases map to the favored base before grouping,
-and region is omitted. Therefore `en`, `eng`, `en-US`, and `en-GB`
+and region is omitted. The bounded observed name `English` (case-insensitive)
+shares the `en` class. `UND`/`und` means undetermined and never supplies a
+positive language choice or title-variant vote; `mul` and `zxx` remain distinct. Therefore `en`, `eng`, `en-US`, and `en-GB`
 share one class; `zh`, `zh-Hans`, and `zh-Hant` are three classes.
 
 Proposal evaluation groups valid language observations by that class before it
@@ -31,8 +33,11 @@ candidate value, while every grouped evidence reference and correlation is
 retained. The immutable MetadataReport remains the provenance authority for
 every original representation; grouping neither rewrites nor deletes evidence.
 The active `language_rendering` option remains bound to the decision and
-effect audit, but does not synthesize a language name or a value absent from
-the evidence.
+effect audit. An equivalent populated incumbent remains byte-for-byte unchanged.
+When filling missing or undetermined knowledge, `display_name` prefers an
+observed English name and `preserve` prefers an observed code, with deterministic
+fallback to another form admitted by that same alternative. Neither option
+synthesizes a value or borrows a spelling from unrelated evidence.
 
 Different bases, different scripts, absent-versus-specified scripts, malformed
 tags, and noncanonical tags remain conflicts. Publisher behavior and ordinary
@@ -40,7 +45,8 @@ field equality do not change. Language equality used by proposal assessment,
 no-change terminalization, and guarded effect validation uses the same class
 contract.
 
-The exact proposal policy advances to `fixed-conservative-v13`. Under
+The #1071 proposal policy is `fixed-conservative-v29`, with report v48, action
+policy v5, decision policy v16 and shadow outcome v8. Under
 ADR-0013, earlier pre-release proposal and downstream decision state requires a
 clean rebuild; no migration, import, repair, or conversion is supplied.
 
