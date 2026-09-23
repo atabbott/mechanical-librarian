@@ -658,3 +658,71 @@ def test_historical_automatic_queue_cannot_reach_scheduler_authority(effects):
     assert effects.repository._connection.execute(
         "SELECT count(*) FROM field_effects"
     ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("substitution", ["incumbent", "option"])
+def test_resealed_incumbent_and_option_refuse_persisted_authority(
+    tmp_path, substitution
+):
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _automatic_decision_value,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from mechanical_librarian.domain.proposal_set import ProposalSet
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+
+    report = synopsis_report("Chapter 1")
+    with closing(open_repository(tmp_path / "substitution.sqlite")) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("description_fill",),
+            selected_options={"description_fill": "replace_safe_plain_text"},
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        decision = next(
+            AutomaticDecision.from_json(document)
+            for document in repository.get_review_case_decisions(case_id)
+            if json.loads(document)["destination"] == "description"
+        )
+        connection = repository._connection
+        case = ReviewCase.from_json(
+            connection.execute(
+                "SELECT document FROM review_cases WHERE review_case_id=?",
+                (case_id,),
+            ).fetchone()[0]
+        )
+        proposal = ProposalSet.from_json(
+            connection.execute(
+                "SELECT document FROM proposal_sets WHERE proposal_set_id=?",
+                (decision.proposal_set_id,),
+            ).fetchone()[0]
+        )
+        outcome = ShadowOutcomeSet.from_json(
+            connection.execute(
+                "SELECT document FROM shadow_decision_outcomes WHERE review_case_id=? "
+                "ORDER BY evaluated_at DESC LIMIT 1",
+                (case_id,),
+            ).fetchone()[0]
+        )
+        assert _automatic_decision_value(decision, case, report, proposal, outcome)[
+            "value"
+        ]
+        if substitution == "incumbent":
+            report = synopsis_report("Useful existing synopsis.")
+        else:
+            arguments = {
+                key: value
+                for key, value in json.loads(decision.to_json()).items()
+                if key
+                not in {"decision_id", "idempotency_digest", "origin", "schema_version"}
+            }
+            arguments["policy_option"] = (
+                "safe_plain_text:audiobook_description_preserve"
+            )
+            decision = AutomaticDecision.from_json(
+                AutomaticDecision.create(**arguments).to_json()
+            )
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            _automatic_decision_value(decision, case, report, proposal, outcome)
