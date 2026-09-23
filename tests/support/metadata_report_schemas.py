@@ -215,7 +215,7 @@ def forged_latin_work_report_json() -> tuple[str, str]:
 def create_legacy_schema(connection: sqlite3.Connection) -> None:
     connection.execute(
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v48'", "= 'metadata-report-v1'"
+            "= 'metadata-report-v49'", "= 'metadata-report-v1'"
         )
     )
     assert (
@@ -234,10 +234,10 @@ def create_prior_schema(
     version: str = "metadata-report-v9",
     proposal_policy: str = "fixed-conservative-v6",
 ) -> None:
-    assert "= 'metadata-report-v48'" in persistence_schema._REPORTS_SQL
+    assert "= 'metadata-report-v49'" in persistence_schema._REPORTS_SQL
     statements = (
         persistence_schema._REPORTS_SQL.replace(
-            "= 'metadata-report-v48'", f"= '{version}'"
+            "= 'metadata-report-v49'", f"= '{version}'"
         ),
         persistence_schema._CURRENT_SQL,
         persistence_schema._CURRENT_LINEAGE_SQL,

@@ -680,6 +680,7 @@ def test_exact_multi_isbn_work_keeps_all_automatic_work_fields() -> None:
     (
         ("applicable", "projected", None),
         ("display_variant", "projected", None),
+        ("inverted", "projected", None),
         ("malformed_display", "abstain", "target_work_contradicted"),
         ("contradictory", "abstain", "target_work_contradicted"),
         ("unavailable", "projected", None),
@@ -709,6 +710,8 @@ def test_automatic_genre_rejects_only_explicit_work_contradiction(
                     if identity == "contradictory"
                     else ". B. Herron"
                     if identity == "malformed_display"
+                    else "Herron, Mick"
+                    if identity == "inverted"
                     else "Mick J Herron"
                     if identity == "display_variant"
                     else "Mick Herron"

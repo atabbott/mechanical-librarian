@@ -383,8 +383,12 @@ def test_one_usable_family_precedes_nonusable_identifier_lanes() -> None:
 
 @pytest.mark.parametrize(
     "candidate",
-    (_identity_candidate("Different Book"), _identity_candidate(authors=())),
-    ids=("contradictory", "unavailable"),
+    (
+        _identity_candidate("Different Book"),
+        _identity_candidate(authors=()),
+        _identity_candidate(authors=("Example, Ada",)),
+    ),
+    ids=("contradictory", "unavailable", "inverted"),
 )
 def test_contradictory_or_unavailable_isbn_identity_preserves_work_fallback(
     candidate: ProviderCandidate,
@@ -1106,7 +1110,7 @@ def test_discovery_plan_deduplicates_families_and_records_convergence() -> None:
             "stage": "lookup",
         }
     ]
-    assert "metadata-report-v48" == report.schema_version
+    assert "metadata-report-v49" == report.schema_version
     previous = report.to_data()
     previous["schema_version"] = "metadata-report-v22"
     with pytest.raises(ReportValueError):

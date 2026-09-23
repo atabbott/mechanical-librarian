@@ -5,7 +5,20 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Current language evidence successor (#1071)
+## Current genre applicability successor (#1074)
+
+[F46 v17](../reference/f46-audiobook-qualification-candidate-v17.json),
+[F19a v34](../reference/f19a-qualification-manifest-v34.json) and
+[F20 v48](../reference/f20-rich-metadata-qualification-candidate-v48.json) bind
+negative-only creator display equivalence and reachable Ask genre choices.
+A supported singleton inversion cannot veto an otherwise eligible genre fill.
+The classifier returns unavailable identity, never positive WORK admission;
+Inventaire retains that distinction through pruning, limits and request accounting.
+Report v49 and proposal policy v30 require a clean rebuild. The successors retain
+all 435 prior source members, qualified options and historical measurements.
+Focused synthetic consumer proof does not rescore historical library outcomes.
+
+## Language evidence successor (#1071)
 
 [F46 v16](../reference/f46-audiobook-qualification-candidate-v16.json),
 [F19a v33](../reference/f19a-qualification-manifest-v33.json) and

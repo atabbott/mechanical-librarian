@@ -184,7 +184,7 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
         local_reasons=("opening_claims",),
         providers=(observation,),
     )
-    assert report.schema_version == "metadata-report-v48"
+    assert report.schema_version == "metadata-report-v49"
     assert report == MetadataReport.from_json(report.to_json())
 
 
@@ -1376,3 +1376,38 @@ def test_entity_label_title_rejection_uses_same_ingress() -> None:
     assert candidate.claims[0].kind is ClaimKind.TITLE
     assert candidate.claims[0].state is FieldState.MALFORMED
     assert candidate.claims[0].value is None
+
+
+@pytest.mark.parametrize("rows", (1, 3))
+@pytest.mark.parametrize(
+    "target_author", ("Ada Example", "Example, Ada", "Other Author")
+)
+def test_complete_discovery_preserves_negative_only_creator_equivalence(
+    rows, target_author
+):
+    from tests.support.genre_reports import inventaire_genre_report
+
+    report, requests = inventaire_genre_report(
+        "Ada Example", rows, target_author=target_author
+    )
+    observation = MetadataReport.from_json(report.to_json()).providers[0]
+    expected = (
+        ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+        if rows == 3 and target_author != "Other Author"
+        else ProviderStatus.CANDIDATES
+        if target_author == "Ada Example"
+        else ProviderStatus.NO_MATCH
+    )
+    assert observation.status is expected
+    assert len(observation.candidates) == (
+        1 if rows == 1 and target_author == "Ada Example" else 0
+    )
+    assert len(requests) == (
+        4 if expected is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED else 3
+    )
+    assert observation.request_accounting.initial_dispatches == 3
+    assert observation.request_accounting.retry_dispatches == (
+        1 if expected is ProviderStatus.CANDIDATE_LIMIT_EXCEEDED else 0
+    )
+    assert observation.lanes
+    assert report.schema_version == "metadata-report-v49"

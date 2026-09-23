@@ -79,7 +79,9 @@ def _publication(values: tuple[str, str], *, current_year: str | None = None):
     )
 
 
-def _wrong_work_publication_provider(name: str, authority: str):
+def _wrong_work_publication_provider(
+    name: str, authority: str, *, inverted: bool = False
+):
     provider = _publication_provider(
         name, f"{name}-edition", ("2001-02-03",), authority=authority
     )
@@ -94,14 +96,14 @@ def _wrong_work_publication_provider(name: str, authority: str):
                         name,
                         candidate.identity,
                         ClaimKind.TITLE,
-                        "Different Book",
+                        "Example Book" if inverted else "Different Book",
                         scope=ClaimScope.WORK,
                     ),
                     _claim(
                         name,
                         candidate.identity,
                         ClaimKind.CREATOR,
-                        "Other Author",
+                        "Example, Ada" if inverted else "Other Author",
                         scope=ClaimScope.WORK,
                         role="author",
                     ),
@@ -113,17 +115,21 @@ def _wrong_work_publication_provider(name: str, authority: str):
 
 
 @pytest.mark.parametrize(
-    "complete_identity", (False, True), ids=("unavailable", "contradictory")
+    "complete_identity", ("unavailable", "contradictory", "inverted")
 )
 def test_only_explicit_wrong_work_evidence_loses_publication_votes(
-    complete_identity: bool,
+    complete_identity: str,
 ) -> None:
     providers = (
         (
-            _wrong_work_publication_provider("alpha", "hardcover"),
-            _wrong_work_publication_provider("beta", "open_library"),
+            _wrong_work_publication_provider(
+                "alpha", "hardcover", inverted=complete_identity == "inverted"
+            ),
+            _wrong_work_publication_provider(
+                "beta", "open_library", inverted=complete_identity == "inverted"
+            ),
         )
-        if complete_identity
+        if complete_identity != "unavailable"
         else (
             _publication_provider(
                 "alpha", "alpha-edition", ("2001-02-03",), authority="hardcover"
@@ -158,7 +164,7 @@ def test_only_explicit_wrong_work_evidence_loses_publication_votes(
     assert 2 == len(report.providers)
     assert (
         ProposalOutcome.INELIGIBLE
-        if complete_identity
+        if complete_identity == "contradictory"
         else ProposalOutcome.PROPOSE_CHANGE
     ) is result.outcome
 

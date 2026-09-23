@@ -364,6 +364,9 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    genre_fixture: tuple[str, ...] | None = None,
+    genre_destination: str = "automatic",
+    genre_current: tuple[str, ...] | None = None,
     language_fixture: tuple[str, ...] | None = None,
     language_current: str | None = None,
     language_audio: bool = False,
@@ -536,7 +539,14 @@ def _server(
         )
     else:
         report = _report()
-    if language_fixture is not None:
+    if genre_fixture is not None:
+        from tests.support.genre_reports import genre_report, publish_genre_case
+
+        report = genre_report(genres=genre_fixture, current=genre_current)
+        case_id, proposal_set = publish_genre_case(
+            repository, report, genre_destination
+        )
+    elif language_fixture is not None:
         from tests.support.language_reports import (
             language_report,
             publish_language_case,
@@ -1040,7 +1050,7 @@ def _server(
                 assert service.apply(operation.plan.plan_id).state == "verified"
                 assert target.read(operation.plan).value == candidate.output.description
     language_activity = None
-    if language_fixture is not None:
+    if language_fixture is not None or genre_fixture is not None:
         from mechanical_librarian.adapters.field_effect_authority import (
             PersistedFieldEffectAuthority,
         )
@@ -1073,7 +1083,9 @@ def _server(
         clock=lambda: 1_000,
         close_repository=True,
         field_application=(
-            _BrowserActivityApplication() if language_fixture is None else None
+            _BrowserActivityApplication()
+            if language_fixture is None and genre_fixture is None
+            else None
         ),
         activity_projection=language_activity,
         react_asset_loader=ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
@@ -6646,5 +6658,89 @@ def test_language_ask_owner_choice_is_reachable_and_durable(audio):
             ).to_have_attribute("aria-pressed", "true")
             page.get_by_role("link", name="Evidence", exact=True).click()
             expect(page.get_by_text("Language: UND.", exact=False)).to_be_visible()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
+@pytest.mark.parametrize("destination", ("automatic", "ask", "ignore"))
+def test_genre_creator_equivalence_owner_journey(destination):
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "genre.sqlite",
+                hash_path=hash_path,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                genre_fixture=("Fantasy",),
+                genre_destination=destination,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=genres")
+            page.get_by_role("heading", name="Real Tigers", exact=True).wait_for()
+            if destination == "ask":
+                choice = page.get_by_role(
+                    "button", name="Choose proposed value: Fantasy", exact=True
+                )
+                expect(choice).to_be_enabled()
+                choice.focus()
+                choice.press("Space")
+                expect(choice).to_have_attribute("aria-pressed", "true")
+                page.reload()
+                expect(
+                    page.get_by_role(
+                        "button", name="Choose proposed value: Fantasy", exact=True
+                    )
+                ).to_have_attribute("aria-pressed", "true")
+            elif destination == "ignore":
+                expect(
+                    page.get_by_role(
+                        "button", name="Choose proposed value: Fantasy", exact=True
+                    )
+                ).to_have_count(0)
+            else:
+                expect(
+                    page.get_by_role(
+                        "button", name="Choose proposed value: Fantasy", exact=True
+                    )
+                ).to_have_attribute("aria-pressed", "true")
+            page.get_by_role("link", name="Evidence", exact=True).click()
+            if destination == "ignore":
+                expect(
+                    page.get_by_text("Metadata: Fantasy", exact=False)
+                ).to_have_count(0)
+                expect(
+                    page.get_by_role("heading", name="Genres", exact=True)
+                ).to_be_visible()
+            else:
+                expect(
+                    page.get_by_text("Metadata: Fantasy", exact=False)
+                ).to_be_visible()
+            if destination != "ignore":
+                page.get_by_role("link", name="History", exact=True).click()
+                expect(page.get_by_text("To Fantasy", exact=True)).to_be_visible()
+                page.get_by_role("link", name="Activity", exact=True).click()
+                page.get_by_role(
+                    "heading", name="Activity and recovery", exact=True
+                ).wait_for()
+                event = page.get_by_role("article").filter(
+                    has_text="Owner choice"
+                    if destination == "ask"
+                    else "Automatic choice"
+                )
+                event.get_by_role("button", name="Details").click()
+                expect(event.get_by_text("Fantasy", exact=True)).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
