@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Supported first-book series may share the preserved book title when filling
+  empty series, while sequence, identity and owner controls remain enforced.
+  Proposal policy v31 requires a clean rebuild; report v49 is unchanged (#1075).
+
+
 - Accepted author display inversion no longer blocks an eligible automatic genre
   fill. Ask exposes eligible genre choices; Ignore and owner-final choices remain
   authoritative. Genuine genre conflicts still abstain. Earlier application state

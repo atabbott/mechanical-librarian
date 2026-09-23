@@ -198,3 +198,16 @@ an old report cannot reconstruct. F19a v34, F20 v48 and F46 v17 retain historica
 options and measurements while binding current consumers. Historical automatic
 documents remain history only. Other schema and decision-policy versions stay
 unchanged; consent and supported effect guards are unchanged.
+
+
+## Same-name series membership (#1075)
+
+A supported series may have the same name as the book whose title is preserved.
+The bounded exception applies only to the series name when a KEEP title is
+preserved and a candidate fills missing, null or empty series. Equality compares
+whole normalized tokens; the original title and series spelling are retained.
+Sequence, appended-component and subtitle duplication checks still apply. Work
+association, competing positions and independent title evidence retain their
+existing authority. Ask, Ignore and owner-final decisions remain authoritative.
+Proposal policy v31 requires a clean rebuild; report v49 remains readable and
+can be re-evaluated. Old proposal/store state is rejected before mutation.

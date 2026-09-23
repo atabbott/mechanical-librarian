@@ -1,0 +1,1077 @@
+{
+  "audio": null,
+  "comparison_version": "closed-title-creator-publication-work-identity-v5",
+  "covers": [],
+  "field_results": [
+    {
+      "kind": "title",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "valid"
+        },
+        {
+          "source": "target_metadata",
+          "state": "absent"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "valid"
+    },
+    {
+      "kind": "subtitle",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "creator",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "contributor",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "series",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "series_sequence",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "isbn",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "valid"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "valid"
+    },
+    {
+      "kind": "asin",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "publication_date",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "date_event",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "contextual_credit",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "publisher",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "description",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "language",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "subject",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "imprint",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "genre",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "tag",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "duration",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "performance_type",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    },
+    {
+      "kind": "adult_product",
+      "sources": [
+        {
+          "source": "epub",
+          "state": "absent"
+        },
+        {
+          "source": "target_metadata",
+          "state": "unsupported"
+        },
+        {
+          "source": "audio_tag",
+          "state": "absent"
+        },
+        {
+          "source": "audio_sidecar",
+          "state": "absent"
+        },
+        {
+          "source": "audio_path",
+          "state": "absent"
+        }
+      ],
+      "state": "absent"
+    }
+  ],
+  "file": {
+    "content_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "format": "epub",
+    "identity": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "selected_index": 0
+  },
+  "identifier_evidence": [
+    {
+      "basis": "explicit_ebook",
+      "candidate_identity": null,
+      "provider": null,
+      "reference": "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca",
+      "related_references": [],
+      "relation": "accepted",
+      "work_identity": null
+    },
+    {
+      "basis": "invalid_identifier",
+      "candidate_identity": "hardcover-edition-0000000001",
+      "provider": "hardcover",
+      "reference": "provider_8be064477ffc3d1366a3ff48375910df4705452bbbcb355d8a5dc6222c0733c5",
+      "related_references": [],
+      "relation": "invalid",
+      "work_identity": "hardcover-work-0000000010"
+    },
+    {
+      "basis": "provider_identifier_agreement",
+      "candidate_identity": "hardcover-edition-0000000001",
+      "provider": "hardcover",
+      "reference": "provider_7b3eba7c1a8bdab3e9372db9ab106391af0ca8024d5a0db75b40544017cd3d10",
+      "related_references": [
+        "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca"
+      ],
+      "relation": "accepted",
+      "work_identity": "hardcover-work-0000000010"
+    }
+  ],
+  "local": {
+    "claims": [
+      {
+        "applicability": "ebook",
+        "applicability_basis": "ebook",
+        "basis": "opening_matter",
+        "canonical": "9780306406157",
+        "checksum": "valid_isbn_13",
+        "date_event": null,
+        "date_precision": null,
+        "excerpt": "eBook ISBN: 9780306406157",
+        "kind": "isbn",
+        "observed": "9780306406157",
+        "occurrence": 0,
+        "rear_provenance": null,
+        "reference": "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca",
+        "role": null,
+        "scope": "edition",
+        "state": "valid"
+      },
+      {
+        "applicability": "not_applicable",
+        "applicability_basis": "not_applicable",
+        "basis": "package_metadata",
+        "canonical": "First Journey",
+        "checksum": "not_applicable",
+        "date_event": null,
+        "date_precision": null,
+        "excerpt": "First Journey",
+        "kind": "title",
+        "observed": "First Journey",
+        "occurrence": 0,
+        "rear_provenance": null,
+        "reference": "local_82cd73ed71973a2d9e662215c8eae8728b56c63eead722277340a217da8325ab",
+        "role": null,
+        "scope": "work",
+        "state": "valid"
+      }
+    ],
+    "reasons": [
+      "opening_matter_creator"
+    ],
+    "status": "candidate"
+  },
+  "providers": [
+    {
+      "accessed_at": "2026-09-23T18:53:24.386599Z",
+      "authority": null,
+      "candidates": [
+        {
+          "claims": [
+            {
+              "applicability": "unknown",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "isbn",
+              "links": [
+                {
+                  "local_reference": "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca",
+                  "method": "none",
+                  "outcome": "not_comparable",
+                  "publication_date_relation": null,
+                  "shared_date_precision": null
+                }
+              ],
+              "raw_order": 0,
+              "reference": "provider_8be064477ffc3d1366a3ff48375910df4705452bbbcb355d8a5dc6222c0733c5",
+              "role": null,
+              "scope": "edition",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "ebook",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "isbn",
+              "links": [
+                {
+                  "local_reference": "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca",
+                  "method": "exact",
+                  "outcome": "agreement",
+                  "publication_date_relation": null,
+                  "shared_date_precision": null
+                }
+              ],
+              "raw_order": 1,
+              "reference": "provider_7b3eba7c1a8bdab3e9372db9ab106391af0ca8024d5a0db75b40544017cd3d10",
+              "role": null,
+              "scope": "edition",
+              "state": "valid",
+              "value": "9780306406157"
+            },
+            {
+              "applicability": "ebook",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "asin",
+              "links": [],
+              "raw_order": 2,
+              "reference": "provider_be29cb7976c9aa1c9963b6b0c319cab5d99592625d41ae26cbb06cb7b7b9093b",
+              "role": null,
+              "scope": "edition",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "title",
+              "links": [
+                {
+                  "local_reference": "local_82cd73ed71973a2d9e662215c8eae8728b56c63eead722277340a217da8325ab",
+                  "method": "none",
+                  "outcome": "not_comparable",
+                  "publication_date_relation": null,
+                  "shared_date_precision": null
+                }
+              ],
+              "raw_order": 3,
+              "reference": "provider_fe00e781ce65145ec37ca000374f6f188df8bffcba94cadd7f902bc939df6aff",
+              "role": null,
+              "scope": "edition",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "ebook",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "subtitle",
+              "links": [],
+              "raw_order": 4,
+              "reference": "provider_a9d16a54f9d1fd6e3cd63f951d90dde6cd3f2494e91821898c9d9514480859a0",
+              "role": null,
+              "scope": "edition",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": "explicit",
+              "date_event": "manifestation_publication",
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "publication_date",
+              "links": [],
+              "raw_order": 5,
+              "reference": "provider_27605719d61f1bae798d49e68fb76f6fdc3889c27c4e7f0d095e057adf726c8e",
+              "role": null,
+              "scope": "edition",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "publisher",
+              "links": [],
+              "raw_order": 6,
+              "reference": "provider_73b2918d57790faa2c52870c77fd9fcb75c30be7e4f315cb2328bf627318dbd9",
+              "role": null,
+              "scope": "edition",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "imprint",
+              "links": [],
+              "raw_order": 7,
+              "reference": "provider_ec3603581cb0d4c1e944af61c19dca383e06c122241e32b77864eecf812aec78",
+              "role": null,
+              "scope": "edition",
+              "state": "unsupported",
+              "value": null
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "language",
+              "links": [],
+              "raw_order": 8,
+              "reference": "provider_2bbbee77a5bd0db2ece68d29cee454162fb08962f32ba11de068fc6217cdc829",
+              "role": null,
+              "scope": "edition",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "title",
+              "links": [
+                {
+                  "local_reference": "local_82cd73ed71973a2d9e662215c8eae8728b56c63eead722277340a217da8325ab",
+                  "method": "exact",
+                  "outcome": "agreement",
+                  "publication_date_relation": null,
+                  "shared_date_precision": null
+                }
+              ],
+              "raw_order": 9,
+              "reference": "provider_71fb9d684d02eb430c75ab8f9d9cbd6cafe46b1ac57494269f587dfc85426b4b",
+              "role": null,
+              "scope": "work",
+              "state": "valid",
+              "value": "First Journey"
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "description",
+              "links": [],
+              "raw_order": 10,
+              "reference": "provider_bab6dd680ec43079e6a5a6260b33bf14bd11d21f8bfd36eb9a3d33c8d055e2de",
+              "role": null,
+              "scope": "work",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "creator",
+              "links": [],
+              "raw_order": 11,
+              "reference": "provider_ea014168d80fe7249d4128c5a6238984f7ac92beaaab26eadd0b6d534b46f17f",
+              "role": "author",
+              "scope": "work",
+              "state": "valid",
+              "value": "Target Author"
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "series",
+              "links": [],
+              "raw_order": 12,
+              "reference": "provider_02e32c38e887ff1990d844cbcef144a9fde28d1cead599b3c11757c097be9e06",
+              "role": null,
+              "scope": "work",
+              "state": "valid",
+              "value": "First Journey"
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "series_sequence",
+              "links": [],
+              "raw_order": 13,
+              "reference": "provider_4ee32f112829fa0b9b201e7a4f9e1a8d3fa74f70c9bc1ad793398feddbab1c08",
+              "role": null,
+              "scope": "work",
+              "state": "valid",
+              "value": "1"
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "genre",
+              "links": [],
+              "raw_order": 14,
+              "reference": "provider_83e983e56793f7cbeb5a19a52ef9dba6bfa609d0b1368dc1912c12d1b7f96530",
+              "role": null,
+              "scope": "work",
+              "state": "absent",
+              "value": null
+            },
+            {
+              "applicability": "not_applicable",
+              "date_confidence": null,
+              "date_event": null,
+              "date_lexical": null,
+              "date_precision": null,
+              "kind": "tag",
+              "links": [],
+              "raw_order": 15,
+              "reference": "provider_91712a51fbf6d8648e51a430174c7980a5aa36ed7f7abf51851aa49dd3b8104f",
+              "role": null,
+              "scope": "work",
+              "state": "absent",
+              "value": null
+            }
+          ],
+          "evidence": [
+            {
+              "chapters": null,
+              "date_confidence": null,
+              "date_event": null,
+              "date_normalized": null,
+              "date_precision": null,
+              "kind": "author_identity",
+              "links": [],
+              "role": null,
+              "scope": "work",
+              "source_ordinal": 0,
+              "taxonomy_type": null,
+              "value": "hardcover-author-0000000001"
+            }
+          ],
+          "identity": "hardcover-edition-0000000001",
+          "identity_bindings": [
+            {
+              "claim_reference": "provider_ea014168d80fe7249d4128c5a6238984f7ac92beaaab26eadd0b6d534b46f17f",
+              "identity": "hardcover-author-0000000001",
+              "role": "author",
+              "scope": "work",
+              "source_ordinal": 0
+            }
+          ],
+          "runtime_short_of_local": false,
+          "work_identity": "hardcover-work-0000000010"
+        }
+      ],
+      "convergence": [],
+      "diagnostics": [],
+      "dispatch_lineage": null,
+      "edition_enrichment_overflow": null,
+      "input_references": [
+        "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca"
+      ],
+      "lanes": [
+        {
+          "candidates": [
+            {
+              "edition_identity": "hardcover-edition-0000000001",
+              "reference": "lane_candidate_208d6e361b7e2eb139d853a819baeff9f23ecefe298ddac49c7db6b76b3ea661",
+              "work_identity": "hardcover-work-0000000010"
+            }
+          ],
+          "diagnostics": [],
+          "dispatch_lineage": null,
+          "identity": "lane_497333671c2d389e817c9b850bbb990a7b018814f54e651952143dbd2c2f2812",
+          "input_references": [
+            "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca"
+          ],
+          "kind": "isbn",
+          "matched_family": "9780306406157",
+          "status": "candidates",
+          "transformation_lineage": null
+        }
+      ],
+      "provider": "hardcover",
+      "query_kind": "isbn",
+      "recording_lookup_candidates": [],
+      "request_accounting": {
+        "initial_dispatches": 1,
+        "logical_requests": 1,
+        "replays": 0,
+        "retry_dispatches": 0,
+        "undispatched_incomplete": 0
+      },
+      "status": "candidates",
+      "transformation_lineage": null
+    }
+  ],
+  "report_id": "report_3b127a9265c75ab7c4c52b1ccb97eef714419f308dfcc4686cc22bfa1020bf51",
+  "schema_version": "metadata-report-v49",
+  "target": {
+    "connection": "primary",
+    "fields": [
+      {
+        "destination": "title",
+        "state": "value",
+        "value": "First Journey"
+      },
+      {
+        "destination": "subtitle",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "authors",
+        "state": "value",
+        "value": [
+          "Target Author"
+        ]
+      },
+      {
+        "destination": "narrators",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "series",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "genres",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "publishedYear",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "publishedDate",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "publisher",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "description",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "isbn",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "asin",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "language",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "explicit",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "tags",
+        "state": "missing",
+        "value": null
+      },
+      {
+        "destination": "cover",
+        "state": "missing",
+        "value": null
+      }
+    ],
+    "item": "item-1",
+    "library": "ebooks"
+  }
+}

@@ -750,6 +750,7 @@ def publish_audiobook_preview(
     automatic: tuple[str, ...],
     *,
     selected_options: dict[str, str] | None = None,
+    selected_destinations: dict[str, str] | None = None,
 ) -> tuple[str, ResolvedMetadataPolicy]:
     """Publish one recording under a policy routing `automatic` to Automatic."""
     import json
@@ -772,6 +773,7 @@ def publish_audiobook_preview(
     }
     for category in automatic:
         destinations[category] = "automatic"
+    destinations.update(selected_destinations or {})
     profile = MetadataPolicyProfile.create("F46 tranche", options, destinations)
     resolved = resolve_policy(profile, report.target.library)
     repository.enter_shadow_preview(1)

@@ -1566,3 +1566,13 @@ Explicit Ask exposes only case-bound genre actions already admitted by the domai
 Ignore, owner-final, stale/forged-choice refusal and effect guards are unchanged.
 Report v49/proposal policy v30 require a clean rebuild; old pruned evidence is not
 recoverable or current authority. No egress, provider, credential or write scope is added.
+
+
+## Same-name title and series (#1075)
+
+Whole normalized-token equality permits only a supported series-name slot to
+coexist with a preserved KEEP title while filling empty series. It grants no
+title replacement, sequence exemption or series-identity merge. Existing
+association, title-witness, policy, owner-final, consent, backup, currentness,
+read-back and audit checks remain mandatory. Proposal policy v31 requires a
+clean rebuild; report v49 remains unchanged. No new egress or write scope exists.

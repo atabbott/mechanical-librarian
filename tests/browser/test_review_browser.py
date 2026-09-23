@@ -364,6 +364,8 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    series_fixture: str | None = None,
+    series_destination: str = "automatic",
     genre_fixture: tuple[str, ...] | None = None,
     genre_destination: str = "automatic",
     genre_current: tuple[str, ...] | None = None,
@@ -539,7 +541,30 @@ def _server(
         )
     else:
         report = _report()
-    if genre_fixture is not None:
+    if series_fixture is not None:
+        from mechanical_librarian.domain.metadata_policy import (
+            human_review_destinations,
+        )
+        from mechanical_librarian.domain.proposal_set import evaluate_report
+        from tests.support.audiobook_reports import publish_audiobook_preview
+        from tests.support.same_name_series import same_name_series_report
+
+        report = same_name_series_report(series_fixture)
+        case_id, series_policy = publish_audiobook_preview(
+            repository,
+            report,
+            ("title_layout",),
+            selected_options={
+                "series": "primary_narrative",
+                "title_layout": "preserve",
+            },
+            selected_destinations={"series": series_destination},
+        )
+        proposal_set = evaluate_report(
+            report, series_policy.resolved_id, human_review_destinations(series_policy)
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+    elif genre_fixture is not None:
         from tests.support.genre_reports import genre_report, publish_genre_case
 
         report = genre_report(genres=genre_fixture, current=genre_current)
@@ -1050,7 +1075,11 @@ def _server(
                 assert service.apply(operation.plan.plan_id).state == "verified"
                 assert target.read(operation.plan).value == candidate.output.description
     language_activity = None
-    if language_fixture is not None or genre_fixture is not None:
+    if (
+        language_fixture is not None
+        or genre_fixture is not None
+        or series_fixture is not None
+    ):
         from mechanical_librarian.adapters.field_effect_authority import (
             PersistedFieldEffectAuthority,
         )
@@ -1084,7 +1113,9 @@ def _server(
         close_repository=True,
         field_application=(
             _BrowserActivityApplication()
-            if language_fixture is None and genre_fixture is None
+            if language_fixture is None
+            and genre_fixture is None
+            and series_fixture is None
             else None
         ),
         activity_projection=language_activity,
@@ -6742,5 +6773,70 @@ def test_genre_creator_equivalence_owner_journey(destination):
                 )
                 event.get_by_role("button", name="Details").click()
                 expect(event.get_by_text("Fantasy", exact=True)).to_be_visible()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
+@pytest.mark.parametrize("media", ("ebook", "audiobook"))
+@pytest.mark.parametrize("destination", ("automatic", "ask", "ignore"))
+def test_same_name_series_owner_journey(media, destination):
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash(_PASSWORD))
+        password.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        page = context.new_page()
+        title = "Synthetic Journey" if media == "audiobook" else "First Journey"
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "series.sqlite",
+                hash_path=password,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                series_fixture=media,
+                series_destination=destination,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=series")
+            page.get_by_role("heading", name=title, exact=True).wait_for()
+            choice = page.get_by_role(
+                "button", name=re.compile(r"^Choose proposed value: " + title)
+            )
+            if destination == "ask":
+                expect(choice).to_be_enabled()
+                choice.focus()
+                choice.press("Space")
+                expect(choice).to_have_attribute("aria-pressed", "true")
+                page.reload()
+                expect(choice).to_have_attribute("aria-pressed", "true")
+            elif destination == "automatic":
+                expect(choice).to_have_attribute("aria-pressed", "true")
+            else:
+                expect(choice).to_have_count(0)
+            page.get_by_role("link", name="Evidence", exact=True).click()
+            expect(
+                page.get_by_role("heading", name="Series", exact=True)
+            ).to_be_visible()
+            if destination != "ignore":
+                expect(
+                    page.get_by_text("Series membership: " + title, exact=False)
+                ).to_be_visible()
+                page.get_by_role("link", name="History", exact=True).click()
+                expect(page.get_by_text("To " + title, exact=False)).to_be_visible()
+                page.get_by_role("link", name="Activity", exact=True).click()
+                page.get_by_role(
+                    "heading", name="Activity and recovery", exact=True
+                ).wait_for()
+                expect(
+                    page.get_by_role("article").filter(has_text=title).first
+                ).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
