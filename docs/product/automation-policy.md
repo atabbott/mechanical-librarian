@@ -622,3 +622,13 @@ genuine competing alternatives abstain and populated genres remain fill-empty
 preservation. Explicit Ask exposes existing eligible owner actions, while Ignore
 creates no automatic decision. Owner-final choices supersede automatic authority.
 The existing consent, currentness, backup, read-back and audit guards still apply.
+
+
+## Same-name title and series (#1075)
+
+Whole normalized-token equality permits only a supported series-name slot to
+coexist with a preserved KEEP title while filling empty series. It grants no
+title replacement, sequence exemption or series-identity merge. Existing
+association, title-witness, policy, owner-final, consent, backup, currentness,
+read-back and audit checks remain mandatory. Proposal policy v31 requires a
+clean rebuild; report v49 remains unchanged. No new egress or write scope exists.

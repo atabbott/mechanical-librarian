@@ -1,0 +1,484 @@
+{
+  "bibliographic_combinations": [],
+  "bibliographic_relationship_schema_version": "bibliographic-relationships-v1",
+  "citations": [
+    {
+      "citation_id": "local_82cd73ed71973a2d9e662215c8eae8728b56c63eead722277340a217da8325ab",
+      "fact": {
+        "applicability": "not_applicable",
+        "applicability_basis": "not_applicable",
+        "basis": "package_metadata",
+        "canonical": "First Journey",
+        "checksum": "not_applicable",
+        "date_event": null,
+        "date_precision": null,
+        "excerpt": "First Journey",
+        "kind": "title",
+        "observed": "First Journey",
+        "occurrence": 0,
+        "rear_provenance": null,
+        "reference": "local_82cd73ed71973a2d9e662215c8eae8728b56c63eead722277340a217da8325ab",
+        "role": null,
+        "scope": "work",
+        "state": "valid"
+      }
+    },
+    {
+      "citation_id": "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca",
+      "fact": {
+        "applicability": "ebook",
+        "applicability_basis": "ebook",
+        "basis": "opening_matter",
+        "canonical": "9780306406157",
+        "checksum": "valid_isbn_13",
+        "date_event": null,
+        "date_precision": null,
+        "excerpt": "eBook ISBN: 9780306406157",
+        "kind": "isbn",
+        "observed": "9780306406157",
+        "occurrence": 0,
+        "rear_provenance": null,
+        "reference": "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca",
+        "role": null,
+        "scope": "edition",
+        "state": "valid"
+      }
+    },
+    {
+      "citation_id": "provider_02e32c38e887ff1990d844cbcef144a9fde28d1cead599b3c11757c097be9e06",
+      "fact": {
+        "applicability": "not_applicable",
+        "date_confidence": null,
+        "date_event": null,
+        "date_lexical": null,
+        "date_precision": null,
+        "kind": "series",
+        "links": [],
+        "raw_order": 12,
+        "reference": "provider_02e32c38e887ff1990d844cbcef144a9fde28d1cead599b3c11757c097be9e06",
+        "role": null,
+        "scope": "work",
+        "state": "valid",
+        "value": "First Journey"
+      }
+    },
+    {
+      "citation_id": "provider_27605719d61f1bae798d49e68fb76f6fdc3889c27c4e7f0d095e057adf726c8e",
+      "fact": {
+        "access": {
+          "accessed_at": "2026-09-23T18:53:24.386599Z",
+          "authority": null,
+          "query_kind": "isbn"
+        },
+        "candidate": "hardcover-edition-0000000001",
+        "fact": {
+          "applicability": "not_applicable",
+          "date_confidence": "explicit",
+          "date_event": "manifestation_publication",
+          "date_lexical": null,
+          "date_precision": null,
+          "kind": "publication_date",
+          "links": [],
+          "raw_order": 5,
+          "reference": "provider_27605719d61f1bae798d49e68fb76f6fdc3889c27c4e7f0d095e057adf726c8e",
+          "role": null,
+          "scope": "edition",
+          "state": "absent",
+          "value": null
+        },
+        "linkage": {
+          "format_facts": [],
+          "identifier_facts": [
+            {
+              "applicability": "ebook",
+              "kind": "isbn",
+              "raw_order": 1,
+              "reference": "provider_7b3eba7c1a8bdab3e9372db9ab106391af0ca8024d5a0db75b40544017cd3d10",
+              "scope": "edition",
+              "value": "9780306406157"
+            }
+          ],
+          "identifier_references": [
+            "provider_7b3eba7c1a8bdab3e9372db9ab106391af0ca8024d5a0db75b40544017cd3d10"
+          ]
+        },
+        "provider": "hardcover",
+        "work_identity": "hardcover-work-0000000010"
+      }
+    },
+    {
+      "citation_id": "provider_4ee32f112829fa0b9b201e7a4f9e1a8d3fa74f70c9bc1ad793398feddbab1c08",
+      "fact": {
+        "applicability": "not_applicable",
+        "date_confidence": null,
+        "date_event": null,
+        "date_lexical": null,
+        "date_precision": null,
+        "kind": "series_sequence",
+        "links": [],
+        "raw_order": 13,
+        "reference": "provider_4ee32f112829fa0b9b201e7a4f9e1a8d3fa74f70c9bc1ad793398feddbab1c08",
+        "role": null,
+        "scope": "work",
+        "state": "valid",
+        "value": "1"
+      }
+    },
+    {
+      "citation_id": "provider_71fb9d684d02eb430c75ab8f9d9cbd6cafe46b1ac57494269f587dfc85426b4b",
+      "fact": {
+        "applicability": "not_applicable",
+        "date_confidence": null,
+        "date_event": null,
+        "date_lexical": null,
+        "date_precision": null,
+        "kind": "title",
+        "links": [
+          {
+            "local_reference": "local_82cd73ed71973a2d9e662215c8eae8728b56c63eead722277340a217da8325ab",
+            "method": "exact",
+            "outcome": "agreement",
+            "publication_date_relation": null,
+            "shared_date_precision": null
+          }
+        ],
+        "raw_order": 9,
+        "reference": "provider_71fb9d684d02eb430c75ab8f9d9cbd6cafe46b1ac57494269f587dfc85426b4b",
+        "role": null,
+        "scope": "work",
+        "state": "valid",
+        "value": "First Journey"
+      }
+    },
+    {
+      "citation_id": "provider_7b3eba7c1a8bdab3e9372db9ab106391af0ca8024d5a0db75b40544017cd3d10",
+      "fact": {
+        "applicability": "ebook",
+        "date_confidence": null,
+        "date_event": null,
+        "date_lexical": null,
+        "date_precision": null,
+        "kind": "isbn",
+        "links": [
+          {
+            "local_reference": "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca",
+            "method": "exact",
+            "outcome": "agreement",
+            "publication_date_relation": null,
+            "shared_date_precision": null
+          }
+        ],
+        "raw_order": 1,
+        "reference": "provider_7b3eba7c1a8bdab3e9372db9ab106391af0ca8024d5a0db75b40544017cd3d10",
+        "role": null,
+        "scope": "edition",
+        "state": "valid",
+        "value": "9780306406157"
+      }
+    },
+    {
+      "citation_id": "provider_ea014168d80fe7249d4128c5a6238984f7ac92beaaab26eadd0b6d534b46f17f",
+      "fact": {
+        "applicability": "not_applicable",
+        "date_confidence": null,
+        "date_event": null,
+        "date_lexical": null,
+        "date_precision": null,
+        "kind": "creator",
+        "links": [],
+        "raw_order": 11,
+        "reference": "provider_ea014168d80fe7249d4128c5a6238984f7ac92beaaab26eadd0b6d534b46f17f",
+        "role": "author",
+        "scope": "work",
+        "state": "valid",
+        "value": "Target Author"
+      }
+    }
+  ],
+  "correlations": [
+    {
+      "candidate_ids": [
+        "alternative_2fc15adb125856c4d7e41d765f3008da37d6330798542fc0f2bc798d43c0ab23",
+        "alternative_f950dd8e60faa8e7cce78cb164bd08ae66bd048e75b14450403b13a8943d2536"
+      ],
+      "correlation_id": "correlation_38180de1cf93ae52fbfc0c37153592bc93b26aad808f32afd30e3943832ecccd",
+      "proposal_ids": [
+        "review_proposal_05e643a4be5741734cd6177480757f1ba74c429f6abd09854509facd9b3daa52",
+        "review_proposal_600a266473937383dd78b7a01a49e22ec9c06cc3d5a9925d43e4177d7cca17b9"
+      ]
+    },
+    {
+      "candidate_ids": [
+        "alternative_2fc15adb125856c4d7e41d765f3008da37d6330798542fc0f2bc798d43c0ab23",
+        "alternative_6edbb9dbe9b97769b3f1267a05133b78f405a24321080a7f1c1448bb216f4c89",
+        "alternative_b267cf71276daf824342fcaf7b834e9b7695f5230361c451cf875abc3bc25562",
+        "alternative_f950dd8e60faa8e7cce78cb164bd08ae66bd048e75b14450403b13a8943d2536"
+      ],
+      "correlation_id": "correlation_ac12df6b18fffc67d392defebb84be1f03571a7c5233e98fd38047b164d15226",
+      "proposal_ids": [
+        "review_proposal_05e643a4be5741734cd6177480757f1ba74c429f6abd09854509facd9b3daa52",
+        "review_proposal_47457ceeba591ab98b6b12b99090d8c940c55782a51bfa76b820edc4dd3322ad",
+        "review_proposal_600a266473937383dd78b7a01a49e22ec9c06cc3d5a9925d43e4177d7cca17b9",
+        "review_proposal_e2452cd8481fb29798f66865f53afc637350eb9904b8c7c0cecf7bee0365252e"
+      ]
+    }
+  ],
+  "proposals": [
+    {
+      "candidates": [
+        {
+          "assessment": "preserves_target",
+          "candidate_id": "alternative_2fc15adb125856c4d7e41d765f3008da37d6330798542fc0f2bc798d43c0ab23",
+          "correlations": [
+            "correlation_38180de1cf93ae52fbfc0c37153592bc93b26aad808f32afd30e3943832ecccd",
+            "correlation_ac12df6b18fffc67d392defebb84be1f03571a7c5233e98fd38047b164d15226"
+          ],
+          "date_event": null,
+          "date_precision": null,
+          "decision_summary": {
+            "bibliographic_compatibility_ids": [],
+            "creator_roles": {
+              "excluded": [],
+              "included": []
+            },
+            "evidence_scope": "work",
+            "independent_title": false,
+            "narrator_agreement": false,
+            "publication": null,
+            "recording_support": false,
+            "selected_manifestation_binding": "associated_work_only",
+            "support": {
+              "independent_provider_correlations": 1,
+              "local_evidence": 1,
+              "target_only_preservation": 0
+            }
+          },
+          "evidence_references": [
+            "local_82cd73ed71973a2d9e662215c8eae8728b56c63eead722277340a217da8325ab",
+            "provider_71fb9d684d02eb430c75ab8f9d9cbd6cafe46b1ac57494269f587dfc85426b4b"
+          ],
+          "scope": "work",
+          "value": {
+            "kind": "text",
+            "value": "First Journey"
+          }
+        }
+      ],
+      "current": {
+        "destination": "title",
+        "state": "value",
+        "value": "First Journey"
+      },
+      "decision_summary": {
+        "evidence_sufficiency": "manual",
+        "target_only_preservation": 0
+      },
+      "destination": "title",
+      "outcome": "unresolved_choice",
+      "proposal_id": "review_proposal_05e643a4be5741734cd6177480757f1ba74c429f6abd09854509facd9b3daa52",
+      "reasons": [
+        "no_safe_bibliographic_combination"
+      ]
+    },
+    {
+      "candidates": [],
+      "current": {
+        "destination": "subtitle",
+        "state": "missing",
+        "value": null
+      },
+      "decision_summary": {
+        "evidence_sufficiency": "manual",
+        "target_only_preservation": 0
+      },
+      "destination": "subtitle",
+      "outcome": "unresolved_choice",
+      "proposal_id": "review_proposal_43e10933c97dd1d23965166422de59a657ecd1e64000aad11fce118265c1e95a",
+      "reasons": [
+        "no_safe_bibliographic_combination"
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "assessment": "fills_empty",
+          "candidate_id": "alternative_6edbb9dbe9b97769b3f1267a05133b78f405a24321080a7f1c1448bb216f4c89",
+          "correlations": [
+            "correlation_ac12df6b18fffc67d392defebb84be1f03571a7c5233e98fd38047b164d15226"
+          ],
+          "date_event": null,
+          "date_precision": null,
+          "decision_summary": {
+            "bibliographic_compatibility_ids": [],
+            "creator_roles": {
+              "excluded": [],
+              "included": []
+            },
+            "evidence_scope": "work",
+            "independent_title": false,
+            "narrator_agreement": false,
+            "publication": null,
+            "recording_support": false,
+            "selected_manifestation_binding": "associated_work_only",
+            "support": {
+              "independent_provider_correlations": 1,
+              "local_evidence": 0,
+              "target_only_preservation": 0
+            }
+          },
+          "evidence_references": [
+            "provider_02e32c38e887ff1990d844cbcef144a9fde28d1cead599b3c11757c097be9e06",
+            "provider_4ee32f112829fa0b9b201e7a4f9e1a8d3fa74f70c9bc1ad793398feddbab1c08"
+          ],
+          "scope": "work",
+          "value": {
+            "kind": "series",
+            "value": [
+              {
+                "name": "First Journey",
+                "sequence": "1"
+              }
+            ]
+          }
+        }
+      ],
+      "current": {
+        "destination": "series",
+        "state": "missing",
+        "value": null
+      },
+      "decision_summary": {
+        "evidence_sufficiency": "manual",
+        "target_only_preservation": 0
+      },
+      "destination": "series",
+      "outcome": "unresolved_choice",
+      "proposal_id": "review_proposal_47457ceeba591ab98b6b12b99090d8c940c55782a51bfa76b820edc4dd3322ad",
+      "reasons": [
+        "no_safe_bibliographic_combination"
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "assessment": "fills_empty",
+          "candidate_id": "alternative_f950dd8e60faa8e7cce78cb164bd08ae66bd048e75b14450403b13a8943d2536",
+          "correlations": [
+            "correlation_38180de1cf93ae52fbfc0c37153592bc93b26aad808f32afd30e3943832ecccd",
+            "correlation_ac12df6b18fffc67d392defebb84be1f03571a7c5233e98fd38047b164d15226"
+          ],
+          "date_event": null,
+          "date_precision": null,
+          "decision_summary": {
+            "bibliographic_compatibility_ids": [],
+            "creator_roles": {
+              "excluded": [],
+              "included": []
+            },
+            "evidence_scope": "edition",
+            "independent_title": false,
+            "narrator_agreement": false,
+            "publication": null,
+            "recording_support": false,
+            "selected_manifestation_binding": "established",
+            "support": {
+              "independent_provider_correlations": 1,
+              "local_evidence": 1,
+              "target_only_preservation": 0
+            }
+          },
+          "evidence_references": [
+            "local_fd31879035913d3800651715ea1d76306ebd6e53e1614bf6b0e9fd7e86f405ca",
+            "provider_7b3eba7c1a8bdab3e9372db9ab106391af0ca8024d5a0db75b40544017cd3d10"
+          ],
+          "scope": "edition",
+          "value": {
+            "kind": "text",
+            "value": "9780306406157"
+          }
+        }
+      ],
+      "current": {
+        "destination": "isbn",
+        "state": "missing",
+        "value": null
+      },
+      "decision_summary": {
+        "evidence_sufficiency": "manual",
+        "target_only_preservation": 0
+      },
+      "destination": "isbn",
+      "outcome": "unresolved_choice",
+      "proposal_id": "review_proposal_600a266473937383dd78b7a01a49e22ec9c06cc3d5a9925d43e4177d7cca17b9",
+      "reasons": [
+        "manifestation_verification_required"
+      ]
+    },
+    {
+      "candidates": [
+        {
+          "assessment": "preserves_target",
+          "candidate_id": "alternative_b267cf71276daf824342fcaf7b834e9b7695f5230361c451cf875abc3bc25562",
+          "correlations": [
+            "correlation_ac12df6b18fffc67d392defebb84be1f03571a7c5233e98fd38047b164d15226"
+          ],
+          "date_event": null,
+          "date_precision": null,
+          "decision_summary": {
+            "bibliographic_compatibility_ids": [],
+            "creator_roles": {
+              "excluded": [],
+              "included": [
+                {
+                  "reference": "provider_ea014168d80fe7249d4128c5a6238984f7ac92beaaab26eadd0b6d534b46f17f",
+                  "role": "author",
+                  "scope": "work"
+                }
+              ]
+            },
+            "evidence_scope": "work",
+            "independent_title": false,
+            "narrator_agreement": false,
+            "publication": null,
+            "recording_support": false,
+            "selected_manifestation_binding": "associated_work_only",
+            "support": {
+              "independent_provider_correlations": 1,
+              "local_evidence": 0,
+              "target_only_preservation": 0
+            }
+          },
+          "evidence_references": [
+            "provider_ea014168d80fe7249d4128c5a6238984f7ac92beaaab26eadd0b6d534b46f17f"
+          ],
+          "scope": "work",
+          "value": {
+            "kind": "list",
+            "value": [
+              "Target Author"
+            ]
+          }
+        }
+      ],
+      "current": {
+        "destination": "authors",
+        "state": "value",
+        "value": [
+          "Target Author"
+        ]
+      },
+      "decision_summary": {
+        "evidence_sufficiency": "keep_current",
+        "target_only_preservation": 0
+      },
+      "destination": "authors",
+      "outcome": "keep",
+      "proposal_id": "review_proposal_e2452cd8481fb29798f66865f53afc637350eb9904b8c7c0cecf7bee0365252e",
+      "reasons": [
+        "positive_preservation_evidence"
+      ]
+    }
+  ],
+  "review_case_id": "review_case_2af1085ac9c06cf88a073cfe3299d39e320ccb49ca87fa7e5df8a84d414782cb",
+  "schema_version": "shadow-review-packet-v9"
+}

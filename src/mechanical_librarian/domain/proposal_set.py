@@ -96,7 +96,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v30"
+POLICY_VERSION = "fixed-conservative-v31"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -5192,7 +5192,25 @@ def _duplicates_bibliographic_component(
                 item
                 for value in component
                 for item in (
-                    value.name,
+                    *(
+                        ()
+                        if (
+                            title_selection.kind
+                            is BibliographicSelectionKind.PRESERVE_TARGET
+                            and results[TargetDestination.TITLE].outcome
+                            is ProposalOutcome.KEEP
+                            and component_selection.kind
+                            is BibliographicSelectionKind.CANDIDATE
+                            and targets[destination].state
+                            in {
+                                TargetFieldState.MISSING,
+                                TargetFieldState.NULL,
+                                TargetFieldState.EMPTY,
+                            }
+                            and _bibliographic_tokens(value.name) == title_tokens
+                        )
+                        else (value.name,)
+                    ),
                     *(
                         ()
                         if value.sequence is None

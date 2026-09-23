@@ -5,7 +5,17 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Current genre applicability successor (#1074)
+## Current same-name series successor (#1075)
+
+[F46 v18](../reference/f46-audiobook-qualification-candidate-v18.json),
+[F19a v35](../reference/f19a-qualification-manifest-v35.json) and
+[F20 v49](../reference/f20-rich-metadata-qualification-candidate-v49.json) bind
+the series-name-only exception for supported title preservation and empty-series
+fill. Proposal policy v31 requires a clean rebuild; report v49 is unchanged.
+All 453 prior source members, option registrations and historical measurements
+remain retained. Focused synthetic proof does not rescore library quality.
+
+## Genre applicability successor (#1074)
 
 [F46 v17](../reference/f46-audiobook-qualification-candidate-v17.json),
 [F19a v34](../reference/f19a-qualification-manifest-v34.json) and

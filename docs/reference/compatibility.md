@@ -19,7 +19,7 @@ The current installed contract is intentionally narrow:
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v49` plus `proposal-set-v8` under
-  `fixed-conservative-v30`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v31`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v16`,
@@ -252,3 +252,16 @@ status and request accounting, even though final positive WORK admission remains
 unchanged. Prior v48 reports cannot recover pruned evidence from replay.
 **Clean rebuild required** under ADR-0013; no migration or predecessor adoption.
 Historical automatic decisions remain readable history, not current authority.
+
+
+## Same-name series membership (#1075)
+
+A supported series may have the same name as the book whose title is preserved.
+The bounded exception applies only to the series name when a KEEP title is
+preserved and a candidate fills missing, null or empty series. Equality compares
+whole normalized tokens; the original title and series spelling are retained.
+Sequence, appended-component and subtitle duplication checks still apply. Work
+association, competing positions and independent title evidence retain their
+existing authority. Ask, Ignore and owner-final decisions remain authoritative.
+Proposal policy v31 requires a clean rebuild; report v49 remains readable and
+can be re-evaluated. Old proposal/store state is rejected before mutation.

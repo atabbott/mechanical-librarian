@@ -771,3 +771,10 @@ Cross-case summaries and history, bulk decisions and reversal, additional
 browser and viewport coverage, and extended qualification budgets remain
 post-first-release work under #195. They are not prerequisites for this
 first-release acceptance.
+
+
+A supported first-book series may share its preserved title (#1075). Detail
+shows unchanged title authority and the separate series name/position choice;
+Evidence keeps provider membership provenance, History retains the disposition,
+and Activity records decisions and guarded effects. Ask and Ignore retain their
+normal controls, and an owner decision remains final.

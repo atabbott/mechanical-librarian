@@ -880,3 +880,113 @@ def test_ignored_members_are_not_resurrected_by_decoration_association(ignored):
         for combination in proposal.bibliographic_combinations
         for selection in combination.selections
     )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "none",
+        "title_candidate",
+        "title_not_keep",
+        "series_preserve",
+        "series_populated",
+        "substring",
+        "sequence_equal",
+        "subtitle_equal",
+    ),
+)
+def test_same_name_exception_is_confined_to_supported_empty_series_name(mutation):
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.metadata_report import TargetSeries
+    from mechanical_librarian.domain.proposal_set import (
+        BibliographicSelectionKind,
+        _duplicates_bibliographic_component,
+    )
+    from tests.support.same_name_series import same_name_series_report
+
+    report = same_name_series_report("ebook")
+    proposal = evaluate_report(report)
+    results = {result.destination: result for result in proposal.results}
+    targets = {field.destination: field for field in report.target.fields}
+    selections = list(proposal.bibliographic_combinations[0].selections)
+    if mutation == "title_candidate":
+        # The guard must never lend this exemption to a replacement selection.
+        title = results[TargetDestination.TITLE].alternatives[0]
+        selections[0] = replace(
+            selections[0],
+            kind=BibliographicSelectionKind.CANDIDATE,
+            alternative_id=title.alternative_id,
+            target_field_fingerprint=None,
+        )
+    elif mutation == "title_not_keep":
+        results[TargetDestination.TITLE] = replace(
+            results[TargetDestination.TITLE],
+            outcome=ProposalOutcome.UNRESOLVED_CHOICE,
+            reasons=("competing_evidence",),
+            selected_alternative_id=None,
+        )
+    elif mutation == "series_preserve":
+        targets[TargetDestination.SERIES] = TargetField(
+            TargetDestination.SERIES,
+            TargetFieldState.VALUE,
+            (TargetSeries("First Journey", "1"),),
+        )
+        selections[2] = replace(
+            selections[2],
+            kind=BibliographicSelectionKind.PRESERVE_TARGET,
+            alternative_id=None,
+            target_field_fingerprint="a" * 64,
+        )
+        # Both preserved values intentionally bypass the existing duplicate guard.
+        assert not _duplicates_bibliographic_component(
+            tuple(selections), targets, results
+        )
+        return
+    elif mutation == "series_populated":
+        targets[TargetDestination.SERIES] = TargetField(
+            TargetDestination.SERIES,
+            TargetFieldState.VALUE,
+            (TargetSeries("Old Order", "1"),),
+        )
+    elif mutation == "substring":
+        targets[TargetDestination.TITLE] = TargetField(
+            TargetDestination.TITLE, TargetFieldState.VALUE, "First Journey 1"
+        )
+    elif mutation == "sequence_equal":
+        targets[TargetDestination.TITLE] = TargetField(
+            TargetDestination.TITLE, TargetFieldState.VALUE, "1984"
+        )
+        series = results[TargetDestination.SERIES]
+        alternative = series.alternatives[0]
+        changed = type(alternative).create(
+            replace(
+                alternative.value,
+                value=(TargetSeries("1984", "1984"),),
+            ),
+            alternative.assessment,
+            alternative.evidence_references,
+            alternative.correlations,
+            alternative.scope,
+        )
+        results[TargetDestination.SERIES] = replace(
+            series,
+            alternatives=(changed,),
+            selected_alternative_id=changed.alternative_id,
+        )
+        selections[2] = replace(selections[2], alternative_id=changed.alternative_id)
+    elif mutation == "subtitle_equal":
+        targets[TargetDestination.SUBTITLE] = TargetField(
+            TargetDestination.SUBTITLE, TargetFieldState.VALUE, "First Journey"
+        )
+        # A candidate title keeps the original subtitle duplication rule active.
+        title = results[TargetDestination.TITLE].alternatives[0]
+        selections[0] = replace(
+            selections[0],
+            kind=BibliographicSelectionKind.CANDIDATE,
+            alternative_id=title.alternative_id,
+            target_field_fingerprint=None,
+        )
+    assert _duplicates_bibliographic_component(tuple(selections), targets, results) is (
+        mutation != "none"
+    )
