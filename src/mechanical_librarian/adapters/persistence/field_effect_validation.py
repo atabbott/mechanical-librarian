@@ -64,6 +64,7 @@ from mechanical_librarian.domain.proposal_set import (
     narrator_candidate_set_agrees,
     provider_candidate_represents_target_recording,
     provider_candidate_supports_complete_narrators,
+    select_language_representation,
 )
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.reviewer_decision_summary import creator_role_evidence
@@ -484,6 +485,27 @@ def _automatic_decision_value(
         ):
             raise FieldEffectError("authority_binding")
     value = selected["value"]
+    if decision.policy_category == "language_rendering":
+        language_candidate = next(
+            (
+                item
+                for result in proposal_set.results
+                if result.destination is TargetDestination.LANGUAGE
+                for item in result.alternatives
+                if item.alternative_id == decision.candidate_id
+            ),
+            None,
+        )
+        exact_value = (
+            None
+            if language_candidate is None
+            else select_language_representation(
+                report, language_candidate, decision.policy_option.split(":", 1)[0]
+            )
+        )
+        if exact_value is None:
+            raise FieldEffectError("authority_binding")
+        value = {"kind": "text", "value": exact_value}
     if decision.policy_category == "isbn_form":
         try:
             result = next(

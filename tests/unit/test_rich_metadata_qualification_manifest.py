@@ -2911,11 +2911,11 @@ def _dependency_qualification_documents():
 
 
 CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v15.json"
+    "f46-audiobook-qualification-candidate-v16.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v32.json")
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v33.json")
 CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v46.json"
+    "f20-rich-metadata-qualification-candidate-v47.json"
 )
 
 
@@ -3153,7 +3153,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         document = json.loads(path.read_bytes())
         assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
         assert document["clean_rebuild_required"] is True
-        assert document["proposal_policy_version"] == "fixed-conservative-v28"
+        assert document["proposal_policy_version"] == "fixed-conservative-v29"
         assert re.fullmatch(r"[0-9a-f]{40}", document["frozen_candidate_sha"])
         assert required <= set(document["source_closure"])
         assert set(predecessor["source_closure"]) - _BUILD_PROVENANCE_PATHS <= set(
@@ -3587,7 +3587,14 @@ def test_provider_title_successors_preserve_closure_and_authority():
 
 def test_title_preservation_successors_retain_404_sources_and_frozen_authority():
     for current, prior_name in zip(
-        _current_qualification_documents(),
+        [
+            json.loads(MANIFEST.with_name(name).read_bytes())
+            for name in (
+                "f46-audiobook-qualification-candidate-v15.json",
+                "f19a-qualification-manifest-v32.json",
+                "f20-rich-metadata-qualification-candidate-v46.json",
+            )
+        ],
         (
             "f46-audiobook-qualification-candidate-v14.json",
             "f19a-qualification-manifest-v31.json",
@@ -3626,5 +3633,52 @@ def test_title_preservation_successors_retain_404_sources_and_frozen_authority()
             "tests/fixtures/shadow-outcome-v6/preservation-v6.sql",
             "tests/integration/test_review_case_lifecycle.py",
             "docs/architecture/decisions/0079-supported-title-preservation-and-recovery.md",
+        } <= set(current["source_closure"])
+
+
+def test_language_successors_retain_419_sources_and_frozen_authority():
+    for current, prior_name in zip(
+        _current_qualification_documents(),
+        (
+            "f46-audiobook-qualification-candidate-v15.json",
+            "f19a-qualification-manifest-v32.json",
+            "f20-rich-metadata-qualification-candidate-v46.json",
+        ),
+        strict=True,
+    ):
+        prior_path = MANIFEST.with_name(prior_name)
+        prior = json.loads(prior_path.read_bytes())
+        assert len(prior["source_closure"]) == 419
+        assert set(prior["source_closure"]) < set(current["source_closure"])
+        assert (
+            current["prior_manifest_sha256"]
+            == hashlib.sha256(prior_path.read_bytes()).hexdigest()
+        )
+        assert current["versions"] == prior["versions"] | {
+            "report": "metadata-report-v48",
+            "action_policy": "shadow-review-action-policy-v5",
+            "decision_policy": "deterministic-shadow-decision-policy-v16",
+            "outcome": "shadow-outcome-set-v8",
+        }
+        assert (
+            current["binding_only_source_equivalence"]["excluded_binding_assignments"]
+            == prior["binding_only_source_equivalence"]["excluded_binding_assignments"]
+        )
+        for key in (
+            "qualified_policy_options",
+            "passing_automatic_options",
+            "passing_paired_options",
+            "historical_measurements",
+            "current_measurement",
+            "current_ebook_measurement",
+        ):
+            if key in prior:
+                assert current[key] == prior[key]
+        assert {
+            "tests/support/language_reports.py",
+            "tests/unit/test_language_authority.py",
+            "tests/fixtures/language-policy-predecessor/report-v47.json",
+            "frontend/src/routes/LibraryPage.tsx",
+            "tests/unit/review_app_fixture.py",
         } <= set(current["source_closure"])
         _assert_live_source_closure(current)

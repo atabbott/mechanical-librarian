@@ -8,6 +8,7 @@ from typing import cast
 
 from mechanical_librarian.domain.epub_inspection import DateEvent, DatePrecision
 from mechanical_librarian.domain.metadata_report import (
+    AUDIO_FILE_FORMATS,
     MAX_CONTRIBUTIONS,
     ClaimKind,
     ClaimScope,
@@ -218,7 +219,11 @@ def _known_correlations(report: MetadataReport) -> tuple[str, set[str]]:
         for source in report.cover_sources
         if source.provenance is not None
     )
-    return correlation_identity("local:selected_epub"), provider_correlations
+    return correlation_identity(
+        "local:selected_audio"
+        if report.file.format in AUDIO_FILE_FORMATS
+        else "local:selected_epub"
+    ), provider_correlations
 
 
 def compatibility_by_candidate(

@@ -39,6 +39,7 @@ from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceBinding,
 )
 from mechanical_librarian.domain.field_effect import decision_value_kind
+from mechanical_librarian.domain.field_outcomes import language_is_unknown
 from mechanical_librarian.domain.human_decision import (
     RECORDED_ONLY_REASON,
     HumanDecision,
@@ -1924,15 +1925,42 @@ def _bounded_token(value: object) -> bool:
 def _review_unselectable_evidence(
     report: MetadataReport, linked: set[str]
 ) -> dict[str, dict[str, object]]:
-    """Keep bounded nonselectable audiobook observations visible for review."""
-    if report.audio is None:
-        return {}
+    """Keep excluded language and recording facts readable without choices."""
     observations: dict[str, dict[str, object]] = {}
+    for local_claim in report.local_claims:
+        if (
+            local_claim.kind is not ClaimKind.LANGUAGE
+            or local_claim.reference in linked
+        ):
+            continue
+        unknown = language_is_unknown(local_claim.canonical or local_claim.observed)
+        observations[local_claim.reference] = {
+            "destinations": ["language"],
+            "role": "local_presence",
+            "source": "Local metadata",
+            "observation": (
+                f"Language: {_choice_text(local_claim.observed)}. "
+                + (
+                    "Undetermined language; "
+                    if unknown
+                    else "Retained for review only; "
+                )
+                + f"not an eligible choice. Reference: {local_claim.reference}."
+            ),
+        }
     for provider in report.providers:
         for candidate in (*provider.candidates, *provider.recording_lookup_candidates):
             for claim in candidate.claims:
+                language = (
+                    claim.kind is ClaimKind.LANGUAGE
+                    and claim.state is FieldState.VALID
+                    and type(claim.value) is str
+                )
+                if report.audio is None and not language:
+                    continue
                 narrator = (
-                    claim.kind is ClaimKind.CONTRIBUTOR
+                    report.audio is not None
+                    and claim.kind is ClaimKind.CONTRIBUTOR
                     and claim.role == "narrator"
                     and (
                         recording_variant_conflict(
@@ -1949,10 +1977,17 @@ def _review_unselectable_evidence(
                 if (
                     claim.kind not in {ClaimKind.ISBN, ClaimKind.ASIN}
                     and not narrator
+                    and not language
                     or claim.reference in linked
                 ):
                     continue
-                label = "Narrator" if narrator else claim.kind.value.upper()
+                label = (
+                    "Language"
+                    if language
+                    else "Narrator"
+                    if narrator
+                    else claim.kind.value.upper()
+                )
                 destination = "narrators" if narrator else claim.kind.value
                 conflict = (
                     recording_variant_conflict(
@@ -1964,7 +1999,11 @@ def _review_unselectable_evidence(
                     else None
                 )
                 reason = (
-                    "Recording language conflicts with this item. "
+                    "Undetermined language. "
+                    if language
+                    and type(claim.value) is str
+                    and language_is_unknown(claim.value)
+                    else "Recording language conflicts with this item. "
                     if conflict == "recording_language_conflict"
                     else "Recording variant conflicts with this item. "
                     if conflict is not None

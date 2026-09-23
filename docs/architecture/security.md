@@ -1545,3 +1545,14 @@ No external acquisition, model, target or media write authority is added. A fail
 transaction rolls back safety, work, scan and presentation together. Predecessor
 v6 state requires a clean rebuild, never silent clearing or migration. See
 [ADR-0079](decisions/0079-supported-title-preservation-and-recovery.md).
+
+## Language evidence authority
+
+Language equivalence groups supported names/codes before admission (#1071).
+Undetermined facts never authorize a candidate, preservation or effect; genuine
+base/script and unsupported-form conflicts survive all compiler shortcuts.
+Representation is reconstructed from the elected alternative's exact report
+references. Local audiobook facts use the same single-source correlation in
+proposal and packet summaries, including creator roles, without granting
+recording identity. Consent, currentness, backup and effect guards are unchanged.
+The report/proposal/action/decision/outcome version rotation requires a clean rebuild.

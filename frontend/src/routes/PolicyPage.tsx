@@ -81,7 +81,8 @@ const fields: readonly FieldDefinition[] = [
   {
     key: 'language_rendering',
     label: 'Language',
-    meaning: 'Keep canonical language identity while choosing its readable form.',
+    meaning:
+      'Group supported language names and codes; keep an equivalent current value unchanged.',
     options: ['preserve', 'display_name'],
     optionLabels: {
       preserve: 'Preserve supported form',
@@ -268,15 +269,18 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   },
   'language_rendering:preserve': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
-    transformation: 'records the option without rendering the candidate',
-    effect: 'Automatic writes only that exact selected Language value',
-    fallback: 'abstains when no decision is qualified',
+    transformation: 'keeps an equivalent current value; when filling, prefers an observed code',
+    effect: 'Automatic writes only a form present in the selected evidence',
+    fallback:
+      'uses another admitted form when no code is present; undetermined values provide no authority',
   },
   'language_rendering:display_name': {
     admitted: 'the already-produced exact candidate and its policy/audit context',
-    transformation: 'records the option without rendering the candidate',
-    effect: 'Automatic writes only that exact selected Language value',
-    fallback: 'abstains when no decision is qualified',
+    transformation:
+      'keeps an equivalent current value; when filling, prefers an observed English name',
+    effect: 'Automatic writes only a form present in the selected evidence',
+    fallback:
+      'uses an admitted code when no name is present; undetermined values provide no authority',
   },
   'subtitle:fill_empty': {
     admitted: "one supported subtitle attested by the book's own metadata",

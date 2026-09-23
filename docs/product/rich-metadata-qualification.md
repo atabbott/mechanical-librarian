@@ -5,6 +5,15 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
+## Current language evidence successor (#1071)
+
+[F46 v16](../reference/f46-audiobook-qualification-candidate-v16.json),
+[F19a v33](../reference/f19a-qualification-manifest-v33.json) and
+[F20 v47](../reference/f20-rich-metadata-qualification-candidate-v47.json) bind
+supported English/code equivalence, unknown exclusion and source-bound observed
+forms through persisted decisions, effects and owner views. These successors
+preserve all 419 inherited sources and historical qualified options and measurements.
+
 ## Author evidence source successor (#1083)
 
 [F46 v13](../reference/f46-audiobook-qualification-candidate-v13.json),
@@ -614,3 +623,12 @@ authority.
 ## Provider title admission successor
 
 The #1084 successors F19 v31, F20 v45 and F46 v14 retain all 397 inherited source paths, add the actual title-admission consumers, and preserve all five binding exclusions and existing qualified options. New synthetic provider, report and persistence checks are separate from unchanged historical quality measurements. Report v47 requires a clean rebuild; proposal policy v28, comparison v5 and shadow policy v15 are unchanged. No provider, model or production-library requests were made.
+
+The #1071 language successors F19 v33, F20 v47 and F46 v16 retain all 419
+inherited sources and the five binding exclusions, adding the actual language
+producer, persistence and owner-view consumers. Existing qualified options and
+historical measurements remain unchanged. Focused synthetic proof binds
+English/code grouping, unknown exclusion, source-bound observed-form selection
+and persisted effects; it is not new library-wide quality scoring. Report v48,
+proposal policy v29, action policy v5, decision policy v16 and outcome v8 require
+a clean rebuild. Proposal shape v8, packet v9 and automatic-decision v1 remain.

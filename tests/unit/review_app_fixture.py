@@ -101,6 +101,7 @@ def create_transport_test_app(
     field_application: GuardedFieldApplication
     | ContinuousGuardedApplication
     | None = None,
+    activity_projection: ContinuousGuardedApplication | None = None,
     operational_timings: TimingRepository | None = None,
     operational_support: SupportExporter | None = None,
     operational_timer: StageTimer | None = None,
@@ -139,6 +140,7 @@ def create_transport_test_app(
         preparation=review_preparation,
         policy_libraries=policy_libraries,
         field_application=field_application,
+        activity_projection=activity_projection,
         operational_timings=operational_timings,
         operational_support=operational_support,
         operational_timer=operational_timer,

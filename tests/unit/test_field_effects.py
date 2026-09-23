@@ -7054,3 +7054,82 @@ def test_paired_post_write_readback_projects_unconfirmed(audiobook_pair):
     assert event["change"] == "Paired title and subtitle change unconfirmed"
     assert "Both fields have not been confirmed" in str(event["evidence"])
     assert "stopped" not in event["change"]
+
+
+@pytest.mark.parametrize("audio", (False, True))
+@pytest.mark.parametrize(
+    "option, expected", (("preserve", "en"), ("display_name", "English"))
+)
+@pytest.mark.parametrize("current", (None, "UND"))
+def test_observed_language_reaches_guarded_write_and_readback(
+    effects, audio, option, expected, current
+):
+    from tests.support.language_reports import language_report
+
+    report = language_report(("English", "en", "und"), current, audio=audio)
+    decision = next(
+        value
+        for value in _automatic_decisions(
+            effects, report, "language_rendering", option, qualified=True
+        )
+        if value.destination == "language"
+    )
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    snapshot = authority.resolve(decision)
+    assert snapshot.pre_value == current
+    assert snapshot.decision_value == {"kind": "text", "value": expected}
+    effects.repository.grant_field_effect_consents(
+        "primary", (report.target.library,), ("language",), 5
+    )
+    service = GuardedFieldApplication(
+        effects.repository,
+        effects.target,
+        effects.backup,
+        effects.capabilities,
+        authority,
+        effects.dependencies,
+        PersistedEffectConsent(effects.repository),
+        effects.recovery,
+        effects.reevaluation,
+        effects.clock,
+        effects.preclaim,
+        effects.claim_hook,
+        effects.recovery_hook,
+    )
+    arguments = dict(
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination="language",
+        pre_value=snapshot.pre_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    with pytest.raises(GuardedApplicationError, match="authority_binding"):
+        service.plan(
+            decision, desired_value={"kind": "text", "value": "eng"}, **arguments
+        )
+    operation = service.plan(
+        decision, desired_value=snapshot.decision_value, **arguments
+    )
+    assert operation is not None
+    effects.target.seed(operation.plan)
+    result = service.apply(operation.plan.plan_id)
+    assert result.state == "verified"
+    assert result.plan.desired_value == expected
+    assert (
+        effects.target._values[("primary", report.target.library, "item-1", "language")]
+        == expected
+    )
+    assert service.apply(operation.plan.plan_id).state == "verified"
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path, create=False)
+    assert (
+        effects.repository.get_field_effect(operation.plan.plan_id).to_data()
+        == result.to_data()
+    )
+    assert PersistedFieldEffectAuthority(effects.repository).resolve(
+        decision
+    ).decision_value == {"kind": "text", "value": expected}

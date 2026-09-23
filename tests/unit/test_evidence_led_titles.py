@@ -22,6 +22,9 @@ from tests.support.evidence_led_titles import isbn_title_report
 @pytest.mark.parametrize(
     "languages,local_language,eligible",
     [
+        (("English", "en"), "UND", True),
+        (("en", "und"), None, True),
+        (("English", "fr"), None, False),
         (("zh-Hans", "zh-Hant"), None, False),
         (("zh-Hans-CN", "zh-Hans-SG"), None, True),
         (("zh", "zh-Hans"), None, True),

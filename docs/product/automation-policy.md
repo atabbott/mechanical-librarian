@@ -136,7 +136,10 @@ populated values. Series Add retains current associations; complete-set
 replacement requires its separate choice and refuses conflicting sequence facts.
 Language comparison recognizes equivalent ISO codes and the observed English
 display name without discarding region or script. Both language options retain
-the admitted source string; neither renders a new display name.
+the admitted source string; neither renders a new display name. `Ask me` exposes
+Language in remaining fields whenever its existing owner actions admit a choice;
+recording that choice retires its attention. Unknown-only evidence and an
+equivalent current value do not create a choice, and Ignore remains excluded.
 
 Audiobook subtitles may fill an empty value or replace a recognized whole-field
 award, bestseller or adaptation announcement with supported descriptive text.
@@ -598,3 +601,11 @@ no-change decision even when no changing bibliographic combination exists. Ask
 and Ignore remain owner policy, not safety failures. No-change bypasses target
 application guards because it creates no write or plan. Actual malformed
 Automatic authority still suspends its category (#1073).
+
+Language names/codes are grouped before election for both media (#1071).
+`English`, `en` and `eng` can support one alternative; undetermined `UND`/`und`
+is readable evidence, never a choice or preservation vote. Equivalent populated
+values stay unchanged. When filling, Preserve prefers an observed code and
+Display name prefers an observed English name, falling back only to another
+form in the elected evidence. Base/script disagreements and unsupported forms
+remain manual; no language is inferred or synthesized.

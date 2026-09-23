@@ -166,8 +166,10 @@ def policy_setting_label(category: str) -> str:
     return destination_label(category)
 
 
-def policy_option_label(option: str) -> str:
+def policy_option_label(option: str, category: str) -> str:
     """Name a policy option value in owner language."""
+    if category == "language_rendering" and option == "preserve":
+        return "Preserve supported form"
     named = {
         "all_qualified": "All qualified memberships",
         "ask": "Ask me",

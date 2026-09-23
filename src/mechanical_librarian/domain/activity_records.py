@@ -304,7 +304,7 @@ def _automatic_facts(
         {"label": "Chosen by", "value": "Automatic policy"},
         {
             "label": "Policy setting",
-            "value": f"{policy_setting_label(category)}: {policy_option_label(option)}"
+            "value": f"{policy_setting_label(category)}: {policy_option_label(option, category)}"
             if category and option
             else "Not recorded",
         },

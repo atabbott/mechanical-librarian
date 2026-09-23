@@ -63,6 +63,8 @@ def _packet(
         "target_only_preservation": target_only,
     }
     candidate = proposal["candidates"][0]
+    if destination == "language":
+        candidate["value"] = {"kind": "text", "value": "en"}
     work_field = destination in {"title", "authors"}
     candidate["scope"] = "work" if work_field else "edition"
     candidate["decision_summary"]["evidence_scope"] = candidate["scope"]
@@ -843,7 +845,7 @@ def test_the_decoration_tidy_rule_states_its_own_closed_thresholds() -> None:
 
 
 def test_v14_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v15" == DECISION_POLICY_VERSION
+    assert "deterministic-shadow-decision-policy-v16" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"

@@ -102,21 +102,24 @@ def test_unusable_duration_produces_no_claim(duration: str) -> None:
     assert _values(interpretation, AudioInspectionField.DURATION) == set()
 
 
-def test_stream_language_is_read_from_the_stream_surface() -> None:
+@pytest.mark.parametrize(
+    "language", ("English", "english", "en", "eng", "UND", "und", "mul", "zxx")
+)
+def test_stream_language_is_read_from_the_stream_surface(language) -> None:
     interpretation = _read(
         _probe(
             streams=[
                 {
                     "codec_type": "audio",
                     "codec_name": "aac",
-                    "tags": {"language": "eng"},
+                    "tags": {"language": language},
                 }
             ]
         )
     )
 
     assert _values(interpretation, AudioInspectionField.LANGUAGE) == {
-        ("container_stream", "eng")
+        ("container_stream", language)
     }
 
 

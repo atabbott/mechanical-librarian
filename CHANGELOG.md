@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Equivalent English names and language codes no longer create false choices.
+  Undetermined language remains readable evidence without automatic authority.
+  Language preferences select an observed form and preserve equivalent current
+  values; genuine language and script conflicts still need review.
+  Earlier application state requires a clean rebuild. (#1071)
+
 - Restart preserves completed preparation records when library ordering is
   reconciled, so unchanged completed work remains readable. (#1073)
 

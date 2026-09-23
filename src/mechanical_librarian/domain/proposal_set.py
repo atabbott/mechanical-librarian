@@ -27,6 +27,7 @@ from mechanical_librarian.domain.evidence_bounds import (
 from mechanical_librarian.domain.field_outcomes import (
     language_equivalence_class,
     language_identity,
+    language_is_unknown,
     language_outcomes_compatible,
     publisher_statement_valid,
 )
@@ -95,7 +96,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v28"
+POLICY_VERSION = "fixed-conservative-v29"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -4103,6 +4104,12 @@ def _evaluate(
     report: MetadataReport,
     dependencies: tuple[TargetDestination, ...] = (),
 ) -> ProposalResult:
+    if (
+        destination is TargetDestination.LANGUAGE
+        and type(target.value) is str
+        and language_is_unknown(target.value)
+    ):
+        target = TargetField(destination, TargetFieldState.MISSING)
     alternatives = _alternatives(destination, target, observations, report)
     if target.state in {
         TargetFieldState.UNLOADED,
@@ -4242,6 +4249,44 @@ def _evaluate(
         ),
         dependencies,
     )
+
+
+def select_language_representation(
+    report: MetadataReport, candidate: ProposalAlternative, option: str
+) -> str | None:
+    """Choose an observed spelling only from the elected alternative's sources."""
+    if (
+        option not in {"preserve", "display_name"}
+        or type(candidate.value.value) is not str
+    ):
+        return None
+    identity = language_equivalence_class(candidate.value.value)
+    if identity is None:
+        return None
+    references = set(candidate.evidence_references)
+    observations = tuple(
+        value
+        for value in _observations(report, TargetDestination.LANGUAGE)
+        if set(value.references) <= references
+    )
+    if not references or references != {
+        reference for value in observations for reference in value.references
+    }:
+        return None
+    values = {
+        value.value.value
+        for value in observations
+        if type(value.value.value) is str
+        and language_equivalence_class(value.value.value) == identity
+    }
+    if len(values) != len({value.value.value for value in observations}):
+        return None
+    preferred = {
+        value
+        for value in values
+        if (value.casefold() == "english") == (option == "display_name")
+    }
+    return min(preferred or values, default=None)
 
 
 def _field_policy_accepts_all(
@@ -4761,6 +4806,8 @@ def _ordinary_description_values(
 
 
 def _eligible_field_value(destination: TargetDestination, value: str) -> bool:
+    if destination is TargetDestination.LANGUAGE:
+        return not language_is_unknown(value)
     return destination is not TargetDestination.PUBLISHER or publisher_statement_valid(
         value
     )
