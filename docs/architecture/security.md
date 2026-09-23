@@ -1534,9 +1534,11 @@ Provider TITLE/SUBTITLE ingress and VALID report claims require the existing obs
 The ordinary citation-bound title preservation witness grants unchanged-value
 authority only. Automatic-only coherence excludes Ask and Ignore from safety
 failure. Existing authenticated CSRF/build-protected recovery atomically removes
-only the requested suspension and, for an actual title suspension, requeues only
-eligible exact-current completed title projections. Safety is read inside that
-transaction; no precomputed replacement can erase another committed suspension.
+only the requested suspension. Recovery or resume requeues eligible exact-current
+completed title projections only when title permission changes from blocked to
+permitted; retained pause, global or title blockers leave completed work untouched.
+Resume changes only the pause flag. Both commands read safety inside their writer
+transaction, preserving suspensions committed by competing projection workers.
 Report/proposal/case and policy currentness, owner-final and manual holds constrain
 the cohort; final projection checks and insertion uniqueness remain authoritative.
 No external acquisition, model, target or media write authority is added. A failed
