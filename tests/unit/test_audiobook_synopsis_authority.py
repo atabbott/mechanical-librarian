@@ -413,30 +413,34 @@ def test_synopsis_replacement_uses_persisted_guarded_effect(
         effects.claim_hook,
         effects.recovery_hook,
     )
-    plan_arguments = dict(
-        connection=snapshot.connection,
-        library=snapshot.library,
-        work_id=snapshot.work_id,
-        destination="description",
-        pre_value=snapshot.pre_value,
-        desired_value=snapshot.decision_value,
-        target_fingerprint=snapshot.target_fingerprint,
-        target_version=snapshot.target_version,
-        dependency_digests=snapshot.dependency_digests,
-        capability_digest=CAPABILITY,
-    )
+
+    def plan():
+        return service.plan(
+            decision,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination="description",
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+
     if guard == "missing_consent":
         from mechanical_librarian.application.field_effects import (
             GuardedApplicationError,
         )
 
         with pytest.raises(GuardedApplicationError, match="consent"):
-            service.plan(decision, **plan_arguments)
+            plan()
         assert effects.repository._connection.execute(
             "SELECT count(*) FROM field_effects"
         ).fetchone() == (0,)
         return
-    result = service.plan(decision, **plan_arguments)
+    result = plan()
     assert result is not None
     assert result.plan.authority.origin == "automatic_policy"
     effects.target.seed(result.plan)
