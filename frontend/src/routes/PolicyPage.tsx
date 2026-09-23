@@ -192,7 +192,7 @@ const fields: readonly FieldDefinition[] = [
     optionLabels: {
       safe_plain_text: 'Fill empty with safe plain text',
       google_visible_text: 'Visible Google text',
-      replace_safe_plain_text: 'Fill empty or replace recognized placeholders',
+      replace_safe_plain_text: 'Fill empty or replace safe text',
     },
     chapter: 'curation',
     automatic: false,
@@ -430,9 +430,9 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
     transformation:
       'keeps the original preferred source text; equal audiobook sources use stable source-record order',
     effect:
-      'fills an empty audiobook Description or replaces whole chapter/track number and no-description/no-synopsis placeholders; preserves other useful prose',
+      'for audiobooks, fills an empty Description or replaces only whole chapter/track number and no-description/no-synopsis placeholders, preserving other useful prose; for ebooks, fills or replaces a Description with eligible source text',
     fallback:
-      'abstains for unsafe, incomplete or conflicting evidence; this closed placeholder rule does not assess general writing quality',
+      'abstains for unsafe, incomplete or conflicting evidence; the audiobook placeholder rule does not assess general writing quality',
   },
   'description_fill:google_visible_text': {
     admitted: 'eligible Google Books visible text only',

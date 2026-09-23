@@ -916,3 +916,132 @@ def test_title_preservation_witness_is_closed_and_retains_audiobook_identity(
         {"reason_code": "target_only_preservation"},
     ):
         assert title_preservation_bundle(SimpleNamespace(**(values | change))) is None
+
+
+@pytest.mark.parametrize(
+    "prior_digest,original_options",
+    automatic_decision._PRIOR_F46_QUALIFICATION_MANIFESTS,
+)
+def test_historical_f46_documents_never_acquire_v19_synopsis_shapes(
+    prior_digest, original_options
+):
+    from pathlib import Path
+
+    pre_v19 = frozenset(
+        json.loads(
+            Path(
+                "docs/reference/f46-audiobook-qualification-candidate-v18.json"
+            ).read_text()
+        )["passing_automatic_options"]
+    )
+    added = {
+        "description_fill:safe_plain_text:audiobook_description_preserve",
+        "description_fill:replace_safe_plain_text:audiobook_description_preserve",
+        "description_fill:replace_safe_plain_text:audiobook_description_fill",
+    }
+    assert len(pre_v19) == 73
+    assert (
+        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
+        == pre_v19 | added
+    )
+    assert not original_options & added
+    for identity in sorted(original_options | added):
+        category, option = identity.split(":", 1)
+        destination = next(
+            destination
+            for destination, identities in audiobook_decision_qualification.F46_IDENTITIES_BY_DESTINATION.items()
+            if identity in identities
+        )
+        arguments = dict(
+            review_case_id="review_case_" + "a" * 64,
+            report_id="report_" + "b" * 64,
+            proposal_set_id="proposal_set_" + "c" * 64,
+            proposal_id="review_proposal_" + "d" * 64,
+            target_fingerprint="e" * 64,
+            destination=destination,
+            outcome="keep_current" if identity.endswith("_preserve") else "candidate",
+            candidate_id=None
+            if identity.endswith("_preserve")
+            else "alternative_" + "f" * 64,
+            resolved_policy_id="resolved_policy_" + "0" * 64,
+            policy_generation=1,
+            rule_id="shadow_rule_" + "1" * 64,
+            policy_category=category,
+            policy_option=option,
+            source_outcome_id="shadow_outcome_" + "3" * 64,
+            bundle_id="automatic_bundle_" + "4" * 64
+            if category in {"title_layout", "date_precision"}
+            else None,
+            qualification_manifest_sha256=prior_digest,
+        )
+        assert not qualification_manifest_is_current(category, option, prior_digest)
+        document = json.dumps(
+            {
+                **arguments,
+                "decision_id": "automatic_decision_"
+                + _digest({**arguments, "occurred_at": 1}),
+                "idempotency_digest": _digest(arguments),
+                "occurred_at": 1,
+                "origin": "automatic_policy",
+                "schema_version": "automatic-decision-v1",
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        if identity in added:
+            with pytest.raises(AutomaticDecisionError):
+                AutomaticDecision.from_json(document)
+            current = AutomaticDecision.create(
+                **(
+                    arguments
+                    | {
+                        "qualification_manifest_sha256": audiobook_decision_qualification.F46_QUALIFICATION_MANIFEST_SHA256
+                    }
+                ),
+                occurred_at=1,
+            )
+            assert AutomaticDecision.from_json(current.to_json()) == current
+        else:
+            assert AutomaticDecision.from_json(document).to_json() == document
+
+
+# The source-only re-pins retain v18 membership; three intermediate manifests
+# are absent, but their exact aliases resolve to this set in pre-v19 source
+# 79dbbf4c3eb58365e266655c32a0f6de3c784e51. Earlier explicit sets stay separate.
+@pytest.mark.parametrize(
+    "prior_digest",
+    [
+        "6ee296bc750e68009a24b68b5fbc2202370f0d5a33e9cb47eee4cdec00535ebc",
+        "97874e99e016627d077ac503e8ab18c017d4444b06e0ee5a2dfb21e37e36b7d1",
+        "44a590388d697fb9d61faaea4e96010d4ccf23ea50577ae9af62e8446e872eb1",
+        "88f79b6038765c0a0932e6bd9893ada5f9d390ec2dd224555c9133182766a851",
+        "66c8547a5092ec3665aaa566a75599bf22ba7b634d18e6927ae39b813db03489",
+        "d49a0313ac599b9db55f6fe7e9eb15bf2dd7df01c4ecb707013b6115b6ac7aaa",
+        "ef836f9cdc6b45d208bf05f406ffb3037864abf78a0e7262d471050a7b394b26",
+        "16eabc9abc5d141a4ce85bf1f5b28c909c5705b49d7642cec3ed75989f6f8e98",
+        "8e43f608421f18bdcca447eb0b99c2b676648f8a156a9e4ac0e57a2e093eec7a",
+        "3bc740723d81d15cac137aa92e3731c4cf5da848a03ff88016e36db9553acd63",
+        "6dbedf9d8e953928300425aef493508aa74798b6c0ef6a5d6fec756a3bd7a366",
+        "e675cf0efcc753ecdcb672bf96e4d0b225ece7f3822fe5d54316fc867b5ed41b",
+        "6cf0944a817d176d2224a97e971f059314d109c96921e6e94eb8f073d216fa87",
+        "29b89f37d509bcff9f09317f9c76a62af1309b1e71e8d8ebf9cb84a835c65b55",
+        "5c99d641474bc81a538463eec6cd619de7d6770a4e3876bef20a1b9ac3bf5656",
+        "5e2d5bb1306585f45db4a7d2788791f1c98152b40cff272b2e9d34c5b3b8748d",
+        "8a708d1bc25ca8cb42e42a09faa9616f0605eadcb0584f0b8a6f7cdfcf7750bc",
+        "e6160457f180870eaf6914bc2b15ff2b18246e721cd6d101e8f2a40a6334c796",
+    ],
+)
+def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
+    from pathlib import Path
+
+    expected = frozenset(
+        json.loads(
+            Path(
+                "docs/reference/f46-audiobook-qualification-candidate-v18.json"
+            ).read_text()
+        )["passing_automatic_options"]
+    )
+    assert (
+        dict(automatic_decision._PRIOR_F46_QUALIFICATION_MANIFESTS)[prior_digest]
+        == expected
+    )
