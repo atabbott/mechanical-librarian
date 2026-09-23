@@ -799,7 +799,14 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       return http.policyCommand<PolicyTransitionView | ShadowPostureView>(action, body)
     },
     retry: false,
-    onSettled: refresh,
+    onSettled: async (_data, _error, { action }) => {
+      await Promise.all([
+        refresh(),
+        ...(action === 'automatic-safety/recover'
+          ? [invalidateBackgroundQueries(queryClient, { queryKey: ['review-preparation'] })]
+          : []),
+      ])
+    },
   })
 
   const editDraft = (next: PolicyDraft) => {

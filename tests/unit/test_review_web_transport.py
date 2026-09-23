@@ -2566,6 +2566,7 @@ def test_shadow_sample_response_refuses_genuine_predecessor_outcome():
 def test_owner_title_recovery_route_requeues_actual_completed_work(
     tmp_path, web: ReviewWebContext[FakeReviewRepository]
 ):
+    from mechanical_librarian.application.live_updates import LiveUpdateChannel
     from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
     from tests.support.evidence_led_titles import complete_title_work, isbn_title_report
 
@@ -2607,11 +2608,22 @@ def test_owner_title_recovery_route_requeues_actual_completed_work(
             ).status_code
             == 403
         )
-        response = context.client.post(
-            route,
-            headers={**context.origin, "x-csrf-token": login["csrf_token"]},
-            json={"category": "title_layout"},
-        )
+        published: list[str] = []
+        publish = LiveUpdateChannel.publish
+
+        def observe(
+            channel: LiveUpdateChannel, topic: str, subject: str | None = None
+        ) -> int:
+            published.append(topic)
+            return publish(channel, topic, subject)
+
+        with patch.object(LiveUpdateChannel, "publish", observe):
+            response = context.client.post(
+                route,
+                headers={**context.origin, "x-csrf-token": login["csrf_token"]},
+                json={"category": "title_layout"},
+            )
+        assert published == ["preparation"]
         assert response.status_code == 200
         assert response.json()["category_suspensions"] == {}
         action = repository.claim_review_pipeline_action(1001)
