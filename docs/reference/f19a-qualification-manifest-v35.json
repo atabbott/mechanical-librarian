@@ -3,7 +3,7 @@
     "clean_rebuild_required": true,
     "frozen_candidate_sha": "aee342a2c7f4aa77cd29118393b87723f1f71723",
     "manifest_path": "docs/reference/f46-audiobook-qualification-candidate-v18.json",
-    "manifest_sha256": "3f9e84833c6d13efd01bd3ec68015d6949e866ba759313b6d9ce228b34b9ba16",
+    "manifest_sha256": "58957ed522dbc71491434735ea5581310472af7cf13026fec8e2ca89a9575189",
     "passing_options": [
       "asin:preserve_exact:audiobook_asin_fill",
       "contributor_names:canonical:audiobook_authors_add",
@@ -111,7 +111,7 @@
       "_PRIOR_F20_QUALIFICATION_MANIFESTS"
     ],
     "meaning": "Only the unchanged named assignment exclusions break binding cycles. This is not whole-source equivalence or a new quality measurement. Prior option registrations are preserved; the F46 registry participates in the stripped AST.",
-    "source_sha": "9fffa6d207be24475f1e451ce607f26a10607bd8"
+    "source_sha": "1a47055e0ef74186ae389d5a8f285a052b2b0a81"
   },
   "build_provenance_paths": [
     "frontend/package-lock.json",
@@ -127,7 +127,7 @@
     "retained_controls": 2,
     "source_reconstructions": 2
   },
-  "frozen_candidate_sha": "9fffa6d207be24475f1e451ce607f26a10607bd8",
+  "frozen_candidate_sha": "1a47055e0ef74186ae389d5a8f285a052b2b0a81",
   "genre_applicability_proof": {
     "historical_quality_rescored": false,
     "inventaire_acquisition": "tests/unit/test_inventaire_metadata.py",
@@ -310,7 +310,7 @@
         "prior_sha256": "374d2f00325f49ad1ae82f577381bb7c19d07eaece166ff727abeebc40668c21"
       },
       "tests/browser/test_review_browser.py": {
-        "current_sha256": "eb24e90817341c0d0dda3b018aed355a5b9a6d0870a1394a370e59314e2ac8e5",
+        "current_sha256": "f4f6649378687cefc6c6ce6aee6dd4fef96fe126ed6d1c32a5d836cd3f7b78b1",
         "prior_sha256": "41af9a32b976ffd17143c1f9f7386b3341bf3989bcc48b0d74f326e944752b79"
       },
       "tests/fixtures/metadata-report-v45/automatic-v45.json": {
@@ -660,7 +660,7 @@
         "measured_sha256": "af594fbfe26c0fc3a55f8c4a54aa664f0d8f7164b907682d41eb59ec5eedaee1"
       }
     },
-    "current_source_sha": "9fffa6d207be24475f1e451ce607f26a10607bd8",
+    "current_source_sha": "1a47055e0ef74186ae389d5a8f285a052b2b0a81",
     "genre_applicability_introduced_sources": {
       "tests/fixtures/genre-applicability-predecessor/README.md": "1624079290b0e12db05ead26799dc03b4ba8c1288944fac92ff4500354b626a3",
       "tests/fixtures/genre-applicability-predecessor/automatic-v48.json": "e3beb9d5578b7cdc98f6de7fa620abf608ac4b68d8be19faf14539fd59be71c2",
@@ -723,11 +723,11 @@
         "prior_sha256": "b9bcd48b2c54b7ca0dd93a7bee25c293470d7516df1896c2ac90a0dbc167952a"
       },
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": {
-        "current_sha256": "3bcc65c5b1fd47bb66b31f4460171ad487768d90eb9e60178e8536b700ee7758",
+        "current_sha256": "0cda5e366b5775dd7a82a1fd6feb3c35c71762fd01761d19227490238137a4bf",
         "prior_sha256": "cc0c05c318b01653a4b4cfdfdcd0fdd1dfcdb7b99ef2cbc62457ca025a848ed3"
       },
       "src/mechanical_librarian/domain/automatic_decision.py": {
-        "current_sha256": "3896e85c29390cc7bda6256c73fb3825b60372be4ec06d55a0fde9852eb7c17b",
+        "current_sha256": "49823e7d0118a1e9c279c51856507c4a89b79f3e257361a896221d81f84f146e",
         "prior_sha256": "93a79db0dd594f9fe0fcf1f7eaf979efcb144a70688f4c1682a18716bcd3a454"
       },
       "src/mechanical_librarian/domain/metadata_report.py": {
@@ -739,11 +739,11 @@
         "prior_sha256": "43a13b5ffa0942904168e32c59c8f939bbdea100974acc4e2772933aaabe4758"
       },
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": {
-        "current_sha256": "31519fa36a7fba71b7ae415267a3c75f3cefa9b90e479109123039670124b7c0",
+        "current_sha256": "ffc779c1c72b23e241ebf1b63184204ca92ad65368302f26a96f4b693c8dcb3f",
         "prior_sha256": "81078a4197c607b11365923bfd16a8f86d99ca98c2042845dc10860ee5d4212e"
       },
       "tests/browser/test_review_browser.py": {
-        "current_sha256": "eb24e90817341c0d0dda3b018aed355a5b9a6d0870a1394a370e59314e2ac8e5",
+        "current_sha256": "f4f6649378687cefc6c6ce6aee6dd4fef96fe126ed6d1c32a5d836cd3f7b78b1",
         "prior_sha256": "d49a6da217fa7ee108941451955811dd2f5c0d401462d14d639e177349cfb839"
       },
       "tests/integration/test_audiobook_provider_activation.py": {
@@ -887,11 +887,11 @@
         "prior_sha256": "0170f7b69fb417a877c81bbfb063872a6c4c1ef1814aae69f0f1f520e47946e7"
       },
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": {
-        "current_sha256": "3bcc65c5b1fd47bb66b31f4460171ad487768d90eb9e60178e8536b700ee7758",
+        "current_sha256": "0cda5e366b5775dd7a82a1fd6feb3c35c71762fd01761d19227490238137a4bf",
         "prior_sha256": "ac24f76a13d73990823037d8999297424c6b0628e30db94ffa74467fb6ffaa66"
       },
       "src/mechanical_librarian/domain/automatic_decision.py": {
-        "current_sha256": "3896e85c29390cc7bda6256c73fb3825b60372be4ec06d55a0fde9852eb7c17b",
+        "current_sha256": "49823e7d0118a1e9c279c51856507c4a89b79f3e257361a896221d81f84f146e",
         "prior_sha256": "c8fff6beffd9da41f622d25af596a4784a2352863bfdd1a989686835943e2edf"
       },
       "src/mechanical_librarian/domain/field_outcomes.py": {
@@ -915,7 +915,7 @@
         "prior_sha256": "1c4701e4f217701eae1f26675af2e4c0435b9e0dcd422681cae992ee02c944e2"
       },
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": {
-        "current_sha256": "31519fa36a7fba71b7ae415267a3c75f3cefa9b90e479109123039670124b7c0",
+        "current_sha256": "ffc779c1c72b23e241ebf1b63184204ca92ad65368302f26a96f4b693c8dcb3f",
         "prior_sha256": "4f55d712ede65044be63ece3c7abf8bb5bdf3ccab5b941723d787b03070a98aa"
       },
       "src/mechanical_librarian/domain/shadow_decision.py": {
@@ -935,7 +935,7 @@
         "prior_sha256": "5f1a68f7f92677376c172aeef37e8f7fde0e3631e5715151e8a5bd77b03965a1"
       },
       "tests/browser/test_review_browser.py": {
-        "current_sha256": "eb24e90817341c0d0dda3b018aed355a5b9a6d0870a1394a370e59314e2ac8e5",
+        "current_sha256": "f4f6649378687cefc6c6ce6aee6dd4fef96fe126ed6d1c32a5d836cd3f7b78b1",
         "prior_sha256": "5dc88190045273071b56e62c64664283eb6b1569bab2c7f60816a491605e517c"
       },
       "tests/fixtures/language-policy-predecessor/README.md": {
@@ -1267,6 +1267,10 @@
         "current_sha256": "e1657c3423ccf0217863299c6de73dd86e42170c617b013b132eb58418102448",
         "prior_sha256": "e246e4c8bc0271976bc5420114ce59774702fc53cde5ffb2e611609ce5732fd6"
       },
+      "docs/product/review-experience.md": {
+        "current_sha256": "05b28500f45299fc660b02dcb8cda3e34aaf1a21d87307e6caf48432e3b13c50",
+        "prior_sha256": "84517bbabdc086fbfb85ca99314747fc47376b5c3bd660901531f9250597ed20"
+      },
       "docs/product/rich-metadata-qualification.md": {
         "current_sha256": "41f591ce70e12cf52762d6f2ef562b654cd24124246d753815e13aedb73bc145",
         "prior_sha256": "fb358e369a837656c5d6d36b20c44339300be71a7540ccaf6e1164a14517d4ca"
@@ -1280,11 +1284,11 @@
         "prior_sha256": "59a6e276a73944517f530eb3fc31a4144618b27f66f1d89bd888dc1da97dddeb"
       },
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": {
-        "current_sha256": "3bcc65c5b1fd47bb66b31f4460171ad487768d90eb9e60178e8536b700ee7758",
+        "current_sha256": "0cda5e366b5775dd7a82a1fd6feb3c35c71762fd01761d19227490238137a4bf",
         "prior_sha256": "aba1d43bbcc8fdc6fea7013285d8b0a1568532e560172675b2dc1983d7567517"
       },
       "src/mechanical_librarian/domain/automatic_decision.py": {
-        "current_sha256": "3896e85c29390cc7bda6256c73fb3825b60372be4ec06d55a0fde9852eb7c17b",
+        "current_sha256": "49823e7d0118a1e9c279c51856507c4a89b79f3e257361a896221d81f84f146e",
         "prior_sha256": "8a7ca5e8a03651040660315747dcfd24408ec72b9b583351de142eb66b3372a2"
       },
       "src/mechanical_librarian/domain/proposal_set.py": {
@@ -1292,11 +1296,11 @@
         "prior_sha256": "66fbdecf57eb1b2911629affd122aa61f1fd441bb4c5fa2f2b479bb8311d3bcf"
       },
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": {
-        "current_sha256": "31519fa36a7fba71b7ae415267a3c75f3cefa9b90e479109123039670124b7c0",
+        "current_sha256": "ffc779c1c72b23e241ebf1b63184204ca92ad65368302f26a96f4b693c8dcb3f",
         "prior_sha256": "a9e85218c09bbcac0668fef64a7d7a8ece46cd1d574c13971d73d2bb8ef79ec8"
       },
       "tests/browser/test_review_browser.py": {
-        "current_sha256": "eb24e90817341c0d0dda3b018aed355a5b9a6d0870a1394a370e59314e2ac8e5",
+        "current_sha256": "f4f6649378687cefc6c6ce6aee6dd4fef96fe126ed6d1c32a5d836cd3f7b78b1",
         "prior_sha256": "9103d9974b54ce4ac9b1c9bfa0a0ce3576cba6b34766160fbb0dba9619169ea9"
       },
       "tests/fixtures/same-name-series-predecessor/audiobook-different-case.json": {
@@ -1420,11 +1424,11 @@
         "prior_sha256": "7e402cb013429e5d5f06e1840d0927c9d26ab36cac91eda64af325739348c02b"
       },
       "tests/support/same_name_series.py": {
-        "current_sha256": "b459808b28f3f935fe91f084e4e002bfda4a45c7bd6ed39ad467d6b42b8b9cb7",
+        "current_sha256": "44cc4c6923d9960a276e26a9ee5df28104cee28c444db6487f886c9d6e5823a3",
         "prior_sha256": null
       },
       "tests/unit/test_bibliographic_bundles.py": {
-        "current_sha256": "967501823ac0bde41753cbee1c17d2e2d25c73b459d9ee04b9096d81e360d368",
+        "current_sha256": "be72a1f6874dbb851cc0db81d01724b7cb6d73611beef5d644caea15f0d0decd",
         "prior_sha256": null
       },
       "tests/unit/test_proposal_results.py": {
@@ -1436,7 +1440,7 @@
         "prior_sha256": "93daeaa381450dccb2bb017da206cf9897a93092b0593a73d2d08c8471274601"
       },
       "tests/unit/test_same_name_series_authority.py": {
-        "current_sha256": "95b9e0e9ed571219a2c37e3950df7057764ba0ba360a327bdcac711299f7f0dc",
+        "current_sha256": "baa3adb49064d94ac7df4be726e7dd8ba84f9b40e89e6ab327118edf1089098a",
         "prior_sha256": null
       }
     },
@@ -1542,11 +1546,11 @@
         "prior_sha256": "0203b001fc03e13567a45a9123c06e692a30d4bba2f760f977d40a038dd3c0ba"
       },
       "src/mechanical_librarian/domain/audiobook_decision_qualification.py": {
-        "current_sha256": "3bcc65c5b1fd47bb66b31f4460171ad487768d90eb9e60178e8536b700ee7758",
+        "current_sha256": "0cda5e366b5775dd7a82a1fd6feb3c35c71762fd01761d19227490238137a4bf",
         "prior_sha256": "1c99e3e2d2ea96b261b37c0baaca65b3582435ab30ea8bc3a6abda6ebe3da1fc"
       },
       "src/mechanical_librarian/domain/automatic_decision.py": {
-        "current_sha256": "3896e85c29390cc7bda6256c73fb3825b60372be4ec06d55a0fde9852eb7c17b",
+        "current_sha256": "49823e7d0118a1e9c279c51856507c4a89b79f3e257361a896221d81f84f146e",
         "prior_sha256": "23c68f6bee719c2f85c7ba090a59615fdb038ec92a6d151444b4fb6287a8663b"
       },
       "src/mechanical_librarian/domain/preparation_presentation.py": {
@@ -1554,7 +1558,7 @@
         "prior_sha256": "9ccb36a9eb569825ca01be5a40e795784232057c70dab4dc24dfe01a798142fa"
       },
       "src/mechanical_librarian/domain/rich_metadata_qualification.py": {
-        "current_sha256": "31519fa36a7fba71b7ae415267a3c75f3cefa9b90e479109123039670124b7c0",
+        "current_sha256": "ffc779c1c72b23e241ebf1b63184204ca92ad65368302f26a96f4b693c8dcb3f",
         "prior_sha256": "986758a18525a283aee966f619fdb8c8ccbef78e419e43caa974e865a39ae5fb"
       },
       "src/mechanical_librarian/domain/shadow_outcome.py": {
@@ -1842,7 +1846,7 @@
     "docs/product/automation-policy.md": "e1657c3423ccf0217863299c6de73dd86e42170c617b013b132eb58418102448",
     "docs/product/delivery-slices.md": "88269bb7a967d78af72d24dc6b242f30016c72a9eef206c10d16e44f18a4f0f4",
     "docs/product/opening-ebook-evidence.md": "c37ede9a36b74a08ef00bce9fad6fade8b2091a53d8cfd629941936b0d78caf5",
-    "docs/product/review-experience.md": "84517bbabdc086fbfb85ca99314747fc47376b5c3bd660901531f9250597ed20",
+    "docs/product/review-experience.md": "05b28500f45299fc660b02dcb8cda3e34aaf1a21d87307e6caf48432e3b13c50",
     "docs/product/rich-metadata-qualification.md": "41f591ce70e12cf52762d6f2ef562b654cd24124246d753815e13aedb73bc145",
     "docs/product/roadmap.md": "1ce2df5d71cad3b116e07912b3c933c32a8fbf34af0870478538755734abe0d9",
     "docs/reference/compatibility.md": "7e087f5faf20001dfa100bf5e824ba5e62526a9ccb9ac2b095f48114d9f35b56",
@@ -2029,8 +2033,8 @@
     "src/mechanical_librarian/domain/audio_inspection.py": "9dd57edfbb4da26b0f7cb3d2c93ca87a383cb0681260a9d5746e262c041d81f1",
     "src/mechanical_librarian/domain/audiobook_corroboration.py": "3b9e89f7b7cd9cee2d43d0c5402e8ea48f4c09772c4dfa19ba8dba382d8847de",
     "src/mechanical_librarian/domain/audiobook_cover_replacement.py": "043cff1ac96c8d99d03a20ae3a5c2015a964080bb4d0b2dbfc271d7eb4e10773",
-    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "3bcc65c5b1fd47bb66b31f4460171ad487768d90eb9e60178e8536b700ee7758",
-    "src/mechanical_librarian/domain/automatic_decision.py": "3896e85c29390cc7bda6256c73fb3825b60372be4ec06d55a0fde9852eb7c17b",
+    "src/mechanical_librarian/domain/audiobook_decision_qualification.py": "0cda5e366b5775dd7a82a1fd6feb3c35c71762fd01761d19227490238137a4bf",
+    "src/mechanical_librarian/domain/automatic_decision.py": "49823e7d0118a1e9c279c51856507c4a89b79f3e257361a896221d81f84f146e",
     "src/mechanical_librarian/domain/contributor_display_qualification.py": "1fbf6af472c87c8b5ce762ea2b47594fd273115aabef53a9a4b61e3e9d2ec2c7",
     "src/mechanical_librarian/domain/cover_automatic_decision.py": "9eb9e4ca4478517ba7d0b39ddf094017a7c907bf8ab9cfffc4ca6ad614db0740",
     "src/mechanical_librarian/domain/cover_evidence.py": "ba8c6f6c5a2ee1adff769ba4ef418823ea2b1c2f9bf720c5c2978888894cafd0",
@@ -2061,7 +2065,7 @@
     "src/mechanical_librarian/domain/reviewer_access.py": "7cf021a4099f549038162121ddb5d0e44e96c590507b473f8077056dd7cda02a",
     "src/mechanical_librarian/domain/reviewer_decision_summary.py": "bee9b167e6e37ad2e77fd6e202d44e04ef922f01691a8f2af691078ab8fa67a6",
     "src/mechanical_librarian/domain/rich_metadata_preview.py": "8133b6d076e65d9c4670d90acae0b428e141149b4aa0fb61dfd7e943cf74452d",
-    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "31519fa36a7fba71b7ae415267a3c75f3cefa9b90e479109123039670124b7c0",
+    "src/mechanical_librarian/domain/rich_metadata_qualification.py": "ffc779c1c72b23e241ebf1b63184204ca92ad65368302f26a96f4b693c8dcb3f",
     "src/mechanical_librarian/domain/setup_state.py": "deef830992df23c1519ccd2dd356a74843482b1e5cd5ad405a5b64844cfbd86f",
     "src/mechanical_librarian/domain/shadow_decision.py": "9aff094d75b8ced401d011eda3ef22eff13456b42c23eff03d933af84ce5c214",
     "src/mechanical_librarian/domain/shadow_outcome.py": "f01b5e03349a47535f51a981c61aefa4332b25b066c2500f1c9b897e2a1c97dc",
@@ -2092,7 +2096,7 @@
     "tests/browser/fidelity_cohort.py": "a2725d895eabdd629a5598f41f5d00a3e97d3a295b160ef6bab31dfe32e442be",
     "tests/browser/test_live_updates_browser.py": "43b0929b5d80d283cb42256ca6d593471fd12abd4dca81b788fa58c3235f0861",
     "tests/browser/test_react_platform_artifact.py": "16f6296753b8cd27f467354593d818f810dc237cdb0381f00887779344188d4f",
-    "tests/browser/test_review_browser.py": "eb24e90817341c0d0dda3b018aed355a5b9a6d0870a1394a370e59314e2ac8e5",
+    "tests/browser/test_review_browser.py": "f4f6649378687cefc6c6ce6aee6dd4fef96fe126ed6d1c32a5d836cd3f7b78b1",
     "tests/fixtures/genre-applicability-predecessor/README.md": "1624079290b0e12db05ead26799dc03b4ba8c1288944fac92ff4500354b626a3",
     "tests/fixtures/genre-applicability-predecessor/automatic-v48.json": "e3beb9d5578b7cdc98f6de7fa620abf608ac4b68d8be19faf14539fd59be71c2",
     "tests/fixtures/genre-applicability-predecessor/inventaire-exact-1-v48.json": "bf91f611862d6136b19e078debfa0a1936d7e8a6556c2dcc57d36d2084011e69",
@@ -2196,7 +2200,7 @@
     "tests/support/metadata_report_schemas.py": "69ad9b75195b2b25374d9a125c18d2ee9e11694845bffa0457ea8384410d745a",
     "tests/support/owner_responsiveness.py": "cef9809902635ccffc12f3cb4086170a149844b17091ef31f201719ff9743f87",
     "tests/support/review_web_doubles.py": "4ae28a37a0a303f6cf9486ac84ea7a7486184e28a584eeab708f35f01581bff3",
-    "tests/support/same_name_series.py": "b459808b28f3f935fe91f084e4e002bfda4a45c7bd6ed39ad467d6b42b8b9cb7",
+    "tests/support/same_name_series.py": "44cc4c6923d9960a276e26a9ee5df28104cee28c444db6487f886c9d6e5823a3",
     "tests/unit/review_app_fixture.py": "7c854565b1bf3de3167481e8edd68f4f9ae1001bd096762304fa785df7b0e92e",
     "tests/unit/shadow_packet_fixtures.py": "8ee51ad8464b2ca50412a2b3c8c1ec69f9287270c627db1e66980d5e60b41f19",
     "tests/unit/test_activity_end_to_end.py": "aebc435a043b2dab80f883925dd2c22e9f0ed312169f8abdc4868f7e7f9ffcf0",
@@ -2213,7 +2217,7 @@
     "tests/unit/test_audnexus_provider.py": "a06a1d4784cb49e9dfbe6fb1b2c694d3b5ccaa91e9181025809ba6586252777b",
     "tests/unit/test_automatic_decision.py": "e60d749b6322d6a165c7e3b78d7c0adb09445ec0101bfdb7aea5cafa16d93dcf",
     "tests/unit/test_batch_composition.py": "d2a5fb391d020bc55f9ce624d753bfa7699ad3677885e6e9b8adc3f77bc331fb",
-    "tests/unit/test_bibliographic_bundles.py": "967501823ac0bde41753cbee1c17d2e2d25c73b459d9ee04b9096d81e360d368",
+    "tests/unit/test_bibliographic_bundles.py": "be72a1f6874dbb851cc0db81d01724b7cb6d73611beef5d644caea15f0d0decd",
     "tests/unit/test_browse_request_lifecycle.py": "5baaefc5b5fb3bbf1a63638bdcf3b30ddc8c85f221ab0cf2bf41ecffc7985400",
     "tests/unit/test_build_frontend.py": "7edd3b5096feb0041c08fa2d27826f2f50d64601e5dab87880d2a5b4f9f9b3b6",
     "tests/unit/test_cold_start_report.py": "c564b9d10d5a839fb0835d935afff2a9e11a491570f77c07539cdc9d67fcf864",
@@ -2280,7 +2284,7 @@
     "tests/unit/test_rich_metadata_preview.py": "76d9dee10c37eda768e301b973b9cfff8249b3833bf84a998a6d15e71460d630",
     "tests/unit/test_rich_metadata_qualification_manifest.py": "49de0d572b2b76a41d9197d60430fbe5d8828ac7d612c8859be47f1909e35fd1",
     "tests/unit/test_runtime_dispatch.py": "f210bf070c9d4a2aa73cf4a3d67925171afdadbc58b632bd5e6311f2c846a5cb",
-    "tests/unit/test_same_name_series_authority.py": "95b9e0e9ed571219a2c37e3950df7057764ba0ba360a327bdcac711299f7f0dc",
+    "tests/unit/test_same_name_series_authority.py": "baa3adb49064d94ac7df4be726e7dd8ba84f9b40e89e6ab327118edf1089098a",
     "tests/unit/test_security_scanning_contract.py": "15cdc7cbc61ca9975c04f610cdd9ade28febdb57f715765adc5f5bfa589e1c1e",
     "tests/unit/test_setup_state_store.py": "f69347e23008015821c87eee2550bb1595d061985ee0baef30f4d0a04ebc9afe",
     "tests/unit/test_setup_web.py": "4aca217f13fa09f6b61c7950afa3214b16942381c107315161fbc7a93e76f137",
