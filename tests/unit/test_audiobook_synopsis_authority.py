@@ -505,6 +505,7 @@ def test_synopsis_replacement_uses_persisted_guarded_effect(
         ("decision_policy_version", None),
         ("decision_policy_version", 17),
         ("decision_policy_version", "deterministic-shadow-decision-policy-v16"),
+        ("decision_policy_version", "deterministic-shadow-decision-policy-v17"),
         ("decision_policy_sha256", None),
         ("decision_policy_sha256", 17),
         ("decision_policy_sha256", "0" * 64),

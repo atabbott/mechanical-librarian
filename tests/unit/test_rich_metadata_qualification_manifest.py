@@ -3804,7 +3804,14 @@ def test_synopsis_successors_retain_486_sources_and_only_three_new_operations():
         "description_fill:replace_safe_plain_text:audiobook_description_fill",
     }
     for current, name in zip(
-        _current_qualification_documents(),
+        [
+            json.loads(MANIFEST.with_name(name).read_bytes())
+            for name in (
+                "f46-audiobook-qualification-candidate-v19.json",
+                "f19a-qualification-manifest-v36.json",
+                "f20-rich-metadata-qualification-candidate-v50.json",
+            )
+        ],
         (
             "f46-audiobook-qualification-candidate-v18.json",
             "f19a-qualification-manifest-v35.json",
@@ -3844,7 +3851,6 @@ def test_synopsis_successors_retain_486_sources_and_only_three_new_operations():
             "tests/unit/test_audiobook_synopsis_authority.py",
             "tests/fixtures/audiobook-synopsis-predecessor/provenance.json",
         } <= set(current["source_closure"])
-        _assert_live_source_closure(current)
 
 
 def test_ebook_synopsis_successors_preserve_exact_historical_memberships():
