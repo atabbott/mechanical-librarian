@@ -1040,13 +1040,15 @@ def test_narrator_qualification_names_actual_effect(current, desired, operation)
 
 def test_rich_effect_reconstruction_rejects_fill_identity_for_replacement():
     candidate = {"kind": "text", "value": "A supported source description."}
-    with pytest.raises(RichMetadataPreviewError, match="operation is unqualified"):
+    with pytest.raises(
+        RichMetadataPreviewError, match="rich automatic operation is unqualified"
+    ):
         project_audiobook_automatic_decision_value(
             "description",
             "description_fill",
             "replace_safe_plain_text:audiobook_description_fill",
             candidate,
-            "An existing description.",
+            "Chapter 1",
         )
     assert (
         project_audiobook_automatic_decision_value(
@@ -1054,10 +1056,21 @@ def test_rich_effect_reconstruction_rejects_fill_identity_for_replacement():
             "description_fill",
             "replace_safe_plain_text:audiobook_description_replace",
             candidate,
-            "An existing description.",
+            "Chapter 1",
         )
         == candidate
     )
+
+    with pytest.raises(
+        RichMetadataPreviewError, match="rich automatic projection is invalid"
+    ):
+        project_audiobook_automatic_decision_value(
+            "description",
+            "description_fill",
+            "replace_safe_plain_text:audiobook_description_replace",
+            candidate,
+            "An existing description.",
+        )
 
 
 def test_series_add_effect_retains_bound_members_and_rejects_forged_fill():

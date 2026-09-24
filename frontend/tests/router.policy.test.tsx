@@ -446,10 +446,13 @@ describe('Policy route', () => {
     const helpLines = within(description).getAllByRole('listitem')
     expect(helpLines).toHaveLength(3)
     expect(helpLines[0]).toHaveTextContent(
-      'Safe plain text: Fills an empty Description only; abstains for unsafe or incomplete source text, conflicting work identity, or unavailable qualification.',
+      'Fill empty with safe plain text: Fills an empty Description; preserves populated audiobook prose; abstains for unsafe or incomplete source text, conflicting work identity, or unavailable qualification.',
     )
     expect(helpLines[1]).toHaveTextContent(
       'Visible Google text: Fills an empty Description only; abstains without it and never falls back to Hardcover.',
+    )
+    expect(helpLines[2]).toHaveTextContent(
+      'Fill empty or replace safe text: For audiobooks, fills an empty Description or replaces only whole chapter/track number and no-description/no-synopsis placeholders, preserving other useful prose; for ebooks, fills or replaces a Description with eligible source text; abstains for unsafe, incomplete or conflicting evidence; the audiobook placeholder rule does not assess general writing quality.',
     )
     await user.click(
       within(description).getByRole('combobox', { name: 'Description representation' }),

@@ -232,6 +232,10 @@ fourth `container-image` job builds the shipped image at that same revision, so
 a Dockerfile regression fails the gate; it loads the image solely to extract
 the pinned `ffprobe` for the probe tier, and never starts or pushes it.
 
+The `fast-source` job has a 25-minute deadline covering toolchain and dependency
+setup as well as qualification. This operational margin preserves every check
+and test; it is not a runtime guarantee for the fast tier.
+
 `protected-browser` restores the Chromium payload from a cache keyed on the
 installed Playwright version and saves it only after
 `scripts/verify_playwright_browser.py` accepts it, so a malformed payload is
@@ -388,7 +392,7 @@ longhand stays.
   so under vitest fake timers its `asyncWrapper` schedules a zero-delay timer
   on the fake clock and never advances it: every `userEvent` call and every
   `findBy*` waits forever instead of failing. `userEvent.setup({ advanceTimers
-  })` does not rescue it, because the stall is in Testing Library's wrapper
+})` does not rescue it, because the stall is in Testing Library's wrapper
   rather than user-event's own wait, and `test.globals: true` does not either
   -- which is why it is declined in `vite.config.ts`, and why `tsconfig.json`
   does not declare the matching ambient types: vitest injects `vi`, `describe`,

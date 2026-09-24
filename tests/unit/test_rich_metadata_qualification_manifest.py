@@ -2911,11 +2911,11 @@ def _dependency_qualification_documents():
 
 
 CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v18.json"
+    "f46-audiobook-qualification-candidate-v19.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v35.json")
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v36.json")
 CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v49.json"
+    "f20-rich-metadata-qualification-candidate-v50.json"
 )
 
 
@@ -2973,8 +2973,8 @@ def _assert_live_source_closure(document, overrides=None):
 
 def test_dependency_predecessors_preserve_measurement_and_options():
     audio, title, rich = _dependency_qualification_documents()
-    assert set(audio["passing_automatic_options"]) == F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 73
+    assert set(audio["passing_automatic_options"]) < F46_PASSING_AUTOMATIC_OPTIONS
+    assert len(audio["passing_automatic_options"]) == 73
     assert set(rich["passing_automatic_options"]) == F20_PASSING_AUTOMATIC_OPTIONS
     assert audio["current_measurement"]["inherited"]["verified_effects"] == 1126
     assert audio["current_measurement"]["inherited"]["no_change"] == 158
@@ -3306,7 +3306,7 @@ def test_current_title_successors_bind_complete_consumer_source_inventory():
         )
     audio = json.loads(CURRENT_AUDIOBOOK_SUCCESSOR.read_bytes())
     assert set(audio["passing_automatic_options"]) == F46_PASSING_AUTOMATIC_OPTIONS
-    assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 73
+    assert len(F46_PASSING_AUTOMATIC_OPTIONS) == 76
     assert set(predecessor["passing_automatic_options"]) < F46_PASSING_AUTOMATIC_OPTIONS
     assert (
         set(audio["passing_paired_options"])
@@ -3387,7 +3387,13 @@ def test_dependency_and_responsiveness_origins_remain_historical_only(family, di
         ),
         "audio": (
             _PRIOR_F46_QUALIFICATION_MANIFESTS,
-            F46_PASSING_AUTOMATIC_OPTIONS,
+            frozenset(
+                json.loads(
+                    MANIFEST.with_name(
+                        "f46-audiobook-qualification-candidate-v10.json"
+                    ).read_bytes()
+                )["passing_automatic_options"]
+            ),
             F46_QUALIFICATION_MANIFEST_SHA256,
         ),
     }[family]
@@ -3745,7 +3751,14 @@ def test_genre_successors_retain_435_sources_and_negative_only_authority():
 
 def test_same_name_successors_retain_453_sources_and_exact_versions():
     for current, prior_name in zip(
-        _current_qualification_documents(),
+        [
+            json.loads(MANIFEST.with_name(name).read_bytes())
+            for name in (
+                "f46-audiobook-qualification-candidate-v18.json",
+                "f19a-qualification-manifest-v35.json",
+                "f20-rich-metadata-qualification-candidate-v49.json",
+            )
+        ],
         (
             "f46-audiobook-qualification-candidate-v17.json",
             "f19a-qualification-manifest-v34.json",
@@ -3781,5 +3794,54 @@ def test_same_name_successors_retain_453_sources_and_exact_versions():
             "tests/support/same_name_series.py",
             "tests/unit/test_same_name_series_authority.py",
             "tests/fixtures/same-name-series-predecessor/provenance.json",
+        } <= set(current["source_closure"])
+
+
+def test_synopsis_successors_retain_486_sources_and_only_three_new_operations():
+    new_operations = {
+        "description_fill:safe_plain_text:audiobook_description_preserve",
+        "description_fill:replace_safe_plain_text:audiobook_description_preserve",
+        "description_fill:replace_safe_plain_text:audiobook_description_fill",
+    }
+    for current, name in zip(
+        _current_qualification_documents(),
+        (
+            "f46-audiobook-qualification-candidate-v18.json",
+            "f19a-qualification-manifest-v35.json",
+            "f20-rich-metadata-qualification-candidate-v49.json",
+        ),
+        strict=True,
+    ):
+        path = MANIFEST.with_name(name)
+        prior = json.loads(path.read_bytes())
+        assert len(prior["source_closure"]) == 486
+        assert set(prior["source_closure"]) < set(current["source_closure"])
+        assert (
+            current["prior_manifest_sha256"]
+            == hashlib.sha256(path.read_bytes()).hexdigest()
+        )
+        assert current["versions"] == prior["versions"] | {
+            "decision_policy": "deterministic-shadow-decision-policy-v17"
+        }
+        assert current["proposal_policy_version"] == prior["proposal_policy_version"]
+        assert (
+            current["binding_only_source_equivalence"]["excluded_binding_assignments"]
+            == prior["binding_only_source_equivalence"]["excluded_binding_assignments"]
+        )
+        for key in (
+            "historical_measurements",
+            "current_measurement",
+            "current_ebook_measurement",
+        ):
+            if key in prior:
+                assert current[key] == prior[key]
+        if "passing_automatic_options" in prior:
+            assert set(current["passing_automatic_options"]) == set(
+                prior["passing_automatic_options"]
+            ) | (new_operations if name.startswith("f46") else set())
+        assert {
+            "tests/support/audiobook_synopsis.py",
+            "tests/unit/test_audiobook_synopsis_authority.py",
+            "tests/fixtures/audiobook-synopsis-predecessor/provenance.json",
         } <= set(current["source_closure"])
         _assert_live_source_closure(current)

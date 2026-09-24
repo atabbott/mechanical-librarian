@@ -24,7 +24,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "58957ed522dbc71491434735ea5581310472af7cf13026fec8e2ca89a9575189"
+    "ce00fc0ce8b1de8ab855fb18451d75d24c1267c78f1a06f144d2e7b14953c461"
 )
 
 _FIELD_OPTIONS: Final = {
@@ -221,6 +221,9 @@ F46_PASSING_AUTOMATIC_OPTIONS: Final[frozenset[str]] = frozenset(
         "cover_order:replace_if_strictly_better:audiobook_cover_replace",
         "date_precision:full_date:audiobook_publisheddate_fill",
         "description_fill:replace_safe_plain_text:audiobook_description_replace",
+        "description_fill:replace_safe_plain_text:audiobook_description_fill",
+        "description_fill:replace_safe_plain_text:audiobook_description_preserve",
+        "description_fill:safe_plain_text:audiobook_description_preserve",
         "description_fill:safe_plain_text:audiobook_description_fill",
         "explicit:adult_product:audiobook_explicit_fill",
         "explicit:adult_product:audiobook_explicit_preserve",

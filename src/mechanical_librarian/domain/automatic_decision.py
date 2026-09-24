@@ -81,7 +81,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "75d0a02488970443f2933cb631cf3849f602071ae338c4cd1b9573ef4696258c"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "b1dfe9eae1a74157590c010cb3fa0a1fa453372b2bdc595e9e3a51d75a1076a2"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -113,6 +113,20 @@ QUALIFIED_POLICY_OPTIONS = (
     | F46_QUALIFIED_POLICY_OPTIONS
 )
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    ("75d0a02488970443f2933cb631cf3849f602071ae338c4cd1b9573ef4696258c", frozenset({
+        'contributor_names:canonical',
+        'contributor_names:preserve',
+        'date_precision:full_date',
+        'date_precision:year',
+        'language_rendering:display_name',
+        'language_rendering:preserve',
+        'publisher_preference:publisher',
+        'title:replace_target:decoration_tidy',
+        'title:replace_target:isbn_creator_supported',
+        'title:replace_target:provider_consensus_noise',
+        'title_layout:preserve',
+        'title_layout:title_and_subtitle',
+    })),
     ("e0cf71dcb87933df3fd62348426ff600500639c0783b5400d425bdc35b77f732", F19A_QUALIFIED_POLICY_OPTIONS),
     ("72a2f7cfc1d7d103538d2211709e608400d7102ba0ab4119ae236d9bce3434cf", F19A_QUALIFIED_POLICY_OPTIONS),
     ("715bdf440093ae0857825f6cc465e94d8b12f773bf1543866e49018240ccda86", F19A_QUALIFIED_POLICY_OPTIONS),
@@ -258,6 +272,21 @@ _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
 })
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    ("bac4643fdb2836ebf3a9589348ead06fefecdce7c66a205fd422c075d659fcdb", frozenset({
+        'description_fill:safe_plain_text',
+        'genres:add',
+        'genres:fill_empty',
+        'genres:replace',
+        'isbn_form:prefer_isbn13',
+        'isbn_form:preserve_exact',
+        'series:all_qualified',
+        'series:primary_narrative',
+        'series:source_order',
+        'subtitle:fill_empty',
+        'tags:add',
+        'tags:fill_empty',
+        'tags:replace',
+    })),
     ("bee26102b06154fe0f9beb48581e993b43025bc82713999a1b915633d6aa5648", F20_PASSING_AUTOMATIC_OPTIONS),
     ("1e86a05ee58e845b1b6fa69401046ddcb19ff757ae8e09a9490ca7c9ab96742b", F20_PASSING_AUTOMATIC_OPTIONS),
     ("6e4209a2354bab74090c3688031cad7c8b0d2e1a3988d38de5a9b7de051f91a7", F20_PASSING_AUTOMATIC_OPTIONS),
@@ -516,18 +545,96 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
     ),
 
 )
+# F46 v8–v18 and their source-only re-pins retain this exact operation set.
+_PRE_V19_F46_QUALIFIED_POLICY_OPTIONS = frozenset({
+        'asin:preserve_exact:audiobook_asin_fill',
+        'contributor_names:canonical:audiobook_authors_add',
+        'contributor_names:canonical:audiobook_authors_fill',
+        'contributor_names:canonical:audiobook_authors_normalize',
+        'contributor_names:canonical:audiobook_authors_preserve',
+        'contributor_names:canonical:audiobook_authors_replace',
+        'contributor_names:canonical:audiobook_narrators_add',
+        'contributor_names:canonical:audiobook_narrators_fill',
+        'contributor_names:canonical:audiobook_narrators_normalize',
+        'contributor_names:canonical:audiobook_narrators_preserve',
+        'contributor_names:canonical:audiobook_narrators_replace',
+        'contributor_names:preserve:audiobook_authors_add',
+        'contributor_names:preserve:audiobook_authors_fill',
+        'contributor_names:preserve:audiobook_authors_normalize',
+        'contributor_names:preserve:audiobook_authors_preserve',
+        'contributor_names:preserve:audiobook_authors_replace',
+        'cover_order:replace_if_strictly_better:audiobook_cover_replace',
+        'date_precision:full_date:audiobook_publisheddate_fill',
+        'description_fill:replace_safe_plain_text:audiobook_description_replace',
+        'description_fill:safe_plain_text:audiobook_description_fill',
+        'explicit:adult_product:audiobook_explicit_fill',
+        'explicit:adult_product:audiobook_explicit_preserve',
+        'explicit:adult_product:audiobook_explicit_replace',
+        'genres:add:audiobook_genres_add',
+        'genres:add:audiobook_genres_fill',
+        'genres:add:audiobook_genres_preserve',
+        'genres:fill_empty:audiobook_genres_fill',
+        'genres:fill_empty:audiobook_genres_preserve',
+        'genres:replace:audiobook_genres_add',
+        'genres:replace:audiobook_genres_fill',
+        'genres:replace:audiobook_genres_normalize',
+        'genres:replace:audiobook_genres_preserve',
+        'genres:replace:audiobook_genres_replace',
+        'isbn_form:prefer_isbn13:audiobook_isbn_fill',
+        'isbn_form:prefer_isbn13:audiobook_isbn_normalize',
+        'isbn_form:prefer_isbn13:audiobook_isbn_replace',
+        'isbn_form:preserve_exact:audiobook_isbn_fill',
+        'isbn_form:preserve_exact:audiobook_isbn_preserve',
+        'language_rendering:display_name:audiobook_language_fill',
+        'language_rendering:display_name:audiobook_language_normalize',
+        'language_rendering:display_name:audiobook_language_preserve',
+        'language_rendering:display_name:audiobook_language_replace',
+        'language_rendering:preserve:audiobook_language_fill',
+        'language_rendering:preserve:audiobook_language_normalize',
+        'language_rendering:preserve:audiobook_language_preserve',
+        'language_rendering:preserve:audiobook_language_replace',
+        'publisher_preference:publisher:audiobook_publisher_fill',
+        'publisher_preference:publisher:audiobook_publisher_preserve',
+        'series:add_qualified:audiobook_series_add',
+        'series:add_qualified:audiobook_series_fill',
+        'series:add_qualified:audiobook_series_preserve',
+        'series:all_qualified:audiobook_series_fill',
+        'series:all_qualified:audiobook_series_preserve',
+        'series:primary_narrative:audiobook_series_fill',
+        'series:primary_narrative:audiobook_series_preserve',
+        'series:replace_qualified:audiobook_series_fill',
+        'series:replace_qualified:audiobook_series_normalize',
+        'series:replace_qualified:audiobook_series_preserve',
+        'series:replace_qualified:audiobook_series_replace',
+        'series:source_order:audiobook_series_fill',
+        'series:source_order:audiobook_series_preserve',
+        'subtitle:corroborated_split:audiobook_subtitle_fill',
+        'subtitle:fill_empty:audiobook_subtitle_fill',
+        'subtitle:replace_descriptive:audiobook_subtitle_preserve',
+        'subtitle:replace_descriptive:audiobook_subtitle_replace',
+        'tags:add:audiobook_tags_add',
+        'tags:fill_empty:audiobook_tags_fill',
+        'title_layout:preserve:audiobook_title_fill',
+        'title_layout:preserve:audiobook_title_preserve',
+        'title_layout:preserve:audiobook_title_replace',
+        'title_layout:title_and_subtitle:audiobook_title_fill',
+        'title_layout:title_and_subtitle:audiobook_title_preserve',
+        'title_layout:title_and_subtitle:audiobook_title_replace',
+    })
+
 # Retained published audiobook authority remains decodable, never current.
 _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
-    ("6ee296bc750e68009a24b68b5fbc2202370f0d5a33e9cb47eee4cdec00535ebc", F46_QUALIFIED_POLICY_OPTIONS),
-    ("97874e99e016627d077ac503e8ab18c017d4444b06e0ee5a2dfb21e37e36b7d1", audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS),
-    ("44a590388d697fb9d61faaea4e96010d4ccf23ea50577ae9af62e8446e872eb1", F46_QUALIFIED_POLICY_OPTIONS),
-    ("88f79b6038765c0a0932e6bd9893ada5f9d390ec2dd224555c9133182766a851", F46_QUALIFIED_POLICY_OPTIONS),
-    ("66c8547a5092ec3665aaa566a75599bf22ba7b634d18e6927ae39b813db03489", F46_QUALIFIED_POLICY_OPTIONS),
-    ("d49a0313ac599b9db55f6fe7e9eb15bf2dd7df01c4ecb707013b6115b6ac7aaa", F46_QUALIFIED_POLICY_OPTIONS),
-    ("ef836f9cdc6b45d208bf05f406ffb3037864abf78a0e7262d471050a7b394b26", F46_QUALIFIED_POLICY_OPTIONS),
-    ("16eabc9abc5d141a4ce85bf1f5b28c909c5705b49d7642cec3ed75989f6f8e98", F46_QUALIFIED_POLICY_OPTIONS),
-    ("8e43f608421f18bdcca447eb0b99c2b676648f8a156a9e4ac0e57a2e093eec7a", F46_QUALIFIED_POLICY_OPTIONS),
-    ("3bc740723d81d15cac137aa92e3731c4cf5da848a03ff88016e36db9553acd63", F46_QUALIFIED_POLICY_OPTIONS),
+    ("58957ed522dbc71491434735ea5581310472af7cf13026fec8e2ca89a9575189", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("6ee296bc750e68009a24b68b5fbc2202370f0d5a33e9cb47eee4cdec00535ebc", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("97874e99e016627d077ac503e8ab18c017d4444b06e0ee5a2dfb21e37e36b7d1", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("44a590388d697fb9d61faaea4e96010d4ccf23ea50577ae9af62e8446e872eb1", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("88f79b6038765c0a0932e6bd9893ada5f9d390ec2dd224555c9133182766a851", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("66c8547a5092ec3665aaa566a75599bf22ba7b634d18e6927ae39b813db03489", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("d49a0313ac599b9db55f6fe7e9eb15bf2dd7df01c4ecb707013b6115b6ac7aaa", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("ef836f9cdc6b45d208bf05f406ffb3037864abf78a0e7262d471050a7b394b26", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("16eabc9abc5d141a4ce85bf1f5b28c909c5705b49d7642cec3ed75989f6f8e98", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("8e43f608421f18bdcca447eb0b99c2b676648f8a156a9e4ac0e57a2e093eec7a", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
+    ("3bc740723d81d15cac137aa92e3731c4cf5da848a03ff88016e36db9553acd63", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
 
     ("17122016872a4cd771a60716b844ba1abe28d8073baa44fdde33cb2d683f5a92", frozenset({
         "asin:preserve_exact:audiobook_asin_fill",
@@ -733,40 +840,40 @@ _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
     ),
     # Nine F46 digests were current before the #1008, #1012, #1065, the four
     # #1009 re-pins and the #1087 and #950 dependency refreshes superseded them. No re-pin
-    # moved an option, so each speaks for the tranche set that is still current,
+    # moved an option, so each speaks for its frozen pre-v19 tranche set,
     # and a record persisted while it was current stays readable rather than
     # losing its authority to a digest move.
     (
         "6dbedf9d8e953928300425aef493508aa74798b6c0ef6a5d6fec756a3bd7a366",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "e675cf0efcc753ecdcb672bf96e4d0b225ece7f3822fe5d54316fc867b5ed41b",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "6cf0944a817d176d2224a97e971f059314d109c96921e6e94eb8f073d216fa87",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "29b89f37d509bcff9f09317f9c76a62af1309b1e71e8d8ebf9cb84a835c65b55",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "5c99d641474bc81a538463eec6cd619de7d6770a4e3876bef20a1b9ac3bf5656",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "5e2d5bb1306585f45db4a7d2788791f1c98152b40cff272b2e9d34c5b3b8748d",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "8a708d1bc25ca8cb42e42a09faa9616f0605eadcb0584f0b8a6f7cdfcf7750bc",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS,
     ),
     (
         "e6160457f180870eaf6914bc2b15ff2b18246e721cd6d101e8f2a40a6334c796",
-        audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS,
+        _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS,
     ),
 )
 

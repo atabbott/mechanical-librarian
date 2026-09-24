@@ -187,12 +187,12 @@ const fields: readonly FieldDefinition[] = [
     key: 'description_fill',
     label: 'Description',
     meaning:
-      'Deterministic selection uses one provider description. Optional description advice can separately rewrite or combine text.',
+      'Deterministic selection retains one source description. Audiobooks preserve useful existing prose; optional advice can separately rewrite or combine text.',
     options: ['safe_plain_text', 'google_visible_text', 'replace_safe_plain_text'],
     optionLabels: {
-      safe_plain_text: 'Safe plain text',
+      safe_plain_text: 'Fill empty with safe plain text',
       google_visible_text: 'Visible Google text',
-      replace_safe_plain_text: 'Replace with safe plain text',
+      replace_safe_plain_text: 'Fill empty or replace safe text',
     },
     chapter: 'curation',
     automatic: false,
@@ -421,15 +421,18 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
       'safe complete text from an applicable source; audiobook regional alternatives remain visible',
     transformation:
       'uses the preferred applicable source; equal audiobook sources use stable source-record order, never text length',
-    effect: 'fills an empty Description only',
+    effect: 'fills an empty Description; preserves populated audiobook prose',
     fallback:
       'abstains for unsafe or incomplete source text, conflicting work identity, or unavailable qualification',
   },
   'description_fill:replace_safe_plain_text': {
-    admitted: 'one useful description from an applicable source',
-    transformation: 'uses bounded safe visible text',
-    effect: 'replaces Description only when replacement is qualified for the media',
-    fallback: 'requires review when replacement is unqualified or source evidence is ambiguous',
+    admitted: 'safe complete synopsis text from an applicable source',
+    transformation:
+      'keeps the original preferred source text; equal audiobook sources use stable source-record order',
+    effect:
+      'for audiobooks, fills an empty Description or replaces only whole chapter/track number and no-description/no-synopsis placeholders, preserving other useful prose; for ebooks, fills or replaces a Description with eligible source text',
+    fallback:
+      'abstains for unsafe, incomplete or conflicting evidence; the audiobook placeholder rule does not assess general writing quality',
   },
   'description_fill:google_visible_text': {
     admitted: 'eligible Google Books visible text only',
