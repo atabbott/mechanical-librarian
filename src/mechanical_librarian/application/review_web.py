@@ -768,9 +768,9 @@ class InspectCurrentReviewCase:
                 if preview_field.field == "description_fill":
                     message = {
                         "no_candidate": "No eligible automatic synopsis is available. You can inspect the retained evidence.",
-                        "description_quality_floor_not_met": "No eligible automatic synopsis: retained source text does not meet the automatic synopsis rules. You can inspect it and choose explicitly.",
+                        "description_quality_floor_not_met": "No eligible automatic synopsis: retained source text does not meet the automatic synopsis rules. You can inspect the retained evidence.",
                         "target_work_applicability_unproved": "Automatic synopsis withheld: the source text is not proved to describe this work.",
-                        "ambiguous_evidence": "Automatic synopsis withheld: a source record contains conflicting descriptions.",
+                        "ambiguous_evidence": "Automatic synopsis withheld: the retained descriptions contain unresolved conflicting evidence.",
                     }.get(preview_field.reason or "")
                     if message is not None:
                         withheld["description"] = message

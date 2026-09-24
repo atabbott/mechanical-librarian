@@ -112,3 +112,43 @@ def publish_synopsis_preview(repository, report, mode="automatic"):
         selected_options={"description_fill": "safe_plain_text", "tags": "fill_empty"},
         selected_destinations={"description_fill": mode},
     )
+
+
+def ambiguous_synopsis_report(*, same_record: bool) -> MetadataReport:
+    """Retain same-record or cross-source ambiguity with proved WORK lineage."""
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.metadata_report import ClaimKind, ClaimScope
+    from tests.support.proposal_evidence import _claim
+
+    report = synopsis_report()
+    first, second = report.providers
+    providers = report.providers
+    if same_record:
+        candidate = first.candidates[0]
+        competing = _claim(
+            first.provider,
+            candidate.identity,
+            ClaimKind.DESCRIPTION,
+            "A conflicting account of the voyage.",
+            scope=ClaimScope.WORK,
+            order=99,
+        )
+        providers = (
+            replace(
+                first,
+                candidates=(replace(candidate, claims=(*candidate.claims, competing)),),
+            ),
+        )
+    else:
+        providers = (
+            replace(first, authority="open_library"),
+            replace(second, authority="audnexus"),
+        )
+    return MetadataReport.create(
+        target=report.target,
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=providers,
+    )

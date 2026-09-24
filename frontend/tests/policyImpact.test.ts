@@ -393,10 +393,14 @@ it.each([
 
 describe('ebook synopsis refusals', () => {
   it.each([
-    ['description_quality_floor_not_met', 'No eligible automatic synopsis'],
-    ['target_work_applicability_unproved', 'not proved to describe this work'],
-    ['ambiguous_evidence', 'source record contains conflicting descriptions'],
-  ])('explains %s without claiming no retained source', (reason, text) => {
+    ['description_quality_floor_not_met', 'No eligible automatic synopsis', 'No change'],
+    ['target_work_applicability_unproved', 'not proved to describe this work', 'No change'],
+    [
+      'ambiguous_evidence',
+      'retained descriptions contain unresolved conflicting evidence',
+      'Needs review',
+    ],
+  ])('explains %s without claiming no retained source', (reason, text, title) => {
     const display = policyImpactDisplay({
       field: 'description_fill',
       outcome: 'abstain',
@@ -406,6 +410,8 @@ describe('ebook synopsis refusals', () => {
       target_state: 'missing',
     })
     expect(display.detail).toContain(text)
+    expect(display.title).toBe(title)
+    expect(display.detail).not.toContain('explicit choice')
     expect(display.changed).toBe(false)
   })
 })

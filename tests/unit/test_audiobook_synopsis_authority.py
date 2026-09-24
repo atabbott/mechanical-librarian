@@ -727,3 +727,47 @@ def test_resealed_incumbent_and_option_refuse_persisted_authority(
             )
         with pytest.raises(FieldEffectError, match="authority_binding"):
             _automatic_decision_value(decision, case, report, proposal, outcome)
+
+
+@pytest.mark.parametrize("summary", [{}, "<script>bad()</script>"])
+def test_current_detail_does_not_offer_unadmitted_audiobook_synopsis(tmp_path, summary):
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_product_lookup_report,
+    )
+
+    report = synthetic_audiobook_product_lookup_report(
+        (
+            {
+                "asin": "B000000001",
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+                "narrators": [{"name": "Example Narrator"}],
+                "summary": summary,
+                "genres": [{"type": "tag", "name": "Exploration"}],
+            },
+        )
+    )
+    path = tmp_path / "markers.sqlite"
+    with closing(open_repository(path)) as repository:
+        case, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("tags", "description_fill"),
+            selected_options={
+                "tags": "fill_empty",
+                "description_fill": "safe_plain_text",
+            },
+        )
+        repository.persist_shadow_outcome(case, 4)
+    with closing(open_repository(path)) as repository:
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(case)["fields"]
+            if f["destination"] == "description"
+        )
+        assert field["decision_actions"] == []
+        assert field["proposed_values"] == []
+        assert field["editable"] is False
+        assert field["automatic_withheld_reason"] == (
+            "No eligible automatic synopsis: retained source text does not meet the automatic synopsis rules. You can inspect the retained evidence."
+        )

@@ -35,6 +35,8 @@ def test_placeholders_never_create_automatic_authority(tmp_path, summaries):
             if f["destination"] == "description"
         )
         assert "No eligible automatic synopsis" in field["automatic_withheld_reason"]
+        assert "accept" in field["decision_actions"]
+        assert field["proposed_values"]
 
 
 def test_concise_source_election_reopens_exact_bytes(tmp_path):
@@ -410,3 +412,42 @@ def test_actual_policy_preview_explains_retained_placeholder(tmp_path):
         )
         assert field.reason == "description_quality_floor_not_met"
         assert field.outcome == "abstain"
+
+
+@pytest.mark.parametrize("same_record", [False, True])
+def test_current_detail_and_policy_describe_both_ambiguity_shapes(
+    tmp_path, same_record
+):
+    from mechanical_librarian.application.metadata_policy import preview_policy
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+    from tests.support.ebook_synopsis import ambiguous_synopsis_report
+
+    report = ambiguous_synopsis_report(same_record=same_record)
+    assert [
+        sum(claim.kind.value == "description" for claim in candidate.claims)
+        for provider in report.providers
+        for candidate in provider.candidates
+    ] == ([2] if same_record else [1, 1])
+    with closing(open_repository(tmp_path / "state.sqlite")) as repository:
+        case, _ = publish_synopsis_preview(repository, report)
+        repository.persist_shadow_outcome(case, 4)
+    with closing(open_repository(tmp_path / "state.sqlite")) as repository:
+        detail = next(
+            field
+            for field in InspectCurrentReviewCase(repository).run(case)["fields"]
+            if field["destination"] == "description"
+        )
+        assert detail["automatic_decision"] is None
+        assert detail["automatic_withheld_reason"] == (
+            "Automatic synopsis withheld: the retained descriptions contain unresolved conflicting evidence."
+        )
+        profile = MetadataPolicyProfile.from_data(
+            json.loads(repository.active_metadata_policy())
+        )
+        preview = preview_policy(profile, (report.target.library,), {}, repository)
+        field = next(
+            f
+            for f in preview.libraries[0].cases[0].fields
+            if f.field == "description_fill"
+        )
+        assert (field.outcome, field.reason) == ("abstain", "ambiguous_evidence")

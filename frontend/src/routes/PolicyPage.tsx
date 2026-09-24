@@ -620,15 +620,20 @@ export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisp
     const explanations: Record<string, string> = {
       no_candidate: 'No eligible automatic synopsis is available — inspect the retained evidence',
       description_quality_floor_not_met:
-        'No eligible automatic synopsis — retained source text remains available for inspection and explicit choice',
+        'No eligible automatic synopsis — inspect the retained source evidence',
       target_work_applicability_unproved:
         'Automatic synopsis withheld — the source text is not proved to describe this work',
       ambiguous_evidence:
-        'Automatic synopsis withheld — a source record contains conflicting descriptions',
+        'Automatic synopsis withheld — the retained descriptions contain unresolved conflicting evidence',
     }
     const explanation = explanations[field.reason ?? '']
     if (explanation)
-      return { changed: false, title: 'No change', detail: explanation, technicalDetail }
+      return {
+        changed: false,
+        title: field.reason === 'ambiguous_evidence' ? 'Needs review' : 'No change',
+        detail: explanation,
+        technicalDetail,
+      }
   }
   if (field.reason === 'ambiguous_evidence')
     return {
