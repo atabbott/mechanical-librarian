@@ -9,8 +9,9 @@ from __future__ import annotations
 from types import MappingProxyType
 from typing import Final, Mapping
 
+# Retained wire name: SHA-256 of the canonical current authority object only.
 F20_QUALIFICATION_CANDIDATE_SHA256: Final = (
-    "5f943991748c5a613ba1d8f8451040a9224e9bd028941d1e63816879b5d1edfe"
+    "28b95c60856b1c6a5f88b6e67f7cba9c55b215c10567eeb3b29d2a7e98233175"
 )
 F20_RICH_FIELDS: Final = (
     "subtitle",

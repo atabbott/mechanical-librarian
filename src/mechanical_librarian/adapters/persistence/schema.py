@@ -588,7 +588,7 @@ _SHADOW_DECISION_OUTCOMES_SQL = (
     "resolved_policy_id TEXT NOT NULL CHECK(resolved_policy_id GLOB 'resolved_policy_[0-9a-f]*' AND length(resolved_policy_id)=80), "
     "source_decision_set_id TEXT NOT NULL, evaluated_at INTEGER NOT NULL CHECK(evaluated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 1048576 "
-    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v8' "
+    "AND json_extract(document,'$.schema_version')='shadow-outcome-set-v9' "
     f"AND json_extract(document,'$.decision_policy_version') IS '{DECISION_POLICY_VERSION}' "
     f"AND json_extract(document,'$.decision_policy_sha256') IS '{DECISION_POLICY_SHA256}'))"
 )

@@ -1,0 +1,51 @@
+{
+  "authority": {
+    "dispositions": {
+      "asin:ebook_manifestation": "insufficient_coverage",
+      "asin:preserve_exact": "insufficient_coverage",
+      "description_fill:google_visible_text": "not_qualified",
+      "description_fill:safe_plain_text": "passing_automatic",
+      "explicit:unsupported": "passing_human_only",
+      "genres:add": "passing_automatic",
+      "genres:fill_empty": "passing_automatic",
+      "genres:replace": "passing_automatic",
+      "isbn_form:prefer_isbn13": "passing_automatic",
+      "isbn_form:preserve_exact": "passing_automatic",
+      "series:all_qualified": "passing_automatic",
+      "series:primary_narrative": "passing_automatic",
+      "series:source_order": "passing_automatic",
+      "subtitle:corroborated_split": "not_qualified",
+      "subtitle:fill_empty": "passing_automatic",
+      "tags:add": "passing_automatic",
+      "tags:fill_empty": "passing_automatic",
+      "tags:off": "policy_only",
+      "tags:replace": "passing_automatic"
+    },
+    "family": "F20",
+    "media": "ebook",
+    "permitted_operations": [
+      "description_fill:safe_plain_text",
+      "genres:add",
+      "genres:fill_empty",
+      "genres:replace",
+      "isbn_form:prefer_isbn13",
+      "isbn_form:preserve_exact",
+      "series:all_qualified",
+      "series:primary_narrative",
+      "series:source_order",
+      "subtitle:fill_empty",
+      "tags:add",
+      "tags:fill_empty",
+      "tags:replace"
+    ],
+    "semantic_input_sha256": "ed7213ab9b142aaef0308d54720f45b37e593dd2c2e536e47e344d4da6298213",
+    "semantic_revision": 1
+  },
+  "predecessor": {
+    "path": "docs/reference/f20-rich-metadata-qualification-candidate-v51.json",
+    "sha256": "5f943991748c5a613ba1d8f8451040a9224e9bd028941d1e63816879b5d1edfe",
+    "source_sha": "608854ea0de96b71931e0c2338d97312dc8f469e"
+  },
+  "provenance": "qualification-provenance-current.json",
+  "schema": "qualification-current-v1"
+}

@@ -663,7 +663,7 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change() -> None:
         ).fetchone()
         assert row is not None
         old_sql = row[0].replace(
-            " AND json_extract(document,'$.schema_version')='shadow-outcome-set-v8'",
+            " AND json_extract(document,'$.schema_version')='shadow-outcome-set-v9'",
             " AND json_extract(document,'$.schema_version')='shadow-outcome-set-v4'",
         )
         assert row[0] != old_sql
@@ -2124,3 +2124,21 @@ def test_current_schema_cannot_relabel_falsely_valid_predecessor_title() -> None
     )
     with pytest.raises(ReportValueError, match="title is invalid"):
         MetadataReport.from_json(canonical_json(document))
+
+
+@pytest.mark.parametrize("fixture_name", ["store-v8.sql", "empty-v8.sql"])
+def test_genuine_qualification_predecessor_refused_without_mutation(
+    tmp_path, fixture_name
+):
+    fixture = Path(__file__).parents[1] / "fixtures/qualification-authority-predecessor"
+    path = tmp_path / "predecessor.sqlite"
+    with sqlite3.connect(path) as connection:
+        connection.executescript((fixture / fixture_name).read_text())
+        count = connection.execute(
+            "SELECT count(*) FROM shadow_decision_outcomes"
+        ).fetchone()[0]
+    assert (count > 0) is (fixture_name == "store-v8.sql")
+    before = path.read_bytes()
+    with pytest.raises(MetadataReportError):
+        open_repository(path, create=False)
+    assert path.read_bytes() == before

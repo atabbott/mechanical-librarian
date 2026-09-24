@@ -5,11 +5,78 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Current ebook synopsis successor (#1076)
+## Current compact authority
 
-[F19a v37](../reference/f19a-qualification-manifest-v37.json),
-[F20 v51](../reference/f20-rich-metadata-qualification-candidate-v51.json) and
-[F46 v20](../reference/f46-audiobook-qualification-candidate-v20.json) bind shared
+The stable [F19a](../reference/f19a-qualification-current.json),
+[F20](../reference/f20-rich-metadata-qualification-current.json) and
+[F46](../reference/f46-audiobook-qualification-current.json) records bind canonical
+JSON of their `authority` objects only: family/media, semantic revision, semantic
+input digest and exact permitted operations, dispositions and pairs. Existing
+runtime constant and serialized digest names retain that narrower meaning.
+Evidence and predecessor references never grant authority or rotate these hashes.
+The compiled runtime reads no JSON history, Git repository or network archive.
+
+The shared [provenance record](../reference/qualification-provenance-current.json)
+classifies a reviewed baseline of 572 source paths: 140 semantic and 432
+provenance-only. Newly introduced record, verifier and fixture paths are explicitly
+provenance-only; retired archive paths leave the active inventory. These are
+starting counts, not permanent totals. New paths and changes of ownership require
+explicit review of the inventory and its verifier pin. Moving authority into a
+provenance-only file requires reclassification. All three families share the
+semantic partition. Mixed `review_web.py`, `interfaces/web/app.py` and
+`field_effect_activity.py` remain semantic even for copy edits. Frontend copy
+and provenance changes still require applicable behavior, security and build proof.
+The package inventory includes non-Python resources: the setup/frontend
+`settings_vocabulary.json` is explicitly provenance-only. Only the exact `py.typed`
+marker and `__pycache__/*.pyc` bytecode are omitted. Frontend runtime assets and
+identity are generated under the separate build tree, not exempted source paths.
+Unknown source resources require classification review. Current record and
+family-specific authority keysets are closed; incidental metadata cannot enter
+authority. Runtime binding reads and refreshes locate actual top-level AST literal
+assignments, so comments and string examples cannot impersonate a binding.
+Only the precisely named existing circular-binding assignments use AST exclusions;
+unknown exclusions fail. There is no general semantic classifier.
+
+Run `uv run python scripts/verify_qualification_records.py` to check bindings;
+use `--refresh` only after the preservation steps below, then inspect the diff.
+Before changing semantic inputs or authority, retain the current committed record's
+full Git SHA, path and byte digest in the archive index, grouped by that source SHA.
+Point each successor's predecessor reference at that immutable entry, increment its
+semantic revision, and append the displaced authority digest with its exact frozen
+permissions to the compiled historical table. Preserve existing table entries and
+extend the independent historical parity expectation; never regenerate genuine
+predecessor documents. Then refresh bindings and prove old decoding/no authority,
+current production and persistence admission. The command refreshes hashes only;
+it does not archive records, revise history or grant migration authority. When
+persisted interpretation changes, assess the clean-rebuild boundary explicitly.
+For provenance-only edits these preservation steps are unnecessary because the
+authority object and digest remain unchanged. No full cumulative record is created.
+The provenance record retains the complete F46 measurement, shared ebook
+measurement, fourteen measurement artifacts and immutable measurement origins.
+No historical quality was rescored, no fresh holdout is claimed and no production
+write occurred. Current records do not claim their own final commit SHA; exact
+artifact receipts bind the final commit, payload and completed checks.
+
+The [archive index](../reference/qualification-archive-index.json) binds each
+retired record to an immutable commit, path and content digest. Historical links
+below resolve there in Git history, never through ordinary validation or runtime.
+All 140 prior digest/permission pairs and the three displaced current digests
+remain historical-only compiled decoding entries, sharing ten independent frozen
+permission sets. F38 and separately consumed cover records retain their own scope.
+
+**Clean rebuild required:** outcome `shadow-outcome-set-v9`, its exact SQL
+constraint and API literal refuse predecessor stores before writable use, even
+when no outcomes exist. There is no adoption or migration. F20 contributes to
+persisted action/outcome identities; F46 cover decisions resolve a live rule
+identity, so document decoding alone cannot establish safe startup. The historical
+qualification-state bridge target remains intentionally unchanged. Authored
+description authority, policy elections, report and proposal versions are unchanged.
+
+## Historical ebook synopsis successor (#1076)
+
+[F19a v37](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v37.json),
+[F20 v51](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v51.json) and
+[F46 v20](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v20.json) bind shared
 shadow decision policy v18. **Clean rebuild required**; historical measurements,
 evaluators and operation memberships remain frozen, with no new quality score.
 
@@ -25,9 +92,9 @@ Policy explain refusal while History retains its existing generic disposition.
 
 ## Prior audiobook synopsis successor (#1070)
 
-[F46 v19](../reference/f46-audiobook-qualification-candidate-v19.json),
-[F19a v36](../reference/f19a-qualification-manifest-v36.json) and
-[F20 v50](../reference/f20-rich-metadata-qualification-candidate-v50.json) retain
+[F46 v19](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v19.json),
+[F19a v36](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v36.json) and
+[F20 v50](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v50.json) retain
 all 486 prior source members and 73 prior operations, adding preservation under
 both synopsis options and empty fill under replacement. Shadow policy v17 binds
 these semantics; clean rebuild required for old derived stores. Historical
@@ -44,9 +111,9 @@ stable source-record identity determine the original text; length does not.
 
 ## Same-name series successor (#1075)
 
-[F46 v18](../reference/f46-audiobook-qualification-candidate-v18.json),
-[F19a v35](../reference/f19a-qualification-manifest-v35.json) and
-[F20 v49](../reference/f20-rich-metadata-qualification-candidate-v49.json) bind
+[F46 v18](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v18.json),
+[F19a v35](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v35.json) and
+[F20 v49](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v49.json) bind
 the series-name-only exception for supported title preservation and empty-series
 fill. Proposal policy v31 requires a clean rebuild; report v49 is unchanged.
 All 453 prior source members, option registrations and historical measurements
@@ -54,9 +121,9 @@ remain retained. Focused synthetic proof does not rescore library quality.
 
 ## Genre applicability successor (#1074)
 
-[F46 v17](../reference/f46-audiobook-qualification-candidate-v17.json),
-[F19a v34](../reference/f19a-qualification-manifest-v34.json) and
-[F20 v48](../reference/f20-rich-metadata-qualification-candidate-v48.json) bind
+[F46 v17](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v17.json),
+[F19a v34](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v34.json) and
+[F20 v48](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v48.json) bind
 negative-only creator display equivalence and reachable Ask genre choices.
 A supported singleton inversion cannot veto an otherwise eligible genre fill.
 The classifier returns unavailable identity, never positive WORK admission;
@@ -67,18 +134,18 @@ Focused synthetic consumer proof does not rescore historical library outcomes.
 
 ## Language evidence successor (#1071)
 
-[F46 v16](../reference/f46-audiobook-qualification-candidate-v16.json),
-[F19a v33](../reference/f19a-qualification-manifest-v33.json) and
-[F20 v47](../reference/f20-rich-metadata-qualification-candidate-v47.json) bind
+[F46 v16](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v16.json),
+[F19a v33](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v33.json) and
+[F20 v47](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v47.json) bind
 supported English/code equivalence, unknown exclusion and source-bound observed
 forms through persisted decisions, effects and owner views. These successors
 preserve all 419 inherited sources and historical qualified options and measurements.
 
 ## Author evidence source successor (#1083)
 
-[F46 v13](../reference/f46-audiobook-qualification-candidate-v13.json),
-[F19a v30](../reference/f19a-qualification-manifest-v30.json) and
-[F20 v44](../reference/f20-rich-metadata-qualification-candidate-v44.json) bind
+[F46 v13](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v13.json),
+[F19a v30](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v30.json) and
+[F20 v44](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v44.json) bind
 whole-statement author attribution and complete-set proposal-governed automatic
 admission. Their explicit synthetic controls exercise isolated extraction,
 SQLite publication, owner projections, reopen/replay and consent-guarded fake
@@ -88,9 +155,9 @@ Inherited quality measurements are historical and were not rescored.
 
 ## Incumbent paragraph source successor (#1080)
 
-[F46 v12](../reference/f46-audiobook-qualification-candidate-v12.json),
-[F19a v29](../reference/f19a-qualification-manifest-v29.json) and
-[F20 v43](../reference/f20-rich-metadata-qualification-candidate-v43.json) bind
+[F46 v12](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v12.json),
+[F19a v29](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v29.json) and
+[F20 v43](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v43.json) bind
 exact multiline incumbent description admission and comparison to the current
 consumer closure. This is a behavioral successor, not whole-source equivalence or
 new quality measurement. Historical manifests, evaluators, measurement artifacts
@@ -102,9 +169,9 @@ media. No production library, provider or model measurement is claimed.
 
 ## Preparation recovery source successor (#1085)
 
-[F46 v11](../reference/f46-audiobook-qualification-candidate-v11.json),
-[F19a v28](../reference/f19a-qualification-manifest-v28.json) and
-[F20 v42](../reference/f20-rich-metadata-qualification-candidate-v42.json) bind
+[F46 v11](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v11.json),
+[F19a v28](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v28.json) and
+[F20 v42](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v42.json) bind
 committed preparation claim ownership, a truthful runtime recovery stop and
 source-preserving Linux crash admission. These are behavioral coordination and
 recovery changes with current consumer proof, not binding-only equivalence or
@@ -115,7 +182,7 @@ clean-rebuild declaration describes the existing schema lineage.
 
 ## Useful audiobook metadata (#1047)
 
-[F46 v8](../reference/f46-audiobook-qualification-candidate-v8.json) registers
+[F46 v8](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v8.json) registers
 73 measured individual operations and one separately guarded title/subtitle pair.
 It preserves the previous 44 operations and adds reached work and recording
 operations, including durable title/author no-change, complete author normalization
@@ -123,8 +190,8 @@ and Add, descriptive subtitles, original publication dates, publisher, synopsis,
 explicit tag unions, associated identifiers, material cover replacement and
 positive-only adult-product flags. The exact operation inventory is in the record;
 an available candidate does not imply that every representation or operation is
-qualified. [F19a v25](../reference/f19a-qualification-manifest-v25.json) and
-[F20 v39](../reference/f20-rich-metadata-qualification-candidate-v39.json) bind the
+qualified. [F19a v25](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v25.json) and
+[F20 v39](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v39.json) bind the
 current consumers while preserving the existing ebook authority.
 
 Work facts require an applicable work relationship. Recording facts retain their
@@ -157,7 +224,7 @@ envelopes; an owner must grant new permission before an explicit flag can be set
 
 The following records that qualification stage, not the current F46 registration.
 
-The historical [v29 candidate](../reference/f20-rich-metadata-qualification-candidate-v29.json)
+The historical [v29 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v29.json)
 binds #1007's title and packet consumers, including replacement-only and
 complete ordered creator corrections. Published v25 remains immutable historical
 evidence. The current continuity proof is
@@ -194,7 +261,7 @@ original 52-case matrix and published v14/v28 artifacts remain unchanged.
 
 ## Historical cover-choice source rotation (#999)
 
-The [v17 candidate](../reference/f20-rich-metadata-qualification-candidate-v17.json)
+The [v17 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v17.json)
 binds the incumbent-artifact and live cover-currentness follow-up. All 35 F20
 behavior-source hashes were reviewed: the only changes in that closure are
 cover-attention repository wiring and read-only recognition of v16. Proposal,
@@ -202,7 +269,7 @@ election, admission, option outcomes and non-cover scoring inputs are unchanged,
 so the retained non-cover receipts remain bound without a fresh holdout claim.
 V16 remains byte-identical and readable for historical decisions.
 
-The historical [v16 candidate](../reference/f20-rich-metadata-qualification-candidate-v16.json)
+The historical [v16 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v16.json)
 rotates the exact authority after the proposal contract learned to retain a
 usable confirmed cover across an incomplete sibling source. That branch is
 cover-only. Both 49-report F20 modes, all 980 non-series previews, all 108
@@ -217,7 +284,7 @@ receipts remain bound to their original measured behavior head.
 
 ## Exact description sources (#1001)
 
-The [v15 candidate](../reference/f20-rich-metadata-qualification-candidate-v15.json)
+The [v15 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v15.json)
 binds grouped description alternatives to the canonical exact representation
 from an eligible ordinary provider source. Equivalent local evidence remains
 inspectable, but cannot replace the applied bytes or borrow the provider's
@@ -230,7 +297,7 @@ claim.
 
 ## Contradictory work evidence (#1000)
 
-The [v14 candidate](../reference/f20-rich-metadata-qualification-candidate-v14.json)
+The [v14 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v14.json)
 binds the target-work contradiction guard for publication dates and automatic
 genres. Claims about another work remain inspectable, but they cannot become a
 field decision or persisted candidate outcome. Where identity proof is absent,
@@ -244,7 +311,7 @@ threshold remains unchanged.
 
 ## Qualified series fill (#895)
 
-The historical [v13 candidate](../reference/f20-rich-metadata-qualification-candidate-v13.json)
+The historical [v13 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v13.json)
 binds the applicability repair: it refuses unrelated ISBN work candidates while
 permitting the bounded
 [source-attested identity formatting rule](../architecture/decisions/0070-isbn-backed-series-identity.md).
@@ -269,7 +336,7 @@ occurrences and one unknown; repeated convention-qualified views do not increase
 independent support. Actual desired values are separately scored: four correct
 memberships and positions in that batch.
 
-The [v12 candidate](../reference/f20-rich-metadata-qualification-candidate-v12.json)
+The [v12 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v12.json)
 qualified the three existing series options for empty Automatic targets. Its
 series rules preserve populated targets and
 permit an absent position without inventing a number. A unique existing source
@@ -492,13 +559,13 @@ title on the decorated side. Every other option replays unchanged, and the
 option keeps 1.0 precision with zero structural or unsupported outputs.
 
 The historical machine-readable candidate described in this section is
-[`f20-rich-metadata-qualification-candidate-v11.json`](../reference/f20-rich-metadata-qualification-candidate-v11.json).
+[`f20-rich-metadata-qualification-candidate-v11.json`](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v11.json).
 The v10 manifest remains a readable historical record.
 
 ## Retained title-component associations (#1002)
 
-The [v18 F20](../reference/f20-rich-metadata-qualification-candidate-v18.json)
-and [v6 F19a](../reference/f19a-qualification-manifest-v6.json)
+The [v18 F20](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v18.json)
+and [v6 F19a](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v6.json)
 successors bind proposal policy v23. Exposed retained replays preserve 17 correct
 title tidies and 19 keeps across 75 cases, 21 correct subtitle fills in each of
 missing/null/empty target states across 113 cases, all 108 series projections or
@@ -520,8 +587,8 @@ measurements remain bound to their original measured source commit.
 
 ## Inventaire preparation source closure (#1006)
 
-The [v19 F20](../reference/f20-rich-metadata-qualification-candidate-v19.json)
-and [v7 F19a](../reference/f19a-qualification-manifest-v7.json) successors bind
+The [v19 F20](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v19.json)
+and [v7 F19a](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v7.json) successors bind
 canonical Inventaire cover references through report and proposal admission,
 validated missing ISBN responses and bounded WORK identity filtering.
 All 980 non-series and 108 series retained previews match the current baseline.
@@ -531,7 +598,7 @@ holdout claim. Synthetic proposal roundtrip and persisted case admission cover
 the repaired consumer. Prior v6/v18 decisions remain readable but cannot regain
 current effect authority. Policy v23, qualified options and schemas are unchanged.
 
-The [v20 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v20.json)
+The [v20 F20 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v20.json)
 rotates source bindings for the application-owned provider result contract
 (#1005). Its explicit closure covers all eight adapters, the SDK and retry
 primitives, evidence types, initial normalization, retry consumption and recovery
@@ -541,7 +608,7 @@ this is neither rescoring nor a fresh holdout claim. V19 remains byte-frozen and
 readable as history, but grants no current effect authority. F19a v7 is unchanged.
 
 
-The [local-transport v21 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v21-local-transport.json)
+The [local-transport v21 F20 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v21-local-transport.json)
 rotates the exact source closure for explicit local transport (#844). Shared
 validation adds strict HTTP/HTTPS origin admission; existing validation functions,
 provider sources, proposal/election behavior, policy v23 and all 13 passing options
@@ -579,8 +646,8 @@ exact-current state only; no adoption or relabelling is offered.
 
 ## Provider recovery explanations source closure (#891)
 
-The [v21 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v21.json)
-and [v8 F19a manifest](../reference/f19a-qualification-manifest-v8.json) bind the
+The [v21 F20 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v21.json)
+and [v8 F19a manifest](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v8.json) bind the
 read-only current review projection and its persisted policy reader. They retain
 all earlier measurements, scoring, evaluator identities and qualified options;
 this is source closure, not fresh scoring or a fresh holdout. The complete F20
@@ -598,7 +665,7 @@ Both that digest and the earlier published v20 digest remain readable history
 only. Its existing frontend byte binding includes the bounded diagnostic return
 context; no router or view file is added to automatic qualification bindings.
 
-The [v22 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v22.json)
+The [v22 F20 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v22.json)
 is the retained combined source closure for local transport and provider recovery
 explanations (#844, #891). Its primary predecessor is the canonical provider-recovery
 v21; the exact local-transport v21 is an explicit additional predecessor. Both
@@ -611,11 +678,11 @@ v22 published before that restatement remains readable history only. It adds no
 rescoring or fresh holdout claim.
 
 
-The [v23 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v23.json)
-and [v9 F19a manifest](../reference/f19a-qualification-manifest-v9.json) are the
+The [v23 F20 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v23.json)
+and [v9 F19a manifest](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v9.json) are the
 current source-only successors for authored description integration (#892).
 V23 inherits the delivered v39 identity-diagnostic bindings from repinned v22;
-the [original v22 artifact](../reference/f20-rich-metadata-qualification-candidate-v22-before-identity-diagnostics.json)
+the [original v22 artifact](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v22-before-identity-diagnostics.json)
 is retained separately with its exact bytes. Both v22 digests remain readable
 history for the same 13 options, without current effect authority. All inherited
 measurements, options and scoring remain unchanged; no fresh qualification or
@@ -623,8 +690,8 @@ model-quality claim is made.
 
 ## Audiobook media-health projection source closure (#144)
 
-The [v24 F20 candidate](../reference/f20-rich-metadata-qualification-candidate-v24.json)
-and [v10 F19a manifest](../reference/f19a-qualification-manifest-v10.json) are the
+The [v24 F20 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v24.json)
+and [v10 F19a manifest](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v10.json) are the
 current qualification. They restate the review-projection binding for the review
 web application, which now projects read-time audiobook media-health observations,
 and rotate the frontend byte binding for the same reason. V23 and F19a v9 remain
@@ -646,15 +713,15 @@ rule moves.
 
 The following limits describe the earlier record; the current successor is above.
 
-The [F46 audiobook record](../reference/f46-audiobook-qualification-candidate-v7.json)
+The [F46 audiobook record](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v7.json)
 names 44 accepted field/operation identities across title, authors, narrators,
 language, series and genres. Its source-quality corpus and candidate operations
 are frozen separately from subsequent Automatic/effect correspondence. Dates,
 publisher, description, ASIN and cover lack the required selected-positive
 confirmation floor; subtitle/tags lack the source floor, and ISBN/explicit
 semantics remain unresolved. No new authority is inferred from those candidates.
-The [F19a v24](../reference/f19a-qualification-manifest-v24.json) and
-[F20 v38](../reference/f20-rich-metadata-qualification-candidate-v38.json)
+The [F19a v24](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v24.json) and
+[F20 v38](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v38.json)
 successors bind the current consumers without rewriting historical records or
 claiming fresh ebook scoring. Report v43, shadow outcome v5 and policy profile
 v3 require a clean rebuild; prior state is never relabelled as current.

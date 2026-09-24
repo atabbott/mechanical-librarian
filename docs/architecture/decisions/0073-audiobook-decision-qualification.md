@@ -118,3 +118,15 @@ does under that routing is still decided by the ebook envelope, which leaves
 This supersedes ADR-0069's statement that nothing automatic is ever offered a
 recording. Everything else ADR-0069 records -- the case, the terminals, and the
 owner's authority over an unqualified field -- is unchanged.
+
+## Compact current records
+
+Current F19a, F20 and F46 bindings now hash only the canonical authority object,
+with shared explicit semantic/provenance source ownership. Evidence references
+remain outside authority; frozen historical decoding never grants current rights.
+The [qualification contract](../../product/rich-metadata-qualification.md#current-compact-authority)
+owns the stable records, inventory and immutable archive. This supersedes the
+cumulative full-record binding representation, preserving every operation and pair.
+Outcome v9 and its exact SQL/API contract require a clean rebuild, with no adoption
+or migration, because binding-derived identities and live F46 cover rules cannot
+safely reinterpret predecessor stores. Empty predecessor stores also refuse.

@@ -1,0 +1,19 @@
+{
+  "f46_v18_origin": "docs/reference/f46-audiobook-qualification-candidate-v18.json",
+  "files": {
+    "decision.json": "d44e48ca7087b06564c3f0f458b206de58ebfa2683930dc3802c0a618f86283f",
+    "empty-v8.sql": "1c10fe43bc2af6ea1ad102597fda278a0d464bdc57650221f81de45c8606eb13",
+    "f46-v18-operations.json": "4983fedff3bf067c34ba2517ad075cbd28210d67cc86e220469e95d8b185251f",
+    "historical-permissions.json": "289e1fc689bf0993fd9536c77192e8f8832ea74d1be3fe9f2300daaa3b499ed9",
+    "store-v8.sql": "de4d07f22e18ce3bd621a9d75bbb1f6283f7c5cbffac10b5f339c9b4f17c5a95"
+  },
+  "lifecycle_clock": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "producer": "tests.support.ebook_synopsis.publish_synopsis_preview with synopsis_report; persist_shadow_outcome(case, 4)",
+  "source_sha": "608854ea0de96b71931e0c2338d97312dc8f469e",
+  "synthetic_only": true
+}

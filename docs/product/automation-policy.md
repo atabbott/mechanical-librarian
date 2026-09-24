@@ -7,9 +7,9 @@ This document defines product intent. Exact thresholds remain versioned configur
 ## Operating posture
 
 The current title qualification is
-[F19a v34](../reference/f19a-qualification-manifest-v34.json) (#1074).
+[F19a v34](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v34.json) (#1074).
 The ISBN-and-creator title option introduced by
-[F19a v15](../reference/f19a-qualification-manifest-v15.json) (#1007) is measured separately: twenty-five synthetic
+[F19a v15](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f19a-qualification-manifest-v15.json) (#1007) is measured separately: twenty-five synthetic
 positive opportunities and two independently labelled retained real positives
 reach correct candidates and durable Automatic decisions; twenty-five synthetic
 negative controls are withheld. All fifty-two cases remain owner-reachable.
@@ -106,7 +106,7 @@ Once a record exists, Automatic is withdrawn from every destination on that
 recording the record does not name, so an unqualified identity is always the
 owner's answer to give and never an authority failure.
 
-The [F46 qualification record](../reference/f46-audiobook-qualification-candidate-v8.json)
+The [F46 qualification record](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f46-audiobook-qualification-candidate-v8.json)
 names each measured field/operation that may become Automatic. It preserves the
 previous 44 operations and adds the accepted audiobook metadata remainder
 (#1047). Useful candidates remain available independently of their automatic
@@ -280,7 +280,7 @@ candidate. It does not admit unrelated works, general subtitle stripping or
 WORK-query transformations. All candidates in the successful target-backed
 ISBN lane must qualify; Ask and non-series applicability stay unchanged.
 
-The [F20 v17 candidate](../reference/f20-rich-metadata-qualification-candidate-v17.json)
+The [F20 v17 candidate](https://github.com/atabbott/mechanical-librarian/blob/608854ea0de96b71931e0c2338d97312dc8f469e/docs/reference/f20-rich-metadata-qualification-candidate-v17.json)
 rotates current decision authority after binding the corrected cover packet
 producer and live attention currentness. Its complete 35-source audit preserves
 every qualified non-cover outcome, value, reason, source binding and correctness

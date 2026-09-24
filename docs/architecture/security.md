@@ -1599,3 +1599,14 @@ choice, and populated ebook targets remain outside automatic fill authority.
 Shared shadow policy v18 and successor qualification bindings require a clean
 rebuild. Existing consent, backup, currentness, optimistic checks, supported APIs,
 read-back and audit remain mandatory; no new egress or write scope is introduced.
+
+## Compact qualification authority
+
+F19a, F20 and F46 current digests bind only canonical authority objects and the
+explicit semantic source partition. Provenance-only changes do not grant or rotate
+automatic authority; moving authority into those sources requires reclassification.
+Immutable historical permission sets support decoding only. Runtime performs no
+archive, Git or network lookup. Exact outcome-v9 DDL rejects v8 stores, including
+empty stores, without mutation; clean rebuild required, no adoption or migration.
+Existing owner-final, Ask/Ignore, consent, backup, currentness, read-back, audit and
+recovery checks remain mandatory. Authored-description authority is independent.
