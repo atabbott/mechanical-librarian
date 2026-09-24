@@ -11,7 +11,7 @@
 - Audiobook synopsis policies preserve useful existing prose, fill empty values,
   and optionally replace recognized chapter/track or no-synopsis placeholders
   with an original supported source description. Old derived state requires a
-  clean rebuild (#1070).
+  clean rebuild. Manual field selection keeps keyboard focus in the Library (#1070).
 
 
 - Supported first-book series may share the preserved book title when filling

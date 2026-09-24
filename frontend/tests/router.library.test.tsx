@@ -5020,40 +5020,52 @@ describe('Library route', () => {
     expect(recordDecision).toHaveBeenCalledOnce()
   })
 
-  it('does not carry failed same-field advancement into a manual field change', async () => {
-    const user = userEvent.setup()
-    const titleField = detail.fields[0]
-    if (!titleField) throw new Error('workspace fixture requires a title field')
-    const authorsField = {
-      ...titleField,
-      destination: 'authors',
-      currentValue: 'Ada Example',
-      proposalId: 'proposal-authors',
-      targetFingerprint: 'fingerprint-authors',
-    }
-    const http: ReviewHttp = {
-      ...createHttp(),
-      getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
-      recordDecision: vi.fn(async () => {
-        throw new ApiError(503, 'unavailable')
-      }),
-    }
-    const scrollTo = vi.mocked(window.scrollTo)
-    scrollTo.mockClear()
-    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+  it.each(['pointer', 'keyboard'])(
+    'does not carry failed same-field advancement into a manual field change via %s',
+    async (input) => {
+      const user = userEvent.setup()
+      const titleField = detail.fields[0]
+      if (!titleField) throw new Error('workspace fixture requires a title field')
+      const authorsField = {
+        ...titleField,
+        destination: 'authors',
+        currentValue: 'Ada Example',
+        proposalId: 'proposal-authors',
+        targetFingerprint: 'fingerprint-authors',
+      }
+      const http: ReviewHttp = {
+        ...createHttp(),
+        getCaseDetail: vi.fn(async () => ({ ...detail, fields: [titleField, authorsField] })),
+        recordDecision: vi.fn(async () => {
+          throw new ApiError(503, 'unavailable')
+        }),
+      }
+      const scrollTo = vi.mocked(window.scrollTo)
+      scrollTo.mockClear()
+      renderRoute('/library?lens=all&preview=case-1&field=title', http)
 
-    await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
-    expect(
-      await screen.findByText('The decision was not recorded. Your choice is unchanged.'),
-    ).toBeVisible()
-    scrollTo.mockClear()
-    const authors = screen.getByRole('button', { name: /Authors.*Needs review/u })
-    await user.click(authors)
+      await user.click(
+        await screen.findByRole('button', { name: 'Choose current value: Old title' }),
+      )
+      expect(
+        await screen.findByText('The decision was not recorded. Your choice is unchanged.'),
+      ).toBeVisible()
+      scrollTo.mockClear()
+      const authors = screen.getByRole('button', { name: /Authors.*Needs review/u })
+      if (input === 'pointer') await user.click(authors)
+      else {
+        authors.focus()
+        await user.keyboard('{Enter}')
+      }
 
-    await waitFor(() => expect(authors).toHaveAttribute('aria-current', 'true'))
-    expect(authors).toHaveFocus()
-    expect(scrollTo).not.toHaveBeenCalledWith({ top: 0 })
-  })
+      await waitFor(() => expect(authors).toHaveAttribute('aria-current', 'true'))
+      await act(
+        async () => await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+      )
+      expect(authors).toHaveFocus()
+      expect(scrollTo).not.toHaveBeenCalledWith({ top: 0 })
+    },
+  )
 
   it('preserves final completion when the reviewer moves on while a decision settles', async () => {
     const user = userEvent.setup()
@@ -6940,6 +6952,10 @@ describe('Library route', () => {
         'true',
       ),
     )
+    await act(
+      async () => await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
+    )
+    expect(screen.getByRole('button', { name: 'Choose current value: Old title' })).toHaveFocus()
     expect(sent).toEqual(['title'])
     await user.click(await screen.findByRole('button', { name: 'Choose current value: Old title' }))
     await waitFor(() => expect(sent).toEqual(['title', 'authors']))

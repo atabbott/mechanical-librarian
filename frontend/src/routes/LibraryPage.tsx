@@ -2607,7 +2607,7 @@ export default function LibraryPage({
       setAutomaticResults((current) => ({ ...current, [request.key]: 'error' })),
   })
 
-  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.field ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
+  const routeIdentity = `${search.lens}:${search.q ?? ''}:${search.cursor ?? ''}:${search.attentionCursor ?? ''}:${search.preview ?? ''}:${search.work ?? ''}:${search.attention ?? ''}:${search.preparation ?? ''}`
   useRouteReadyFocus(routeIdentity, true)
   useEffect(() => {
     if (!preparationSelected) return
