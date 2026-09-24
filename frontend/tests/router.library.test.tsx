@@ -5042,7 +5042,8 @@ describe('Library route', () => {
       }
       const scrollTo = vi.mocked(window.scrollTo)
       scrollTo.mockClear()
-      renderRoute('/library?lens=all&preview=case-1&field=title', http)
+      const { router } = renderRoute('/library?lens=all&preview=case-1&field=title', http)
+      const navigate = vi.spyOn(router, 'navigate')
 
       await user.click(
         await screen.findByRole('button', { name: 'Choose current value: Old title' }),
@@ -5062,6 +5063,7 @@ describe('Library route', () => {
       await act(
         async () => await new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
       )
+      expect(navigate).toHaveBeenLastCalledWith(expect.objectContaining({ resetScroll: false }))
       expect(authors).toHaveFocus()
       expect(scrollTo).not.toHaveBeenCalledWith({ top: 0 })
     },

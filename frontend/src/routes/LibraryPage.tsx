@@ -2774,6 +2774,7 @@ export default function LibraryPage({
     }
     setOpenedWork(null)
     void navigate({
+      resetScroll: !(field && reviewCaseId === selectedReviewCaseId),
       search: (current) => {
         const next = { ...current, preview: reviewCaseId }
         delete next.work

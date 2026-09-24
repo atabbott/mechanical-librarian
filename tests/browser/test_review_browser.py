@@ -3326,6 +3326,39 @@ def test_compact_lower_choice_reveals_only_the_next_focused_control() -> None:
                     f"{origin}/library?lens=needs_attention&preview={case_id}&field=title"
                 )
                 page.locator(".decision-canvas").wait_for()
+                # Same-work manual field navigation retains the real browser
+                # scroll position after the router's restoration frame (#1070).
+                for width in (390, 320):
+                    page.set_viewport_size({"width": width, "height": 800})
+                    for destination, keyboard in (("series", False), ("title", True)):
+                        button = page.get_by_role(
+                            "button",
+                            name=re.compile(f"^{destination.title()} Needs review"),
+                        )
+                        button.evaluate(
+                            """button => {
+                                const masthead = document.querySelector('.masthead');
+                                const top = button.getBoundingClientRect().top + scrollY;
+                                window.scrollTo(0, top - masthead.getBoundingClientRect().bottom - 24);
+                            }"""
+                        )
+                        if keyboard:
+                            button.focus()
+                        before_scroll = page.evaluate("() => window.scrollY")
+                        assert before_scroll > 0
+                        if keyboard:
+                            button.press("Enter")
+                        else:
+                            button.click()
+                        expect(button).to_have_attribute("aria-current", "true")
+                        page.evaluate(
+                            "() => new Promise(resolve => requestAnimationFrame(() => "
+                            "requestAnimationFrame(resolve)))"
+                        )
+                        expect(button).to_be_focused()
+                        expect(button).to_be_in_viewport()
+                        assert page.evaluate("() => window.scrollY") == before_scroll
+                page.set_viewport_size({"width": 390, "height": 320})
                 rail_order = [
                     label.splitlines()[0]
                     for label in page.locator(
