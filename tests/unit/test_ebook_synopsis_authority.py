@@ -231,14 +231,10 @@ def test_persisted_projection_refuses_ineligible_or_populated(value, current):
         )
 
 
-def test_actual_predecessors_refuse_authority_and_store_before_mutation(tmp_path):
+def test_actual_predecessors_refuse_authority_and_store_before_mutation():
     import hashlib
-    import sqlite3
     from pathlib import Path
 
-    from mechanical_librarian.adapters.persistence.metadata_reports import (
-        MetadataReportError,
-    )
     from mechanical_librarian.application.field_effects import authority_from_decision
     from mechanical_librarian.domain.automatic_decision import (
         AutomaticDecision,
@@ -253,8 +249,23 @@ def test_actual_predecessors_refuse_authority_and_store_before_mutation(tmp_path
     for capture in (root, root / "qualified"):
         provenance = json.loads((capture / "provenance.json").read_text())
         assert provenance["source_sha"] == "b3186df6c4835a4fd7b5dc31cf65d019f5bb0446"
-        for name, digest in provenance["files"].items():
-            assert hashlib.sha256((capture / name).read_bytes()).hexdigest() == digest
+        # Sidecars retain archived capture entries recoverable from Git history.
+        names = [
+            f"{scenario}-{kind}.json"
+            for scenario in ("duplicate", "extent", "concise")
+            for kind in ("report", "proposal", "shadow-decision", "outcome")
+        ] + [
+            f"{scenario}-automatic-{index}.json"
+            for scenario, count in (("duplicate", 2), ("extent", 2), ("concise", 1))
+            for index in range(count)
+        ]
+        if capture == root / "qualified":
+            names.append("duplicate-store.sql")
+        for name in names:
+            assert (
+                hashlib.sha256((capture / name).read_bytes()).hexdigest()
+                == provenance["files"][name]
+            )
         for scenario in ("duplicate", "extent", "concise"):
             MetadataReport.from_json(
                 (capture / f"{scenario}-report.json").read_text().strip()
@@ -270,7 +281,8 @@ def test_actual_predecessors_refuse_authority_and_store_before_mutation(tmp_path
                     parser.from_json(
                         (capture / f"{scenario}-{kind}.json").read_text().strip()
                     )
-            for path in capture.glob(f"{scenario}-automatic-*.json"):
+            for index in range(1 if scenario == "concise" else 2):
+                path = capture / f"{scenario}-automatic-{index}.json"
                 decision = AutomaticDecision.from_json(path.read_text().strip())
                 assert authority_from_decision(decision) is None
                 assert not qualification_manifest_is_current(
@@ -278,18 +290,44 @@ def test_actual_predecessors_refuse_authority_and_store_before_mutation(tmp_path
                     decision.policy_option,
                     decision.qualification_manifest_sha256,
                 )
-            directory = tmp_path / capture.name / scenario
-            directory.mkdir(parents=True, mode=0o700)
-            database = directory / "state.sqlite"
-            with closing(sqlite3.connect(database)) as connection:
-                connection.executescript(
-                    (capture / f"{scenario}-store.sql").read_text()
-                )
-            database.chmod(0o600)
-            before = database.read_bytes()
-            with pytest.raises(MetadataReportError):
-                open_repository(database, create=False)
-            assert database.read_bytes() == before
+
+
+def test_genuine_predecessor_store_refuses_before_row_validation(tmp_path):
+    import sqlite3
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from mechanical_librarian.adapters.persistence import schema
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        MetadataReportError,
+    )
+
+    source = (
+        Path(__file__).parents[1]
+        / "fixtures/ebook-synopsis-predecessor/qualified/duplicate-store.sql"
+    )
+    database = tmp_path / "old.sqlite"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.executescript(source.read_text())
+        assert connection.execute(
+            "SELECT count(*) FROM shadow_decision_outcomes"
+        ).fetchone() == (1,)
+    database.chmod(0o600)
+    before = database.read_bytes()
+    with patch.object(
+        schema, "_validate_schema_contents", wraps=schema._validate_schema_contents
+    ) as validate_rows:
+        with pytest.raises(MetadataReportError):
+            open_repository(database, create=False)
+        validate_rows.assert_not_called()
+        assert database.read_bytes() == before
+        current = tmp_path / "current.sqlite"
+        with closing(open_repository(current)):
+            pass
+        validate_rows.reset_mock()
+        with closing(open_repository(current, create=False)):
+            pass
+        validate_rows.assert_called()
 
 
 @pytest.mark.parametrize("substitution", ["winner", "citation", "source", "populated"])
