@@ -922,7 +922,7 @@ def test_title_preservation_witness_is_closed_and_retains_audiobook_identity(
     "prior_digest,original_options",
     automatic_decision._PRIOR_F46_QUALIFICATION_MANIFESTS,
 )
-def test_historical_f46_documents_never_acquire_v19_synopsis_shapes(
+def test_historical_f46_documents_preserve_frozen_synopsis_membership(
     prior_digest, original_options
 ):
     from pathlib import Path
@@ -944,7 +944,10 @@ def test_historical_f46_documents_never_acquire_v19_synopsis_shapes(
         audiobook_decision_qualification.F46_PASSING_AUTOMATIC_OPTIONS
         == pre_v19 | added
     )
-    assert not original_options & added
+    if original_options & added:
+        assert original_options == pre_v19 | added
+    else:
+        assert original_options <= pre_v19
     for identity in sorted(original_options | added):
         category, option = identity.split(":", 1)
         destination = next(
@@ -988,7 +991,7 @@ def test_historical_f46_documents_never_acquire_v19_synopsis_shapes(
             separators=(",", ":"),
             sort_keys=True,
         )
-        if identity in added:
+        if identity not in original_options:
             with pytest.raises(AutomaticDecisionError):
                 AutomaticDecision.from_json(document)
             current = AutomaticDecision.create(

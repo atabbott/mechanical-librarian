@@ -1,0 +1,40 @@
+{
+  "authority_seam": "application.metadata_report.observe_provider",
+  "files": {
+    "concise-automatic-0.json": "c607861b67510fc170402515a5742b487cada397017edcc1c687e92314236a6b",
+    "concise-outcome.json": "a3b0880dc4c31b9dd367dce83cce09803e49c821ceeb719259e67bf49b6268b5",
+    "concise-packet.json": "d88841607125fe53904dedcc8320ee85bbffa866a205bcb01b58c80efb4fffb9",
+    "concise-policy.json": "24152a09e26d9f111349853cfd461e6f1ae819bc1c5145f04e03737f1d4b64a3",
+    "concise-proposal.json": "0f349e252f16bc4c00b662ab81907bfdd2f03c2f786d9d9f9c8c26c16204544d",
+    "concise-report.json": "53666d7db4d44c0b28af5f62e0f02c8912b3cca3256a1f0953c88649238f44c8",
+    "concise-shadow-decision.json": "082b783fe84ead35b88966ea0e07207c9839280955490b6aa9077388ff6c27bc",
+    "concise-store.sql": "dfafd79ca9be48fbadd98108c617022a37df1e2f80137780130bc5dc524d1345",
+    "duplicate-automatic-0.json": "e977bd4a619b1f6451a183e39134ab221d00aeaae8535ae78bb140eec58139bb",
+    "duplicate-automatic-1.json": "0c0a24c05ba03b77cd00ca5c6cebc6a85924404df9cdfb53da481869cde8593e",
+    "duplicate-outcome.json": "d1adb57a997ae68f21e969371c6ca1bd54185621e854eab1d1dd1498a43459f7",
+    "duplicate-packet.json": "bf6a0919c9f4beadeaf031845031e0088d51f7bc28e0a0d7089c6d221714632e",
+    "duplicate-policy.json": "24152a09e26d9f111349853cfd461e6f1ae819bc1c5145f04e03737f1d4b64a3",
+    "duplicate-proposal.json": "b35f10ce6cf393db066ea4a6f6679f0b67e322c65af4028fbb27be0f7091654c",
+    "duplicate-report.json": "db0adfb4f1ee410c0de46c49c829754b62c7b6622afac488c254765d55b90d63",
+    "duplicate-shadow-decision.json": "dd228d09f92bbb874e514b2d1d95b900ac2e56ec171b226b12ed2421bc310e33",
+    "duplicate-store.sql": "b734f6b40917c678328d811266f5e31e90c2fa94829098be704e1e490f62a52d",
+    "extent-automatic-0.json": "284a46f73089218235b0bc9b16b63116f0437c70a7ae461ff47eb4653e40bf8d",
+    "extent-automatic-1.json": "650831321dcc351340446a8b851efe148d0d5a65b57b766f908fd809cad7822e",
+    "extent-outcome.json": "88d206b1b708dad7723867007134bf9d92672513c0beea57a28d2f68c936d7a7",
+    "extent-packet.json": "408efd839ba08c7f8fa8282ebb16bf0b5af16e2fb1fdbfea98230d30801151e6",
+    "extent-policy.json": "24152a09e26d9f111349853cfd461e6f1ae819bc1c5145f04e03737f1d4b64a3",
+    "extent-proposal.json": "ee367466ffa521b084d9bbabf85d25d896b4e2fd61ea9fe51f37d831f1258aa2",
+    "extent-report.json": "bbf7349c5cfb55c97ffe6b34b107c2443a4229cdf44baeac61a5fe8e789bb6eb",
+    "extent-shadow-decision.json": "01c817ff828f8708e244f5ba19d9e1746c07c03e79a39c27b00ccb4ec94ac112",
+    "extent-store.sql": "c6afdd37a47ba1df1a56e4723e1a674181f6a928032ced0722483fd6383afd92"
+  },
+  "lifecycle_clock": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "provider_clock": 0.0,
+  "provider_wall_clock": 1700000000.0,
+  "source_sha": "b3186df6c4835a4fd7b5dc31cf65d019f5bb0446"
+}

@@ -418,10 +418,10 @@ export const policyRepresentationGuidance: Readonly<Record<string, Representatio
   },
   'description_fill:safe_plain_text': {
     admitted:
-      'safe complete text from an applicable source; audiobook regional alternatives remain visible',
+      'safe complete text from an applicable source; catalogue placeholders are excluded from automatic ebook fills and retained for explicit choice',
     transformation:
-      'uses the preferred applicable source; equal audiobook sources use stable source-record order, never text length',
-    effect: 'fills an empty Description; preserves populated audiobook prose',
+      'uses the preferred applicable source; equal sources use stable source-record order, never text length',
+    effect: 'fills an empty Description; preserves populated prose',
     fallback:
       'abstains for unsafe or incomplete source text, conflicting work identity, or unavailable qualification',
   },
@@ -616,6 +616,25 @@ export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisp
       detail: 'Current value is unavailable or unreadable — inspect the source before deciding',
       technicalDetail,
     }
+  if (field.field === 'description_fill' && field.outcome === 'abstain') {
+    const explanations: Record<string, string> = {
+      no_candidate: 'No eligible automatic synopsis is available — inspect the retained evidence',
+      description_quality_floor_not_met:
+        'No eligible automatic synopsis — inspect the retained source evidence',
+      target_work_applicability_unproved:
+        'Automatic synopsis withheld — the source text is not proved to describe this work',
+      ambiguous_evidence:
+        'Automatic synopsis withheld — the retained descriptions contain unresolved conflicting evidence',
+    }
+    const explanation = explanations[field.reason ?? '']
+    if (explanation)
+      return {
+        changed: false,
+        title: field.reason === 'ambiguous_evidence' ? 'Needs review' : 'No change',
+        detail: explanation,
+        technicalDetail,
+      }
+  }
   if (field.reason === 'ambiguous_evidence')
     return {
       changed: false,

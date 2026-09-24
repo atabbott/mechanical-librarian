@@ -7133,3 +7133,85 @@ def test_observed_language_reaches_guarded_write_and_readback(
     assert PersistedFieldEffectAuthority(effects.repository).resolve(
         decision
     ).decision_value == {"kind": "text", "value": expected}
+
+
+@pytest.mark.parametrize("guard", [None, "backup", "target", "consent", "readback"])
+def test_ebook_fill_uses_guarded_persisted_effect(effects, guard):
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.adapters.field_effect_runtime import (
+        PersistedEffectConsent,
+    )
+    from mechanical_librarian.application.field_effects import GuardedFieldApplication
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecision
+    from tests.support.ebook_synopsis import (
+        publish_synopsis_preview,
+        synopsis_report,
+    )
+
+    case, _ = publish_synopsis_preview(effects.repository, synopsis_report())
+    effects.repository.persist_shadow_outcome(case, 4)
+    decision = next(
+        AutomaticDecision.from_json(d)
+        for d in effects.repository.get_review_case_decisions(case)
+        if json.loads(d)["destination"] == "description"
+    )
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    snapshot = authority.resolve(decision)
+    effects.repository.grant_field_effect_consents(
+        snapshot.connection, (snapshot.library,), ("description",), 5
+    )
+    service = GuardedFieldApplication(
+        effects.repository,
+        effects.target,
+        effects.backup,
+        effects.capabilities,
+        authority,
+        effects.dependencies,
+        PersistedEffectConsent(effects.repository),
+        effects.recovery,
+        effects.reevaluation,
+        effects.clock,
+        effects.preclaim,
+        effects.claim_hook,
+        effects.recovery_hook,
+    )
+    result = service.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination="description",
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert result is not None
+    effects.target.seed(result.plan)
+    if guard == "backup":
+        effects.backup.ready_value = False
+    elif guard == "target":
+        effects.target.drift(result.plan, "Owner edited synopsis.")
+    elif guard == "consent":
+        effects.repository.revoke_field_effect_consent(
+            result.plan.consent.consent_id, effects.clock()
+        )
+    elif guard == "readback":
+        effects.target.fail_read_after_apply_for.add(result.plan.plan_id)
+    before = dict(effects.target._values)
+    applied = service.apply(result.plan.plan_id)
+    if guard in {"backup", "target", "consent"}:
+        assert applied.state == ("superseded" if guard == "consent" else "stale")
+        assert effects.target._values == before
+    elif guard == "readback":
+        assert (applied.state, applied.failure) == ("reconciling", "target_failure")
+    else:
+        assert applied.state == "verified"
+        assert service.apply(result.plan.plan_id).state == "verified"
+        assert (
+            effects.target.read(result.plan).value == "A voyage reveals a hidden city."
+        )

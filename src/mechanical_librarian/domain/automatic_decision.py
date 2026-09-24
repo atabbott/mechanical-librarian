@@ -81,7 +81,7 @@ class AutomaticDecisionError(ValueError):
     """Automatic authority is incomplete, stale, or outside its envelope."""
 
 
-F19A_QUALIFICATION_MANIFEST_SHA256 = "b1dfe9eae1a74157590c010cb3fa0a1fa453372b2bdc595e9e3a51d75a1076a2"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "7b5cfb2662246bc74f4ad7745f1edfe0656fdbe0116a712fc3af93673945f9a2"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -113,6 +113,7 @@ QUALIFIED_POLICY_OPTIONS = (
     | F46_QUALIFIED_POLICY_OPTIONS
 )
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    ("b1dfe9eae1a74157590c010cb3fa0a1fa453372b2bdc595e9e3a51d75a1076a2", F19A_QUALIFIED_POLICY_OPTIONS),
     ("75d0a02488970443f2933cb631cf3849f602071ae338c4cd1b9573ef4696258c", frozenset({
         'contributor_names:canonical',
         'contributor_names:preserve',
@@ -272,6 +273,7 @@ _PRE_V12_F20_QUALIFIED_POLICY_OPTIONS = frozenset({
     "isbn_form:preserve_exact", "isbn_form:prefer_isbn13",
 })
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    ("637a32ef676a0e85adca6f447d910099b13564a32317970416802b11f42e25d4", F20_PASSING_AUTOMATIC_OPTIONS),
     ("bac4643fdb2836ebf3a9589348ead06fefecdce7c66a205fd422c075d659fcdb", frozenset({
         'description_fill:safe_plain_text',
         'genres:add',
@@ -622,8 +624,11 @@ _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS = frozenset({
         'title_layout:title_and_subtitle:audiobook_title_replace',
     })
 
+_V19_F46_QUALIFIED_POLICY_OPTIONS = frozenset({'title_layout:title_and_subtitle:audiobook_title_fill', 'contributor_names:canonical:audiobook_authors_fill', 'date_precision:full_date:audiobook_publisheddate_fill', 'contributor_names:canonical:audiobook_narrators_replace', 'cover_order:replace_if_strictly_better:audiobook_cover_replace', 'genres:replace:audiobook_genres_normalize', 'language_rendering:display_name:audiobook_language_replace', 'contributor_names:preserve:audiobook_authors_add', 'description_fill:replace_safe_plain_text:audiobook_description_fill', 'explicit:adult_product:audiobook_explicit_fill', 'genres:add:audiobook_genres_add', 'contributor_names:canonical:audiobook_narrators_add', 'isbn_form:prefer_isbn13:audiobook_isbn_normalize', 'language_rendering:display_name:audiobook_language_fill', 'series:all_qualified:audiobook_series_fill', 'series:all_qualified:audiobook_series_preserve', 'subtitle:replace_descriptive:audiobook_subtitle_preserve', 'genres:fill_empty:audiobook_genres_preserve', 'title_layout:title_and_subtitle:audiobook_title_replace', 'genres:fill_empty:audiobook_genres_fill', 'title_layout:preserve:audiobook_title_replace', 'genres:replace:audiobook_genres_preserve', 'subtitle:replace_descriptive:audiobook_subtitle_replace', 'series:primary_narrative:audiobook_series_preserve', 'description_fill:safe_plain_text:audiobook_description_fill', 'genres:replace:audiobook_genres_add', 'contributor_names:canonical:audiobook_narrators_preserve', 'language_rendering:display_name:audiobook_language_preserve', 'subtitle:corroborated_split:audiobook_subtitle_fill', 'series:replace_qualified:audiobook_series_replace', 'title_layout:preserve:audiobook_title_preserve', 'contributor_names:preserve:audiobook_authors_replace', 'series:replace_qualified:audiobook_series_normalize', 'genres:add:audiobook_genres_fill', 'title_layout:preserve:audiobook_title_fill', 'series:add_qualified:audiobook_series_preserve', 'title_layout:title_and_subtitle:audiobook_title_preserve', 'isbn_form:preserve_exact:audiobook_isbn_preserve', 'contributor_names:canonical:audiobook_authors_normalize', 'series:replace_qualified:audiobook_series_preserve', 'description_fill:replace_safe_plain_text:audiobook_description_replace', 'contributor_names:canonical:audiobook_authors_replace', 'language_rendering:preserve:audiobook_language_fill', 'series:source_order:audiobook_series_preserve', 'genres:add:audiobook_genres_preserve', 'language_rendering:preserve:audiobook_language_replace', 'series:source_order:audiobook_series_fill', 'tags:add:audiobook_tags_add', 'series:add_qualified:audiobook_series_fill', 'genres:replace:audiobook_genres_fill', 'series:primary_narrative:audiobook_series_fill', 'asin:preserve_exact:audiobook_asin_fill', 'series:add_qualified:audiobook_series_add', 'language_rendering:preserve:audiobook_language_preserve', 'genres:replace:audiobook_genres_replace', 'isbn_form:prefer_isbn13:audiobook_isbn_fill', 'contributor_names:canonical:audiobook_authors_preserve', 'publisher_preference:publisher:audiobook_publisher_preserve', 'language_rendering:display_name:audiobook_language_normalize', 'contributor_names:canonical:audiobook_narrators_normalize', 'contributor_names:preserve:audiobook_authors_fill', 'publisher_preference:publisher:audiobook_publisher_fill', 'description_fill:replace_safe_plain_text:audiobook_description_preserve', 'series:replace_qualified:audiobook_series_fill', 'contributor_names:canonical:audiobook_authors_add', 'subtitle:fill_empty:audiobook_subtitle_fill', 'isbn_form:prefer_isbn13:audiobook_isbn_replace', 'description_fill:safe_plain_text:audiobook_description_preserve', 'contributor_names:canonical:audiobook_narrators_fill', 'explicit:adult_product:audiobook_explicit_preserve', 'tags:fill_empty:audiobook_tags_fill', 'contributor_names:preserve:audiobook_authors_preserve', 'language_rendering:preserve:audiobook_language_normalize', 'explicit:adult_product:audiobook_explicit_replace', 'contributor_names:preserve:audiobook_authors_normalize', 'isbn_form:preserve_exact:audiobook_isbn_fill'})
+
 # Retained published audiobook authority remains decodable, never current.
 _PRIOR_F46_QUALIFICATION_MANIFESTS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("ce00fc0ce8b1de8ab855fb18451d75d24c1267c78f1a06f144d2e7b14953c461", _V19_F46_QUALIFIED_POLICY_OPTIONS),
     ("58957ed522dbc71491434735ea5581310472af7cf13026fec8e2ca89a9575189", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
     ("6ee296bc750e68009a24b68b5fbc2202370f0d5a33e9cb47eee4cdec00535ebc", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
     ("97874e99e016627d077ac503e8ab18c017d4444b06e0ee5a2dfb21e37e36b7d1", _PRE_V19_F46_QUALIFIED_POLICY_OPTIONS),
