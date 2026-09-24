@@ -170,11 +170,8 @@ line-length = 88
 force-exclude = true
 
 [tool.ruff.format]
-# These sources are byte-frozen by the F20 rich-metadata or cover-election
-# qualification manifests. The formatter
-# rewrites bytes by definition, and `# fmt: off` is itself a byte, so the only
-# way to leave their digests intact is to keep the formatter out of them. This
-# exclusion retires with the same re-qualification those lint entries do.
+# Retained formatter exclusions predate compact qualification. They are lint
+# policy, not immutable current-record bytes; this unit does not change them.
 exclude = [
   "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py",
   "src/mechanical_librarian/domain/automatic_decision.py",
@@ -222,16 +219,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-# Four sources are byte-frozen by the F20 rich-metadata qualification
-# manifest, `docs/reference/f20-rich-metadata-qualification-candidate-v1.json`.
-# Its `frozen_contract` entries pin their sha256, and
-# `tests/unit/test_rich_metadata_qualification_manifest.py` fails if any byte
-# moves. An inline `# noqa` is itself a byte, so these findings cannot be
-# suppressed at the site; the alternative -- rewriting the pinned digests --
-# would weaken an existing gate to make a new one pass, which #652 forbids.
-# Each entry lists only the codes present today, so a new finding of any other
-# code in these files still fails the gate. Re-qualifying these sources is
-# separate, owned work; when it happens these entries go away with it.
+# Retained narrow lint exceptions are unchanged by compact qualification.
+# Historical frozen bytes live at immutable archive references. Current semantic
+# bindings are refreshed explicitly; removal of these exceptions is separate work.
 "src/mechanical_librarian/adapters/library_services/audiobookshelf_field_effect.py" = ["I001"]
 "src/mechanical_librarian/domain/automatic_decision.py" = ["E731"]
 "src/mechanical_librarian/domain/metadata_policy.py" = ["I001"]
@@ -269,23 +259,11 @@ strict = true
 warn_unused_ignores = true
 warn_unused_configs = true
 
-# The three overrides below cover sources that are byte-frozen by the F20
-# rich-metadata qualification manifest,
-# `docs/reference/f20-rich-metadata-qualification-candidate-v1.json`. Its
-# `frozen_contract` entries pin their sha256 and
-# `tests/unit/test_rich_metadata_qualification_manifest.py` fails if any byte
-# moves, so neither an annotation nor an inline `# type: ignore` can be added
-# at the site. Rewriting the pinned digests instead would weaken an existing
-# gate to make this one pass, which #652 forbids. Each override names only the
-# error codes those files produce today, so strict mode still applies to every
-# other code in them and a new class of finding still fails the gate.
-# `src/mechanical_librarian/domain/metadata_policy.py` is frozen too but needs
-# no override: it is already clean under strict mode. These overrides retire
-# with the next re-qualification of those sources.
-
+# Retained narrow typing exceptions are unchanged by compact qualification;
+# historical byte freezing is no longer the current maintenance mechanism.
 [[tool.mypy.overrides]]
 module = "mechanical_librarian.domain.rich_metadata_preview"
-# reason: byte-frozen by the F20 qualification manifest; see the note above.
+# reason: retained pre-existing narrow exception; see the note above.
 disable_error_code = [
   "arg-type",
   "assignment",
@@ -298,12 +276,12 @@ disable_error_code = [
 
 [[tool.mypy.overrides]]
 module = "mechanical_librarian.domain.automatic_decision"
-# reason: byte-frozen by the F20 qualification manifest; see the note above.
+# reason: retained pre-existing narrow exception; see the note above.
 disable_error_code = ["arg-type", "no-untyped-call"]
 
 [[tool.mypy.overrides]]
 module = "mechanical_librarian.adapters.library_services.audiobookshelf_field_effect"
-# reason: byte-frozen by the F20 qualification manifest; see the note above.
+# reason: retained pre-existing narrow exception; see the note above.
 disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]

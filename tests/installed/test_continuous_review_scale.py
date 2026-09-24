@@ -4,7 +4,7 @@ import json
 import re
 import sqlite3
 import time
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from tests.support import continuous_review_scale as harness
@@ -182,3 +182,64 @@ def test_inventaire_failure_then_authenticated_reprepare_starts_new_run(
                             assert (
                                 source.artifact.artifact_id == alternative.value.value
                             )
+
+
+def test_current_authority_and_predecessor_refusal_without_history(
+    tmp_path, monkeypatch
+):
+    """The exact wheel uses compiled grants with no checkout documents or Git."""
+    from contextlib import closing
+    from pathlib import Path
+
+    from tests.support.ebook_synopsis import publish_synopsis_preview, synopsis_report
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+    from mechanical_librarian.domain.automatic_decision import (
+        AutomaticDecision,
+        AutomaticDecisionError,
+        qualification_manifest_is_current,
+    )
+
+    fixture = Path(__file__).parents[1] / "fixtures/qualification-authority-predecessor"
+    historical = (fixture / "decision.json").read_text().strip()
+    predecessor = (fixture / "empty-v8.sql").read_text()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PATH", "")
+    assert not Path("docs").exists()
+    assert not Path(".git").exists()
+    path = tmp_path / "current.sqlite"
+    with closing(open_repository(path)) as repository:
+        case, _ = publish_synopsis_preview(repository, synopsis_report())
+        repository.persist_shadow_outcome(case, 4)
+        document = next(
+            d
+            for d in repository.get_review_case_decisions(case)
+            if json.loads(d)["destination"] == "description"
+        )
+        current = AutomaticDecision.from_json(document)
+        assert qualification_manifest_is_current(
+            current.policy_category,
+            current.policy_option,
+            current.qualification_manifest_sha256,
+        )
+    with closing(open_repository(path, create=False)) as repository:
+        assert document in repository.get_review_case_decisions(case)
+    old = AutomaticDecision.from_json(historical)
+    assert old.to_json() == historical
+    assert not qualification_manifest_is_current(
+        old.policy_category, old.policy_option, old.qualification_manifest_sha256
+    )
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(
+            **cast("dict[str, Any]", old._core()), occurred_at=old.occurred_at
+        )
+    old_path = tmp_path / "prior.sqlite"
+    with closing(sqlite3.connect(old_path)) as connection:
+        connection.executescript(predecessor)
+    before = old_path.read_bytes()
+    with pytest.raises(MetadataReportError):
+        open_repository(old_path, create=False)
+    assert old_path.read_bytes() == before

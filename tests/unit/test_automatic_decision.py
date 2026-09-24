@@ -930,9 +930,9 @@ def test_historical_f46_documents_preserve_frozen_synopsis_membership(
     pre_v19 = frozenset(
         json.loads(
             Path(
-                "docs/reference/f46-audiobook-qualification-candidate-v18.json"
+                "tests/fixtures/qualification-authority-predecessor/f46-v18-operations.json"
             ).read_text()
-        )["passing_automatic_options"]
+        )
     )
     added = {
         "description_fill:safe_plain_text:audiobook_description_preserve",
@@ -1040,9 +1040,9 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
     expected = frozenset(
         json.loads(
             Path(
-                "docs/reference/f46-audiobook-qualification-candidate-v18.json"
+                "tests/fixtures/qualification-authority-predecessor/f46-v18-operations.json"
             ).read_text()
-        )["passing_automatic_options"]
+        )
     )
     assert (
         dict(automatic_decision._PRIOR_F46_QUALIFICATION_MANIFESTS)[prior_digest]

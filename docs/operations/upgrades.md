@@ -3,7 +3,7 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v49`, `proposal-set-v8` under
-`fixed-conservative-v31`, `shadow-review-packet-v9`, `shadow-outcome-set-v8`,
+`fixed-conservative-v31`, `shadow-review-packet-v9`, `shadow-outcome-set-v9`,
 and `deterministic-shadow-decision-policy-v18`. #1076 changes automatic ebook
 synopsis semantics and the exact-current SQL bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.
@@ -212,3 +212,13 @@ association, competing positions and independent title evidence retain their
 existing authority. Ask, Ignore and owner-final decisions remain authoritative.
 Proposal policy v31 requires a clean rebuild; report v49 remains readable and
 can be re-evaluated. Old proposal/store state is rejected before mutation.
+
+## Compact qualification transition
+
+Outcome v9 requires a **clean rebuild** of prior derived stores, including empty
+v8 stores. Exact predecessor DDL is refused without mutation; no migration or
+adoption is provided. Canonical authority-only digests replace cumulative record
+hashes without changing current grants. Historical decoding remains available but
+cannot authorize current decisions or effects. The historical qualification-state
+bridge target stays fixed and does not adopt this transition. See the
+[qualification contract](../product/rich-metadata-qualification.md#current-compact-authority).

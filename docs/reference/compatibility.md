@@ -23,7 +23,7 @@ The current installed contract is intentionally narrow:
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v18`,
-  `shadow-review-action-policy-v5`, `shadow-outcome-set-v8`,
+  `shadow-review-action-policy-v5`, `shadow-outcome-set-v9`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
   these successors require a clean rebuild and do not adopt prior state;
 - `review-session-v1`, `review-library-v2`, `review-case-detail-v4`,
@@ -285,3 +285,13 @@ Report v49, proposal policy v31, action policy v5, outcome v8, proposal shape v8
 packet v9 and automatic document v1 remain unchanged. Prior reports/proposals
 still parse; old shadow documents and derived stores refuse current use, and
 historical automatic records confer no effect authority. No adoption is supplied.
+
+## Compact qualification transition
+
+Outcome v9 requires a **clean rebuild** of prior derived stores, including empty
+v8 stores. Exact predecessor DDL is refused without mutation; no migration or
+adoption is provided. Canonical authority-only digests replace cumulative record
+hashes without changing current grants. Historical decoding remains available but
+cannot authorize current decisions or effects. The historical qualification-state
+bridge target stays fixed and does not adopt this transition. See the
+[qualification contract](../product/rich-metadata-qualification.md#current-compact-authority).
