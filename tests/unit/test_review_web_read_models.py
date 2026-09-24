@@ -3143,3 +3143,84 @@ def test_conflicting_recording_statements_remain_nonselectable_evidence(statemen
     assert claim.reference not in _review_unselectable_evidence(
         reopened, {claim.reference}
     )
+
+
+@pytest.mark.parametrize(
+    "scenario,expected",
+    [
+        (
+            "absent",
+            "No eligible automatic synopsis is available. You can inspect the retained evidence.",
+        ),
+        (
+            "placeholder",
+            "No eligible automatic synopsis: retained source text does not meet the automatic synopsis rules. You can inspect the retained evidence.",
+        ),
+        (
+            "unproved_work",
+            "Automatic synopsis withheld: the source text is not proved to describe this work.",
+        ),
+        (
+            "ambiguous",
+            "Automatic synopsis withheld: the retained descriptions contain unresolved conflicting evidence.",
+        ),
+    ],
+)
+def test_automatic_synopsis_withheld_wording(scenario, expected):
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from tests.support.description_advice import _description_candidate
+    from tests.support.ebook_synopsis import ambiguous_synopsis_report, synopsis_report
+    from tests.support.proposal_evidence import _target_work_report
+
+    if scenario == "unproved_work":
+        report = _target_work_report(
+            (
+                (
+                    "catalogue",
+                    "hardcover",
+                    (
+                        _description_candidate(
+                            "catalogue", "edition-1", "work-1", "A voyage begins."
+                        ),
+                    ),
+                    True,
+                ),
+            ),
+            target_authors=None,
+        )
+    elif scenario == "ambiguous":
+        report = ambiguous_synopsis_report(same_record=True)
+    else:
+        report = synopsis_report(
+            summaries=() if scenario == "absent" else ("(duplicate)",)
+        )
+    builtin = MetadataPolicyProfile.builtin()
+    options = dict(builtin.options) | {"description_fill": "safe_plain_text"}
+    for mode in ("automatic", "ask"):
+        destinations = dict(builtin.destinations) | {"description_fill": mode}
+        policy = resolve_policy(
+            MetadataPolicyProfile.create("Synopsis wording", options, destinations),
+            report.target.library,
+        )
+        proposal = evaluate_report(
+            report, policy.resolved_id, dict(policy.destinations)
+        )
+        case = ReviewCase.create(proposal, report)
+        repository = FakeReviewRepository(case, report)
+        snapshot = replace(
+            repository.read_current_review_case(case.review_case_id, None),
+            resolved_policy_document=policy.canonical_json,
+        )
+        with patch.object(
+            repository, "read_current_review_case", return_value=snapshot
+        ):
+            detail = InspectCurrentReviewCase(repository).run(case.review_case_id)
+        field = next(f for f in detail["fields"] if f["destination"] == "description")
+        assert field["automatic_withheld_reason"] == (
+            expected if mode == "automatic" else None
+        )

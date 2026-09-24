@@ -2766,13 +2766,10 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
             for f in detail["fields"]
             if f["automatic_withheld_reason"] is not None
         }
-        assert reasons == (
-            {
-                "description": "No eligible automatic synopsis is available. You can inspect the retained evidence."
-            }
-            if mode in {"admission_only", "human"}
-            else {}
+        assert set(reasons) == (
+            {"description"} if mode in {"admission_only", "human"} else set()
         )
+        assert all(isinstance(reason, str) and reason for reason in reasons.values())
     repository.close()
 
 
@@ -2882,7 +2879,13 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
     try:
         with patch.object(reader, "get_review_case", side_effect=interleave):
             detail = InspectCurrentReviewCase(reader).run(case_id)
-        assert any(f["automatic_withheld_reason"] is not None for f in detail["fields"])
+        reasons = {
+            f["destination"]: f["automatic_withheld_reason"]
+            for f in detail["fields"]
+            if f["automatic_withheld_reason"] is not None
+        }
+        assert set(reasons) == {"series", "description"}
+        assert all(isinstance(reason, str) and reason for reason in reasons.values())
         writer_thread.join(timeout=5)
         assert not writer_thread.is_alive()
         assert errors == []
@@ -2900,13 +2903,13 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
             == provider_failure_report(contributing=False).report_id
         )
         after = InspectCurrentReviewCase(reader).run(successor_ids[0])
-        assert {
+        reasons = {
             f["destination"]: f["automatic_withheld_reason"]
             for f in after["fields"]
             if f["automatic_withheld_reason"] is not None
-        } == {
-            "description": "No eligible automatic synopsis is available. You can inspect the retained evidence."
         }
+        assert set(reasons) == {"description"}
+        assert all(isinstance(reason, str) and reason for reason in reasons.values())
     finally:
         if started:
             writer_thread.join(timeout=5)

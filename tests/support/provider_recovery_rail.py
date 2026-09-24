@@ -151,9 +151,10 @@ def publish_provider_failure_case(
     builtin = MetadataPolicyProfile.builtin()
     destinations = dict(builtin.destinations)
     destinations["series"] = "automatic" if automatic else "ask"
-    profile = MetadataPolicyProfile.create(
-        "Series review", dict(builtin.options), destinations
-    )
+    destinations["description_fill"] = "automatic"
+    options = dict(builtin.options)
+    options["description_fill"] = "safe_plain_text"
+    profile = MetadataPolicyProfile.create("Series review", options, destinations)
     policy = resolve_policy(profile, report.target.library)
     repository.enter_shadow_preview(1)
     repository.create_metadata_policy_draft(profile.canonical_json)
