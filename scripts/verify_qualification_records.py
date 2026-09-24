@@ -121,8 +121,47 @@ def semantic_digest(provenance: dict[str, Any], bindings: dict[str, str]) -> str
     )
 
 
+def verify_references(root: Path, provenance: dict[str, Any]) -> None:
+    """Check local immutable reference coherence without resolving archive bytes."""
+    archive = json.loads(
+        (root / REFERENCE / "qualification-archive-index.json").read_bytes()
+    )["records"]
+    if set(provenance["historical_measurement_origins"]) != set(RECORDS):
+        raise ValueError("measurement origin family mismatch")
+    for family, (name, _, _) in RECORDS.items():
+        record = json.loads((root / REFERENCE / name).read_bytes())
+        authority = record["authority"]
+        if (
+            record["schema"] != "qualification-current-v1"
+            or authority["family"] != family
+            or authority["media"] != ("audiobook" if family == "F46" else "ebook")
+            or type(authority["semantic_revision"]) is not int
+            or authority["semantic_revision"] < 1
+            or record["provenance"] != PROVENANCE.name
+        ):
+            raise ValueError("qualification family or representation mismatch")
+        for reference in (
+            record["predecessor"],
+            provenance["historical_measurement_origins"][family],
+        ):
+            if (
+                set(reference) != {"source_sha", "path", "sha256"}
+                or re.fullmatch(r"[0-9a-f]{40}", reference["source_sha"]) is None
+                or re.fullmatch(r"[0-9a-f]{64}", reference["sha256"]) is None
+                or not reference["path"].startswith(
+                    "docs/reference/"
+                    + name.split("-qualification-")[0]
+                    + "-qualification-"
+                )
+                or archive.get(reference["source_sha"], {}).get(reference["path"])
+                != reference["sha256"]
+            ):
+                raise ValueError("immutable qualification reference mismatch")
+
+
 def verify(root: Path = ROOT, *, overrides: dict[str, bytes] | None = None) -> None:
     provenance = json.loads((root / PROVENANCE).read_bytes())
+    verify_references(root, provenance)
     bindings = source_bindings(root, provenance, overrides)
     if bindings != provenance["source_bindings"]:
         raise ValueError("source binding drift")
@@ -140,6 +179,7 @@ def verify(root: Path = ROOT, *, overrides: dict[str, bytes] | None = None) -> N
 def refresh(root: Path = ROOT) -> None:
     """Refresh reviewed source bytes; never infer a new classification or permission."""
     provenance = json.loads((root / PROVENANCE).read_bytes())
+    verify_references(root, provenance)
     semantic = semantic_digest(provenance, source_bindings(root, provenance))
     for name, module, constant in RECORDS.values():
         path = root / REFERENCE / name

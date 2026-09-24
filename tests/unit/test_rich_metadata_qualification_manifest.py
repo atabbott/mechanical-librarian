@@ -106,6 +106,8 @@ def test_all_dispositions_and_public_summary_keep_exact_authority():
     "name",
     [
         "src/mechanical_librarian/domain/rich_metadata_preview.py",
+        "src/mechanical_librarian/adapters/providers/hardcover_metadata.py",
+        "src/mechanical_librarian/adapters/persistence/field_effect_validation.py",
         "src/mechanical_librarian/application/review_web.py",
         "src/mechanical_librarian/interfaces/web/app.py",
         "src/mechanical_librarian/adapters/persistence/field_effect_activity.py",
@@ -126,6 +128,8 @@ def test_semantic_changes_rotate_authority(name):
     "name",
     [
         "frontend/src/routes/PolicyPage.tsx",
+        "docs/product/rich-metadata-qualification.md",
+        "tests/fixtures/qualification-authority-predecessor/provenance.json",
         "src/mechanical_librarian/application/operations.py",
         "tests/unit/test_rich_metadata_qualification_manifest.py",
     ],
@@ -233,3 +237,63 @@ def test_only_named_binding_assignments_break_the_cycle():
     assert records.source_digest(name, source.encode()) != records.source_digest(
         name, changed.encode()
     )
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "family",
+        "media",
+        "predecessor_digest",
+        "predecessor_family",
+        "origin_digest",
+        "origin_family",
+        "provenance",
+    ],
+)
+def test_immutable_references_and_family_are_coherent(tmp_path, mutation):
+    import shutil
+
+    reference = tmp_path / records.REFERENCE
+    reference.mkdir(parents=True)
+    for name, _, _ in records.RECORDS.values():
+        shutil.copyfile(ROOT / records.REFERENCE / name, reference / name)
+    shutil.copyfile(
+        ROOT / records.REFERENCE / "qualification-archive-index.json",
+        reference / "qualification-archive-index.json",
+    )
+    provenance = json.loads((ROOT / records.PROVENANCE).read_bytes())
+    path = reference / records.RECORDS["F19A"][0]
+    document = json.loads(path.read_bytes())
+    if mutation in {"family", "media"}:
+        document["authority"][mutation] = "F46" if mutation == "family" else "audiobook"
+    elif mutation == "predecessor_digest":
+        document["predecessor"]["sha256"] = "0" * 64
+    elif mutation == "predecessor_family":
+        document["predecessor"] = json.loads(
+            (reference / records.RECORDS["F46"][0]).read_bytes()
+        )["predecessor"]
+    elif mutation == "origin_digest":
+        provenance["historical_measurement_origins"]["F19A"]["sha256"] = "0" * 64
+    elif mutation == "origin_family":
+        provenance["historical_measurement_origins"]["F19A"] = provenance[
+            "historical_measurement_origins"
+        ]["F46"]
+    else:
+        document["provenance"] = "unbound.json"
+    path.write_text(json.dumps(document))
+    with pytest.raises(ValueError):
+        records.verify_references(tmp_path, provenance)
+
+
+def test_retained_measurement_context_matches_immutable_base():
+    provenance = json.loads((ROOT / records.PROVENANCE).read_bytes())
+    # Independently captured from the base F46-v20 / F20-v51 records; no archive lookup.
+    expected = {
+        "current_measurement": "5bc75d52d821e9f91607d0a567382162677bee954a8b4185891874260883a760",
+        "measurement_artifacts": "131f350ce18f5d4dc1df46f6364278af148027a95c0db63c5b6b8cd51f698151",
+        "limitations": "a5ff8bf309e9f8c5881c3804a4018336f23093a90a707942eb1e1d4186d04669",
+        "current_ebook_measurement": "68257847af41acebfa3fbc20bbe61bdc4ae9e2a8df4a6f2aeea1cd4214258efc",
+    }
+    for key, digest in expected.items():
+        assert records.canonical_digest(provenance[key]) == digest

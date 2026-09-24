@@ -30,7 +30,19 @@ Only the precisely named existing circular-binding assignments use AST exclusion
 unknown exclusions fail. There is no general semantic classifier.
 
 Run `uv run python scripts/verify_qualification_records.py` to check bindings;
-use `--refresh` after a reviewed source change, then inspect the resulting diff.
+use `--refresh` only after the preservation steps below, then inspect the diff.
+Before changing semantic inputs or authority, retain the current committed record's
+full Git SHA, path and byte digest in the archive index, grouped by that source SHA.
+Point each successor's predecessor reference at that immutable entry, increment its
+semantic revision, and append the displaced authority digest with its exact frozen
+permissions to the compiled historical table. Preserve existing table entries and
+extend the independent historical parity expectation; never regenerate genuine
+predecessor documents. Then refresh bindings and prove old decoding/no authority,
+current production and persistence admission. The command refreshes hashes only;
+it does not archive records, revise history or grant migration authority. When
+persisted interpretation changes, assess the clean-rebuild boundary explicitly.
+For provenance-only edits these preservation steps are unnecessary because the
+authority object and digest remain unchanged. No full cumulative record is created.
 The provenance record retains the complete F46 measurement, shared ebook
 measurement, fourteen measurement artifacts and immutable measurement origins.
 No historical quality was rescored, no fresh holdout is claimed and no production
