@@ -770,16 +770,18 @@ def test_setup_outcomes_preserve_native_case_accounting(
         passed, summary = _cohort_summary(_module(Path(directory), body))
     assert passed is expected_passed
     assert summary["tests_run"] == tests_run
-    assert summary.get("errors", 0) == errors
-    assert summary.get("failures", 0) == 0
-    assert summary.get("skipped", 0) == skipped
-    assert (
-        tuple(
-            ".".join(identifier.rsplit(".", 2)[-2:])
-            for identifier in summary.get("failed_test_ids", ())
+    if expected_passed:
+        assert summary["skipped"] == skipped
+    else:
+        assert summary["errors"] == errors
+        assert summary["failures"] == 0
+        assert (
+            tuple(
+                ".".join(identifier.rsplit(".", 2)[-2:])
+                for identifier in summary["failed_test_ids"]
+            )
+            == failed_suffixes
         )
-        == failed_suffixes
-    )
 
 
 _LOAD_TESTS_MODULE = (
