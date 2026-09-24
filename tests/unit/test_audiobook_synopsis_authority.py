@@ -22,12 +22,7 @@ from mechanical_librarian.domain.rich_metadata_preview import (
 )
 from tests.support.audiobook_reports import publish_audiobook_preview
 from tests.support.audiobook_synopsis import synopsis_report
-from tests.unit.test_field_effects import effects as _effects
-
-
-@pytest.fixture
-def effects():
-    yield from _effects.__wrapped__()
+from tests.support.field_effects import effects as effects
 
 
 @pytest.mark.parametrize(
@@ -419,7 +414,7 @@ def test_synopsis_replacement_uses_persisted_guarded_effect(
         PersistedEffectConsent,
     )
     from mechanical_librarian.application.field_effects import GuardedFieldApplication
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
 
     case_id, _ = publish_audiobook_preview(
         effects.repository,

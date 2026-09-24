@@ -5,12 +5,11 @@ import json
 import os
 import sqlite3
 import sys
-import tempfile
 import threading
 import time
 from collections.abc import Callable
 from contextlib import closing
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
@@ -25,14 +24,6 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.field_effect_fakes import (
-    FakeAuthorityCurrentness,
-    FakeBackupReadiness,
-    FakeCapabilityObserver,
-    FakeConsentCurrentness,
-    FakeDependencyCurrentness,
-    FakeForwardReevaluation,
-    FakePreclaimHook,
-    FakeTargetService,
     PrivateCoverRecoveryStore,
 )
 from mechanical_librarian.adapters.field_effect_runtime import (
@@ -75,7 +66,6 @@ from mechanical_librarian.domain.field_effect import (
     FieldEffectNoChange,
     FieldEffectOperation,
     FieldEffectPlan,
-    decision_value_kind,
     project_decision_value,
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
@@ -118,6 +108,19 @@ from tests.support.audiobookshelf_targets import (
 )
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.cover_images import synthetic_image
+from tests.support.field_effects import (
+    CAPABILITY,
+    DEPENDENCY,
+    _authorize,
+    _EffectEnvironment,
+    _plan,
+    decision,
+    envelope,
+    metadata_report,
+)
+from tests.support.field_effects import (
+    effects as effects,
+)
 from tests.support.proposal_evidence import (
     _target_work_candidate,
     _target_work_report,
@@ -133,18 +136,6 @@ if TYPE_CHECKING:
     # `append` takes exactly this record.
     from mechanical_librarian.application.operations import StageTiming
 
-CAPABILITY = "c" * 64
-DEPENDENCY = "d" * 64
-
-
-class Clock:
-    def __init__(self) -> None:
-        self.value = 10
-
-    def __call__(self) -> int:
-        self.value += 1
-        return self.value
-
 
 class TimingCollector:
     def __init__(self) -> None:
@@ -155,139 +146,6 @@ class TimingCollector:
 
     def list(self):
         return tuple(self.values)
-
-
-def decision(destination: str, selected: object, suffix: str = "a") -> HumanDecision:
-    return HumanDecision(
-        "human_decision_" + suffix * 64,
-        "review_case_" + "b" * 64,
-        "review_proposal_" + "c" * 64,
-        "d" * 64,
-        destination,
-        "owner",
-        "accept",
-        selected,
-        "e" * 64,
-        "f" * 64,
-        1,
-        "apply",
-    )
-
-
-def envelope(destination: str, value: object) -> dict[str, object]:
-    return {"kind": decision_value_kind(destination), "value": value}
-
-
-def metadata_report(
-    title: str,
-    content: str,
-    file_identity: str,
-    item_id: str = "1234567890abcdef",
-    library: str = "books",
-) -> MetadataReport:
-    claim = LocalClaim.create(
-        kind=ClaimKind.TITLE,
-        observed="Exact evaluator candidate",
-        canonical="Exact evaluator candidate",
-        excerpt="Exact evaluator candidate",
-        applicability="not_applicable",
-        checksum="not_applicable",
-        applicability_basis="not_applicable",
-        scope=ClaimScope.WORK,
-    )
-    return MetadataReport.create(
-        target=TargetFacts("primary", library, item_id, default_target_fields(title)),
-        file=FileFacts(0, content * 64, file_identity * 64),
-        local_claims=(claim,),
-        local_reasons=("opening_matter_title",),
-        providers=(),
-    )
-
-
-@dataclass
-class _EffectEnvironment:
-    """The guarded field-effect application under test, with its doubles.
-
-    Declared rather than a `SimpleNamespace` so every member keeps the type
-    the `setUp` attributes carried; an untyped namespace would silently make
-    `service` and `repository` `Any` and retire the site suppressions that
-    depend on their real signatures.
-    """
-
-    temporary: tempfile.TemporaryDirectory[str]
-    database_path: Path
-    repository: SQLiteMetadataReportRepository
-    target: FakeTargetService
-    authority: FakeAuthorityCurrentness
-    dependencies: FakeDependencyCurrentness
-    backup: FakeBackupReadiness
-    capabilities: FakeCapabilityObserver
-    consent: FakeConsentCurrentness
-    preclaim: FakePreclaimHook
-    claim_hook: FakePreclaimHook
-    recovery_hook: FakePreclaimHook
-    reevaluation: FakeForwardReevaluation
-    recovery: PrivateCoverRecoveryStore
-    clock: Clock
-    service: GuardedFieldApplication
-
-
-@pytest.fixture
-def effects():
-    """One guarded field-effect application with its doubles and store."""
-
-    temporary = tempfile.TemporaryDirectory()
-    root = Path(temporary.name)
-    os.chmod(root, 0o700)
-    database_path = root / "effects.sqlite"
-    repository = open_repository(database_path, cross_thread=True)
-    target = FakeTargetService()
-    authority = FakeAuthorityCurrentness()
-    dependencies = FakeDependencyCurrentness()
-    backup = FakeBackupReadiness()
-    capabilities = FakeCapabilityObserver(CAPABILITY)
-    consent = FakeConsentCurrentness(repository.field_effect_consent_envelope_identity)
-    preclaim = FakePreclaimHook()
-    claim_hook = FakePreclaimHook()
-    recovery_hook = FakePreclaimHook()
-    reevaluation = FakeForwardReevaluation()
-    recovery = PrivateCoverRecoveryStore(root / "recovery", lambda _: b"old-cover")
-    clock = Clock()
-    environment = _EffectEnvironment(
-        temporary,
-        database_path,
-        repository,
-        target,
-        authority,
-        dependencies,
-        backup,
-        capabilities,
-        consent,
-        preclaim,
-        claim_hook,
-        recovery_hook,
-        reevaluation,
-        recovery,
-        clock,
-        GuardedFieldApplication(
-            repository,
-            target,
-            backup,
-            capabilities,
-            authority,
-            dependencies,
-            consent,
-            recovery,
-            reevaluation,
-            clock,
-            preclaim,
-            claim_hook,
-            recovery_hook,
-        ),
-    )
-    yield environment
-    environment.repository.close()
-    temporary.cleanup()
 
 
 def test_consent_is_invalidated_when_resolved_policy_semantics_change(
@@ -2135,53 +1993,6 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
     effects.repository.publish_proposal(replacement_proposal)
     effects.repository.admit_review_case(replacement_proposal)
     assert effects.repository.pending_field_effect_decision_documents(10) == ()
-
-
-def _plan(
-    effects: _EffectEnvironment,
-    destination: str = "title",
-    pre: object = "old",
-    desired: object = "new",
-    suffix: str = "a",
-) -> FieldEffectOperation:
-    selected = envelope(destination, desired)
-    source = decision(destination, selected, suffix)
-    _authorize(effects, source)
-    result = effects.service.plan(
-        source,
-        connection="primary",
-        library="books",
-        work_id="book-1",
-        destination=destination,
-        pre_value=pre,
-        desired_value=selected,
-        target_fingerprint="d" * 64,
-        target_version="version-1",
-        dependency_digests=(DEPENDENCY,),
-        capability_digest=CAPABILITY,
-    )
-    assert result is not None
-    effects.target.seed(result.plan)
-    return result
-
-
-def _authorize(
-    effects: _EffectEnvironment,
-    source: HumanDecision | AutomaticDecision,
-    *,
-    work_id: str = "book-1",
-    target_version: str = "version-1",
-) -> None:
-    effects.authority.bind(
-        source,
-        connection="primary",
-        library="books",
-        work_id=work_id,
-        target_version=target_version,
-    )
-    effects.consent.allow(
-        connection="primary", library="books", destination=source.destination
-    )
 
 
 class _PlanWriteWatch:
@@ -5797,9 +5608,9 @@ def test_actual_pair_reconstruction_refuses_changed_sources(audiobook_pair, chan
         (audiobook_pair.case_id,),
     ).fetchone()[0]
     outcome = ShadowOutcomeSet.from_json(raw)
-    for decision in audiobook_pair.decisions.values():
+    for source in audiobook_pair.decisions.values():
         assert _automatic_decision_value(
-            decision, case, audiobook_pair.report, proposal, outcome
+            source, case, audiobook_pair.report, proposal, outcome
         )
     with pytest.raises(ValueError):
         report = audiobook_pair.report

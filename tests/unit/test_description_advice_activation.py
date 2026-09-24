@@ -44,7 +44,7 @@ def test_real_service_candidate_admits_through_persisted_authority(
         store.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 12)
         == decision
     )
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
 
     application, target = _guarded_application(repository, tmp_path, authority)
     operation = application.plan(
@@ -754,7 +754,7 @@ def test_advice_automatic_off_retains_qualified_deterministic_description_fill(
         deterministic.to_json()
         in repository.pending_field_effect_decision_documents(100)
     )
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
 
     application, target = _guarded_application(
         repository, tmp_path, PersistedFieldEffectAuthority(repository)
@@ -873,7 +873,7 @@ def test_profile_drift_between_guarded_boundaries_never_writes(
     boundary: str,
 ) -> None:
     from mechanical_librarian.domain.field_effect import FieldEffectError
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
 
     identity = ("synthetic-model", b"synthetic-contained-profile")
     calls = []
@@ -1058,8 +1058,8 @@ def test_verified_deterministic_fill_retires_advice_before_successor_scan(
         TargetFieldState,
     )
     from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.field_effects import CAPABILITY
     from tests.support.proposal_evidence import _report
-    from tests.unit.test_field_effects import CAPABILITY
 
     base, *_ = _automatic_no_change_inputs("description_preserved")
     report = _report(
@@ -1703,7 +1703,7 @@ def test_unverified_effect_does_not_retire_description_binding(
     tmp_path: Path,
     outcome: str,
 ) -> None:
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
 
     repository, store, binding, candidate, _ = _prepared(tmp_path)
     decision = store.admit(candidate.candidate_id, binding, "human", "a" * 64, 11)
@@ -1752,7 +1752,7 @@ def test_guarded_runtime_composition_binds_its_reopened_description_store(
     )
     from mechanical_librarian.bootstrap import composition
     from tests.support.description_advice import _contained_profile
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
     from tests.unit.test_shadow_outcome_persistence import _pipeline_configuration
 
     profile = _contained_profile(tmp_path)
@@ -1826,8 +1826,8 @@ def test_other_verified_fake_service_write_preserves_description_binding(
         FakeAuthorityCurrentness,
     )
     from mechanical_librarian.domain.field_effect import field_value_version
-    from tests.unit.test_field_effects import CAPABILITY, DEPENDENCY
-    from tests.unit.test_field_effects import decision as fake_decision
+    from tests.support.field_effects import CAPABILITY, DEPENDENCY
+    from tests.support.field_effects import decision as fake_decision
 
     repository, store, binding, _, _ = _prepared(tmp_path)
     destination = "title" if scope == "other_field" else "description"
@@ -1879,8 +1879,8 @@ def test_authored_admission_replaces_pending_but_not_claimed_deterministic_effec
         TargetFieldState,
     )
     from tests.support.automatic_no_change import _automatic_no_change_inputs
+    from tests.support.field_effects import CAPABILITY
     from tests.support.proposal_evidence import _report
-    from tests.unit.test_field_effects import CAPABILITY
 
     base, *_ = _automatic_no_change_inputs("description_preserved")
     report = _report(
@@ -2440,7 +2440,7 @@ def test_selected_effect_outcome_survives_new_attempt_and_reopen(
     from mechanical_librarian.domain.description_advice import (
         DescriptionAdviceCandidate,
     )
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
 
     repository, store, binding, candidate, _ = _prepared(
         tmp_path, same_current=same_current

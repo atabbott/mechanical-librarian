@@ -63,8 +63,8 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
+from tests.support.field_effects import CAPABILITY, Clock
 from tests.unit.test_cover_packets import _preview, _report, _source
-from tests.unit.test_field_effects import CAPABILITY, Clock
 from tests.unit.test_shadow_outcome_persistence import (
     _pipeline_configuration,
     _qualified_cover_report,
