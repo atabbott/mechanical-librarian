@@ -725,7 +725,7 @@
     "tests/unit/test_shadow_review_actions.py": "d3da5ec7fa2b23cf26e88fd5e092e5e236fdc440bdd0317910e66aa143dc5a6b",
     "tests/unit/test_shadow_review_packets.py": "cc6a9b23ffc04c150bdb0522bf5cad6930fd8d6a34543909290e7db7efadfb56",
     "tests/unit/test_sqlite_row_delta_audit.py": "013e6a009bdff0208e11cdb9abf36eb240fec76b035f079801fc7580962a8221",
-    "tests/unit/test_test_tiers.py": "04a10af1c4a7ad484881116de40ce87c6855ba48eebb0e3fd3dbc2b73bc3935b",
+    "tests/unit/test_test_tiers.py": "ea92e725295338e94370502ca195cfff4a3c74ddf591856a394f47c9f2ad510f",
     "tests/unit/test_transaction_scope.py": "220aa16d0156ce795a036fe3c246a6167452eeb555408d07e8b86f982b26a13a",
     "tests/unit/test_work_identity.py": "561906ba2447c972ba5dc24bda35de965075a15860663935f1a8d990195dee87"
   },
