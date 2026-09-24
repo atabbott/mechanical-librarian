@@ -3710,3 +3710,49 @@ def test_ebook_same_record_conflict_precedes_placeholder_fitness():
         "abstain",
         "ambiguous_evidence",
     )
+
+
+@pytest.mark.parametrize(
+    "summaries",
+    [
+        ("(duplicate)",),
+        ("294 pages ; 22 cm",),
+        ("(Duplicate)", "(duplicate)"),
+        ("294 pages;22 cm", "(duplicate)"),
+    ],
+)
+def test_ebook_placeholder_synopses_abstain(summaries):
+    from tests.support.ebook_synopsis import synopsis_report
+
+    _, fields = _target_work_preview(synopsis_report(summaries=summaries))
+    field = fields["description_fill"]
+    assert (field.outcome, field.reason) == (
+        "abstain",
+        "description_quality_floor_not_met",
+    )
+    assert field.desired_value is None
+    assert field.source_evidence_references == ()
+
+
+@pytest.mark.parametrize(
+    "summaries,winner_index",
+    [
+        (("(duplicate)", "A voyage begins."), 1),
+        (("294 pages ; 22 cm", "A voyage begins."), 1),
+        (("A voyage begins.", "(duplicate)"), 0),
+    ],
+)
+def test_ebook_mixed_synopses_select_useful_source(summaries, winner_index):
+    from tests.support.ebook_synopsis import synopsis_report
+
+    report = synopsis_report(summaries=summaries)
+    _, fields = _target_work_preview(report)
+    field = fields["description_fill"]
+    assert (field.outcome, field.reason) == ("projected", None)
+    assert field.desired_value == "A voyage begins."
+    winner = report.providers[winner_index].candidates[0]
+    assert field.source_evidence_references == tuple(
+        claim.reference
+        for claim in winner.claims
+        if claim.kind is ClaimKind.DESCRIPTION
+    )

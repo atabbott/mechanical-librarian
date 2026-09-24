@@ -187,7 +187,7 @@ def _guarded_application(repository, root, authority):
         PersistedEffectConsent,
     )
     from mechanical_librarian.application.field_effects import GuardedFieldApplication
-    from tests.unit.test_field_effects import CAPABILITY, Clock
+    from tests.support.field_effects import CAPABILITY, Clock
 
     repository.grant_field_effect_consents("primary", ("ebooks",), ("description",), 12)
     from mechanical_librarian.domain.field_effect import field_value_version

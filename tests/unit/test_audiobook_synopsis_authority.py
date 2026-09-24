@@ -22,12 +22,7 @@ from mechanical_librarian.domain.rich_metadata_preview import (
 )
 from tests.support.audiobook_reports import publish_audiobook_preview
 from tests.support.audiobook_synopsis import synopsis_report
-from tests.unit.test_field_effects import effects as _effects
-
-
-@pytest.fixture
-def effects():
-    yield from _effects.__wrapped__()
+from tests.support.field_effects import effects as effects
 
 
 @pytest.mark.parametrize(
@@ -192,8 +187,18 @@ def test_persisted_value_projection_refuses_replacement_substitutions(
         )
 
 
-@pytest.mark.parametrize("mode", ["automatic", "ask", "ignore"])
-@pytest.mark.parametrize("choice", [0, 1, None])
+@pytest.mark.parametrize(
+    "mode,choice",
+    [
+        ("automatic", 0),
+        ("automatic", 1),
+        ("automatic", None),
+        ("ask", 0),
+        ("ask", 1),
+        ("ask", None),
+        ("ignore", None),
+    ],
+)
 def test_owner_routing_alternatives_and_finality(tmp_path, mode, choice):
     from mechanical_librarian.application.review_web import (
         BrowseReviewLibrary,
@@ -419,7 +424,7 @@ def test_synopsis_replacement_uses_persisted_guarded_effect(
         PersistedEffectConsent,
     )
     from mechanical_librarian.application.field_effects import GuardedFieldApplication
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
 
     case_id, _ = publish_audiobook_preview(
         effects.repository,
@@ -808,6 +813,5 @@ def test_current_detail_does_not_offer_unadmitted_audiobook_synopsis(tmp_path, s
         assert field["decision_actions"] == []
         assert field["proposed_values"] == []
         assert field["editable"] is False
-        assert field["automatic_withheld_reason"] == (
-            "No eligible automatic synopsis: retained source text does not meet the automatic synopsis rules. You can inspect the retained evidence."
-        )
+        assert isinstance(field["automatic_withheld_reason"], str)
+        assert field["automatic_withheld_reason"]

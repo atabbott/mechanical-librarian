@@ -67,16 +67,7 @@ from tests.support.audiobook_reports import (
 )
 from tests.support.automatic_decisions import _automatic_decisions
 from tests.support.automatic_no_change import _automatic_no_change_inputs
-from tests.support.proposal_evidence import (
-    _claim,
-    _fields,
-    _local_description,
-    _provider,
-    _target_work_candidate,
-    _target_work_report,
-)
-from tests.support.proposal_evidence import _report as _proposal_report
-from tests.unit.test_field_effects import (  # noqa: F401
+from tests.support.field_effects import (  # noqa: F401
     CAPABILITY,
     DEPENDENCY,
     _authorize,
@@ -86,6 +77,15 @@ from tests.unit.test_field_effects import (  # noqa: F401
     envelope,
     metadata_report,
 )
+from tests.support.proposal_evidence import (
+    _claim,
+    _fields,
+    _local_description,
+    _provider,
+    _target_work_candidate,
+    _target_work_report,
+)
+from tests.support.proposal_evidence import _report as _proposal_report
 
 
 def _ledger(

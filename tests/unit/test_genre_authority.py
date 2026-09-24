@@ -285,7 +285,7 @@ def test_genre_real_authority_reaches_consent_guarded_verified_effect(tmp_path):
     )
     from mechanical_librarian.application.field_effects import GuardedApplicationError
     from tests.support.description_advice import _guarded_application
-    from tests.unit.test_field_effects import CAPABILITY
+    from tests.support.field_effects import CAPABILITY
 
     with closing(open_repository(tmp_path / "effect.sqlite")) as repository:
         case_id, _ = publish_genre_case(repository, genre_report())
