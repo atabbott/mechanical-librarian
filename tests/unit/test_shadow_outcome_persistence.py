@@ -10,7 +10,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
@@ -36,6 +36,7 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
+    SQLiteMetadataReportRepository,
     open_repository,
 )
 from mechanical_librarian.adapters.reviewers.contained_reviewer import (
@@ -125,6 +126,7 @@ from mechanical_librarian.domain.metadata_policy import (
     DEFAULT_OPTIONS,
     OPTION_CATALOGUE,
     MetadataPolicyProfile,
+    ResolvedMetadataPolicy,
     human_review_destinations,
     resolve_policy,
 )
@@ -148,7 +150,11 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
     finalize_candidate_comparisons,
 )
-from mechanical_librarian.domain.proposal_set import ProposalOutcome, evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    ProposalOutcome,
+    ProposalSet,
+    evaluate_report,
+)
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewTransition
 from mechanical_librarian.domain.reviewer_access import (
     CodexTaskSelection,
@@ -1008,17 +1014,9 @@ def test_first_automatic_cover_compares_the_actual_target_after_typed_timeout(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
         )
@@ -1814,20 +1812,12 @@ def test_year_current_reaches_one_durable_publication_keep_and_read_models() -> 
         )
         resolved = resolve_policy(profile, report.target.library)
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
         assert type(case_id) is str
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
@@ -1955,20 +1945,12 @@ def test_full_date_reaches_one_durable_publication_candidate_and_read_models() -
         )
         resolved = resolve_policy(profile, report.target.library)
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
         assert type(case_id) is str
 
         persisted = repository.persist_shadow_outcome(case_id, 4)
@@ -2085,24 +2067,14 @@ def test_automatic_keep_current_is_a_single_no_change_fact_without_guards(
         )
         resolved = resolve_policy(profile, report.target.library)
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal_set = evaluate_report(
             report,
             resolved.resolved_id,
             human_review_destinations(resolved),
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal_set)
-        case_id = json.loads(repository.admit_review_case(proposal_set))[
-            "review_case_id"
-        ]
+        case_id = _publish_case(repository, report, proposal_set)["review_case_id"]
         assert case_id is not None
         case = ReviewCase.create_from_data(
             json.loads(repository.get_review_case(case_id))["case"]
@@ -2644,19 +2616,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
             )
             resolved = resolve_policy(profile, report.target.library)
             repository.enter_shadow_preview(1)
-            repository.create_metadata_policy_draft(profile.canonical_json)
-            repository.activate_metadata_policy(
-                profile.policy_id,
-                MetadataPolicyProfile.builtin().policy_id,
-                (
-                    (
-                        report.target.library,
-                        resolved.resolved_id,
-                        resolved.canonical_json,
-                    ),
-                ),
-                2,
-            )
+            _activate_profile(repository, profile, resolved, report.target.library)
             repository.activate_qualified_automatic(3)
             proposal = evaluate_report(
                 report,
@@ -2670,11 +2630,7 @@ def test_every_f20_automatic_option_reaches_persisted_effect_authority() -> None
                     if value.destination is TargetDestination.SERIES
                 )
                 assert 2 == len(series_result.alternatives[0].value.value)
-            repository.publish(report, lambda: True)
-            repository.publish_proposal(proposal)
-            case_id = json.loads(repository.admit_review_case(proposal))[
-                "review_case_id"
-            ]
+            case_id = _publish_case(repository, report, proposal)["review_case_id"]
             outcome = ShadowOutcomeSet.from_json(
                 repository.persist_shadow_outcome(case_id, 4)
             )
@@ -3348,19 +3304,7 @@ def test_uncorroborated_subtitle_under_automatic_mints_no_decision() -> None:
         )
         resolved = resolve_policy(profile, report.target.library)
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            (
-                (
-                    report.target.library,
-                    resolved.resolved_id,
-                    resolved.canonical_json,
-                ),
-            ),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report,
@@ -3372,9 +3316,7 @@ def test_uncorroborated_subtitle_under_automatic_mints_no_decision() -> None:
             and value.outcome is ProposalOutcome.PROPOSE_CHANGE
             for value in proposal.results
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
         outcome = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
         )
@@ -3475,20 +3417,8 @@ def test_preview_automatic_matrix_preserves_human_policy_and_records_outcomes() 
             repository = open_repository(Path(temporary) / "reports.sqlite")
             profile = _preview_automatic_profile()
             repository.enter_shadow_preview(1)
-            repository.create_metadata_policy_draft(profile.canonical_json)
             resolved = resolve_policy(profile, report.target.library)
-            repository.activate_metadata_policy(
-                profile.policy_id,
-                MetadataPolicyProfile.builtin().policy_id,
-                (
-                    (
-                        report.target.library,
-                        resolved.resolved_id,
-                        resolved.canonical_json,
-                    ),
-                ),
-                2,
-            )
+            _activate_profile(repository, profile, resolved, report.target.library)
             effective = human_review_destinations(resolved)
             assert "ask" == effective["title_layout"]
             assert "ignore" == effective["tags"]
@@ -3510,9 +3440,7 @@ def test_preview_automatic_matrix_preserves_human_policy_and_records_outcomes() 
                 proposal.bibliographic_combinations
                 == manual_proposal.bibliographic_combinations
             )
-            repository.publish(report, lambda: True)
-            repository.publish_proposal(proposal)
-            admitted = json.loads(repository.admit_review_case(proposal))
+            admitted = _publish_case(repository, report, proposal)
             assert "admitted" == admitted["status"]
             default_packet = repository.preview_shadow_packet(
                 admitted["review_case_id"]
@@ -3563,14 +3491,8 @@ def test_preview_automatic_matrix_preserves_human_policy_and_records_outcomes() 
             },
         )
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.publish(report, lambda: True)
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
@@ -3887,13 +3809,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         recovery = composition.SQLiteProviderRecoveryStore.open(
             root / "provider-recovery.sqlite"
@@ -4320,13 +4236,7 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         recovery = composition.SQLiteProviderRecoveryStore.open(
             root / "provider-recovery.sqlite"
@@ -4943,19 +4853,7 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
             first_report, resolved.resolved_id, human_review_destinations(resolved)
         )
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            (
-                (
-                    first_report.target.library,
-                    resolved.resolved_id,
-                    resolved.canonical_json,
-                ),
-            ),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, first_report.target.library)
         repository.activate_qualified_automatic(3)
         recovery = composition.SQLiteProviderRecoveryStore.open(
             root / "provider-recovery.sqlite"
@@ -6618,21 +6516,13 @@ def test_generic_subtitle_preservation_records_only_the_title_no_op() -> None:
         path = Path(temporary) / "reports.sqlite"
         repository = open_repository(path)
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, dict(resolved.destinations)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
         repository.set_automatic_safety_state(AutomaticSafetyState(False, None, ()), 2)
 
         persisted = repository.persist_shadow_outcome(case_id, 3)
@@ -6713,21 +6603,13 @@ def test_provider_consensus_title_persists_the_exact_qualified_automatic_tranche
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, dict(resolved.destinations)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
 
         outcome = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
@@ -6830,21 +6712,13 @@ def test_decoration_tidy_title_persists_its_own_qualified_automatic_option() -> 
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, dict(resolved.destinations)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
 
         outcome = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
@@ -6879,61 +6753,32 @@ def test_decoration_tidy_title_persists_its_own_qualified_automatic_option() -> 
         repository.close()
 
 
-def test_decoration_equivalent_title_keeps_the_current_value_without_a_write() -> None:
-    local = "Plain Work"
-    report = _proposal_report(
-        fields=_fields(
-            local,
-            title=TargetField(
-                TargetDestination.TITLE,
-                TargetFieldState.VALUE,
-                local,
-            ),
-        ),
-        local_claims=(_consensus_local_title(local),),
-        providers=(
-            _consensus_provider_title("open_library", "Plain Work"),
-            _consensus_provider_title("hardcover", "Plain Work [retail]"),
-        ),
+def _activate_profile(
+    repository: SQLiteMetadataReportRepository,
+    profile: MetadataPolicyProfile,
+    resolved: ResolvedMetadataPolicy,
+    library: str,
+) -> None:
+    repository.create_metadata_policy_draft(profile.canonical_json)
+    repository.activate_metadata_policy(
+        profile.policy_id,
+        MetadataPolicyProfile.builtin().policy_id,
+        ((library, resolved.resolved_id, resolved.canonical_json),),
+        2,
     )
-    profile = _preview_automatic_profile()
-
-    with tempfile.TemporaryDirectory() as temporary:
-        repository = open_repository(Path(temporary) / "reports.sqlite")
-        repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
-        repository.activate_qualified_automatic(3)
-        proposal = evaluate_report(
-            report, resolved.resolved_id, dict(resolved.destinations)
-        )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        title = next(
-            value
-            for value in proposal.results
-            if value.destination is TargetDestination.TITLE
-        )
-        rows = repository._connection.execute(
-            "SELECT count(*) FROM automatic_decisions WHERE destination='title'"
-        ).fetchone()
-
-        assert ProposalOutcome.KEEP is title.outcome
-        assert ("decoration_equivalent_bracket_source_tag",) == title.reasons
-        assert title.selected_alternative_id is None
-        assert (0,) == rows
-        repository.close()
 
 
-def test_provider_consensus_contributor_display_preserves_local_provenance_and_owner_finality() -> (
-    None
-):
+def _publish_case(
+    repository: SQLiteMetadataReportRepository,
+    report: MetadataReport,
+    proposal: ProposalSet,
+) -> dict[str, Any]:
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    return cast(dict[str, Any], json.loads(repository.admit_review_case(proposal)))
+
+
+def _contributor_display_report() -> MetadataReport:
     local = "Example, Ada"
     local_claims = (_local_creator(local),)
     providers = tuple(
@@ -6963,7 +6808,7 @@ def test_provider_consensus_contributor_display_preserves_local_provenance_and_o
         )
         for name in ("open_library", "hardcover")
     )
-    report = _proposal_report(
+    return _proposal_report(
         fields=_fields(
             authors=TargetField(
                 TargetDestination.AUTHORS,
@@ -6974,6 +6819,45 @@ def test_provider_consensus_contributor_display_preserves_local_provenance_and_o
         local_claims=local_claims,
         providers=providers,
     )
+
+
+def test_decoration_equivalent_title_retains_current_value() -> None:
+    local = "Plain Work"
+    report = _proposal_report(
+        fields=_fields(
+            local,
+            title=TargetField(
+                TargetDestination.TITLE,
+                TargetFieldState.VALUE,
+                local,
+            ),
+        ),
+        local_claims=(_consensus_local_title(local),),
+        providers=(
+            _consensus_provider_title("open_library", "Plain Work"),
+            _consensus_provider_title("hardcover", "Plain Work [retail]"),
+        ),
+    )
+    profile = _preview_automatic_profile()
+
+    resolved = resolve_policy(profile, report.target.library)
+    proposal = evaluate_report(
+        report, resolved.resolved_id, dict(resolved.destinations)
+    )
+    title = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.TITLE
+    )
+    assert ProposalOutcome.KEEP is title.outcome
+    assert ("decoration_equivalent_bracket_source_tag",) == title.reasons
+    assert title.selected_alternative_id is None
+
+
+def test_provider_consensus_contributor_display_preserves_local_provenance_and_owner_finality() -> (
+    None
+):
+    report = _contributor_display_report()
     destinations = {
         category: "unsupported" if category == "explicit" else "ask"
         for category in OPTION_CATALOGUE
@@ -6986,14 +6870,8 @@ def test_provider_consensus_contributor_display_preserves_local_provenance_and_o
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, dict(resolved.destinations)
@@ -7004,10 +6882,11 @@ def test_provider_consensus_contributor_display_preserves_local_provenance_and_o
             if value.destination is TargetDestination.AUTHORS
         )
         assert authors.reasons == ("provider_consensus_contributor_display",)
-        assert local_claims[0].reference in authors.alternatives[0].evidence_references
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        assert (
+            report.local_claims[0].reference
+            in authors.alternatives[0].evidence_references
+        )
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
 
         outcome = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
@@ -7066,46 +6945,7 @@ def test_provider_consensus_contributor_display_preserves_local_provenance_and_o
 
 
 def test_provider_consensus_contributor_display_preserve_option_stays_manual() -> None:
-    local = "Example, Ada"
-    local_claims = (_local_creator(local),)
-    providers = tuple(
-        ProviderObservation(
-            name,
-            ProviderStatus.CANDIDATES,
-            candidates=(
-                finalize_candidate_comparisons(
-                    ProviderCandidate(
-                        f"{name}-edition",
-                        f"{name}-work",
-                        (
-                            _claim(
-                                name,
-                                f"{name}-edition",
-                                ClaimKind.CREATOR,
-                                "Ada Example",
-                                scope=ClaimScope.WORK,
-                                role="author",
-                            ),
-                        ),
-                    ),
-                    local_claims,
-                ),
-            ),
-            authority=name,
-        )
-        for name in ("open_library", "hardcover")
-    )
-    report = _proposal_report(
-        fields=_fields(
-            authors=TargetField(
-                TargetDestination.AUTHORS,
-                TargetFieldState.VALUE,
-                (local,),
-            ),
-        ),
-        local_claims=local_claims,
-        providers=providers,
-    )
+    report = _contributor_display_report()
     options = dict(DEFAULT_OPTIONS)
     options["contributor_names"] = "preserve"
     destinations = {
@@ -7120,21 +6960,13 @@ def test_provider_consensus_contributor_display_preserve_option_stays_manual() -
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, dict(resolved.destinations)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
 
         outcome = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
@@ -7168,21 +7000,13 @@ def test_provider_consensus_title_respects_title_layout_suspension_at_admission(
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, dict(resolved.destinations)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
         repository.set_automatic_safety_state(
             AutomaticSafetyState(False, None, (("title_layout", "test"),)), 4
         )
@@ -7235,21 +7059,13 @@ def test_absent_series_positions_reach_effect_authority_after_persistence(
     with tempfile.TemporaryDirectory() as temporary:
         repository = open_repository(Path(temporary) / "reports.sqlite")
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, dict(resolved.destinations)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
         repository.set_automatic_safety_state(AutomaticSafetyState(False, None, ()), 2)
 
         repository.persist_shadow_outcome(case_id, 3)
@@ -7306,14 +7122,8 @@ def test_paused_or_category_suspended_actionless_tuple_stays_context_only() -> N
 
     def admit(repository):
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
         resolved = resolve_policy(profile, report.target.library)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
@@ -7457,20 +7267,12 @@ def _assert_retained_decoration_automatic_value(component, option, keep, *, appl
         path = Path(temporary) / "reports.sqlite"
         repository = open_repository(path)
         repository.enter_shadow_preview(1)
-        repository.create_metadata_policy_draft(profile.canonical_json)
-        repository.activate_metadata_policy(
-            profile.policy_id,
-            MetadataPolicyProfile.builtin().policy_id,
-            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
-            2,
-        )
+        _activate_profile(repository, profile, resolved, report.target.library)
         repository.activate_qualified_automatic(3)
         proposal = evaluate_report(
             report, resolved.resolved_id, human_review_destinations(resolved)
         )
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(proposal)
-        case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+        case_id = _publish_case(repository, report, proposal)["review_case_id"]
         outcome = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
         )

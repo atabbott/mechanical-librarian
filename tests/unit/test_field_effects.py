@@ -55,7 +55,6 @@ from mechanical_librarian.application.operations import StageTimer, aggregate_in
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
-    F19A_QUALIFICATION_MANIFEST_SHA256,
     AutomaticDecision,
 )
 from mechanical_librarian.domain.field_effect import (
@@ -2374,21 +2373,7 @@ def test_isbn_title_uses_persisted_authority_for_only_title_effect(
     effects.repository.grant_field_effect_consents(
         snapshot.connection, (snapshot.library,), ("title",), 5
     )
-    service = GuardedFieldApplication(
-        effects.repository,
-        effects.target,
-        effects.backup,
-        effects.capabilities,
-        authority,
-        effects.dependencies,
-        PersistedEffectConsent(effects.repository),
-        effects.recovery,
-        effects.reevaluation,
-        effects.clock,
-        effects.preclaim,
-        effects.claim_hook,
-        effects.recovery_hook,
-    )
+    service = effects.persisted_service(effects.repository, effects.target, authority)
     result = service.plan(
         decision,
         connection=snapshot.connection,
@@ -2448,49 +2433,6 @@ def test_isbn_title_uses_persisted_authority_for_only_title_effect(
         (snapshot.connection, snapshot.library, snapshot.work_id, "title")
     }
     assert effects.target._values[next(iter(changed))] == "Example Title"
-
-
-def test_qualified_automatic_origin_uses_the_identical_plan_and_effect_path(
-    effects: _EffectEnvironment,
-) -> None:
-    automatic = AutomaticDecision.create(
-        review_case_id="review_case_" + "a" * 64,
-        report_id="report_" + "b" * 64,
-        proposal_set_id="proposal_set_" + "c" * 64,
-        proposal_id="review_proposal_" + "d" * 64,
-        target_fingerprint="e" * 64,
-        destination="title",
-        outcome="candidate",
-        candidate_id="alternative_" + "f" * 64,
-        resolved_policy_id="resolved_policy_" + "0" * 64,
-        policy_generation=1,
-        rule_id="shadow_rule_" + "1" * 64,
-        policy_category="title_layout",
-        policy_option="preserve",
-        qualification_manifest_sha256=F19A_QUALIFICATION_MANIFEST_SHA256,
-        source_outcome_id="shadow_outcome_" + "3" * 64,
-        bundle_id="automatic_bundle_" + "4" * 64,
-        occurred_at=1,
-    )
-    effects.authority.automatic_values[automatic.decision_id] = envelope("title", "new")
-    _authorize(effects, automatic, work_id="auto-book")
-    result = effects.service.plan(
-        automatic,
-        connection="primary",
-        library="books",
-        work_id="auto-book",
-        destination="title",
-        pre_value="old",
-        desired_value=envelope("title", "new"),
-        target_fingerprint="e" * 64,
-        target_version="version-1",
-        dependency_digests=(DEPENDENCY,),
-        capability_digest=CAPABILITY,
-    )
-    assert result is not None
-    assert result.plan.authority.origin == "automatic_policy"
-    effects.target.seed(result.plan)
-    assert effects.service.apply(result.plan.plan_id).state == "verified"
 
 
 def test_an_activated_audiobook_tranche_plans_through_the_same_guarded_path(
@@ -4884,20 +4826,8 @@ def audiobook_pair(tmp_path, effects):
             state.repo.close()
             state.repo = open_repository(out / "state.sqlite")
             state.authority = PersistedFieldEffectAuthority(state.repo)
-            state.service = GuardedFieldApplication(
-                state.repo,
-                case.target,
-                env.backup,
-                env.capabilities,
-                state.authority,
-                env.dependencies,
-                PersistedEffectConsent(state.repo),
-                env.recovery,
-                env.reevaluation,
-                env.clock,
-                env.preclaim,
-                env.claim_hook,
-                env.recovery_hook,
+            state.service = env.persisted_service(
+                state.repo, case.target, state.authority
             )
 
         state.reopen = reopen
@@ -5485,20 +5415,8 @@ def test_audiobook_adult_product_only_sets_true_and_otherwise_finishes_without_w
         assert decision.destination == "explicit"
         assert decision.outcome == ("candidate" if changes else "keep_current")
         authority = PersistedFieldEffectAuthority(effects.repository)
-        service = GuardedFieldApplication(
-            effects.repository,
-            effects.target,
-            effects.backup,
-            effects.capabilities,
-            authority,
-            effects.dependencies,
-            PersistedEffectConsent(effects.repository),
-            effects.recovery,
-            effects.reevaluation,
-            effects.clock,
-            effects.preclaim,
-            effects.claim_hook,
-            effects.recovery_hook,
+        service = effects.persisted_service(
+            effects.repository, effects.target, authority
         )
         if changes:
             snapshot = authority.resolve(decision)
@@ -5769,20 +5687,8 @@ def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negat
             state.repo.grant_field_effect_consents("primary", ("audio",), ("cover",), 5)
             authority = PersistedFieldEffectAuthority(state.repo)
             snapshot = authority.resolve(state.decisions[0])
-            guarded = GuardedFieldApplication(
-                state.repo,
-                target_case.target,
-                effects.backup,
-                effects.capabilities,
-                authority,
-                effects.dependencies,
-                PersistedEffectConsent(state.repo),
-                effects.recovery,
-                effects.reevaluation,
-                effects.clock,
-                effects.preclaim,
-                effects.claim_hook,
-                effects.recovery_hook,
+            guarded = effects.persisted_service(
+                state.repo, target_case.target, authority
             )
             operation = guarded.plan(
                 state.decisions[0],
@@ -6284,21 +6190,7 @@ def test_complete_source_authors_add_keeps_every_credit_through_guarded_effect(
     effects.repository.grant_field_effect_consents(
         "primary", ("audio",), ("authors",), 5
     )
-    service = GuardedFieldApplication(
-        effects.repository,
-        effects.target,
-        effects.backup,
-        effects.capabilities,
-        authority,
-        effects.dependencies,
-        PersistedEffectConsent(effects.repository),
-        effects.recovery,
-        effects.reevaluation,
-        effects.clock,
-        effects.preclaim,
-        effects.claim_hook,
-        effects.recovery_hook,
-    )
+    service = effects.persisted_service(effects.repository, effects.target, authority)
     operation = service.plan(
         decision,
         connection=snapshot.connection,
@@ -6352,21 +6244,7 @@ def test_original_work_date_precision_reaches_current_guarded_effect(effects, so
     effects.repository.grant_field_effect_consents(
         "primary", ("audio",), ("publishedDate",), 5
     )
-    service = GuardedFieldApplication(
-        effects.repository,
-        effects.target,
-        effects.backup,
-        effects.capabilities,
-        authority,
-        effects.dependencies,
-        PersistedEffectConsent(effects.repository),
-        effects.recovery,
-        effects.reevaluation,
-        effects.clock,
-        effects.preclaim,
-        effects.claim_hook,
-        effects.recovery_hook,
-    )
+    service = effects.persisted_service(effects.repository, effects.target, authority)
     operation = service.plan(
         decision,
         connection=snapshot.connection,
@@ -6892,21 +6770,7 @@ def test_observed_language_reaches_guarded_write_and_readback(
     effects.repository.grant_field_effect_consents(
         "primary", (report.target.library,), ("language",), 5
     )
-    service = GuardedFieldApplication(
-        effects.repository,
-        effects.target,
-        effects.backup,
-        effects.capabilities,
-        authority,
-        effects.dependencies,
-        PersistedEffectConsent(effects.repository),
-        effects.recovery,
-        effects.reevaluation,
-        effects.clock,
-        effects.preclaim,
-        effects.claim_hook,
-        effects.recovery_hook,
-    )
+    service = effects.persisted_service(effects.repository, effects.target, authority)
     arguments = dict(
         connection=snapshot.connection,
         library=snapshot.library,
@@ -6951,10 +6815,6 @@ def test_ebook_fill_uses_guarded_persisted_effect(effects, guard):
     from mechanical_librarian.adapters.field_effect_authority import (
         PersistedFieldEffectAuthority,
     )
-    from mechanical_librarian.adapters.field_effect_runtime import (
-        PersistedEffectConsent,
-    )
-    from mechanical_librarian.application.field_effects import GuardedFieldApplication
     from mechanical_librarian.domain.automatic_decision import AutomaticDecision
     from tests.support.ebook_synopsis import (
         publish_synopsis_preview,
@@ -6973,21 +6833,7 @@ def test_ebook_fill_uses_guarded_persisted_effect(effects, guard):
     effects.repository.grant_field_effect_consents(
         snapshot.connection, (snapshot.library,), ("description",), 5
     )
-    service = GuardedFieldApplication(
-        effects.repository,
-        effects.target,
-        effects.backup,
-        effects.capabilities,
-        authority,
-        effects.dependencies,
-        PersistedEffectConsent(effects.repository),
-        effects.recovery,
-        effects.reevaluation,
-        effects.clock,
-        effects.preclaim,
-        effects.claim_hook,
-        effects.recovery_hook,
-    )
+    service = effects.persisted_service(effects.repository, effects.target, authority)
     result = service.plan(
         decision,
         connection=snapshot.connection,

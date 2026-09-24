@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -371,6 +372,48 @@ def _inspect_in_child(value: bytes):
             EpubOpeningLimits(),
             logical_identity=source.digest,
         )
+
+
+def _inspect_locally(value: bytes) -> EpubInspection:
+    digest = hashlib.sha256(value).hexdigest()
+    request = replace(
+        _request(value),
+        target=TargetId(
+            AdapterId("local-epub"),
+            ConnectionId("local"),
+            LibraryId("local"),
+            ExternalItemId(digest),
+        ),
+        file=FileReference("local", digest + ".epub"),
+        expected_source=Fingerprint("sha256", SchemaVersion("local-file-v1"), digest),
+    )
+    package, opening, rear = child._inspect_bundle(
+        request,
+        replace(request, capability=EpubPackageCapability.PACKAGE),
+        EpubOpeningLimits(),
+    )
+    assert package is not None
+    return child._inspection(package, opening, rear)
+
+
+def _front_epub(markup: str) -> bytes:
+    return _opening_epub(
+        package=_opening_package(
+            items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
+            spine=("front",),
+        ),
+        entries=(("EPUB/front.xhtml", _xhtml(markup), zipfile.ZIP_STORED),),
+    )
+
+
+def _label_facts(markup: str, source: str):
+    if source == "front":
+        return _inspect_locally(
+            _front_epub(f'<section epub:type="copyright-page">{markup}</section>')
+        ).facts
+    request, (package, opening, _) = _bundle(_xhtml(markup))
+    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
+        return _rear_facts(request, package, opening, archive)
 
 
 def _package_facts(package: bytes):
@@ -1313,26 +1356,13 @@ def test_rear_series_indicia_aggregate_improves_recall_without_false_positives()
 
 
 def test_front_and_rear_bibliographic_indicia_have_paired_semantics() -> None:
-    front_package = _opening_package(
-        items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
-        spine=("front",),
-    )
     front = _inspect_in_child(
-        _opening_epub(
-            package=front_package,
-            entries=(
-                (
-                    "EPUB/front.xhtml",
-                    _xhtml(
-                        '<section epub:type="copyright-page">'
-                        "<p>Subtitle: A Bounded Companion</p>"
-                        "<p>Publisher: Example House</p>"
-                        "<p>Imprint: Example Mark</p>"
-                        "</section>"
-                    ),
-                    zipfile.ZIP_STORED,
-                ),
-            ),
+        _front_epub(
+            '<section epub:type="copyright-page">'
+            "<p>Subtitle: A Bounded Companion</p>"
+            "<p>Publisher: Example House</p>"
+            "<p>Imprint: Example Mark</p>"
+            "</section>"
         )
     )
     request, (package, opening, _) = _bundle(
@@ -1415,25 +1445,6 @@ def test_front_and_rear_labels_reject_contextual_values_without_name_guessing(
         "<p>Publisher: Copyright House</p>"
         "<p>Imprint: Conversion Press</p>"
     )
-    front_package = _opening_package(
-        items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
-        spine=("front",),
-    )
-    front = _inspect_in_child(
-        _opening_epub(
-            package=front_package,
-            entries=(
-                (
-                    "EPUB/front.xhtml",
-                    _xhtml(f'<section epub:type="copyright-page">{markup}</section>'),
-                    zipfile.ZIP_STORED,
-                ),
-            ),
-        )
-    )
-    request, (package, opening, _) = _bundle(_xhtml(markup))
-    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear = _rear_facts(request, package, opening, archive)
 
     fields = {
         EpubInspectionField.PUBLISHER,
@@ -1446,19 +1457,11 @@ def test_front_and_rear_labels_reject_contextual_values_without_name_guessing(
         (EpubInspectionField.PUBLISHER, "Copyright House"),
         (EpubInspectionField.IMPRINT, "Conversion Press"),
     ]
-    facts = dict(
-        (
-            (
-                "front",
-                tuple(
-                    fact
-                    for fact in front.facts
-                    if fact.basis == "opening_matter" and fact.field in fields
-                ),
-            ),
-            ("rear", tuple(fact for fact in rear if fact.field in fields)),
-        )
-    )[source]
+    facts = tuple(
+        fact
+        for fact in _label_facts(markup, source)
+        if fact.field in fields and (source == "rear" or fact.basis == "opening_matter")
+    )
     assert [(fact.field, fact.canonical_value) for fact in facts] == expected
 
 
@@ -1498,31 +1501,7 @@ def test_front_and_rear_labels_apply_contextual_and_promotion_vocabularies(
     markup = (
         f"<p>All rights reserved</p><p>{label}: {rejected}</p><p>{label}: {control}</p>"
     )
-    front_package = _opening_package(
-        items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
-        spine=("front",),
-    )
-    front = _inspect_in_child(
-        _opening_epub(
-            package=front_package,
-            entries=(
-                (
-                    "EPUB/front.xhtml",
-                    _xhtml(f'<section epub:type="copyright-page">{markup}</section>'),
-                    zipfile.ZIP_STORED,
-                ),
-            ),
-        )
-    )
-    request, (package, opening, _) = _bundle(_xhtml(markup))
-    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear = _rear_facts(
-            request,
-            package,
-            opening,
-            archive,
-        )
-    facts = dict((("front", front.facts), ("rear", rear)))[source]
+    facts = _label_facts(markup, source)
     assert [
         fact.canonical_value
         for fact in facts
@@ -1551,25 +1530,6 @@ def test_front_and_rear_labels_preserve_exact_occurrence_ownership(
         "<p><span>Publisher: Safe House</span> "
         "<span>Imprint:</span> EPUB conversion by Toolchain</p>"
     )
-    front_package = _opening_package(
-        items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
-        spine=("front",),
-    )
-    front = _inspect_in_child(
-        _opening_epub(
-            package=front_package,
-            entries=(
-                (
-                    "EPUB/front.xhtml",
-                    _xhtml(f'<section epub:type="copyright-page">{markup}</section>'),
-                    zipfile.ZIP_STORED,
-                ),
-            ),
-        )
-    )
-    request, (package, opening, _) = _bundle(_xhtml(markup))
-    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear = _rear_facts(request, package, opening, archive)
 
     fields = {
         EpubInspectionField.SUBTITLE,
@@ -1643,7 +1603,7 @@ def test_front_and_rear_labels_preserve_exact_occurrence_ownership(
             "Publisher: Safe House",
         ),
     ]
-    facts = dict((("front", front.facts), ("rear", rear)))[source]
+    facts = _label_facts(markup, source)
     assert [
         (
             fact.field,
@@ -1665,32 +1625,13 @@ def test_front_and_rear_bibliographic_canonical_values_share_normalization(
         "<p>Publisher: Cafe\u0301   House</p>"
         "<p>Imprint: Cafe\u0301   Mark</p>"
     )
-    front_package = _opening_package(
-        items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
-        spine=("front",),
-    )
-    front = _inspect_in_child(
-        _opening_epub(
-            package=front_package,
-            entries=(
-                (
-                    "EPUB/front.xhtml",
-                    _xhtml(f'<section epub:type="copyright-page">{markup}</section>'),
-                    zipfile.ZIP_STORED,
-                ),
-            ),
-        )
-    )
-    request, (package, opening, _) = _bundle(_xhtml(markup))
-    with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-        rear = _rear_facts(request, package, opening, archive)
     expected = [
         (EpubInspectionField.SUBTITLE, "Café Companion"),
         (EpubInspectionField.PUBLISHER, "Café House"),
         (EpubInspectionField.IMPRINT, "Café Mark"),
     ]
     fields = {field for field, _value in expected}
-    facts = dict((("front", front.facts), ("rear", rear)))[source]
+    facts = _label_facts(markup, source)
     assert [
         (fact.field, fact.canonical_value)
         for fact in facts
@@ -1769,31 +1710,18 @@ def test_rear_bibliographic_indicia_preserves_conflicts_and_repetition() -> None
 
 
 def test_front_labels_suppress_generic_title_semantics() -> None:
-    package = _opening_package(
-        items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
-        spine=("front",),
-    )
-    inspection = _inspect_in_child(
-        _opening_epub(
-            package=package,
-            entries=(
-                (
-                    "EPUB/front.xhtml",
-                    _xhtml(
-                        '<section epub:type="titlepage">'
-                        '<h1 epub:type="fulltitle">'
-                        "Publisher: Label House</h1>"
-                        '<h1 epub:type="title">'
-                        "Imprint: Label Mark</h1>"
-                        '<h1 epub:type="fulltitle">'
-                        "Subtitle: Label Companion</h1>"
-                        '<h1 epub:type="fulltitle">'
-                        "Publisher: Copyright © 2024 Rights House</h1>"
-                        "</section>"
-                    ),
-                    zipfile.ZIP_STORED,
-                ),
-            ),
+    inspection = _inspect_locally(
+        _front_epub(
+            '<section epub:type="titlepage">'
+            '<h1 epub:type="fulltitle">'
+            "Publisher: Label House</h1>"
+            '<h1 epub:type="title">'
+            "Imprint: Label Mark</h1>"
+            '<h1 epub:type="fulltitle">'
+            "Subtitle: Label Companion</h1>"
+            '<h1 epub:type="fulltitle">'
+            "Publisher: Copyright © 2024 Rights House</h1>"
+            "</section>"
         )
     )
     front = tuple(
@@ -1827,38 +1755,7 @@ def test_front_and_rear_labels_enforce_the_exact_excerpt_bound(source: str) -> N
     ):
         publisher = "P" * value_length
         markup = f"<p>All rights reserved</p><p>{prefix}{publisher}</p>"
-        front_package = _opening_package(
-            items=(("front", "front.xhtml", "application/xhtml+xml", ""),),
-            spine=("front",),
-        )
-        front = _inspect_in_child(
-            _opening_epub(
-                package=front_package,
-                entries=(
-                    (
-                        "EPUB/front.xhtml",
-                        _xhtml(
-                            f'<section epub:type="copyright-page">{markup}</section>'
-                        ),
-                        zipfile.ZIP_STORED,
-                    ),
-                ),
-            )
-        )
-        request, (package, opening, _) = _bundle(_xhtml(markup))
-        with zipfile.ZipFile(child._SourceIO(request), "r") as archive:
-            rear = _rear_facts(
-                request,
-                package,
-                opening,
-                archive,
-            )
-        facts = dict(
-            (
-                ("front", front.facts),
-                ("rear", rear),
-            )
-        )[source]
+        facts = _label_facts(markup, source)
         publishers = tuple(
             fact
             for fact in facts
@@ -2943,11 +2840,10 @@ def test_child_preserves_explicit_publisher_and_imprint_as_distinct_report_field
 
 @pytest.mark.parametrize("body, expected, role", AUTHOR_STATEMENTS)
 @pytest.mark.parametrize("recovered", (False, True))
-@pytest.mark.parametrize("rear", (False, True))
-def test_isolated_author_statement_preserves_whole_credit(
-    body: str, expected: str | None, role: str | None, recovered: bool, rear: bool
+def test_rear_author_statement_preserves_whole_credit(
+    body: str, expected: str | None, role: str | None, recovered: bool
 ) -> None:
-    report = _inspect_in_child(author_epub(body, recovered=recovered, rear=rear))
+    report = _inspect_locally(author_epub(body, recovered=recovered, rear=True))
     authors = [
         fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
     ]
@@ -3051,13 +2947,16 @@ def test_package_creator_roles_remain_true_through_isolated_projection() -> None
 
 
 @pytest.mark.parametrize("rear", (False, True))
+@pytest.mark.parametrize("recovered", (False, True))
 def test_whole_credit_context_and_role_are_retained_without_authorship(
     rear: bool,
+    recovered: bool,
 ) -> None:
     report = _inspect_in_child(
         author_epub(
             '<p>Author photograph <span epub:type="creator">by Pat Example</span></p>',
             rear=rear,
+            recovered=recovered,
         )
     )
     assert not any(fact.field is EpubInspectionField.CREATOR for fact in report.facts)
@@ -3067,19 +2966,28 @@ def test_whole_credit_context_and_role_are_retained_without_authorship(
     assert [
         (fact.canonical_value, fact.role, fact.supporting_context) for fact in credits
     ] == [("Pat Example", "photographer", "Author photograph by Pat Example")]
+    assert EpubInspection.from_json(report.to_json()) == report
 
 
 @pytest.mark.parametrize("rear", (False, True))
-def test_whole_author_context_keeps_inline_name_and_explicit_role(rear: bool) -> None:
+@pytest.mark.parametrize("recovered", (False, True))
+def test_whole_author_context_keeps_inline_name_and_explicit_role(
+    rear: bool, recovered: bool
+) -> None:
     report = _inspect_in_child(
-        author_epub("<p>Authors: <em>Ada Example</em></p>", rear=rear)
+        author_epub(
+            "<p>Authors: <em>Élodie O’Neill-Smith</em></p>",
+            rear=rear,
+            recovered=recovered,
+        )
     )
     creators = [
         fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
     ]
     assert [
         (fact.canonical_value, fact.role, fact.supporting_context) for fact in creators
-    ] == [("Ada Example", "author", "Authors: Ada Example")]
+    ] == [("Élodie O’Neill-Smith", "author", "Authors: Élodie O’Neill-Smith")]
+    assert EpubInspection.from_json(report.to_json()) == report
 
 
 @pytest.mark.parametrize(
@@ -3087,10 +2995,9 @@ def test_whole_author_context_keeps_inline_name_and_explicit_role(rear: bool) ->
     [(body, None) for body in MIXED_AUTHOR_STATEMENTS]
     + list(LEGITIMATE_AUTHOR_STATEMENTS),
 )
-@pytest.mark.parametrize("rear", (False, True))
 @pytest.mark.parametrize("recovered", (False, True))
-def test_whole_author_mixed_indicia_refuses_authority(body, expected, rear, recovered):
-    report = _inspect_in_child(author_epub(body, rear=rear, recovered=recovered))
+def test_rear_author_mixed_indicia_refuses_authority(body, expected, recovered):
+    report = _inspect_locally(author_epub(body, rear=True, recovered=recovered))
     creators = [
         fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
     ]
@@ -3101,11 +3008,10 @@ def test_whole_author_mixed_indicia_refuses_authority(body, expected, rear, reco
 
 @pytest.mark.parametrize("body,context,role,field", TYPED_CREDIT_STATEMENTS)
 @pytest.mark.parametrize("recovered", (False, True))
-@pytest.mark.parametrize("rear", (False, True))
-def test_typed_credit_containers_preserve_roles_without_authors(
-    body, context, role, field, recovered, rear
+def test_rear_typed_credit_containers_preserve_roles_without_authors(
+    body, context, role, field, recovered
 ):
-    report = _inspect_in_child(author_epub(body, rear=rear, recovered=recovered))
+    report = _inspect_locally(author_epub(body, rear=True, recovered=recovered))
     credits = [
         fact
         for fact in report.facts
@@ -3113,11 +3019,7 @@ def test_typed_credit_containers_preserve_roles_without_authors(
     ]
     assert [
         (fact.canonical_value, fact.role, fact.supporting_context) for fact in credits
-    ] == (
-        [("Bea Artist", role, context)]
-        if rear or (body.startswith("<p>") or 'epub:type="contributor"' in body)
-        else []
-    )
+    ] == [("Bea Artist", role, context)]
     assert not [
         fact for fact in report.facts if fact.field is EpubInspectionField.CREATOR
     ]
@@ -3137,3 +3039,77 @@ def test_isolated_language_acquisition_retains_raw_unknown(language):
     assert len(facts) == 1
     assert facts[0].canonical_value == language
     assert facts[0].observed_value == language
+
+
+@pytest.mark.parametrize("rear", (False, True), ids=("front", "rear"))
+def test_recovered_conversion_credit_retains_front_rear_authority(rear: bool) -> None:
+    report = _inspect_in_child(
+        author_epub("<div>Converted by Bea Artist</div>", rear=rear, recovered=True)
+    )
+    assert [
+        (fact.canonical_value, fact.role, fact.supporting_context)
+        for fact in report.facts
+        if fact.field is EpubInspectionField.CONTEXTUAL_CREDIT
+    ] == ([("Bea Artist", "conversion", "Converted by Bea Artist")] if rear else [])
+    assert not any(fact.field is EpubInspectionField.CREATOR for fact in report.facts)
+    assert EpubInspection.from_json(report.to_json()) == report
+
+
+@pytest.mark.parametrize(
+    "program, outcome",
+    [
+        pytest.param(
+            "print('not-json')",
+            EpubInspectionOutcome.CHILD_FAILURE,
+            id="malformed-output",
+        ),
+        pytest.param(
+            "raise SystemExit(2)", EpubInspectionOutcome.CHILD_FAILURE, id="crash"
+        ),
+        pytest.param(
+            "import time; time.sleep(30)", EpubInspectionOutcome.TIMEOUT, id="timeout"
+        ),
+        pytest.param(
+            "import sys; sys.stdout.buffer.write(b'x' * 1048577)",
+            EpubInspectionOutcome.CHILD_FAILURE,
+            id="oversized-output",
+        ),
+    ],
+)
+def test_inspector_process_failures_reap_child_and_close_pipes(
+    program: str, outcome: EpubInspectionOutcome
+) -> None:
+    # Only launch is substituted: the real OS process, streams, selector,
+    # parent protocol loop and termination path remain under test.
+    launch = subprocess.Popen
+    processes: list[subprocess.Popen[bytes]] = []
+
+    def spawn(_command, **kwargs):
+        process = launch([sys.executable, "-I", "-B", "-c", program], **kwargs)
+        processes.append(process)
+        return process
+
+    value = b"synthetic source"
+    source = Fingerprint(
+        "sha256", SchemaVersion("local-file-v1"), hashlib.sha256(value).hexdigest()
+    )
+    with tempfile.TemporaryFile() as fixture:
+        fixture.write(value)
+        fixture.flush()
+        with patch(
+            "mechanical_librarian.adapters.evidence_extractors.process.subprocess.Popen",
+            side_effect=spawn,
+        ):
+            report = run_epub_inspector_child(
+                fixture.fileno(),
+                source,
+                EpubOpeningLimits(wall_seconds=1),
+                logical_identity=source.digest,
+            )
+    assert report.outcome is outcome
+    assert len(processes) == 1
+    process = processes[0]
+    assert process.poll() is not None
+    assert process.stdin is not None and process.stdin.closed
+    assert process.stdout is not None and process.stdout.closed
+    assert process.stderr is not None and process.stderr.closed
