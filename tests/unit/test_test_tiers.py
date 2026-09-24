@@ -686,142 +686,102 @@ def test_colour_only_pytest_options_stay_permitted(
     assert summary["failures"] == 1
 
 
-def test_shared_class_setup_failure_is_one_error_that_runs_no_tests() -> None:
+@pytest.mark.parametrize(
+    "declaration, expected_passed, tests_run, errors, skipped, failed_suffixes",
+    [
+        pytest.param(
+            "class SharedSetupTests(unittest.TestCase):\n"
+            "    @classmethod\n"
+            "    def setUpClass(cls) -> None:\n"
+            "        raise RuntimeError('shared setup exploded')\n",
+            False,
+            0,
+            1,
+            0,
+            ("SharedSetupTests.setUpClass",),
+            id="shared-class-error",
+        ),
+        pytest.param(
+            "class InstanceSetupTests(unittest.TestCase):\n"
+            "    def setUp(self) -> None:\n"
+            "        raise RuntimeError('instance setup exploded')\n",
+            False,
+            2,
+            2,
+            0,
+            ("InstanceSetupTests.test_first", "InstanceSetupTests.test_second"),
+            id="instance-errors",
+        ),
+        pytest.param(
+            "@pytest.fixture(autouse=True)\n"
+            "def exploding() -> None:\n"
+            "    raise RuntimeError('function fixture exploded')\n"
+            "\n"
+            "class FixtureSetupTests(unittest.TestCase):\n",
+            False,
+            2,
+            2,
+            0,
+            ("FixtureSetupTests.test_first", "FixtureSetupTests.test_second"),
+            id="function-fixture-errors",
+        ),
+        pytest.param(
+            "class SkippedSetupTests(unittest.TestCase):\n"
+            "    @classmethod\n"
+            "    def setUpClass(cls) -> None:\n"
+            "        raise unittest.SkipTest('shared setup skipped')\n",
+            True,
+            0,
+            0,
+            1,
+            (),
+            id="shared-class-skip",
+        ),
+        pytest.param(
+            "@unittest.skip('the whole class')\n"
+            "class SkippedClassTests(unittest.TestCase):\n",
+            True,
+            2,
+            0,
+            2,
+            (),
+            id="class-skip",
+        ),
+    ],
+)
+def test_setup_outcomes_preserve_native_case_accounting(
+    declaration: str,
+    expected_passed: bool,
+    tests_run: int,
+    errors: int,
+    skipped: int,
+    failed_suffixes: tuple[str, ...],
+) -> None:
+    # Shared setup is one class-level outcome; instance/fixture errors and
+    # a skipped class retain one outcome per native case.
     body = (
-        "import unittest\n"
-        "\n"
-        "class SharedSetupTests(unittest.TestCase):\n"
-        "    @classmethod\n"
-        "    def setUpClass(cls) -> None:\n"
-        "        raise RuntimeError('shared setup exploded')\n"
-        "\n"
+        "import pytest\nimport unittest\n\n" + declaration + "\n"
         "    def test_first(self) -> None:\n"
-        "        pass\n"
-        "\n"
+        "        pass\n\n"
         "    def test_second(self) -> None:\n"
         "        pass\n"
     )
     with tempfile.TemporaryDirectory() as directory:
-        targets = _module(Path(directory), body)
-        passed, summary = _cohort_summary(targets)
-    assert not passed
-    # unittest reports no tests run and one class-level error. pytest emits
-    # a failed setup report per collected method, so without class-level
-    # accounting this reads as two run and two errors.
-    assert summary["tests_run"] == 0
-    assert summary["errors"] == 1
-    assert summary["failures"] == 0
-    assert len(summary["failed_test_ids"]) == 1
-    assert summary["failed_test_ids"][0].endswith(".SharedSetupTests.setUpClass")
-
-
-def test_instance_setup_failures_stay_one_error_per_case() -> None:
-    # The sibling of the class-level rule: an instance `setUp` failure runs
-    # inside the call phase and is still one error per case, so class-level
-    # accounting must not collapse these two into one.
-    body = (
-        "import unittest\n"
-        "\n"
-        "class InstanceSetupTests(unittest.TestCase):\n"
-        "    def setUp(self) -> None:\n"
-        "        raise RuntimeError('instance setup exploded')\n"
-        "\n"
-        "    def test_first(self) -> None:\n"
-        "        pass\n"
-        "\n"
-        "    def test_second(self) -> None:\n"
-        "        pass\n"
-    )
-    with tempfile.TemporaryDirectory() as directory:
-        targets = _module(Path(directory), body)
-        passed, summary = _cohort_summary(targets)
-    assert not passed
-    assert summary["tests_run"] == 2
-    assert summary["errors"] == 2
-    assert len(summary["failed_test_ids"]) == 2
-
-
-def test_function_scoped_fixture_failures_stay_one_error_per_case() -> None:
-    # A function-scoped fixture is the pytest-native instance `setUp`: it runs
-    # once per case, so its failure is one error per case. Keying the
-    # class-level rule on the setup phase alone claimed these for `setUpClass`
-    # and reported one error with no tests run.
-    body = (
-        "import pytest\n"
-        "import unittest\n"
-        "\n"
-        "@pytest.fixture(autouse=True)\n"
-        "def exploding() -> None:\n"
-        "    raise RuntimeError('function fixture exploded')\n"
-        "\n"
-        "class FixtureSetupTests(unittest.TestCase):\n"
-        "    def test_first(self) -> None:\n"
-        "        pass\n"
-        "\n"
-        "    def test_second(self) -> None:\n"
-        "        pass\n"
-    )
-    with tempfile.TemporaryDirectory() as directory:
-        targets = _module(Path(directory), body)
-        passed, summary = _cohort_summary(targets)
-    assert not passed
-    assert summary["tests_run"] == 2
-    assert summary["errors"] == 2
-    assert summary["failures"] == 0
-    assert [
-        identifier.rsplit(".", 2)[-2:] for identifier in summary["failed_test_ids"]
-    ] == [["FixtureSetupTests", "test_first"], ["FixtureSetupTests", "test_second"]]
-
-
-def test_shared_class_setup_skip_is_one_skip_that_runs_no_tests() -> None:
-    # The skip path of the class-level rule. pytest emits a skipped setup
-    # report per collected method, so counting each one reported two run and
-    # two skipped where unittest reports none run and one class-level skip.
-    body = (
-        "import unittest\n"
-        "\n"
-        "class SkippedSetupTests(unittest.TestCase):\n"
-        "    @classmethod\n"
-        "    def setUpClass(cls) -> None:\n"
-        "        raise unittest.SkipTest('shared setup skipped')\n"
-        "\n"
-        "    def test_first(self) -> None:\n"
-        "        pass\n"
-        "\n"
-        "    def test_second(self) -> None:\n"
-        "        pass\n"
-    )
-    with tempfile.TemporaryDirectory() as directory:
-        targets = _module(Path(directory), body)
-        passed, summary = _cohort_summary(targets)
-    assert passed
-    assert summary["tests_run"] == 0
-    assert summary["skipped"] == 1
-
-
-def test_a_skipped_class_stays_one_skip_per_case() -> None:
-    # The shape the class-level skip rule must not claim. unittest never
-    # reaches `setUpClass` for a class it was told to skip and records one
-    # skip against each method it did not run, so this stays two run and two
-    # skipped -- even though pytest reports it through a class-scoped fixture
-    # exactly as it reports a `SkipTest` raised inside `setUpClass`.
-    body = (
-        "import unittest\n"
-        "\n"
-        "@unittest.skip('the whole class')\n"
-        "class SkippedClassTests(unittest.TestCase):\n"
-        "    def test_first(self) -> None:\n"
-        "        pass\n"
-        "\n"
-        "    def test_second(self) -> None:\n"
-        "        pass\n"
-    )
-    with tempfile.TemporaryDirectory() as directory:
-        targets = _module(Path(directory), body)
-        passed, summary = _cohort_summary(targets)
-    assert passed
-    assert summary["tests_run"] == 2
-    assert summary["skipped"] == 2
+        passed, summary = _cohort_summary(_module(Path(directory), body))
+    assert passed is expected_passed
+    assert summary["tests_run"] == tests_run
+    if expected_passed:
+        assert summary["skipped"] == skipped
+    else:
+        assert summary["errors"] == errors
+        assert summary["failures"] == 0
+        assert (
+            tuple(
+                ".".join(identifier.rsplit(".", 2)[-2:])
+                for identifier in summary["failed_test_ids"]
+            )
+            == failed_suffixes
+        )
 
 
 _LOAD_TESTS_MODULE = (
@@ -1629,10 +1589,21 @@ with patch('scripts.run_test_tier.threading.Thread') as writer:
 
 def test_slow_partition_covers_the_actual_full_inventory() -> None:
     root = Path(__file__).resolve().parents[2]
-    _verify_slow_partition(root)
-    full = set(collect_cohort(root, "slow"))
-    owner = set(collect_cohort(root, "slow-owner-browser"))
-    remaining = set(collect_cohort(root, "slow-remaining"))
+    inventories: dict[str, tuple[str, ...]] = {}
+
+    def collect(root: Path, name: str) -> tuple[str, ...]:
+        values = collect_cohort(root, name)
+        inventories[name] = values
+        return values
+
+    with patch(
+        "scripts.run_test_tier.collect_cohort", side_effect=collect
+    ) as collector:
+        _verify_slow_partition(root)
+    assert collector.call_count == 3
+    full = set(inventories["slow"])
+    owner = set(inventories["slow-owner-browser"])
+    remaining = set(inventories["slow-remaining"])
     assert len(full) == 30
     assert len(owner) == 1
     assert len(remaining) == 29

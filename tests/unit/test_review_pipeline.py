@@ -8400,11 +8400,19 @@ def test_first_generation_and_refresh_publish_only_after_projection(
         confirm_removal(entries, 110 + index * 20, database)
 
 
-def test_first_generation_real_shadow_projection_precedes_package_cutover(
+@pytest.mark.parametrize("crash", (False, True), ids=("complete", "crash"))
+def test_real_shadow_projection_publishes_atomically_or_rolls_back(
     application_path: Path,
+    crash: bool,
 ) -> None:
-    report = _report(
-        title="First staged projection", content_digest="a", file_identity="b"
+    report = (
+        _report(
+            title="Rollback staged projection", content_digest="c", file_identity="d"
+        )
+        if crash
+        else _report(
+            title="First staged projection", content_digest="a", file_identity="b"
+        )
     )
     proposal = evaluate_report(report)
 
@@ -8424,6 +8432,7 @@ def test_first_generation_real_shadow_projection_precedes_package_cutover(
         result = repository.persist_shadow_outcome(
             action.review_case_id or "", 10, staged_action=action
         )
+        assert result != "stale"
         observer = sqlite3.connect(application_path)
         try:
             assert (0,) == observer.execute(
@@ -8435,6 +8444,8 @@ def test_first_generation_real_shadow_projection_precedes_package_cutover(
             ).fetchone()
         finally:
             observer.close()
+        if crash:
+            raise RuntimeError("injected projection crash")
         return "complete" if result != "stale" else "stale"
 
     pipeline = ReviewPreparationPipeline(
@@ -8481,6 +8492,34 @@ def test_first_generation_real_shadow_projection_precedes_package_cutover(
     repository.close()
 
     assert pipeline.run_next(1)
+    if crash:
+        observer = open_repository(application_path)
+        try:
+            assert () == observer.list_shadow_outcomes(50)
+            assert (0, 0) == observer._connection.execute(
+                "SELECT (SELECT COUNT(*) FROM current_review_packages),"
+                "(SELECT COUNT(*) FROM automatic_decisions)"
+            ).fetchone()
+            assert ("failed", "unknown") == observer._connection.execute(
+                "SELECT state,failure_code FROM review_preparation_work"
+            ).fetchone()
+            incident = next(
+                signal
+                for signal in cast(
+                    "list[dict[str, object]]",
+                    observer.operational_snapshot()["signals"],
+                )
+                if signal["cause"] == "preparation_failure"
+            )
+            assert {
+                "attempt": 1,
+                "code": "unknown",
+                "stage": "projection",
+            }.items() <= incident.items()
+            assert str(incident["diagnostic_reference"]).startswith("prep-")
+        finally:
+            observer.close()
+        return
     repository = open_repository(application_path)
     assert ("complete",) == repository._connection.execute(
         "SELECT state FROM review_preparation_work"
@@ -8504,94 +8543,6 @@ def test_first_generation_real_shadow_projection_precedes_package_cutover(
         "(SELECT COUNT(*) FROM review_preparation_work WHERE state='complete')"
     ).fetchone()
     restarted.close()
-
-
-def test_projection_crash_rolls_back_staged_shadow_outcome_before_requeue(
-    application_path: Path,
-) -> None:
-    report = _report(
-        title="Rollback staged projection", content_digest="c", file_identity="d"
-    )
-    proposal = evaluate_report(report)
-
-    def extract(repository, action: PipelineAction, claim_next: bool):
-        repository.publish(
-            report,
-            lambda: True,
-            after_publication=lambda bound, current: (
-                bound.complete_review_extraction_publication(
-                    action, current.report_id, 10, 0, None, claim_next, None
-                )
-            ),
-        )
-        return report.report_id, True
-
-    def project(repository, action: PipelineAction) -> str:
-        assert "stale" != repository.persist_shadow_outcome(
-            action.review_case_id or "", 10, staged_action=action
-        )
-        observer = sqlite3.connect(application_path)
-        try:
-            assert (0,) == observer.execute(
-                "SELECT COUNT(*) FROM shadow_decision_outcomes"
-            ).fetchone()
-            assert (0, 0) == observer.execute(
-                "SELECT (SELECT COUNT(*) FROM current_review_packages),"
-                "(SELECT COUNT(*) FROM automatic_decisions)"
-            ).fetchone()
-        finally:
-            observer.close()
-        raise RuntimeError("injected projection crash")
-
-    pipeline = ReviewPreparationPipeline(
-        repository_factory=lambda: open_repository(application_path),
-        libraries=(("primary", "ebooks", "lib-1", _PRODUCER),),
-        discover=lambda *_: (
-            1,
-            report.file.content_digest,
-            (replace(_entry("item-1", report.file.identity), library="ebooks"),),
-        ),
-        extract=extract,
-        providers=lambda *_: (),
-        propose=lambda repository, _: (
-            repository.publish_proposal(proposal),
-            proposal.proposal_set_id,
-        )[1],
-        admit=lambda repository, _: (
-            lambda value: (value["status"], value.get("review_case_id"))
-        )(json.loads(repository.admit_review_case(proposal))),
-        project=project,
-        clock=lambda: 10,
-    )
-    pipeline.request("primary", "ebooks")
-    for _ in range(5):
-        assert pipeline.run_next(1)
-
-    observer = open_repository(application_path)
-    try:
-        assert () == observer.list_shadow_outcomes(50)
-        assert (0, 0) == observer._connection.execute(
-            "SELECT (SELECT COUNT(*) FROM current_review_packages),"
-            "(SELECT COUNT(*) FROM automatic_decisions)"
-        ).fetchone()
-        assert ("failed", "unknown") == observer._connection.execute(
-            "SELECT state,failure_code FROM review_preparation_work"
-        ).fetchone()
-        incident = next(
-            signal
-            for signal in cast(
-                "list[dict[str, object]]", observer.operational_snapshot()["signals"]
-            )
-            if signal["cause"] == "preparation_failure"
-        )
-        assert {
-            "attempt": 1,
-            "code": "unknown",
-            "stage": "projection",
-        }.items() <= incident.items()
-        assert str(incident["diagnostic_reference"]).startswith("prep-")
-    finally:
-        observer.close()
 
 
 def test_real_projection_stale_lane_does_not_block_mixed_fifty_work_cohort(

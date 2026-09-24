@@ -9,6 +9,9 @@ from pathlib import Path
 
 import pytest
 
+from mechanical_librarian.adapters.field_effect_authority import (
+    PersistedFieldEffectAuthority,
+)
 from mechanical_librarian.adapters.field_effect_fakes import (
     FakeAuthorityCurrentness,
     FakeBackupReadiness,
@@ -20,6 +23,7 @@ from mechanical_librarian.adapters.field_effect_fakes import (
     FakeTargetService,
     PrivateCoverRecoveryStore,
 )
+from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -129,6 +133,28 @@ class _EffectEnvironment:
     recovery: PrivateCoverRecoveryStore
     clock: Clock
     service: GuardedFieldApplication
+
+    def persisted_service(
+        self,
+        repository: SQLiteMetadataReportRepository,
+        target: FakeTargetService,
+        authority: PersistedFieldEffectAuthority,
+    ) -> GuardedFieldApplication:
+        return GuardedFieldApplication(
+            repository,
+            target,
+            self.backup,
+            self.capabilities,
+            authority,
+            self.dependencies,
+            PersistedEffectConsent(repository),
+            self.recovery,
+            self.reevaluation,
+            self.clock,
+            self.preclaim,
+            self.claim_hook,
+            self.recovery_hook,
+        )
 
 
 @pytest.fixture
