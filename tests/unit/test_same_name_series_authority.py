@@ -155,14 +155,10 @@ def test_real_series_association_and_title_witness_remain_authoritative(
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))
 @pytest.mark.parametrize("kind", ("same", "different"))
-def test_actual_base_proposal_and_store_refuse_without_mutation(tmp_path, media, kind):
+def test_actual_base_proposal_and_store_refuse_without_mutation(media, kind):
     import hashlib
-    import sqlite3
     from pathlib import Path
 
-    from mechanical_librarian.adapters.persistence.metadata_reports import (
-        MetadataReportError,
-    )
     from mechanical_librarian.domain.metadata_report import (
         MetadataReport,
         canonical_json,
@@ -172,8 +168,19 @@ def test_actual_base_proposal_and_store_refuse_without_mutation(tmp_path, media,
     root = Path(__file__).parents[1] / "fixtures/same-name-series-predecessor"
     provenance = json.loads((root / "provenance.json").read_text())
     assert provenance["source_sha"] == "6dd9a74e9814588878ccdd4f4ed0fb3998c65536"
-    for name, digest in provenance["sha256"].items():
-        assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest
+    # Sidecars retain archived capture entries recoverable from Git history.
+    names = [
+        f"{medium}-{scenario}-{document}.json"
+        for medium in ("ebook", "audiobook")
+        for scenario in ("same", "different")
+        for document in ("report", "proposal", "outcome")
+    ] + [f"{medium}-different-decisions.json" for medium in ("ebook", "audiobook")]
+    names.append("ebook-same-store.sql")
+    for name in names:
+        assert (
+            hashlib.sha256((root / name).read_bytes()).hexdigest()
+            == provenance["sha256"][name]
+        )
     report = MetadataReport.from_json(
         canonical_json(json.loads((root / f"{media}-{kind}-report.json").read_text()))
     )
@@ -184,14 +191,44 @@ def test_actual_base_proposal_and_store_refuse_without_mutation(tmp_path, media,
                 json.loads((root / f"{media}-{kind}-proposal.json").read_text())
             )
         )
-    path = tmp_path / "old.sqlite"
-    with sqlite3.connect(path) as connection:
-        connection.executescript((root / f"{media}-{kind}-store.sql").read_text())
-    path.chmod(0o600)
-    before = path.read_bytes()
-    with pytest.raises(MetadataReportError):
-        open_repository(path, create=False)
-    assert path.read_bytes() == before
+
+
+def test_genuine_predecessor_store_refuses_before_row_validation(tmp_path):
+    import sqlite3
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from mechanical_librarian.adapters.persistence import schema
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        MetadataReportError,
+    )
+
+    source = (
+        Path(__file__).parents[1]
+        / "fixtures/same-name-series-predecessor/ebook-same-store.sql"
+    )
+    database = tmp_path / "old.sqlite"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.executescript(source.read_text())
+        assert connection.execute(
+            "SELECT count(*) FROM shadow_decision_outcomes"
+        ).fetchone() == (1,)
+    database.chmod(0o600)
+    before = database.read_bytes()
+    with patch.object(
+        schema, "_validate_schema_contents", wraps=schema._validate_schema_contents
+    ) as validate_rows:
+        with pytest.raises(MetadataReportError):
+            open_repository(database, create=False)
+        validate_rows.assert_not_called()
+        assert database.read_bytes() == before
+        current = tmp_path / "current.sqlite"
+        with closing(open_repository(current)):
+            pass
+        validate_rows.reset_mock()
+        with closing(open_repository(current, create=False)):
+            pass
+        validate_rows.assert_called()
 
 
 @pytest.mark.parametrize("media", ("ebook", "audiobook"))

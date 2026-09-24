@@ -279,14 +279,10 @@ def test_owner_routing_alternatives_and_finality(tmp_path, mode, choice):
         )
 
 
-def test_actual_predecessor_artifacts_and_ebook_comparison(tmp_path):
+def test_actual_predecessor_artifacts_and_ebook_comparison():
     import hashlib
-    import sqlite3
     from pathlib import Path
 
-    from mechanical_librarian.adapters.persistence.metadata_reports import (
-        MetadataReportError,
-    )
     from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
     from mechanical_librarian.domain.metadata_report import MetadataReport
     from mechanical_librarian.domain.proposal_set import ProposalSet
@@ -299,8 +295,25 @@ def test_actual_predecessor_artifacts_and_ebook_comparison(tmp_path):
     root = Path(__file__).parents[1] / "fixtures/audiobook-synopsis-predecessor"
     provenance = json.loads((root / "provenance.json").read_text().removesuffix("\n"))
     assert provenance["source_sha"] == "79dbbf4c3eb58365e266655c32a0f6de3c784e51"
-    for name, digest in provenance["files"].items():
-        assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest
+    # Sidecars retain archived capture entries recoverable from Git history.
+    names = [
+        f"{scenario}-{kind}.json"
+        for scenario in ("useful", "marker")
+        for kind in (
+            "report",
+            "proposal",
+            "shadow-decision",
+            "outcome",
+            "automatic-0",
+            "automatic-1",
+        )
+    ] + [f"ebook-{kind}.json" for kind in ("report", "proposal", "policy", "preview")]
+    names.append("useful-store.sql")
+    for name in names:
+        assert (
+            hashlib.sha256((root / name).read_bytes()).hexdigest()
+            == provenance["files"][name]
+        )
     for scenario in ("useful", "marker"):
         MetadataReport.from_json(
             (root / f"{scenario}-report.json").read_text().removesuffix("\n")
@@ -320,7 +333,8 @@ def test_actual_predecessor_artifacts_and_ebook_comparison(tmp_path):
             qualification_manifest_is_current,
         )
 
-        for file in root.glob(f"{scenario}-automatic-*.json"):
+        for index in range(2):
+            file = root / f"{scenario}-automatic-{index}.json"
             decision = AutomaticDecision.from_json(file.read_text().removesuffix("\n"))
             from mechanical_librarian.application.field_effects import (
                 authority_from_decision,
@@ -332,18 +346,6 @@ def test_actual_predecessor_artifacts_and_ebook_comparison(tmp_path):
                 decision.policy_option,
                 decision.qualification_manifest_sha256,
             )
-        directory = tmp_path / scenario
-        directory.mkdir(mode=0o700)
-        database = directory / "state.sqlite"
-        with closing(sqlite3.connect(database)) as connection:
-            connection.executescript(
-                (root / f"{scenario}-store.sql").read_text().removesuffix("\n")
-            )
-        database.chmod(0o600)
-        before = database.read_bytes()
-        with pytest.raises(MetadataReportError):
-            open_repository(database, create=False)
-        assert database.read_bytes() == before
     report = MetadataReport.from_json(
         (root / "ebook-report.json").read_text().removesuffix("\n")
     )
@@ -356,6 +358,44 @@ def test_actual_predecessor_artifacts_and_ebook_comparison(tmp_path):
     assert json.loads(
         json.dumps(compile_rich_metadata_preview(policy, report, proposal).to_data())
     ) == json.loads((root / "ebook-preview.json").read_text().removesuffix("\n"))
+
+
+def test_genuine_predecessor_store_refuses_before_row_validation(tmp_path):
+    import sqlite3
+    from pathlib import Path
+    from unittest.mock import patch
+
+    from mechanical_librarian.adapters.persistence import schema
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        MetadataReportError,
+    )
+
+    source = (
+        Path(__file__).parents[1]
+        / "fixtures/audiobook-synopsis-predecessor/useful-store.sql"
+    )
+    database = tmp_path / "old.sqlite"
+    with closing(sqlite3.connect(database)) as connection:
+        connection.executescript(source.read_text())
+        assert connection.execute(
+            "SELECT count(*) FROM shadow_decision_outcomes"
+        ).fetchone() == (1,)
+    database.chmod(0o600)
+    before = database.read_bytes()
+    with patch.object(
+        schema, "_validate_schema_contents", wraps=schema._validate_schema_contents
+    ) as validate_rows:
+        with pytest.raises(MetadataReportError):
+            open_repository(database, create=False)
+        validate_rows.assert_not_called()
+        assert database.read_bytes() == before
+        current = tmp_path / "current.sqlite"
+        with closing(open_repository(current)):
+            pass
+        validate_rows.reset_mock()
+        with closing(open_repository(current, create=False)):
+            pass
+        validate_rows.assert_called()
 
 
 @pytest.mark.parametrize(
