@@ -47,7 +47,7 @@ AST_SOURCES = sorted(
 )
 # Reviewed path/classification snapshot. Amend explicitly when source ownership changes.
 CLASSIFICATION_SHA256 = (
-    "0be26dec11c96f5c22e571bfc9301f7805279d229479f7d27406c69023cfc4e4"
+    "df82e08dd8c92c75aa4921ecb5298ef20a875aac14409c5c09c930b409bd0b3d"
 )
 
 
@@ -92,7 +92,10 @@ def source_bindings(
         raise ValueError("unknown binding exclusion")
     product_sources = {
         p.relative_to(root).as_posix()
-        for p in (root / "src/mechanical_librarian").rglob("*.py")
+        for p in (root / "src/mechanical_librarian").rglob("*")
+        if p.is_file()
+        and p.relative_to(root).as_posix() != "src/mechanical_librarian/py.typed"
+        and not (p.parent.name == "__pycache__" and p.suffix == ".pyc")
     }
     classified_sources = {
         p for p in classifications if p.startswith("src/mechanical_librarian/")
@@ -130,7 +133,29 @@ def verify_references(root: Path, provenance: dict[str, Any]) -> None:
         raise ValueError("measurement origin family mismatch")
     for family, (name, _, _) in RECORDS.items():
         record = json.loads((root / REFERENCE / name).read_bytes())
+        if type(record) is not dict or set(record) != {
+            "schema",
+            "authority",
+            "predecessor",
+            "provenance",
+        }:
+            raise ValueError("qualification record keys are invalid")
         authority = record["authority"]
+        authority_keys = {
+            "family",
+            "media",
+            "semantic_revision",
+            "semantic_input_sha256",
+            "permitted_operations",
+        } | (
+            {"dispositions"}
+            if family == "F20"
+            else {"paired_operations"}
+            if family == "F46"
+            else set()
+        )
+        if type(authority) is not dict or set(authority) != authority_keys:
+            raise ValueError("qualification authority keys are invalid")
         if (
             record["schema"] != "qualification-current-v1"
             or authority["family"] != family
@@ -159,6 +184,29 @@ def verify_references(root: Path, provenance: dict[str, Any]) -> None:
                 raise ValueError("immutable qualification reference mismatch")
 
 
+def binding_value(source: str, constant: str) -> ast.Constant:
+    """Locate the single actual top-level literal binding, never a textual decoy."""
+    values = [
+        node.value
+        for node in ast.parse(source).body
+        if isinstance(node, (ast.Assign, ast.AnnAssign))
+        and any(
+            isinstance(target, ast.Name) and target.id == constant
+            for target in (
+                node.targets if isinstance(node, ast.Assign) else [node.target]
+            )
+        )
+    ]
+    if (
+        len(values) != 1
+        or not isinstance(values[0], ast.Constant)
+        or type(values[0].value) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", values[0].value) is None
+    ):
+        raise ValueError("runtime binding assignment is invalid")
+    return values[0]
+
+
 def verify(root: Path = ROOT, *, overrides: dict[str, bytes] | None = None) -> None:
     provenance = json.loads((root / PROVENANCE).read_bytes())
     verify_references(root, provenance)
@@ -171,8 +219,9 @@ def verify(root: Path = ROOT, *, overrides: dict[str, bytes] | None = None) -> N
         if record["authority"]["semantic_input_sha256"] != semantic:
             raise ValueError("semantic authority drift")
         source = (root / "src/mechanical_librarian/domain" / module).read_text()
-        match = re.search(rf'{constant}[^=]*=\s*\(?\s*["\']([0-9a-f]{{64}})', source)
-        if match is None or match[1] != canonical_digest(record["authority"]):
+        if binding_value(source, constant).value != canonical_digest(
+            record["authority"]
+        ):
             raise ValueError("runtime authority binding drift")
 
 
@@ -188,15 +237,15 @@ def refresh(root: Path = ROOT) -> None:
         path.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
         module_path = root / "src/mechanical_librarian/domain" / module
         source = module_path.read_text()
-        source, count = re.subn(
-            rf'({constant}[^=]*=\s*\(?\s*["\'])[0-9a-f]{{64}}',
-            r"\g<1>" + canonical_digest(record["authority"]),
-            source,
-            count=1,
+        value = binding_value(source, constant)
+        lines = source.encode().splitlines(keepends=True)
+        start = sum(map(len, lines[: value.lineno - 1])) + value.col_offset
+        assert value.end_lineno is not None and value.end_col_offset is not None
+        end = sum(map(len, lines[: value.end_lineno - 1])) + value.end_col_offset
+        replacement = json.dumps(canonical_digest(record["authority"])).encode()
+        module_path.write_bytes(
+            source.encode()[:start] + replacement + source.encode()[end:]
         )
-        if count != 1:
-            raise ValueError("runtime binding assignment missing")
-        module_path.write_text(source)
     provenance["source_bindings"] = source_bindings(root, provenance)
     (root / PROVENANCE).write_text(
         json.dumps(provenance, indent=2, sort_keys=True) + "\n"

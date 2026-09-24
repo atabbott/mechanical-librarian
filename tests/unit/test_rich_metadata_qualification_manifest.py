@@ -128,6 +128,7 @@ def test_semantic_changes_rotate_authority(name):
     "name",
     [
         "frontend/src/routes/PolicyPage.tsx",
+        "src/mechanical_librarian/interfaces/web/settings_vocabulary.json",
         "docs/product/rich-metadata-qualification.md",
         "tests/fixtures/qualification-authority-predecessor/provenance.json",
         "src/mechanical_librarian/application/operations.py",
@@ -213,13 +214,23 @@ def test_f38_manifest_separately_qualifies_provider_consensus_contributor_displa
     } == manifest["metrics"]
 
 
-def test_new_product_source_requires_review(tmp_path):
+@pytest.mark.parametrize(
+    "name",
+    [
+        "new_authority.py",
+        "rules.json",
+        "rules.txt",
+        "interfaces/web/react_assets/rules.json",
+        "__pycache__/rules.json",
+    ],
+)
+def test_new_product_source_requires_review(tmp_path, name):
     import shutil
 
     shutil.copytree(ROOT / "src", tmp_path / "src")
-    (tmp_path / "src/mechanical_librarian/new_authority.py").write_text(
-        "grant = True\n"
-    )
+    resource = tmp_path / "src/mechanical_librarian" / name
+    resource.parent.mkdir(parents=True, exist_ok=True)
+    resource.write_text("grant = True\n")
     provenance = json.loads((ROOT / records.PROVENANCE).read_bytes())
     with pytest.raises(ValueError, match="product source inventory"):
         records.source_bindings(tmp_path, provenance)
@@ -297,3 +308,90 @@ def test_retained_measurement_context_matches_immutable_base():
     }
     for key, digest in expected.items():
         assert records.canonical_digest(provenance[key]) == digest
+
+
+@pytest.mark.parametrize("family", list(records.RECORDS))
+@pytest.mark.parametrize("scope", ["record", "authority"])
+def test_closed_record_keysets_refuse_before_verify_or_refresh(tmp_path, family, scope):
+    import shutil
+
+    reference = tmp_path / records.REFERENCE
+    reference.mkdir(parents=True)
+    for path in [
+        ROOT / records.PROVENANCE,
+        ROOT / records.REFERENCE / "qualification-archive-index.json",
+        *[ROOT / records.REFERENCE / name for name, _, _ in records.RECORDS.values()],
+    ]:
+        shutil.copyfile(path, reference / path.name)
+    path = reference / records.RECORDS[family][0]
+    original = json.loads(path.read_bytes())
+    target = original if scope == "record" else original["authority"]
+    for field in [*target, "incidental_evidence"]:
+        changed = copy.deepcopy(original)
+        destination = changed if scope == "record" else changed["authority"]
+        if field in target:
+            del destination[field]
+        else:
+            destination[field] = "not authority"
+        path.write_text(json.dumps(changed))
+        before = {p.name: p.read_bytes() for p in reference.iterdir()}
+        for operation in (records.verify, records.refresh):
+            with pytest.raises(ValueError, match=f"qualification {scope} keys"):
+                operation(tmp_path)
+            assert {p.name: p.read_bytes() for p in reference.iterdir()} == before
+
+
+@pytest.mark.parametrize(
+    "declaration",
+    [
+        "",
+        'BOUND = "a" * 64',
+        'BOUND = "' + "0" * 64 + '"\nBOUND = "' + "1" * 64 + '"',
+        "BOUND: str",
+    ],
+)
+def test_binding_assignment_requires_one_top_level_literal(declaration):
+    with pytest.raises(ValueError, match="runtime binding assignment"):
+        records.binding_value('# BOUND = "' + "2" * 64 + '"\n' + declaration, "BOUND")
+
+
+@pytest.mark.parametrize("family", list(records.RECORDS))
+@pytest.mark.parametrize("decoy", ["comment", "string"])
+def test_refresh_changes_actual_imported_binding_not_decoy(tmp_path, family, decoy):
+    import runpy
+    import shutil
+
+    provenance = json.loads((ROOT / records.PROVENANCE).read_bytes())
+    for name in provenance["source_classification"]:
+        destination = tmp_path / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(ROOT / name, destination)
+    name, module, constant = records.RECORDS[family]
+    module_path = tmp_path / "src/mechanical_librarian/domain" / module
+    source = module_path.read_text()
+    old = records.binding_value(source, constant).value
+    assert type(old) is str
+    example = f'{constant} = "{old}"'
+    source = (
+        "# " + example + "\n" + source
+        if decoy == "comment"
+        else source.replace('"""', '"""' + example + "\n", 1)
+    )
+    module_path.write_text(source)
+    record_path = tmp_path / records.REFERENCE / name
+    record = json.loads(record_path.read_bytes())
+    record["authority"]["semantic_revision"] += 1
+    record_path.write_text(json.dumps(record))
+    records.refresh(tmp_path)
+    records.verify(tmp_path)
+    expected = records.canonical_digest(
+        json.loads(record_path.read_bytes())["authority"]
+    )
+    assert expected != old
+    assert example in module_path.read_text()
+    assert runpy.run_path(str(module_path))[constant] == expected
+    # A matching comment must not conceal a stale actual value from verification.
+    source = module_path.read_text().replace(f'"{expected}"', '"' + "0" * 64 + '"')
+    module_path.write_text(f'# {constant} = "{expected}"\n' + source)
+    with pytest.raises(ValueError, match="runtime authority binding drift"):
+        records.verify(tmp_path)

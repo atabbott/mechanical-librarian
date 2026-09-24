@@ -26,6 +26,14 @@ provenance-only file requires reclassification. All three families share the
 semantic partition. Mixed `review_web.py`, `interfaces/web/app.py` and
 `field_effect_activity.py` remain semantic even for copy edits. Frontend copy
 and provenance changes still require applicable behavior, security and build proof.
+The package inventory includes non-Python resources: the setup/frontend
+`settings_vocabulary.json` is explicitly provenance-only. Only the exact `py.typed`
+marker and `__pycache__/*.pyc` bytecode are omitted. Frontend runtime assets and
+identity are generated under the separate build tree, not exempted source paths.
+Unknown source resources require classification review. Current record and
+family-specific authority keysets are closed; incidental metadata cannot enter
+authority. Runtime binding reads and refreshes locate actual top-level AST literal
+assignments, so comments and string examples cannot impersonate a binding.
 Only the precisely named existing circular-binding assignments use AST exclusions;
 unknown exclusions fail. There is no general semantic classifier.
 
