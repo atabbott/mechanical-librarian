@@ -2705,7 +2705,7 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
     from tests.support.provider_recovery_rail import publish_provider_failure_case
 
     repository = open_repository(tmp_path / "review.sqlite")
-    case_id, report, _, _ = publish_provider_failure_case(
+    case_id, report, policy, proposal = publish_provider_failure_case(
         repository, project=mode != "admission_only"
     )
     if mode == "human":
@@ -2725,6 +2725,22 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
             idempotency_key="a" * 32,
         )
     snapshot = repository.read_current_review_case(case_id, None)
+    assert snapshot.resolved_policy_document == policy.canonical_json
+    assert (
+        json.loads(snapshot.case_document)["case"]["proposal_set_id"]
+        == proposal.proposal_set_id
+    )
+    assert dict(policy.destinations)["description_fill"] == "automatic"
+    from mechanical_librarian.domain.rich_metadata_preview import (
+        compile_rich_metadata_preview,
+    )
+
+    description = next(
+        f
+        for f in compile_rich_metadata_preview(policy, report, proposal).fields
+        if f.field == "description_fill"
+    )
+    assert (description.outcome, description.reason) == ("abstain", "no_candidate")
     if mode in {"absent", "mismatched", "malformed"}:
         document = (
             None
@@ -2745,7 +2761,18 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
             InspectCurrentReviewCase(store).run(case_id)
     else:
         detail = InspectCurrentReviewCase(store).run(case_id)
-        assert all(f["automatic_withheld_reason"] is None for f in detail["fields"])
+        reasons = {
+            f["destination"]: f["automatic_withheld_reason"]
+            for f in detail["fields"]
+            if f["automatic_withheld_reason"] is not None
+        }
+        assert reasons == (
+            {
+                "description": "No eligible automatic synopsis is available. You can inspect the retained evidence."
+            }
+            if mode in {"admission_only", "human"}
+            else {}
+        )
     repository.close()
 
 
@@ -2873,7 +2900,13 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
             == provider_failure_report(contributing=False).report_id
         )
         after = InspectCurrentReviewCase(reader).run(successor_ids[0])
-        assert all(f["automatic_withheld_reason"] is None for f in after["fields"])
+        assert {
+            f["destination"]: f["automatic_withheld_reason"]
+            for f in after["fields"]
+            if f["automatic_withheld_reason"] is not None
+        } == {
+            "description": "No eligible automatic synopsis is available. You can inspect the retained evidence."
+        }
     finally:
         if started:
             writer_thread.join(timeout=5)
