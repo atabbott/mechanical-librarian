@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Qualification maintenance separates current automatic authority from evidence
+  provenance while preserving historical decisions. Earlier derived stores require
+  a clean rebuild; automatic grants and write safeguards are unchanged (#1102).
+
 - Fill empty ebook descriptions from exact eligible same-work synopsis text,
   including concise alternatives, while excluding catalogue placeholders from
   automatic choices. Ask supports explicit owner choices and current views
