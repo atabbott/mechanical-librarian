@@ -2911,11 +2911,11 @@ def _dependency_qualification_documents():
 
 
 CURRENT_AUDIOBOOK_SUCCESSOR = MANIFEST.with_name(
-    "f46-audiobook-qualification-candidate-v19.json"
+    "f46-audiobook-qualification-candidate-v20.json"
 )
-CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v36.json")
+CURRENT_TITLE_SUCCESSOR = MANIFEST.with_name("f19a-qualification-manifest-v37.json")
 CURRENT_RICH_SUCCESSOR = MANIFEST.with_name(
-    "f20-rich-metadata-qualification-candidate-v50.json"
+    "f20-rich-metadata-qualification-candidate-v51.json"
 )
 
 
@@ -3845,3 +3845,59 @@ def test_synopsis_successors_retain_486_sources_and_only_three_new_operations():
             "tests/fixtures/audiobook-synopsis-predecessor/provenance.json",
         } <= set(current["source_closure"])
         _assert_live_source_closure(current)
+
+
+def test_ebook_synopsis_successors_preserve_exact_historical_memberships():
+    from mechanical_librarian.domain.automatic_decision import (
+        _PRIOR_F19A_QUALIFICATION_MANIFESTS,
+        _PRIOR_F20_QUALIFICATION_MANIFESTS,
+        _V19_F46_QUALIFIED_POLICY_OPTIONS,
+    )
+
+    assert len(_V19_F46_QUALIFIED_POLICY_OPTIONS) == 76
+    for name, registry, key in (
+        (
+            "f19a-qualification-manifest-v36.json",
+            _PRIOR_F19A_QUALIFICATION_MANIFESTS,
+            "qualified_policy_options",
+        ),
+        (
+            "f20-rich-metadata-qualification-candidate-v50.json",
+            _PRIOR_F20_QUALIFICATION_MANIFESTS,
+            "passing_automatic_options",
+        ),
+        (
+            "f46-audiobook-qualification-candidate-v19.json",
+            _PRIOR_F46_QUALIFICATION_MANIFESTS,
+            "passing_automatic_options",
+        ),
+    ):
+        path = MANIFEST.with_name(name)
+        assert dict(registry)[
+            hashlib.sha256(path.read_bytes()).hexdigest()
+        ] == frozenset(json.loads(path.read_bytes())[key])
+    for document in _current_qualification_documents():
+        assert document["issue"] == 1076
+        assert (
+            document["versions"]["decision_policy"]
+            == "deterministic-shadow-decision-policy-v18"
+        )
+        prior = json.loads(
+            (MANIFEST.parents[2] / document["prior_manifest_path"]).read_bytes()
+        )
+        assert set(prior["source_closure"]) <= set(document["source_closure"])
+        assert len(prior["source_closure"]) == 516
+        assert "tests/support/ebook_synopsis.py" in document["source_closure"]
+        assert (
+            "tests/unit/test_ebook_synopsis_authority.py" in document["source_closure"]
+        )
+        for key in (
+            "current_measurement",
+            "current_ebook_measurement",
+            "measurement_artifacts",
+            "historical_measurements",
+            "passing_automatic_options",
+            "qualified_policy_options",
+        ):
+            if key in prior:
+                assert document[key] == prior[key]

@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Fill empty ebook descriptions from exact eligible same-work synopsis text,
+  including concise alternatives, while excluding catalogue placeholders from
+  automatic choices. Ask supports explicit owner choices and current views
+  explain refusals. Clean rebuild required (#1076).
+
 - Audiobook synopsis policies preserve useful existing prose, fill empty values,
   and optionally replace recognized chapter/track or no-synopsis placeholders
   with an original supported source description. Old derived state requires a

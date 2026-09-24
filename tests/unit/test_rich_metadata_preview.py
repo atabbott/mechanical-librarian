@@ -981,7 +981,7 @@ def test_single_automatic_description_preserves_the_preexisting_no_floor_path() 
     assert description.source_evidence_references == (candidate.claims[3].reference,)
 
 
-def test_automatic_description_applies_quality_floor_then_provider_order() -> None:
+def test_automatic_description_uses_authority_without_a_length_floor() -> None:
     too_short = _description_candidate(
         "preferred",
         "edition-1",
@@ -1004,7 +1004,7 @@ def test_automatic_description_applies_quality_floor_then_provider_order() -> No
     )
 
     description = fields["description_fill"]
-    assert ("projected", lower_authority.claims[3].value) == (
+    assert ("projected", too_short.claims[3].value) == (
         description.outcome,
         description.desired_value,
     )
@@ -1039,7 +1039,7 @@ def test_automatic_description_uses_fixed_authority_order_not_source_order() -> 
     )
 
 
-def test_automatic_description_abstains_from_equal_authority_competition() -> None:
+def test_automatic_description_elects_stable_equal_authority_record() -> None:
     first = _description_candidate(
         "first",
         "edition-1",
@@ -1062,9 +1062,9 @@ def test_automatic_description_abstains_from_equal_authority_competition() -> No
     )
 
     description = fields["description_fill"]
-    assert ("abstain", "ambiguous_evidence") == (
+    assert ("projected", first.claims[3].value) == (
         description.outcome,
-        description.reason,
+        description.desired_value,
     )
 
 
@@ -1099,10 +1099,7 @@ def test_automatic_description_abstains_from_unranked_authority_competition() ->
 
 @pytest.mark.parametrize(
     "description",
-    (
-        "A short description that cannot clear the frozen minimum length.",
-        _QUALIFIED_DESCRIPTION + " This source visibly cuts off...",
-    ),
+    (_QUALIFIED_DESCRIPTION + " This source visibly cuts off...",),
 )
 def test_automatic_description_abstains_when_competing_text_misses_quality_floor(
     description: str,
@@ -3691,3 +3688,25 @@ def test_ebook_add_keeps_its_existing_exact_membership_comparison(field):
         {"kind": "list", "value": ["Fantasy", "Epic"]},
         ["FANTASY", "EPIC"],
     ) == {"kind": "list", "value": ["FANTASY", "EPIC", "Fantasy", "Epic"]}
+
+
+def test_ebook_same_record_conflict_precedes_placeholder_fitness():
+    candidate = _description_candidate(
+        "catalogue", "edition-1", "work-1", "(duplicate)"
+    )
+    competing = _claim(
+        "catalogue",
+        "edition-1",
+        ClaimKind.DESCRIPTION,
+        "A voyage begins.",
+        scope=ClaimScope.WORK,
+        order=99,
+    )
+    candidate = replace(candidate, claims=(*candidate.claims, competing))
+    _, fields = _target_work_preview(
+        _target_work_report((("catalogue", "hardcover", (candidate,), True),))
+    )
+    assert (fields["description_fill"].outcome, fields["description_fill"].reason) == (
+        "abstain",
+        "ambiguous_evidence",
+    )

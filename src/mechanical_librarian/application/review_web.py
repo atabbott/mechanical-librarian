@@ -758,32 +758,46 @@ class InspectCurrentReviewCase:
             if proposal.proposal_set_id != case.proposal_set_id:
                 return detail
             preview = compile_rich_metadata_preview(policy, report, proposal)
-            withheld = {
-                field.field
-                for field in preview.fields
-                if dict(policy.destinations).get(field.field) == "automatic"
-                and field.outcome == "abstain"
-                and field.reason
-                in {
+            withheld: dict[str, str] = {}
+            for preview_field in preview.fields:
+                if (
+                    dict(policy.destinations).get(preview_field.field) != "automatic"
+                    or preview_field.outcome != "abstain"
+                ):
+                    continue
+                if preview_field.field == "description_fill":
+                    message = {
+                        "no_candidate": "No eligible automatic synopsis is available. You can inspect the retained evidence.",
+                        "description_quality_floor_not_met": "No eligible automatic synopsis: retained source text does not meet the automatic synopsis rules. You can inspect it and choose explicitly.",
+                        "target_work_applicability_unproved": "Automatic synopsis withheld: the source text is not proved to describe this work.",
+                        "ambiguous_evidence": "Automatic synopsis withheld: a source record contains conflicting descriptions.",
+                    }.get(preview_field.reason or "")
+                    if message is not None:
+                        withheld["description"] = message
+                elif preview_field.reason in {
                     "series_provider_failure_isbn",
                     "series_provider_failure_work",
                     "series_provider_failure_asin",
-                }
-            }
+                }:
+                    withheld[preview_field.field] = (
+                        "Automatic decision withheld: a contributing provider lookup "
+                        "did not supply usable evidence. You can review this field."
+                    )
             fields = detail["fields"]
             assert type(fields) is list
             for field in fields:
                 assert type(field) is dict
+                message = withheld.get(str(field["destination"]))
                 if (
-                    field["destination"] in withheld
-                    and field["needs_attention"] is True
+                    message is not None
+                    and (
+                        field["destination"] == "description"
+                        or field["needs_attention"] is True
+                    )
                     and field["human_decision"] is None
                     and field["automatic_decision"] is None
                 ):
-                    field["automatic_withheld_reason"] = (
-                        "Automatic decision withheld: a contributing provider lookup "
-                        "did not supply usable evidence. You can review this field."
-                    )
+                    field["automatic_withheld_reason"] = message
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         return detail

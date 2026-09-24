@@ -2,12 +2,13 @@
 
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
-The reviewer-access authority, `setup-state-v3`, `owner-settings-v4`,
-`cover-consideration-v4`, `metadata-report-v43`, and the added application
-tables change the current SQLite objects in this build. Every earlier
-application database therefore requires a clean rebuild; no adoption,
-migration, conversion, import, repair, or downgrade is supplied by #872, #873,
-#749, #956, #965, #896, #888, #1000, #999, #957, #967, #892, or #144.
+The current build uses `metadata-report-v49`, `proposal-set-v8` under
+`fixed-conservative-v31`, `shadow-review-packet-v9`, `shadow-outcome-set-v8`,
+and `deterministic-shadow-decision-policy-v18`. #1076 changes automatic ebook
+synopsis semantics and the exact-current SQL bindings. **Clean rebuild required**
+for every predecessor application database; startup refuses it before mutation.
+No migration, adoption, conversion, import or downgrade is supplied. Historical
+automatic records remain readable evidence, without current effect authority.
 
 #967 requires current `metadata-report-v43`, `shadow-outcome-set-v5`,
 `metadata-policy-profile-v3`, `shadow-review-packet-v8`, and

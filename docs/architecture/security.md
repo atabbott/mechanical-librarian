@@ -1588,3 +1588,14 @@ Owner-final, Ask/Ignore, consent, backup, currentness, optimistic preconditions,
 read-back and audit remain mandatory. Shared shadow policy v17 and successor
 qualification bindings require a clean rebuild of prior derived stores; no new
 provider, parser, model, egress or write capability is introduced.
+
+## Ebook synopsis authority (#1076)
+
+Automatic ebook fills reject only whole normalized duplicate and numeric
+page/size catalogue markers after source safety and WORK admission. Source-record
+conflicts precede deterministic election; persisted effect authority reconstructs
+the exact winner and citations. Fitness never vetoes an explicit admitted owner
+choice, and populated ebook targets remain outside automatic fill authority.
+Shared shadow policy v18 and successor qualification bindings require a clean
+rebuild. Existing consent, backup, currentness, optimistic checks, supported APIs,
+read-back and audit remain mandatory; no new egress or write scope is introduced.

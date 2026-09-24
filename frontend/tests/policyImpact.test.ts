@@ -390,3 +390,22 @@ it.each([
     }),
   ).toMatchObject({ changed: false, title: 'No change', detail: `remains empty — ${explanation}` })
 })
+
+describe('ebook synopsis refusals', () => {
+  it.each([
+    ['description_quality_floor_not_met', 'No eligible automatic synopsis'],
+    ['target_work_applicability_unproved', 'not proved to describe this work'],
+    ['ambiguous_evidence', 'source record contains conflicting descriptions'],
+  ])('explains %s without claiming no retained source', (reason, text) => {
+    const display = policyImpactDisplay({
+      field: 'description_fill',
+      outcome: 'abstain',
+      reason,
+      current_value: null,
+      desired_value: null,
+      target_state: 'missing',
+    })
+    expect(display.detail).toContain(text)
+    expect(display.changed).toBe(false)
+  })
+})

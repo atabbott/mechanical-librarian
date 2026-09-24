@@ -5,7 +5,25 @@ rich-metadata qualification contract and its exact option-level decisions. It
 grants decision-only Automatic authority to the passing options; it does not
 grant effect consent, construct a target write, or change provider selection.
 
-## Current audiobook synopsis successor (#1070)
+## Current ebook synopsis successor (#1076)
+
+[F19a v37](../reference/f19a-qualification-manifest-v37.json),
+[F20 v51](../reference/f20-rich-metadata-qualification-candidate-v51.json) and
+[F46 v20](../reference/f46-audiobook-qualification-candidate-v20.json) bind shared
+shadow decision policy v18. **Clean rebuild required**; historical measurements,
+evaluators and operation memberships remain frozen, with no new quality score.
+
+Automatic ebook fills preserve exact eligible same-work source text, with no
+length floor. Whole normalized `(duplicate)` and ASCII integer `pages ;` ASCII
+integer `cm` values are excluded only from automatic authority. Safety, WORK
+applicability and conflicting text within one source record are checked first.
+Existing authority order then stable provider/record identity chooses between
+eligible alternatives. Populated ebook descriptions and audiobook rules remain
+unchanged. Ask exposes admitted choices, including placeholders; Ignore exposes
+no actions, and an explicit owner choice remains final. Current Library and
+Policy explain refusal while History retains its existing generic disposition.
+
+## Prior audiobook synopsis successor (#1070)
 
 [F46 v19](../reference/f46-audiobook-qualification-candidate-v19.json),
 [F19a v36](../reference/f19a-qualification-manifest-v36.json) and
@@ -434,7 +452,8 @@ and unchanged rather than being dequalified by a different evidence mode.
 
 The fifteenth and sixteenth candidate executions qualified the automatic
 description tiebreaker after adopting the same target-work applicability rule.
-Applicable descriptions must pass the frozen 80-character, 16-word floor and
+In that historical qualification, applicable descriptions had to pass the frozen
+80-character, 16-word floor and
 must not end in a visible cutoff; the survivors then follow the fixed Hardcover,
 Google Books, Open Library authority order without combining text. The exposed
 confirmation selected 13 of 23 cases and the one-shot sealed holdout selected 14

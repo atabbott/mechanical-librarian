@@ -70,8 +70,8 @@ from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.reviewer_decision_summary import creator_role_evidence
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichMetadataPreviewError,
-    audiobook_description_candidate,
     audiobook_tag_union_candidate,
+    automatic_description_candidate,
     project_audiobook_automatic_decision_value,
     project_f20_automatic_decision_value,
     select_isbn_representation,
@@ -453,13 +453,13 @@ def _automatic_decision_value(
             selected = union.to_data()
     if selected is None:
         raise FieldEffectError("authority_binding")
-    if decision.destination == "description" and report.audio is not None:
+    if decision.destination == "description":
         result = next(
             item
             for item in proposal_set.results
             if item.destination is TargetDestination.DESCRIPTION
         )
-        synopsis = audiobook_description_candidate(report, result)
+        synopsis = automatic_description_candidate(report, result)
         if (
             synopsis is None
             or synopsis[0].alternative_id != decision.candidate_id
