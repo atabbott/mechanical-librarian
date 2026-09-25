@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Clarify why conflicting full-work and prologue identities remain for owner
+  review: opening ISBNs do not establish body completeness, and independent
+  adjudication remains separate from observed application evidence (#1079).
+
 - Fill empty ebook ISBNs from verified retained edition evidence even when its
   associated image is unavailable. Representation, owner choices and write
   safeguards remain unchanged. Clean rebuild required (#1077).
