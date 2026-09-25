@@ -2897,9 +2897,20 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                 current_comparison.get_by_role(
                     "button", name="Evidence for Alternative 1 cover"
                 ).click()
-                current_comparison.get_by_label("Alternative 1 cover evidence").press(
-                    "Enter"
+                disclosure = current_comparison.get_by_role(
+                    "button", name="Evidence for Alternative 1 cover", exact=True
                 )
+                disclosure.focus()
+                assert disclosure.evaluate("node => document.activeElement === node")
+                disclosure.press("Enter")
+                expect(disclosure).to_have_attribute("aria-expanded", "false")
+                assert decision_statuses == [409]
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_have_count(0)
+                current_comparison.get_by_role(
+                    "button", name="Choose Alternative 1 cover", exact=True
+                ).click()
                 page.get_by_role("heading", name="Review complete").wait_for()
                 assert decision_statuses == [409, 200]
                 assert errors and all("409" in error for error in errors), errors
@@ -3056,6 +3067,98 @@ _COVER_CONTAINMENT = """(selector) => {
 # the widest ratio spread lands together on the surface with the least room.
 _COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280), (300, 200))
 _LIBRARY_SHAPES = _COVER_SHAPES
+
+
+def test_library_description_controls_preserve_words_at_enlarged_text() -> None:
+    """Text enlargement keeps each control word intact without page overflow."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, reduced_motion="reduce"
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture="ready",
+                    long_descriptions=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field=description"
+                )
+                page.get_by_role("button", name="Choose current description").wait_for()
+                for width, size in (
+                    (1440, "100%"),
+                    (390, "100%"),
+                    (320, "100%"),
+                    (1440, "200%"),
+                    (320, "200%"),
+                ):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.evaluate(
+                        "size => document.documentElement.style.fontSize = size", size
+                    )
+                    words = page.evaluate("""() => {
+                      const targets = [
+                        ...document.querySelectorAll('.lenses a'),
+                        ...document.querySelectorAll('.description-value button'),
+                        ...document.querySelectorAll('.description-choice-content + .choice-select strong'),
+                      ].filter(node => node.getClientRects().length);
+                      return targets.flatMap(node => {
+                        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+                        const result = [];
+                        while (walker.nextNode()) {
+                          const text = walker.currentNode;
+                          for (const match of text.textContent.matchAll(/\\S+/g)) {
+                            const range = document.createRange();
+                            range.setStart(text, match.index);
+                            range.setEnd(text, match.index + match[0].length);
+                            const rects = [...range.getClientRects()];
+                            result.push({word: match[0], lines: new Set(rects.map(rect => rect.top)).size});
+                          }
+                        }
+                        return result;
+                      });
+                    }""")
+                    assert words and all(word["lines"] == 1 for word in words), (
+                        width,
+                        size,
+                        words,
+                    )
+                    assert (
+                        page.evaluate("document.documentElement.scrollWidth") <= width
+                    )
+                disclosure = page.get_by_role(
+                    "button", name="Read full description"
+                ).first
+                disclosure.click()
+                expect(
+                    page.get_by_role("button", name="Read full description")
+                ).to_have_count(2)
+                expect(
+                    page.get_by_role("button", name="Show less description")
+                ).to_have_count(1)
+                expect(
+                    page.get_by_role("button", name="Choose current description")
+                ).to_have_attribute("aria-pressed", "true")
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_have_count(0)
+            browser.close()
 
 
 def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
