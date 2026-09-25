@@ -360,6 +360,7 @@ def _server(
     port: ReservedPort,
     transport_mode: str = "direct",
     cover: bool = False,
+    configured_cover_reviewer: bool = False,
     sole_cover_timeout: bool = False,
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
@@ -469,6 +470,26 @@ def _server(
         # other case exists, because confirmation requires a settled
         # transition.
         _publish_audiobook_tranche_case(repository)
+    reviewer_access: ReviewerAccessOperations | Mock | None = None
+    if configured_cover_reviewer:
+        from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+        from tests.unit.test_reviewer_access_application import _Auth, _OpenRouter
+
+        assert cover
+        reviewer_access = ReviewerAccessOperations(
+            repository.reviewer_access_store(),
+            codex_auth=_Auth("usable"),
+            codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+            codex_binding=lambda: (
+                "synthetic-contained-model",
+                b"synthetic-cover-profile",
+                lambda *_args: "{}",
+            ),
+            openrouter_factory=lambda key, model: _OpenRouter(key, model, []),
+        )
+        reviewer_access.configure_openrouter(
+            expected_revision=1, api_key="synthetic-key", model="synthetic/cover-a"
+        )
     cover_considerations = None
     if cover:
         # Real pixel dimensions, because containment is a property of the
@@ -552,6 +573,17 @@ def _server(
             read_preview_digest=artifacts.read_preview_digest,
             clock=lambda: 1_000,
             bind_policy=repository.bind_current_cover_authority,
+            reviewer_dispatch=(
+                reviewer_access.dispatch_cover_observation if reviewer_access else None
+            ),
+            reviewer_identity=(
+                reviewer_access.current_cover_observation_identity
+                if reviewer_access
+                else None
+            ),
+            reviewer_revision_current=(
+                reviewer_access.revision_is_current if reviewer_access else None
+            ),
         )
         cover_considerations.update_policy(CoverPolicy())
     elif retained_decoration is not None:
@@ -1034,7 +1066,8 @@ def _server(
         ),
         openrouter=ReviewerEngineStatus(engine="openrouter", state="unconfigured"),
     )
-    reviewer_access: ReviewerAccessOperations | Mock = unconfigured_reviewer
+    if reviewer_access is None:
+        reviewer_access = unconfigured_reviewer
     if description_fixture is not None:
         from types import SimpleNamespace
 
@@ -3023,6 +3056,54 @@ _COVER_CONTAINMENT = """(selector) => {
 # the widest ratio spread lands together on the surface with the least room.
 _COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280), (300, 200))
 _LIBRARY_SHAPES = _COVER_SHAPES
+
+
+def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
+    """Real reviewer configuration and dispatch reach the Library retry control."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    cover=True,
+                    configured_cover_reviewer=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                retry = page.get_by_role("button", name="Retry advisory review")
+                expect(retry).to_be_enabled()
+                with page.expect_response(
+                    lambda response: response.url.endswith(
+                        "/cover-considerations/retry"
+                    )
+                ) as response:
+                    retry.click()
+                assert response.value.status == 200
+                expect(retry).to_be_enabled()
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_have_count(0)
+                assert (
+                    page.locator(".library-cover-card[aria-pressed='true']").count()
+                    == 0
+                )
+            browser.close()
 
 
 def test_protected_cover_comparison_contains_every_image_without_cropping() -> None:
