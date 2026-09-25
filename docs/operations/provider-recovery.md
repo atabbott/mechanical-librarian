@@ -19,7 +19,13 @@ stays the conservative generic rate-limited case and uses a strict bounded
 authorization, and configuration failures are dormant.
 
 Google Books recognizes only the closed API reason vocabulary: burst reasons
-wait at most 100 seconds, while daily-limit reasons resume at the next Pacific
+start a shared 100-second admission hold in the composed process. Later Google
+lanes and works return rate-limited without starting HTTP, sleeping through the
+hold, or renewing its deadline. Initial ebook and terminal audiobook reports,
+and recovery successors, commit the remaining wait through existing recovery
+state (82 seconds when 18 seconds of the window have elapsed). A known expired
+window uses the existing one-second minimum; an unknown window does not inherit
+a hold. Already admitted requests may finish. Daily-limit reasons resume at the next Pacific
 midnight. Hardcover recognizes either its exact current `RateLimit` response
 grammar or its exact legacy remaining/reset pair. A depleted
 burst bucket waits at most 60 seconds; a depleted daily bucket resumes at the
@@ -87,7 +93,10 @@ provider payloads, or credentials.
 Google Books, Hardcover, Inventaire, and Open Library each use one shared one-second
 request-start pacer across foreground and recovery work inside a composed run.
 This serializes starts for one provider without holding a SQLite transaction or
-creating a separate request budget.
+creating a separate request budget. Google alone arms its pacer from an exact
+burst response. The lock covers admission and hold updates, never the HTTP
+exchange. Restart loses an uncommitted process-local hold; committed recovery
+eligibility survives. This provides no restart-wide quota coordination (#1082).
 
 The owner may run `mechanical-librarian provider-recovery` with the same
 configuration, database, catalogue, and artifact paths used by the server. It
@@ -111,3 +120,9 @@ and publishes no successor. Cancellation-compatible failures propagate with thei
 partial snapshot. Retry delay comes only from the final canonical attempt:
 terminal or exhausted `http_429`, with an integral non-Boolean value from 1 to
 86,400 seconds. Initial-report unavailable-lane handling is not a recovery fallback.
+
+An iTunes Search overflow is terminal for that observation. The adapter asks for
+six rows and admits at most five distinct candidates; it neither truncates an
+overflow nor repeats the same request as a supposed narrower query. Its narrowing
+flag does not change the wire term. The ordinary query ladder removes information
+and advances only after no-match, so it is not an overflow remedy (#1082).

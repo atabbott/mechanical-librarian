@@ -2463,7 +2463,14 @@ def create_review_pipeline(
             raise ProviderRetrySuccessorError("provider retry configuration changed")
 
         return ConfiguredProviderRetry(
-            ProviderBinding(name, True, factory, adapter), adapter, generation
+            ProviderBinding(name, True, factory, adapter),
+            adapter,
+            generation,
+            google_burst_remaining=(
+                google_books_pacer.remaining_burst
+                if adapter == "google_books" and google_books_pacer is not None
+                else None
+            ),
         )
 
     pipeline_holder: dict[str, ReviewPreparationPipeline] = {}
@@ -2732,6 +2739,11 @@ def create_review_pipeline(
         prepare_description=prepare_description,
         admit_description=admit_description,
         recovery_observer=provider_recovery,
+        google_burst_remaining=(
+            google_books_pacer.remaining_burst
+            if google_books_pacer is not None
+            else None
+        ),
         drain_outbox=drain_outbox,
         discovery_lock=discovery_lock,
         clock=lambda: int(time.time()),

@@ -10,7 +10,7 @@ credential, so each is stated here beside its consumers and unit tested directly
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Callable, Protocol
 
 from mechanical_librarian.application.metadata_report import (
     PROVIDER_RECOVERY_ELIGIBLE_STATUSES,
@@ -177,10 +177,13 @@ def record_provider_recovery_observations(
     scope: str,
     generation: int,
     now: int,
+    google_burst_remaining: Callable[[], int | None] | None = None,
 ) -> None:
     """Persist only terminal F22 provider classifications; never retry them."""
     for observation in report.providers:
-        decision = provider_recovery_decision(observation, now=now)
+        decision = provider_recovery_decision(
+            observation, now=now, google_burst_remaining=google_burst_remaining
+        )
         if decision is not None:
             failure, retry_after = decision
             adapter = adapters.get(observation.provider)

@@ -137,6 +137,7 @@ class GoogleBooksMetadataProvider:
             or any(not 0x21 <= ord(value) <= 0x7E for value in api_key)
         ):
             raise ValueError("provider credential is invalid")
+        self._pacer = pacer
         self._name = name
         self._client = client
         self._api_key = api_key
@@ -520,8 +521,14 @@ class GoogleBooksMetadataProvider:
             },
             deadline=deadline,
             query_retry=query_retry,
-            classify=_classify,
+            classify=self._classify,
         )
+
+    def _classify(self, facts: ProviderResponseFacts) -> ProviderFailure:
+        failure = _classify(facts)
+        if failure.category == "burst_throttled" and self._pacer is not None:
+            self._pacer.hold_burst(_BURST_WINDOW_SECONDS)
+        return failure
 
 
 def _classify(facts: ProviderResponseFacts) -> ProviderFailure:

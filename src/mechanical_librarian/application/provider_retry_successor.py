@@ -121,6 +121,7 @@ class ConfiguredProviderRetry:
     binding: ProviderBinding
     adapter: str
     generation: int
+    google_burst_remaining: Callable[[], int | None] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -263,7 +264,11 @@ class GenerateProviderRetrySuccessor:
                 or not 0 <= reading <= MAX_TIMESTAMP
             ):
                 raise ProviderRetrySuccessorError("provider retry clock is invalid")
-            decision = provider_recovery_decision(replacement, now=int(reading))
+            decision = provider_recovery_decision(
+                replacement,
+                now=int(reading),
+                google_burst_remaining=live_provider.google_burst_remaining,
+            )
             if decision is not None:
                 failure, scheduled_delay = decision
                 raise ProviderRetrySharedFailure(

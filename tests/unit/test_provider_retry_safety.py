@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import socket
 import ssl
+from concurrent.futures import ThreadPoolExecutor
+from threading import Event
 
 import httpcore
 import httpx
 import pytest
 
 from mechanical_librarian.adapters.providers.retry_safety import (
+    ProviderFailure,
     ProviderRequestPacer,
     _DiscoveryRequestLedger,
     bounded_attempt_elapsed,
     bounded_retry_after,
     transient_transport_failure,
 )
+from mechanical_librarian.domain.metadata_report import ProviderStatus
 
 
 def test_shared_pacer_spaces_starts_and_refuses_a_deadline_boundary() -> None:
@@ -281,3 +285,51 @@ def test_retry_after_accepts_bounded_canonical_values_only(value: str) -> None:
     assert 60.0 == bounded_retry_after("60", now=now)
     assert 30.0 == bounded_retry_after("Mon, 20 Jul 2026 13:20:30 GMT", now=now)
     assert bounded_retry_after(value, now=now) is None
+
+
+def test_burst_hold_uses_max_deadline_and_never_renews_on_refusal() -> None:
+
+    now = [0.0]
+    pacer = ProviderRequestPacer(
+        clock=lambda: now[0], sleep=lambda _: pytest.fail("held")
+    )
+    assert pacer.remaining_burst() is None
+    assert pacer.wait()
+    pacer.hold_burst(100)
+    now[0] = 18
+    pacer.hold_burst(10)
+    assert pacer.remaining_burst() == 82
+    for _ in range(3):
+        with pytest.raises(ProviderFailure) as raised:
+            pacer.wait()
+        assert raised.value.status is ProviderStatus.RATE_LIMITED
+        assert raised.value.category == "shared_burst_throttled"
+        assert raised.value.retry_after == 82
+    now[0] = 99.1
+    assert pacer.remaining_burst() == 1
+    now[0] = 100
+    assert pacer.remaining_burst() == 0
+    assert pacer.wait()
+
+
+def test_burst_update_serializes_with_admission_but_not_http() -> None:
+
+    admitted = Event()
+    release = Event()
+    pacer = ProviderRequestPacer(clock=lambda: 0.0)
+
+    def request() -> None:
+        assert pacer.wait()
+        admitted.set()
+        assert release.wait(5)
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(request)
+        assert admitted.wait(5)
+        try:
+            pacer.hold_burst(100)
+            with pytest.raises(ProviderFailure):
+                pacer.wait()
+        finally:
+            release.set()
+        future.result(timeout=5)

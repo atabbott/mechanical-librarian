@@ -3,6 +3,7 @@ from __future__ import annotations
 import gzip
 import json
 import tempfile
+from dataclasses import replace
 from pathlib import Path
 
 import httpx
@@ -15,12 +16,19 @@ from mechanical_librarian.adapters.providers.google_books_metadata import (
     GOOGLE_BOOKS_URL,
     GoogleBooksMetadataProvider,
 )
+from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
+from mechanical_librarian.application.failure_diagnostics import (
+    provider_result_diagnostics,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataDiscoveryLane,
     MetadataDiscoveryPlan,
     MetadataLookup,
     ProviderObservationInterrupted,
     qualify_provider_observation,
+)
+from mechanical_librarian.application.provider_recovery_policy import (
+    provider_recovery_decision,
 )
 from mechanical_librarian.domain.metadata_report import (
     MAX_DESCRIPTION_CHARACTERS,
@@ -1948,3 +1956,57 @@ def test_rejection_provenance_preserves_safe_sibling_bytes(key: str) -> None:
                 assert claim.reference != old["reference"]
             continue
         assert claim.to_data() == old
+
+
+def test_shared_google_burst_stops_later_lanes_and_work_until_expiry() -> None:
+
+    now = [0.0]
+    requests: list[httpx.Request] = []
+
+    def sleep(delay: float) -> None:
+        now[0] += delay
+
+    pacer = ProviderRequestPacer(clock=lambda: now[0], sleep=sleep)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            403 if now[0] < 100 else 200,
+            json={"error": {"errors": [{"reason": "rateLimitExceeded"}]}}
+            if now[0] < 100
+            else {"totalItems": 0},
+        )
+
+    def observe():
+        return GoogleBooksMetadataProvider(
+            "google",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=pacer,
+            clock=lambda: now[0],
+            sleep=sleep,
+        ).observe(_identifier_first_plan())
+
+    first = observe()
+    assert len(requests) == 1
+    assert first.observation.request_accounting.initial_dispatches == 1
+    assert first.observation.request_accounting.undispatched_incomplete == 1
+    assert len(first.evidence.attempt_records) == 1
+    initial = replace(
+        first.observation,
+        diagnostics=provider_result_diagnostics(first.observation, first.evidence),
+    )
+    assert provider_recovery_decision(initial, now=0) == ("burst_throttled", 100)
+    now[0] = 18
+    held = observe()
+    assert len(requests) == 1
+    assert held.observation.status is ProviderStatus.RATE_LIMITED
+    assert held.observation.accessed_at is None
+    assert held.evidence.attempt_records == ()
+    assert held.observation.request_accounting.initial_dispatches == 0
+    assert held.observation.request_accounting.undispatched_incomplete == 2
+    now[0] = 100
+    resumed = observe()
+    assert resumed.observation.status is ProviderStatus.NO_MATCH
+    assert resumed.observation.request_accounting.initial_dispatches == 2
+    assert len(requests) == 3

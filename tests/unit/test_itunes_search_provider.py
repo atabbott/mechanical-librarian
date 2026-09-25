@@ -611,3 +611,56 @@ def test_http_title_isolation_preserves_candidate_evidence(
         for claim in claims
     )
     assert all(claim.value is None or "\u200b" not in claim.value for claim in claims)
+
+
+@pytest.mark.parametrize(
+    "count,malformed", ((5, False), (6, False), (7, False), (7, True))
+)
+def test_complete_itunes_overflow_is_terminal_before_projection(
+    count: int, malformed: bool
+) -> None:
+    matching = {
+        "collectionId": 100,
+        "collectionName": "Synthetic Work",
+        "artistName": "Example Writer",
+        "description": "An original synthetic account.",
+    }
+    rows = [matching]
+    for index in range(1, count):
+        row = copy.deepcopy(matching)
+        row["collectionId"] = 100 + index
+        row["collectionName"] = f"Unrelated Synthetic Work {index}"
+        row["artistName"] = "Another Writer"
+        rows.append(row)
+    if malformed:
+        # A JSON-compatible malformed member must still be rejected by the
+        # complete raw-result bound before any member projection.
+        rows[-1] = {"collectionId": None}
+    seen, handle = _recorder(_store({"resultCount": count, "results": rows}))
+    observation = (
+        _provider(handle)
+        .observe(work_plan(title="Synthetic Work", authors=("Example Writer",)))
+        .observation
+    )
+    assert len(seen) == 1
+    assert seen[0].params["limit"] == "6"
+    assert observation.status is (
+        ProviderStatus.CANDIDATES
+        if count == 5
+        else ProviderStatus.CANDIDATE_LIMIT_EXCEEDED
+    )
+    assert len(observation.candidates) == (1 if count == 5 else 0)
+    assert observation.request_accounting.retry_dispatches == 0
+
+
+def test_itunes_narrowing_flag_does_not_change_wire_term() -> None:
+    from mechanical_librarian.adapters.providers.itunes_search_metadata import (
+        _search_term,
+    )
+    from mechanical_librarian.domain.work_identity import (
+        narrowing_work_query,
+        work_query_ladder,
+    )
+
+    query = work_query_ladder("Synthetic Work: An Account", ("Example Writer",))[0]
+    assert _search_term(narrowing_work_query(query)) == _search_term(query)

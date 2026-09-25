@@ -784,3 +784,15 @@ Synthetic Inventaire ISBN responses without an image also traverse the actual
 adapter, cover observer, report constructor and persisted owner outcome. They
 retain exact edition/work provenance without image acquisition; missing binding,
 unknown media and work-search controls confer no ISBN authority.
+
+## Shared provider admission preservation (#1082)
+
+Current F19a, F20 and F46 records advance their semantic revision for shared
+Google burst admission and remaining-delay recovery. Their exact predecessors
+are retained as immutable history and displaced permission sets remain decode-only.
+The 12, 13 and 76 automatic options and the one F46 paired operation are unchanged.
+Synthetic current-producer, persistence, guarded-effect and predecessor-decoding
+proof protects this source change; it is not a new population qualification,
+historical rescore or real-provider success measurement. Historical v44 evidence
+and the earlier 1,624-report and final 1,916-report observations remain separate,
+immutable snapshots, not counts of individually failed HTTP requests.
