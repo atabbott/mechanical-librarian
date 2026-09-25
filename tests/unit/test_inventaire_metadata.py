@@ -1491,13 +1491,14 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
         requests.append(request)
         uris = request.url.params.get_list("uris")
         if uris == ["isbn:9780306406157"]:
-            entity = {
+            claims = {"wdt:P212": ["9780306406157"]}
+            if shape != "missing_binding":
+                claims["wdt:P629"] = ["wd:Q100"]
+            entity: dict[str, object] = {
                 "uri": "inv:edition-one",
                 "labels": {"en": "Example Book"},
-                "claims": {"wdt:P212": ["9780306406157"]},
+                "claims": claims,
             }
-            if shape != "missing_binding":
-                entity["claims"]["wdt:P629"] = ["wd:Q100"]
             if shape == "null":
                 entity["image"] = None
             entities = {"inv:edition-one": entity}
@@ -1524,6 +1525,7 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
     for descriptor in result.cover_descriptors:
         assert descriptor.url is None
         assert descriptor.terminal_state is CoverSourceState.ABSENT
+        assert descriptor.provenance is not None
         assert descriptor.provenance.designation is CoverDesignation.EXACT_EDITION
         candidate = result.observation.candidates[0]
         assert descriptor.provenance.edition_identity == candidate.identity

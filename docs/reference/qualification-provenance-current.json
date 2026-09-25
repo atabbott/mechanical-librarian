@@ -656,7 +656,7 @@
     "tests/unit/test_google_books_metadata.py": "1763229200257d314b186fc59336ec5dcb6214ef122cf8780e7d910a8b8bdf4b",
     "tests/unit/test_hardcover_rich_projection.py": "733db720514cd41dc935f2cbc5dea2e85663c29d2e6f64221f722cc17711f8a9",
     "tests/unit/test_incumbent_description_text.py": "223c64bc75fe76a1aadfc8c4690cc223efb907ed1280ba1f19421e29d3a46046",
-    "tests/unit/test_inventaire_metadata.py": "85666060f8f927020e5e46384b06f9bab2105deb9f82a4a9984b5c6404947bd0",
+    "tests/unit/test_inventaire_metadata.py": "51aa7d73e050789ebae834da05ed91f62d642bee7b4ea62ca40908ee646adff9",
     "tests/unit/test_inventaire_preparation.py": "447817a84c86802c522a41c78c231acaeb9a8b105c9435c9f0c91ffe4a23c899",
     "tests/unit/test_itunes_search_provider.py": "8910c2ec4136a82f4cd7425500db865fdca4355357923b69866b0e6eb27c9c7f",
     "tests/unit/test_language_authority.py": "4a1463c19c22a158f4b3f671a3ef8946c7aa0b0bb65691900e4f5d42d0259aaa",
