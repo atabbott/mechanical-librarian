@@ -846,3 +846,17 @@ recording identity; real base or script conflicts still withhold recording
 authority. Local audio facts share one selected-audio correlation, including
 author evidence. This does not itself establish a recording match. Prior report
 and SQL state require a clean rebuild under ADR-0013 (#1071).
+
+## Shared Google burst admission (#1082)
+
+An exact Google burst response holds later HTTP starts in the same composed
+process until its monotonic deadline. Suppressed work remains rate-limited and
+counts as undispatched incomplete logical work, with zero physical attempts and
+no invented access time. Replay counts retain their existing meaning. Generic
+429, mixed specific/generic, authentication, authorization and daily-quota
+precedence are unchanged. A shared hold does not mean the source has no match.
+
+iTunes Search retains its complete-result bound: five rows with one supported
+match and distinct distractors can admit that match; six distinct candidates or
+an oversized raw result list overflow. Over-limit lists are rejected before
+member projection. No cap increase, truncation or effective narrowing is claimed.

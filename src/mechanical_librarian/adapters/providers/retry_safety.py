@@ -56,11 +56,34 @@ class ProviderRequestPacer:
         self._clock = clock
         self._sleep = sleep
         self._last_start: float | None = None
+        self._burst_until: float | None = None
         self._lock = threading.Lock()
+
+    def hold_burst(self, seconds: float) -> None:
+        """Extend an observed burst window; only an actual response may arm it."""
+        if type(seconds) not in {int, float} or not 0 < seconds <= 100:
+            raise ValueError("provider burst window is invalid")
+        with self._lock:
+            self._burst_until = max(self._burst_until or 0.0, self._clock() + seconds)
+
+    def remaining_burst(self) -> int | None:
+        """Distinguish an unknown window from a known, possibly expired one."""
+        with self._lock:
+            return (
+                None
+                if self._burst_until is None
+                else max(0, math.ceil(self._burst_until - self._clock()))
+            )
 
     def wait(self, deadline: float | None = None) -> bool:
         with self._lock:
             now = self._clock()
+            if self._burst_until is not None and now < self._burst_until:
+                raise ProviderFailure(
+                    ProviderStatus.RATE_LIMITED,
+                    category="shared_burst_throttled",
+                    retry_after=math.ceil(self._burst_until - now),
+                )
             delay = (
                 0.0
                 if self._last_start is None

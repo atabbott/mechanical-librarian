@@ -5,6 +5,8 @@ import sqlite3
 import tempfile
 from dataclasses import replace
 from pathlib import Path
+from threading import Lock
+from types import SimpleNamespace
 from typing import cast
 from unittest.mock import patch
 
@@ -18,10 +20,15 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
 )
+from mechanical_librarian.adapters.providers.google_books_metadata import (
+    GoogleBooksMetadataProvider,
+)
 from mechanical_librarian.adapters.providers.inventaire_metadata import (
     InventaireMetadataProvider,
     InventairePacer,
 )
+from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
+from mechanical_librarian.application.catalogue import CatalogueReader
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
     LibraryConfiguration,
@@ -30,12 +37,16 @@ from mechanical_librarian.application.configuration import (
     ReviewWebConfiguration,
     TargetConnectionConfiguration,
 )
+from mechanical_librarian.application.failure_diagnostics import (
+    provider_result_diagnostics,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ProviderLaneResult,
     ProviderResult,
     TargetFile,
     TargetSnapshot,
+    audiobook_discovery_plan,
     metadata_discovery_plan,
     provider_observation,
 )
@@ -43,13 +54,26 @@ from mechanical_librarian.application.provider_evidence import (
     ProviderAttemptRecord,
     ProviderOperationalEvidence,
 )
+from mechanical_librarian.application.provider_recovery_policy import (
+    provider_recovery_decision,
+)
 from mechanical_librarian.application.provider_recovery_runner import RecoveryRun
-from mechanical_librarian.application.review_pipeline import ReviewPipelineError
+from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
+    ReviewPipelineError,
+)
+from mechanical_librarian.application.review_pipeline_stages import ReviewPipelineStages
 from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessApplicationError,
     ReviewerAccessOperations,
 )
 from mechanical_librarian.bootstrap import composition
+from mechanical_librarian.domain.failure_diagnostics import (
+    FailureCategory,
+    FailureComponent,
+    FailureDiagnostic,
+    FailureStage,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -57,11 +81,17 @@ from mechanical_librarian.domain.metadata_report import (
     LocalClaim,
     MetadataReport,
     ProviderCandidate,
+    ProviderObservation,
+    ProviderRequestAccounting,
     ProviderStatus,
     TargetFacts,
+    audio_set_content_digest,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
+from tests.support.audiobook_providers import target_title_claim
+from tests.support.audiobook_reports import audio_local_claims, audio_target_fields
+from tests.support.metadata_report_doubles import single_track_audio_facts
 from tests.support.proposal_evidence import _claim, _provider
 
 
@@ -602,8 +632,13 @@ def test_restart_delivers_generation_cutover_once_after_dormant_health(
         empty.close()
 
 
-@pytest.mark.parametrize("adapter", ("google_books", "inventaire"))
-def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
+@pytest.mark.parametrize(
+    "adapter,burst",
+    (("google_books", False), ("inventaire", False), ("google_books", True)),
+)
+def test_three_work_shared_failure_then_real_f22_cutover(
+    adapter: str, burst: bool
+) -> None:
     with tempfile.TemporaryDirectory() as temporary:
         root = Path(temporary)
         database = root / "reports.sqlite"
@@ -814,8 +849,48 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
         clock = [7_200]
         _TargetReader.snapshots = snapshots
 
+        burst_pacer = ProviderRequestPacer(
+            clock=lambda: float(clock[0]), sleep=lambda _: None
+        )
+        physical: list[httpx.Request] = []
+
+        def burst_response(request: httpx.Request) -> httpx.Response:
+            physical.append(request)
+            return (
+                httpx.Response(
+                    403, json={"error": {"errors": [{"reason": "rateLimitExceeded"}]}}
+                )
+                if clock[0] < 7_282
+                else httpx.Response(200, json={"totalItems": 0})
+            )
+
+        if burst:
+            clock[0] = 7_182
+            initial = GoogleBooksMetadataProvider(
+                "google",
+                httpx.Client(transport=httpx.MockTransport(burst_response)),
+                65_536,
+                pacer=burst_pacer,
+                clock=lambda: float(clock[0]),
+            ).observe(
+                metadata_discovery_plan(snapshots["item-1"], reports[0].local_claims)
+            )
+            assert initial.observation.status is ProviderStatus.RATE_LIMITED
+            assert len(physical) == 1
+            clock[0] = 7_200
+
         def google_provider(name, *_args, **_kwargs):
             status = outcomes.pop(0)
+            if burst:
+                calls.append(status)
+                assert _kwargs["pacer"] is burst_pacer
+                return GoogleBooksMetadataProvider(
+                    name,
+                    httpx.Client(transport=httpx.MockTransport(burst_response)),
+                    65_536,
+                    pacer=burst_pacer,
+                    clock=lambda: float(clock[0]),
+                )
             if adapter == "google_books":
                 return _GoogleProvider(name, status, calls)
             calls.append(status)
@@ -850,6 +925,7 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
 
         with (
             patch.object(composition.time, "time", side_effect=lambda: clock[0]),
+            patch.object(composition, "GoogleBooksPacer", return_value=burst_pacer),
             patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
             patch.object(composition, "_IsolatedEpubInspector", _Inspector),
             patch.object(composition, "google_books_client", return_value=object()),
@@ -895,7 +971,10 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
             assert [ProviderStatus.RATE_LIMITED] == calls
             assert "waiting" == recovery.snapshot()[0].state
 
-            clock[0] = 7_237
+            if burst:
+                assert len(physical) == 1
+                assert recovery.snapshot()[0].next_eligible_at == 7_282
+            clock[0] = 7_282 if burst else 7_237
             with patch.object(
                 recovery, "authorize_fanout", side_effect=KeyboardInterrupt
             ):
@@ -915,7 +994,7 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
 
             # The completed exact successor is recognized after lease expiry;
             # the canary provider is not contacted again before sibling fanout.
-            clock[0] = 7_537
+            clock[0] = 7_582 if burst else 7_537
             supervisor.recover_provider_once()
             check = open_repository(database)
             current_packages = {
@@ -942,3 +1021,262 @@ def test_three_work_shared_failure_then_real_f22_cutover(adapter: str) -> None:
             assert "recovered" == recovery.snapshot()[0].state
             assert [] == outcomes
             supervisor.stop()
+
+
+@pytest.mark.parametrize("audio", (False, True))
+def test_google_remaining_burst_is_committed_without_renewal(
+    tmp_path: Path, audio: bool
+) -> None:
+
+    now = [0.0]
+    dispatched: list[httpx.Request] = []
+    pacer = ProviderRequestPacer(
+        clock=lambda: now[0], sleep=lambda _: pytest.fail("hold must not sleep")
+    )
+    isbn = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="9780306406157",
+        canonical="9780306406157",
+        excerpt="9780306406157",
+        applicability="ebook",
+        checksum="valid_isbn_13",
+        applicability_basis="ebook",
+    )
+    snapshot = TargetSnapshot(
+        "ebook", "Synthetic title", (TargetFile("f" * 64, "book.epub", "epub"),)
+    )
+    claims: tuple[LocalClaim, ...] = (isbn,)
+    audio_facts = None
+    if audio:
+        snapshot = TargetSnapshot(
+            "audiobook",
+            "Project Hail Mary",
+            (TargetFile("f" * 64, "book.m4b", "m4b"),),
+            fields=audio_target_fields(),
+        )
+        claims = tuple(
+            sorted(
+                (*audio_local_claims(), target_title_claim()),
+                key=lambda claim: claim.reference,
+            )
+        )
+        audio_facts = single_track_audio_facts()
+        plan = audiobook_discovery_plan(snapshot, claims, audio=audio_facts)
+    else:
+        plan = metadata_discovery_plan(snapshot, claims)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        dispatched.append(request)
+        return httpx.Response(
+            403, json={"error": {"errors": [{"reason": "rateLimitExceeded"}]}}
+        )
+
+    def observe():
+        result = GoogleBooksMetadataProvider(
+            "google",
+            httpx.Client(transport=httpx.MockTransport(handler)),
+            65_536,
+            pacer=pacer,
+            clock=lambda: now[0],
+        ).observe(plan)
+        return replace(
+            result.observation,
+            diagnostics=provider_result_diagnostics(
+                result.observation, result.evidence
+            ),
+        )
+
+    first = observe()
+    assert len(dispatched) == 1
+    assert provider_recovery_decision(
+        first, now=0, google_burst_remaining=pacer.remaining_burst
+    ) == ("burst_throttled", 100)
+    now[0] = 18
+    inherited = observe()
+    assert inherited.request_accounting.initial_dispatches == 0
+    assert inherited.accessed_at is None
+    assert provider_recovery_decision(
+        first, now=18, google_burst_remaining=pacer.remaining_burst
+    ) == ("burst_throttled", 82)
+    assert provider_recovery_decision(
+        inherited, now=18, google_burst_remaining=pacer.remaining_burst
+    ) == ("burst_throttled", 82)
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "ebooks", "item-one", snapshot.fields),
+        file=FileFacts(
+            0,
+            "f" * 64,
+            audio_set_content_digest(
+                tuple(track.digest for track in audio_facts.tracks)
+            )
+            if audio_facts is not None
+            else "e" * 64,
+            "m4b" if audio else "epub",
+        ),
+        local_claims=claims,
+        local_reasons=("no_local_audio_claims",) if audio else ("opening_matter_isbn",),
+        providers=(inherited,),
+        audio=audio_facts,
+    )
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+
+    def unreachable(*_args, **_kwargs):
+        raise AssertionError("unrelated stage reached")
+
+    catalogue = SimpleNamespace(
+        latest_entry=lambda *_args: SimpleNamespace(
+            file_identity="f" * 64, source_fingerprint="a" * 64, eligible=True
+        ),
+        close=lambda: None,
+    )
+    repository = open_repository(tmp_path / "reports.sqlite")
+    repository.publish(report, lambda: True)
+    stages = ReviewPipelineStages(
+        configuration=_recovery_configuration(),
+        catalogue=lambda _: catalogue,
+        catalogue_reader=cast("CatalogueReader", catalogue),
+        probe_connection=unreachable,
+        connections=frozenset(),
+        repository_factory=unreachable,
+        recover_artifacts=lambda: None,
+        generate_report=lambda *_args: report.to_json(),
+        create_proposal_set=unreachable,
+        admit_review_case=unreachable,
+        cover_considerations=unreachable,
+        recovery_observer=store,
+        drain_outbox=unreachable,
+        discovery_lock=Lock(),
+        clock=lambda: 18,
+        google_burst_remaining=pacer.remaining_burst,
+    )
+    if audio:
+        action = PipelineAction(
+            "action",
+            "scan",
+            "extraction",
+            1,
+            "primary",
+            "ebooks",
+            "library-1",
+            "b" * 64,
+            item_id="item-one",
+            file_identity="f" * 64,
+            source_fingerprint="a" * 64,
+            source_revision=1,
+            catalogue_generation=1,
+            catalogue_fingerprint="c" * 64,
+        )
+        assert stages.extract(repository, action, False) == (report.report_id, True)
+    else:
+        assert ProviderStatus.RATE_LIMITED in stages.providers(
+            repository, report.report_id
+        )
+    repository.close()
+    assert store.snapshot()[0].next_eligible_at == 100
+    store.close()
+    reopened = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    assert reopened.snapshot()[0].next_eligible_at == 100
+    assert reopened.snapshot()[0].state == "waiting"
+    reopened.close()
+    assert len(dispatched) == 1
+    assert pacer.remaining_burst() == 82
+    now[0] = 100
+    assert provider_recovery_decision(
+        first, now=100, google_burst_remaining=pacer.remaining_burst
+    ) == ("burst_throttled", 1)
+
+
+@pytest.mark.parametrize(
+    "status,authority,categories,physical,reader,expected",
+    (
+        (
+            ProviderStatus.AUTHENTICATION,
+            "google_books",
+            ("burst_throttle",),
+            0,
+            True,
+            ("authentication", None),
+        ),
+        (
+            ProviderStatus.AUTHORIZATION,
+            "google_books",
+            ("burst_throttle",),
+            0,
+            True,
+            ("authorization", None),
+        ),
+        (
+            ProviderStatus.RATE_LIMITED,
+            "google_books",
+            ("daily_quota_exhausted",),
+            0,
+            True,
+            ("quota_exhausted", 28_782),
+        ),
+        (
+            ProviderStatus.RATE_LIMITED,
+            "google_books",
+            ("burst_throttle", "quota_rate_limit"),
+            2,
+            True,
+            ("rate_limited", None),
+        ),
+        (
+            ProviderStatus.RATE_LIMITED,
+            "google_books",
+            ("quota_rate_limit",),
+            1,
+            True,
+            ("rate_limited", None),
+        ),
+        (
+            ProviderStatus.RATE_LIMITED,
+            "hardcover",
+            ("quota_rate_limit",),
+            0,
+            True,
+            ("rate_limited", None),
+        ),
+        (
+            ProviderStatus.RATE_LIMITED,
+            "google_books",
+            ("quota_rate_limit",),
+            0,
+            False,
+            ("rate_limited", None),
+        ),
+    ),
+)
+def test_trusted_google_hold_preserves_failure_precedence(
+    status, authority, categories, physical, reader, expected
+) -> None:
+
+    observation = ProviderObservation(
+        "google",
+        status,
+        authority=authority,
+        diagnostics=tuple(
+            sorted(
+                (
+                    FailureDiagnostic(
+                        FailureCategory(category),
+                        FailureComponent.PROVIDER,
+                        FailureStage.RESPONSE,
+                    )
+                    for category in categories
+                ),
+                key=lambda value: value.category.value,
+            )
+        ),
+        request_accounting=ProviderRequestAccounting(
+            logical_requests=max(1, physical),
+            initial_dispatches=physical,
+            undispatched_incomplete=0 if physical else 1,
+        ),
+    )
+    assert (
+        provider_recovery_decision(
+            observation, now=18, google_burst_remaining=(lambda: 82) if reader else None
+        )
+        == expected
+    )

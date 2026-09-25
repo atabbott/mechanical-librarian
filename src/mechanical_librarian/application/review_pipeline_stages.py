@@ -138,6 +138,7 @@ class ReviewPipelineStages:
         drain_outbox: Callable[[ReviewPipelineRepository], None],
         discovery_lock: threading.Lock,
         clock: Callable[[], int],
+        google_burst_remaining: Callable[[], int | None] | None = None,
         admit_description: Callable[[ReviewPipelineRepository, PipelineAction], None]
         | None = None,
         prepare_description: Callable[[ReviewPipelineRepository, PipelineAction], None]
@@ -145,6 +146,7 @@ class ReviewPipelineStages:
         observation_repository_factory: Callable[[], ReviewPipelineRepository]
         | None = None,
     ) -> None:
+        self._google_burst_remaining = google_burst_remaining
         self._prepare_description = prepare_description
         self._admit_description = admit_description
         self._configuration = configuration
@@ -282,6 +284,7 @@ class ReviewPipelineStages:
             scope=value.target.library,
             generation=self._configuration.provider_recovery_generation,
             now=self._clock(),
+            google_burst_remaining=self._google_burst_remaining,
         )
 
     def _require_eligible_entry(self, action: PipelineAction) -> None:

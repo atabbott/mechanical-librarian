@@ -122,3 +122,20 @@ or repair.
 Unit tests cover bounded delays, dormancy, all-state generation reconciliation,
 idempotent observation, strict lease completion, restart, stale leases, and
 schema corruption.
+
+## Amendment: shared Google burst admission (#1082)
+
+The composed Google request pacer retains an observed burst deadline under its
+existing admission lock. Exact burst responses may extend the deadline; suppressed
+requests cannot renew it. HTTP runs outside the lock and previously admitted work
+may complete. Initial ebook, terminal audiobook and successor recovery read the
+remaining wait through a trusted same-process callback. Only exact burst evidence
+or wholly undispatched inherited Google rate-limited work may use that reading;
+actual generic or conflicting rate limits keep existing precedence. Known expired
+state uses the existing minimum delay; unknown state remains distinct.
+
+The hold is process-local. Existing committed recovery records retain restart
+eligibility; no new persistence or coordination contract is added. The callback
+is not part of configuration identity. iTunes overflow remains terminal because
+its narrowing flag leaves the request term identical; widening or truncating its
+candidate bound would change the evidence contract and is not adopted.

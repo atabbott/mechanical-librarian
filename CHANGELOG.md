@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Pause new Google Books requests during an observed shared burst window and
+  retain its remaining wait through provider recovery. iTunes overflow remains
+  safely bounded and terminal; no additional provider requests are implied (#1082).
+
 - Clarify why conflicting full-work and prologue identities remain for owner
   review: opening ISBNs do not establish body completeness, and independent
   adjudication remains separate from observed application evidence (#1079).

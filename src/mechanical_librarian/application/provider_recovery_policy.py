@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -21,7 +22,10 @@ _DAILY_RESET_ZONES: dict[str, timezone | ZoneInfo] = {
 
 
 def provider_recovery_decision(
-    observation: ProviderObservation, *, now: int
+    observation: ProviderObservation,
+    *,
+    now: int,
+    google_burst_remaining: Callable[[], int | None] | None = None,
 ) -> tuple[str, int | None] | None:
     """Return one closed failure and delay from durable provider evidence."""
     if type(now) is not int or not 0 <= now <= MAX_TIMESTAMP:
@@ -46,6 +50,27 @@ def provider_recovery_decision(
         }
         generic = FailureCategory.QUOTA_RATE_LIMIT in categories
         authority = getattr(observation, "authority", None)
+        # The reader belongs to the same composed Google pacer. A generic
+        # *physical* 429 must keep its precedence; an entirely undispatched
+        # observation may inherit only that trusted process-local window.
+        if authority == "google_books" and google_burst_remaining is not None:
+            accounting = observation.request_accounting
+            inherited = (
+                not specific
+                and accounting.logical_requests > 0
+                and accounting.initial_dispatches == 0
+                and accounting.retry_dispatches == 0
+                and accounting.undispatched_incomplete > 0
+                and all(status is ProviderStatus.RATE_LIMITED for status in statuses)
+            )
+            if (
+                inherited
+                or not generic
+                and specific == {FailureCategory.BURST_THROTTLE}
+            ):
+                remaining = google_burst_remaining()
+                if remaining is not None:
+                    return "burst_throttled", max(1, remaining)
         if not generic and specific == {FailureCategory.BURST_THROTTLE}:
             delay = _BURST_DELAYS.get(authority or "")
             return (

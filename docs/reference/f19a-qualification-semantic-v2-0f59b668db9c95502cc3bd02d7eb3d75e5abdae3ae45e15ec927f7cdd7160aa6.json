@@ -1,0 +1,29 @@
+{
+  "authority": {
+    "family": "F19A",
+    "media": "ebook",
+    "permitted_operations": [
+      "contributor_names:canonical",
+      "contributor_names:preserve",
+      "date_precision:full_date",
+      "date_precision:year",
+      "language_rendering:display_name",
+      "language_rendering:preserve",
+      "publisher_preference:publisher",
+      "title:replace_target:decoration_tidy",
+      "title:replace_target:isbn_creator_supported",
+      "title:replace_target:provider_consensus_noise",
+      "title_layout:preserve",
+      "title_layout:title_and_subtitle"
+    ],
+    "semantic_input_sha256": "81cb04ab94f60d3fb7ee867cbd57389f84fd023cfafc83b3d99867a067097695",
+    "semantic_revision": 2
+  },
+  "predecessor": {
+    "path": "docs/reference/f19a-qualification-current.json",
+    "sha256": "9859282f6b59c910cfbf386bf784e4d681b7bb946f75f16888994fb349d7c7ec",
+    "source_sha": "eeebcf48277e5b6ffa3776ed4f5c30ff5acdc31a"
+  },
+  "provenance": "qualification-provenance-current.json",
+  "schema": "qualification-current-v1"
+}

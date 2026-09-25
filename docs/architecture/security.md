@@ -1610,3 +1610,14 @@ archive, Git or network lookup. Exact outcome-v9 DDL rejects v8 stores, includin
 empty stores, without mutation; clean rebuild required, no adoption or migration.
 Existing owner-final, Ask/Ignore, consent, backup, currentness, read-back, audit and
 recovery checks remain mandatory. Authored-description authority is independent.
+
+## Google burst admission (#1082)
+
+Only an actual exact Google burst response arms its composition-owned monotonic
+pacer. Admission refusal precedes SDK dispatch accounting and creates no HTTP
+attempt or access timestamp. A trusted reader of that same pacer supplies only
+the remaining delay to existing initial-report and successor recovery. It is
+excluded from persisted configuration identity and never grants currentness or
+write authority. Actual generic 429 and conflicting rate-limit evidence retain
+precedence. No transaction spans provider work; no schema, restart-wide hold,
+new egress, credential access, quota budget or effect authority is introduced.
