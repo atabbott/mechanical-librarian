@@ -3016,6 +3016,22 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
             fixture = json.loads(
                 Path("frontend/tests/identifierEvidenceFixture.json").read_text()
             )
+            from mechanical_librarian.domain.review_case import ReviewCase
+
+            case = ReviewCase.from_json(
+                repository._connection.execute(
+                    "SELECT document FROM review_cases WHERE review_case_id=?",
+                    (case_id,),
+                ).fetchone()[0]
+            )
+            proposal_ids = {
+                proposal["destination"]: proposal["proposal_id"]
+                for proposal in case.proposals
+            }
+            for field in fixture["detail"]["fields"]:
+                field["proposal_id"] = proposal_ids[field["destination"]]
+            fixture["detail"]["review_case_id"] = case_id
+            fixture["evidence"]["review_case_id"] = case_id
             assert fixture == {"detail": response.json(), "evidence": expected}
         retained = [item for item in items if item["role"] == "external_observation"]
         assert retained == observations
