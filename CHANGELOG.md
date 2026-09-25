@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+- Show admitted ISBN choices when the owner selects Ask (#1077).
+
 - Qualification maintenance separates current automatic authority from evidence
   provenance while preserving historical decisions. Earlier derived stores require
   a clean rebuild; automatic grants and write safeguards are unchanged (#1102).
