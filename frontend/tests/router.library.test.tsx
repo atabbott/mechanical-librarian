@@ -19,6 +19,7 @@ import type {
   LibraryView,
   PreparationView,
   ReviewHttp,
+  ReviewerAccessView,
 } from '../src/api/http'
 import { createApplicationRouter, normalizeLibrarySearch } from '../src/router'
 import {
@@ -44,6 +45,14 @@ it('keeps the active search caret through debounced Library URL changes', async 
   expect(search).toHaveFocus()
   expect(search).toHaveProperty('selectionStart', 7)
   expect(search).toHaveProperty('selectionEnd', 7)
+  await user.clear(search)
+  await user.type(search, 'replacement')
+  await waitFor(() => expect(router.state.location.search.q).toBe('replacement'))
+  await user.click(screen.getByRole('button', { name: 'Clear' }))
+  expect(search).toHaveFocus()
+  await waitFor(() => expect(router.state.location.search.q).toBeUndefined())
+  expect(screen.getByText('1 total')).toHaveAttribute('role', 'status')
+  expect(screen.getByText('1 total')).toHaveAttribute('aria-live', 'polite')
 })
 
 it('keeps resync debt with its exact collection while search and cursor replace old requests', async () => {
@@ -3123,7 +3132,7 @@ describe('Library route', () => {
     await user.keyboard('{Enter}')
     expect(http.recordDecision).not.toHaveBeenCalled()
 
-    const fullValue = screen.getByRole('button', { name: 'Choose current full description' })
+    const fullValue = screen.getByRole('button', { name: /^Choose current value:/u })
     await user.click(fullValue)
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
   })
@@ -3443,6 +3452,8 @@ describe('Library route', () => {
       within(mixedComparison).getByRole('button', { name: 'Evidence for Alternative 1 cover' }),
     )
     await user.click(within(mixedComparison).getByLabelText('Alternative 1 cover evidence'))
+    expect(recordDecision).not.toHaveBeenCalled()
+    await user.click(within(mixedComparison).getByRole('button', { name: /^Alternative 1 cover/u }))
     expect(recordDecision).toHaveBeenCalledOnce()
 
     cleanup()
@@ -3616,7 +3627,7 @@ describe('Library route', () => {
       expect(screen.getByText('Visual checks unavailable')).toBeVisible()
       expect(screen.queryByText('No visual defects flagged')).not.toBeInTheDocument()
       if (reviewerUnavailableReason === null) {
-        expect(screen.getByRole('button', { name: 'Retry advisory review' })).toBeVisible()
+        expect(screen.queryByRole('button', { name: 'Retry advisory review' })).toBeNull()
         expect(screen.queryByText(/Regenerate the profile for the current contract/u)).toBeNull()
       } else {
         expect(
@@ -3694,6 +3705,70 @@ describe('Library route', () => {
       await user.click(screen.getByRole('button', { name: /Evidence for Current cover/u }))
       expect(screen.queryByRole('button', { name: 'Choose Current cover' })).not.toBeInTheDocument()
       expect(acceptOnlyHttp.recordDecision).not.toHaveBeenCalled()
+      if (reviewerStatus === 'failed') {
+        for (const capability of [
+          'configured',
+          'null',
+          'unconfigured',
+          'changed-engine',
+        ] as const) {
+          cleanup()
+          const access: ReviewerAccessView = {
+            schema_version: 'reviewer-access-view-v1',
+            revision: 9,
+            mapping:
+              capability === 'null'
+                ? null
+                : capability === 'changed-engine'
+                  ? { engine: 'openrouter', model: 'synthetic-model' }
+                  : { engine: 'codex' },
+            description_mapping: null,
+            description_metadata: null,
+            description: null,
+            openrouter_key_configured: false,
+            codex: {
+              engine: 'codex',
+              state: capability === 'unconfigured' ? 'unconfigured' : 'failed',
+              reason: null,
+              model: null,
+              tier: null,
+              host_headroom_bytes: null,
+            },
+            openrouter: {
+              engine: 'openrouter',
+              state: 'unconfigured',
+              reason: null,
+              model: null,
+              tier: null,
+              host_headroom_bytes: null,
+            },
+            recommendations: [],
+            candidates: [],
+            free_tier_caveat: '',
+            data_use_caveat: '',
+          }
+          const capabilityHttp = {
+            ...createHttp(),
+            getCaseDetail: vi.fn(async () => ({ ...detail, fields: [coverField] })),
+            getReviewerAccess: vi.fn(async () => access),
+            retryCoverConsideration: vi.fn<ReviewHttp['retryCoverConsideration']>(async () => {
+              throw new ApiError(409, 'stale_cover')
+            }),
+          }
+          renderRoute('/library?lens=all&preview=case-1&field=cover', capabilityHttp)
+          await screen.findByRole('button', { name: /Alternative 1 cover/u })
+          await waitFor(() => expect(capabilityHttp.getReviewerAccess).toHaveBeenCalledOnce())
+          if (capability === 'configured') {
+            await user.click(await screen.findByRole('button', { name: 'Retry advisory review' }))
+            expect(await screen.findByText(/The advisory retry failed safely/u)).toBeVisible()
+            expect(capabilityHttp.retryCoverConsideration).toHaveBeenCalledOnce()
+          } else {
+            expect(screen.queryByRole('button', { name: 'Retry advisory review' })).toBeNull()
+            expect(capabilityHttp.retryCoverConsideration).not.toHaveBeenCalled()
+          }
+          expect(capabilityHttp.recordDecision).not.toHaveBeenCalled()
+        }
+      }
     },
   )
 
@@ -3990,7 +4065,7 @@ describe('Library route', () => {
     expect(http.recordDecision).not.toHaveBeenCalled()
   })
 
-  it('keeps retained per-choice provenance in Library without loading diagnostic evidence', async () => {
+  it('keeps retained per-choice provenance when additional observations fail', async () => {
     const user = userEvent.setup()
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
@@ -4049,7 +4124,8 @@ describe('Library route', () => {
     await user.click(evidenceButton)
     expect(screen.getByText('Local library record')).toBeVisible()
     expect(screen.getByText('Title: retained current value')).toBeVisible()
-    expect(http.getEvidence).not.toHaveBeenCalled()
+    expect(http.getEvidence).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('button', { name: 'Retry observations' })).toBeVisible()
     expect(screen.queryByLabelText('Comparison condition')).not.toBeInTheDocument()
   })
 
@@ -4675,7 +4751,7 @@ describe('Library route', () => {
       ),
     ).toBeNull()
     expect(screen.getByText('Sources')).toBeVisible()
-    expect(screen.getByText('1 consulted for this work')).toBeVisible()
+    expect(screen.getByText('1 lookup recorded for this work')).toBeVisible()
     expect(screen.getByText('1 field has context')).toBeVisible()
     expect(screen.queryByText('field with contexts')).toBeNull()
     await user.click(screen.getByRole('button', { name: /Subtitle.*No eligible change/u }))
@@ -7060,7 +7136,7 @@ describe('Library route', () => {
     renderRoute('/library?lens=all&preview=case-1&field=title', http)
     // The protected footer: one line, no subtitle, and it says what it is
     // evidence for. The work summary is not a comparison and keeps its own.
-    expect(await screen.findByText('1 source supports this comparison')).toBeVisible()
+    expect(await screen.findByText('1 lookup recorded for this work')).toBeVisible()
     expect(screen.queryByText(/consulted for this work$/u)).toBeNull()
   })
 
@@ -8983,3 +9059,103 @@ it.each([
     }
   },
 )
+
+it('pages selected-field observations and retries without creating a choice', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getEvidence = vi
+    .fn<ReviewHttp['getEvidence']>()
+    .mockResolvedValueOnce({
+      items: [
+        {
+          destinations: ['isbn'],
+          observation: 'ISBN: 9780000000002',
+          role: 'external_observation',
+          source: 'Open Library',
+        },
+      ],
+      missingLineageCount: 0,
+      sourceLedger: [],
+      nextCursor: 'page-two',
+    })
+    .mockRejectedValueOnce(new Error('temporary read failure'))
+    .mockResolvedValueOnce({
+      items: [
+        {
+          destinations: ['title'],
+          observation: 'Title: contradicted retained fact',
+          role: 'external_observation',
+          source: 'Open Library',
+        },
+      ],
+      missingLineageCount: 0,
+      sourceLedger: [],
+    })
+  renderRoute('/library?lens=all&preview=case-1&field=title', http)
+  const region = await screen.findByRole('region', { name: 'Recorded observations' })
+  await user.click(await within(region).findByRole('button', { name: 'Load more observations' }))
+  await user.click(await within(region).findByRole('button', { name: 'Retry observations' }))
+  expect(await within(region).findByText('Title: contradicted retained fact')).toBeVisible()
+  expect(within(region).queryByText('ISBN: 9780000000002')).toBeNull()
+  expect(within(region).queryByRole('button')).toBeNull()
+  expect(http.getEvidence).toHaveBeenLastCalledWith(
+    'case-1',
+    'page-two',
+    expect.any(AbortSignal),
+    expect.anything(),
+  )
+  expect(http.recordDecision).not.toHaveBeenCalled()
+})
+
+it('counts linked corroborating authorities once and keeps observations separate', async () => {
+  const user = userEvent.setup()
+  const field = detail.fields[0]
+  if (!field) throw new Error('title field required')
+  const http = createHttp()
+  http.getCaseDetail = vi.fn<ReviewHttp['getCaseDetail']>(async () => ({
+    ...detail,
+    fields: [
+      {
+        ...field,
+        choiceContexts: [
+          {
+            alternativeId: null,
+            selection: 'current',
+            limitations: [],
+            rationale: 'Retained current title.',
+            recommendation: 'no_recommendation',
+            recommendationReason: 'No recommendation.',
+            evidence: [
+              {
+                source: 'Open Library',
+                observation: 'Title: Old title',
+                role: 'external_corroboration',
+              },
+              {
+                source: 'Open Library',
+                observation: 'Edition title: Old title',
+                role: 'external_corroboration',
+              },
+              {
+                source: 'Retained observation (provider name unavailable)',
+                observation: 'Title: Other title',
+                role: 'external_observation',
+              },
+              {
+                source: 'Local library record',
+                observation: 'Title: Old title',
+                role: 'local_presence',
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  }))
+  renderRoute('/library?lens=all&preview=case-1&field=title', http)
+  await user.click(await screen.findByRole('button', { name: /^Evidence for Current value:/u }))
+  expect(screen.getByText('1 source corroborates this choice.')).toBeVisible()
+  expect(screen.getByText('Title: Other title')).toBeVisible()
+  expect(screen.getByText('External observation')).toBeVisible()
+  expect(http.recordDecision).not.toHaveBeenCalled()
+})

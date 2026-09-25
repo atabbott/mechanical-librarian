@@ -771,11 +771,33 @@ class ReviewApplication:
         candidate = self.validate_policy(name, options, destinations)
         return candidate, self._policy.preview(candidate)
 
+    def _library_labels(self) -> dict[str, str]:
+        # Settings enforce globally unique stable library names. Read once for
+        # each projection; a presentation rename never rebinds a target.
+        return (
+            {}
+            if self._settings is None
+            else {
+                item.name: item.display_name or item.name
+                for item in self._settings.read().document.libraries
+            }
+        )
+
+    def _labelled_collection(self, value: dict[str, object]) -> dict[str, object]:
+        labels = self._library_labels()
+        for item in cast(list[dict[str, object]], value["items"]):
+            library = str(item["library"])
+            item["library_display_name"] = labels.get(library, library)
+        return value
+
     def case_detail(self, review_case_id: str) -> CaseDetailView:
         def read() -> CaseDetailView:
             detail = self._cases.run(review_case_id)
             target = detail["target"]
             assert isinstance(target, dict)
+            target["library_display_name"] = self._library_labels().get(
+                str(target["library"]), str(target["library"])
+            )
             for field in cast("list[object]", detail["fields"]):
                 assert isinstance(field, dict)
                 if isinstance(self._field_application, ContinuousGuardedApplication):
@@ -859,8 +881,10 @@ class ReviewApplication:
     ) -> LibraryView:
         return self._browse_serialized(
             lambda: LibraryView.from_data(
-                self._browse.library(
-                    lens=lens, search=search, limit=limit, cursor=cursor
+                self._labelled_collection(
+                    self._browse.library(
+                        lens=lens, search=search, limit=limit, cursor=cursor
+                    )
                 )
             ),
             check_active,
@@ -876,7 +900,9 @@ class ReviewApplication:
     ) -> AttentionView:
         return self._browse_serialized(
             lambda: AttentionView.from_data(
-                self._browse.attention(search=search, limit=limit, cursor=cursor)
+                self._labelled_collection(
+                    self._browse.attention(search=search, limit=limit, cursor=cursor)
+                )
             ),
             check_active,
         )
@@ -885,9 +911,15 @@ class ReviewApplication:
         self, connection: str, library: str, item: str
     ) -> dict[str, object]:
         """Read one item's recorded evidence where no review case exists."""
-        return self.serialized(
-            lambda: self._browse.report_detail(connection, library, item)
-        )
+
+        def read() -> dict[str, object]:
+            detail = self._browse.report_detail(connection, library, item)
+            detail["library_display_name"] = self._library_labels().get(
+                library, library
+            )
+            return detail
+
+        return self.serialized(read)
 
     def record_decision(
         self,

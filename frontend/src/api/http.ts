@@ -293,6 +293,7 @@ export interface ReportDetailView {
   evidenceTruncated: boolean
   item: string
   library: string
+  libraryDisplayName?: string
   mediaHealth: readonly MediaHealthObservationView[]
   mediaKind: string
   providerSources: readonly ProviderOutcomeView[]
@@ -308,6 +309,7 @@ export interface LibraryWorkView {
   title: string
   authors: readonly string[]
   library: string
+  libraryDisplayName?: string
   mediaKind: string
   attentionCount: number
   attention: string
@@ -337,6 +339,7 @@ export interface AttentionItemView {
   title: string
   authors: readonly string[]
   library: string
+  libraryDisplayName?: string
   mediaKind: string
   classificationReason?: string
   notices: readonly string[]
@@ -349,9 +352,11 @@ export interface AttentionView {
   total: number
   items: readonly AttentionItemView[]
 }
+export type EvidenceRole = 'external_corroboration' | 'external_observation' | 'local_presence'
+
 export interface ChoiceEvidenceView {
   observation: string
-  role: 'external_corroboration' | 'local_presence'
+  role: EvidenceRole
   source: string
 }
 export interface ChoiceContextView {
@@ -464,7 +469,14 @@ export interface CaseDetailView {
   recordingIdentityBasis: RecordingIdentityBasisView | null
   id: string
   current: boolean
-  target: { connection: string; library: string; item: string; mediaKind: string; title: string }
+  target: {
+    connection: string
+    library: string
+    libraryDisplayName?: string
+    item: string
+    mediaKind: string
+    title: string
+  }
   title: string
   authors: readonly string[]
   subtitle: string
@@ -476,7 +488,7 @@ export interface CaseDetailView {
 export interface EvidenceObservationView {
   destinations: readonly string[]
   observation: string
-  role: 'external_corroboration' | 'external_observation' | 'local_presence'
+  role: EvidenceRole
   source: string
 }
 export interface EvidenceView {
@@ -2541,6 +2553,9 @@ export const mapReportDetail = (value: unknown): ReportDetailView => {
     evidenceTruncated: value.evidence_truncated,
     item: stringValue(value.item, 'report_item'),
     library: stringValue(value.library, 'report_library'),
+    libraryDisplayName:
+      optionalString(value.library_display_name, 'report_library_display_name') ??
+      stringValue(value.library, 'report_library'),
     mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
     recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
     mediaKind: stringValue(value.media_kind, 'report_media_kind'),
@@ -2650,6 +2665,9 @@ export const mapLibrary = (value: unknown): LibraryView => {
         title: stringValue(item.title, 'title'),
         authors: stringArray(item.authors, 'authors'),
         library: stringValue(item.library, 'library'),
+        libraryDisplayName:
+          optionalString(item.library_display_name, 'library_display_name') ??
+          stringValue(item.library, 'library'),
         mediaKind: stringValue(item.media_kind, 'media_kind'),
         attentionCount: integerValue(item.attention_count, 'attention_count'),
         attention: stringValue(item.attention_state, 'attention_state'),
@@ -2690,6 +2708,9 @@ export const mapAttention = (value: unknown): AttentionView => {
       title: stringValue(item.title, 'title'),
       authors: stringArray(item.authors, 'authors'),
       library: stringValue(item.library, 'library'),
+      libraryDisplayName:
+        optionalString(item.library_display_name, 'library_display_name') ??
+        stringValue(item.library, 'library'),
       mediaKind: stringValue(item.media_kind, 'media_kind'),
       classificationReason: stringValue(
         item.classification_reason,
@@ -2920,19 +2941,22 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
     throw new ApiError(502, 'invalid_target_authors')
   const library = boundedStringValue(dto.target.library, 'target_library', 512)
   const mediaKind = boundedStringValue(dto.target.media_kind, 'target_media_kind', 64)
+  const libraryDisplayName =
+    optionalString(dto.target.library_display_name, 'library_display_name') ?? library
   return {
     id: stringValue(dto.review_case_id, 'review_case_id'),
     current: dto.current,
     target: {
       connection: boundedStringValue(dto.target.connection, 'target_connection', 512),
       library,
+      libraryDisplayName,
       item: boundedStringValue(dto.target.item, 'target_item', 512),
       mediaKind,
       title: boundedStringValue(dto.target.title, 'target_title', 512),
     },
     title: boundedStringValue(dto.target.title, 'target_title', 512),
     authors,
-    subtitle: `${library} · ${mediaKind}`,
+    subtitle: `${libraryDisplayName} · ${mediaKind}`,
     comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
     mediaHealth: mapMediaHealth(value.media_health, 'case_media_health'),
     recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
@@ -3293,7 +3317,7 @@ const mapChoiceContexts = (
           row.role,
           `choice_evidence_${String(index)}_${String(rowIndex)}_role`,
         )
-        if (!['local_presence', 'external_corroboration'].includes(role))
+        if (!['local_presence', 'external_corroboration', 'external_observation'].includes(role))
           throw new ApiError(
             502,
             `invalid_choice_evidence_${String(index)}_${String(rowIndex)}_role`,

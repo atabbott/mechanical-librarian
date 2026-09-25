@@ -11,7 +11,7 @@ import { descriptionAdviceStatus } from '../descriptionAdviceStatus'
 import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import type { KeyboardEvent, SyntheticEvent } from 'react'
+import type { SyntheticEvent } from 'react'
 
 import { displayValue } from '../api/http'
 import type {
@@ -19,6 +19,7 @@ import type {
   ChoiceContextView,
   CoverObservationView,
   DecisionCommand,
+  EvidenceView,
   LibrarySearch,
   LibraryView,
   LibraryWorkView,
@@ -27,7 +28,7 @@ import type {
 } from '../api/http'
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
-import { fieldLabel, labelWords, opaqueSource } from '../labels'
+import { evidenceRoleLabel, fieldLabel, labelWords, opaqueSource } from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
   detailQuery,
@@ -697,17 +698,16 @@ function WorkSources({
   comparison?: boolean
 }) {
   if (!outcomes.length) return null
+  const ledgerLabel = `${String(outcomes.length)} ${outcomes.length === 1 ? 'lookup recorded' : 'lookups recorded'} for this work`
   return (
     <details className="work-sources">
       <summary>
         {comparison ? (
-          <span>
-            {`${String(outcomes.length)} ${outcomes.length === 1 ? 'source supports' : 'sources support'} this comparison`}
-          </span>
+          <span>{ledgerLabel}</span>
         ) : (
           <>
             <span>Sources</span>
-            <small>{String(outcomes.length)} consulted for this work</small>
+            <small>{ledgerLabel}</small>
           </>
         )}
       </summary>
@@ -827,7 +827,8 @@ function WorkSummary({ work }: { work: LibraryWorkView }) {
         <div>
           <h2>{work.title}</h2>
           <p>
-            {authorLine(work)} · {work.library} · {labelWords(work.mediaKind)}
+            {authorLine(work)} · {work.libraryDisplayName ?? work.library} ·{' '}
+            {labelWords(work.mediaKind)}
           </p>
         </div>
       </header>
@@ -866,41 +867,31 @@ function ChoiceEvidencePanel({
   context,
   evidenceId,
   label,
-  onChoose,
 }: {
   context: ChoiceContextView | undefined
   evidenceId: string
   label: string
-  onChoose?: () => void
 }) {
+  const corroboratingSources = new Set(
+    context?.evidence
+      .filter((row) => row.role === 'external_corroboration')
+      .map((row) => row.source),
+  ).size
   return (
-    <section
-      className="choice-evidence"
-      id={evidenceId}
-      aria-label={`${label} evidence`}
-      {...(onChoose
-        ? {
-            role: 'button' as const,
-            tabIndex: 0,
-            onClick: onChoose,
-            onKeyDown: (event: KeyboardEvent<HTMLElement>) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault()
-                onChoose()
-              }
-            },
-          }
-        : {})}
-    >
+    <section className="choice-evidence" id={evidenceId} aria-label={`${label} evidence`}>
       <p>{context?.rationale ?? 'Retained evidence is unavailable for this choice.'}</p>
+      {corroboratingSources ? (
+        <p>
+          {corroboratingSources}{' '}
+          {corroboratingSources === 1 ? 'source corroborates' : 'sources corroborate'} this choice.
+        </p>
+      ) : null}
       {context?.evidence.length ? (
         <ul>
           {context.evidence.map((row, index) => (
             <li key={`${row.source}:${row.observation}:${String(index)}`}>
               <strong>{row.source}</strong>
-              <span>
-                {row.role === 'local_presence' ? 'Local presence' : 'External corroboration'}
-              </span>
+              <span>{evidenceRoleLabel(row.role)}</span>
               <p>{row.observation}</p>
             </li>
           ))}
@@ -941,6 +932,107 @@ const isLongDescription = (destination: string, value: string) =>
 const decisionQuestion = (destination: string) =>
   `Which ${labelWords(destination)} should this work use?`
 
+function DescriptionText({ value }: { value: string }) {
+  const [expanded, setExpanded] = useState(false)
+  const long = value.length > 280
+  return (
+    <div className="description-value">
+      <p>{long && !expanded ? `${value.slice(0, 240)}…` : value}</p>
+      {long ? (
+        <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
+          {expanded ? 'Show less description' : 'Read full description'}
+        </button>
+      ) : null}
+    </div>
+  )
+}
+
+function RecordedFieldObservations({
+  reviewCaseId,
+  field,
+}: {
+  reviewCaseId: string
+  field: ReviewField
+}) {
+  const { http } = useReviewContext()
+  const evidence = useInfiniteQuery({
+    queryKey: ['review-case', reviewCaseId, 'evidence'],
+    initialPageParam: undefined as string | undefined,
+    queryFn: (context) =>
+      http.getEvidence(reviewCaseId, context.pageParam, context.signal, queryWorkClass(context)),
+    getNextPageParam: (page: EvidenceView) => page.nextCursor,
+    retry: false,
+    staleTime: 30_000,
+  })
+  const choiceEvidence = field.choiceContexts.flatMap((context) => context.evidence)
+  const observations = (evidence.data?.pages.flatMap((page) => page.items) ?? []).filter(
+    (item) =>
+      item.destinations.includes(field.destination) &&
+      !choiceEvidence.some(
+        (linked) =>
+          linked.source === item.source &&
+          linked.role === item.role &&
+          linked.observation === item.observation,
+      ),
+  )
+  return (
+    <section className="recorded-field-observations" aria-label="Recorded observations">
+      <h3>Recorded observations</h3>
+      <p>These retained facts are read-only. They do not offer additional choices.</p>
+      {observations.length ? (
+        <ul className="evidence-values">
+          {observations.map((item, index) => (
+            <li key={`${item.source}:${item.observation}:${String(index)}`}>
+              <p>{item.observation}</p>
+              <small>
+                {item.source} · {evidenceRoleLabel(item.role)}
+              </small>
+            </li>
+          ))}
+        </ul>
+      ) : evidence.isPending ? (
+        <p role="status">Loading recorded observations…</p>
+      ) : (
+        <p>
+          {evidence.hasNextPage
+            ? 'No additional facts for this field on the loaded pages.'
+            : evidence.isError
+              ? 'Recorded observations are unavailable.'
+              : 'No additional facts were recorded for this field.'}
+        </p>
+      )}
+      {evidence.data?.pages[0]?.missingLineageCount ? (
+        <p>Some referenced observations are unavailable.</p>
+      ) : null}
+      {evidence.isError ? (
+        <p role="alert">
+          The observations could not be loaded.{' '}
+          <button
+            type="button"
+            onClick={() =>
+              void (evidence.isFetchNextPageError ? evidence.fetchNextPage() : evidence.refetch())
+            }
+          >
+            Retry observations
+          </button>
+        </p>
+      ) : null}
+      {evidence.hasNextPage ? (
+        <p>
+          More observations remain.{' '}
+          <button
+            type="button"
+            disabled={evidence.isFetchingNextPage}
+            onClick={() => void evidence.fetchNextPage()}
+          >
+            {evidence.isFetchingNextPage ? 'Loading observations…' : 'Load more observations'}
+          </button>
+        </p>
+      ) : null}
+    </section>
+  )
+}
+
 function MetadataChoice({
   advice,
   retainedAdvice = false,
@@ -979,6 +1071,12 @@ function MetadataChoice({
     <article
       className={`metadata-choice${current ? ' is-current' : ''}${context?.recommendation === 'recommended' ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}${expanded ? ' is-evidence-open' : ''}`}
     >
+      {longDescription ? (
+        <div className="description-choice-content">
+          <small>{label}</small>
+          <DescriptionText key={value} value={value} />
+        </div>
+      ) : null}
       <button
         type="button"
         className="value-choice choice-select"
@@ -991,7 +1089,11 @@ function MetadataChoice({
           {label}
           {context?.recommendation === 'recommended' ? ' · Recommended' : ''}
         </small>
-        <strong>{longDescription ? `${value.slice(0, 240)}…` : value}</strong>
+        <strong>
+          {longDescription
+            ? `Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} description`
+            : value}
+        </strong>
         <span>
           {adviceSource
             ? `${adviceSource.engine} · ${adviceSource.model}`
@@ -1007,25 +1109,6 @@ function MetadataChoice({
                 : 'No recommendation retained'}
         </span>
       </button>
-      {longDescription ? (
-        <details className="choice-description">
-          <summary>Read full description</summary>
-          <p
-            aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} full description`}
-            className="choice-description-value"
-            role={disabled ? undefined : 'button'}
-            tabIndex={disabled ? undefined : 0}
-            onClick={disabled ? undefined : onChoose}
-            onKeyDown={(event) => {
-              if (disabled || (event.key !== 'Enter' && event.key !== ' ')) return
-              event.preventDefault()
-              onChoose()
-            }}
-          >
-            {value}
-          </p>
-        </details>
-      ) : null}
       {hasEvidence ? (
         <button
           type="button"
@@ -1039,12 +1122,7 @@ function MetadataChoice({
         </button>
       ) : null}
       {expanded ? (
-        <ChoiceEvidencePanel
-          context={context}
-          evidenceId={evidenceId}
-          label={label}
-          onChoose={onChoose}
-        />
+        <ChoiceEvidencePanel context={context} evidenceId={evidenceId} label={label} />
       ) : null}
     </article>
   )
@@ -1069,7 +1147,13 @@ function ContextValue({
       <dl>
         <div>
           <dt>Current value</dt>
-          <dd>{displayValue(field.currentValue)}</dd>
+          <dd>
+            {field.destination === 'description' ? (
+              <DescriptionText key={field.currentValue} value={field.currentValue} />
+            ) : (
+              displayValue(field.currentValue)
+            )}
+          </dd>
         </div>
       </dl>
       <button
@@ -1285,12 +1369,24 @@ function RecordedOutcome({
         {accepted ? (
           <div>
             <dt>Chosen value</dt>
-            <dd>{decisionValue(field)}</dd>
+            <dd>
+              {field.destination === 'description' ? (
+                <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
+              ) : (
+                decisionValue(field)
+              )}
+            </dd>
           </div>
         ) : (
           <div>
             <dt>{decision.outcome === 'keep_current' ? 'Retained value' : 'Current value'}</dt>
-            <dd>{decisionValue(field)}</dd>
+            <dd>
+              {field.destination === 'description' ? (
+                <DescriptionText key={decisionValue(field)} value={decisionValue(field)} />
+              ) : (
+                decisionValue(field)
+              )}
+            </dd>
           </div>
         )}
       </dl>
@@ -1522,6 +1618,25 @@ function LibraryCoverChoicesContent({
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
 }) {
+  const { http } = useReviewContext()
+  const access = useQuery({
+    queryKey: ['reviewer-access'] as const,
+    queryFn: (context) => http.getReviewerAccess(context.signal, queryWorkClass(context)),
+    retry: false,
+  })
+  const mapping = access.isSuccess ? access.data.mapping : null
+  const currentReviewer = mapping && access.isSuccess ? access.data[mapping.engine] : null
+  const canRetryReviewer =
+    currentReviewer !== null &&
+    [
+      'ready',
+      'configured',
+      'usable',
+      'failed',
+      'interrupted',
+      'unreachable',
+      'malformed_response',
+    ].includes(currentReviewer.state)
   const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
   const keeps = field.decisionActions.includes('keep_current')
@@ -1672,14 +1787,7 @@ function LibraryCoverChoicesContent({
           </button>
         ) : null}
         {open ? (
-          <ChoiceEvidencePanel
-            context={context}
-            evidenceId={evidenceId}
-            label={label}
-            {...(disabled || !actionableCandidate
-              ? {}
-              : { onChoose: () => choose(outcome, value) })}
-          />
+          <ChoiceEvidencePanel context={context} evidenceId={evidenceId} label={label} />
         ) : null}
       </article>
     )
@@ -1690,7 +1798,7 @@ function LibraryCoverChoicesContent({
     consideration.reviewerStatus === 'completed'
       ? 'Advisory visual review complete'
       : reviewerUnavailable
-        ? 'Deterministic confirmed choice remains available'
+        ? 'Visual review is unavailable. Only the eligible choices shown below can be selected.'
         : 'Manual cover comparison'
   const reviewerDetail = reviewerUnavailableDetail(consideration.reviewerUnavailableReason)
   return (
@@ -1733,7 +1841,7 @@ function LibraryCoverChoicesContent({
         Every cover is shown whole in one row. Scroll the row, or tab between covers, to compare
         them.
       </p>
-      {reviewerUnavailable ? (
+      {reviewerUnavailable && canRetryReviewer ? (
         <button
           className="secondary-action"
           type="button"
@@ -1979,6 +2087,7 @@ export default function LibraryPage({
   const searchGeneration = useRef(0)
   const observedSearchIdentity = useRef(librarySearchIdentity(search))
   const expectedSearchIdentity = useRef<string | null>(null)
+  const searchInput = useRef<HTMLInputElement>(null)
   const retryButton = useRef<HTMLButtonElement>(null)
   const completionRegion = useRef<HTMLElement>(null)
   const activeFieldButton = useRef<HTMLButtonElement>(null)
@@ -2027,6 +2136,7 @@ export default function LibraryPage({
     title: string
     authors: readonly string[]
     library: string
+    libraryDisplayName?: string
     mediaKind: string
   } | null>(null)
   const selectedTargetRef = useRef<{
@@ -2059,7 +2169,13 @@ export default function LibraryPage({
     id: string
     fields: readonly ReviewField[]
     priorAttention: ReadonlySet<string>
-    identity: { title: string; authors: readonly string[]; library: string; mediaKind: string }
+    identity: {
+      title: string
+      authors: readonly string[]
+      library: string
+      libraryDisplayName?: string
+      mediaKind: string
+    }
   } | null>(null)
   const [completionInspection, setCompletionInspection] = useState<string | null>(null)
   const [automaticPanel, setAutomaticPanel] = useState<string | null>(null)
@@ -2266,6 +2382,8 @@ export default function LibraryPage({
                 title: detail.data.title,
                 authors: detail.data.authors,
                 library: detail.data.target.library,
+                libraryDisplayName:
+                  detail.data.target.libraryDisplayName ?? detail.data.target.library,
                 mediaKind: detail.data.target.mediaKind,
               }
             : undefined))
@@ -2279,6 +2397,7 @@ export default function LibraryPage({
         title: selectedIdentity.title,
         authors: selectedIdentity.authors,
         library: selectedIdentity.library,
+        libraryDisplayName: selectedIdentity.libraryDisplayName ?? selectedIdentity.library,
         mediaKind: selectedIdentity.mediaKind,
       }
   }, [search.preview, selectedIdentity])
@@ -3080,7 +3199,7 @@ export default function LibraryPage({
           ) : null}
           <div className="library-works-heading">
             <h2 id="library-works-title">Works</h2>
-            <span>
+            <span role="status" aria-live="polite">
               {data
                 ? `${String(data.counts.all)} total`
                 : failed
@@ -3114,6 +3233,7 @@ export default function LibraryPage({
             </label>
             <div>
               <input
+                ref={searchInput}
                 id="library-query"
                 name="q"
                 type="search"
@@ -3122,7 +3242,14 @@ export default function LibraryPage({
                 placeholder="Search works…"
                 onChange={(event) => runSearch(event.target.value)}
               />
-              <button type="button" disabled={!queryText} onClick={() => runSearch('')}>
+              <button
+                type="button"
+                disabled={!queryText}
+                onClick={() => {
+                  runSearch('')
+                  searchInput.current?.focus()
+                }}
+              >
                 Clear
               </button>
             </div>
@@ -3145,7 +3272,13 @@ export default function LibraryPage({
               <div className="empty-copy">
                 <p>No exact-current works match this search and lens.</p>
                 {search.q ? (
-                  <button type="button" onClick={() => runSearch('')}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      runSearch('')
+                      searchInput.current?.focus()
+                    }}
+                  >
                     Clear search
                   </button>
                 ) : null}
@@ -3197,7 +3330,7 @@ export default function LibraryPage({
                       <strong className="library-work-title">{work.title}</strong>
                       <span className="library-work-author">{authorLine(work)}</span>
                       <span className="library-work-origin">
-                        {work.library} · {fieldLabel(work.mediaKind)}
+                        {work.libraryDisplayName ?? work.library} · {fieldLabel(work.mediaKind)}
                       </span>
                       {summary ? (
                         <span id={summaryId} className="library-provider-summary">
@@ -3413,7 +3546,8 @@ export default function LibraryPage({
                     {displayedIdentity.authors.length
                       ? displayedIdentity.authors.join(', ')
                       : 'Author details unavailable'}{' '}
-                    · {displayedIdentity.library} · {labelWords(displayedIdentity.mediaKind)}
+                    · {displayedIdentity.libraryDisplayName ?? displayedIdentity.library} ·{' '}
+                    {labelWords(displayedIdentity.mediaKind)}
                   </p>
                 </div>
                 <dl className="selected-work-status">
@@ -3458,7 +3592,6 @@ export default function LibraryPage({
                   </Link>
                 </nav>
               </header>
-              <RecordingIdentityBasis value={detail.data.recordingIdentityBasis} />
               {detail.data.comparisonNotices.length ? (
                 <aside className="comparison-notice" aria-label="Provider comparison condition">
                   {detail.data.comparisonNotices.map((notice) => (
@@ -4003,6 +4136,11 @@ export default function LibraryPage({
                       ))}
                     </aside>
                   ) : null}
+                  <RecordedFieldObservations
+                    key={selectedReviewCaseId}
+                    reviewCaseId={selectedReviewCaseId}
+                    field={selected}
+                  />
                   {controller.canRetry && selectedProgress?.phase === 'failed' ? (
                     <button
                       ref={retryButton}
@@ -4050,6 +4188,10 @@ export default function LibraryPage({
               ) : (
                 <p>This work has no fields requiring a decision.</p>
               )}
+              <section aria-label="Whole-work context">
+                <h3>Whole-work context</h3>
+                <RecordingIdentityBasis value={detail.data.recordingIdentityBasis} />
+              </section>
               {contextualFields.length ? (
                 <details className="automatic-resolution-details">
                   <summary>
@@ -4132,7 +4274,7 @@ export default function LibraryPage({
                           : 'Author details unavailable'}
                       </small>
                       <small>
-                        {item.library} · {fieldLabel(item.mediaKind)}
+                        {item.libraryDisplayName ?? item.library} · {fieldLabel(item.mediaKind)}
                       </small>
                       <b>
                         {fieldLabel(item.destination)} ·{' '}

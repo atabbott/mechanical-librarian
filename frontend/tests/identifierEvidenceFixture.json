@@ -805,6 +805,7 @@
       "connection": "primary",
       "item": "item-1",
       "library": "audio",
+      "library_display_name": "audio",
       "media_kind": "m4b",
       "title": "Synthetic Journey"
     },

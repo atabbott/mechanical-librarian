@@ -203,7 +203,7 @@ describe('Library review ownership', () => {
       .flatMap((field) => field.choice_contexts)
       .flatMap((context) => context.evidence)[0]
     if (!choiceEvidence) throw new Error('actual linked choice evidence required')
-    choiceEvidence.role = 'external_observation'
+    choiceEvidence.role = 'invented_support'
     expect(() => mapCaseDetail(changed)).toThrow(ApiError)
     renderRoute(`/review/${current.id}?field=isbn&subview=evidence`, {
       ...createHttp(),

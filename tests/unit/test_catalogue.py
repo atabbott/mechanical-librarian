@@ -513,3 +513,86 @@ def test_exact_get_rejects_zero_and_multiple_matches(
         RefreshCurrentCatalogue(None, Repository(entries)).inspect(
             _configuration(), exact=exact
         )
+
+
+def test_library_admission_validates_once_and_detaches_after_failure() -> None:
+    from mechanical_librarian.adapters.persistence import catalogue as adapter
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        writer = open_catalogue(path, create=True)
+        writer.acquire_refresh()
+        writer.publish("a" * 64, (_entry(),))
+        connection = sqlite3.connect(":memory:", uri=True, isolation_level=None)
+        admission = adapter.CatalogueReadAdmission(path, "a" * 64)
+        with patch.object(
+            adapter, "_validate_schema", wraps=adapter._validate_schema
+        ) as validate:
+            for _ in range(3):
+                with admission.attach(connection):
+                    connection.execute("BEGIN")
+                    assert connection.execute(
+                        "SELECT title FROM retained_catalogue.catalogue_entries"
+                    ).fetchall() == [("Title",)]
+                    connection.execute("COMMIT")
+            assert validate.call_count == 1
+            with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                with admission.attach(connection):
+                    connection.execute(
+                        "UPDATE retained_catalogue.catalogue_entries SET title='Forbidden'"
+                    )
+            assert connection.execute("PRAGMA database_list").fetchall() == [
+                (0, "main", "")
+            ]
+            with admission.attach(connection):
+                assert writer.inspect("a" * 64)[0].title == "Title"
+            assert validate.call_count == 1
+        writer.close()
+        admission.close()
+        connection.close()
+
+
+def test_library_admission_missing_then_available_and_drift_requires_reopen() -> None:
+    from mechanical_librarian.adapters.persistence.catalogue import (
+        CatalogueReadAdmission,
+    )
+
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "catalogue.sqlite"
+        connection = sqlite3.connect(":memory:", uri=True, isolation_level=None)
+        admission = CatalogueReadAdmission(path, "a" * 64)
+        with admission.attach(connection):
+            assert not admission.active
+        assert not path.exists()
+        writer = open_catalogue(path, create=True)
+        writer.close()
+        with admission.attach(connection):
+            assert admission.active
+        path.rename(path.with_suffix(".old"))
+        with pytest.raises(CatalogueError, match="pathname changed"):
+            with admission.attach(connection):
+                pytest.fail("deleted admitted pathname accepted")
+        writer = open_catalogue(path, create=True)
+        writer.close()
+        with pytest.raises(CatalogueError, match="pathname changed"):
+            with admission.attach(connection):
+                pytest.fail("replacement admitted")
+        admission.close()
+        admission = CatalogueReadAdmission(path, "a" * 64)
+        with admission.attach(connection):
+            assert admission.active
+        with sqlite3.connect(path) as changed:
+            changed.execute("CREATE TABLE unapproved(value TEXT)")
+        with pytest.raises(CatalogueError, match="schema changed"):
+            with admission.attach(connection):
+                pytest.fail("schema drift admitted")
+        admission.close()
+        admission = CatalogueReadAdmission(path, "a" * 64)
+        with pytest.raises(CatalogueError, match="schema is unsupported"):
+            with admission.attach(connection):
+                pytest.fail("unknown schema admitted")
+        admission.close()
+        assert connection.execute("PRAGMA database_list").fetchall() == [
+            (0, "main", "")
+        ]
+        connection.close()

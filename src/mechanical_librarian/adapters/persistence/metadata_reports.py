@@ -10,7 +10,7 @@ import stat
 import sys
 from _thread import RLock
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from typing import cast
 from urllib.parse import quote
@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.persistence.binding import (
     _validate_connection_binding,
     _validate_delete_mode_header,
 )
+from mechanical_librarian.adapters.persistence.catalogue import CatalogueReadAdmission
 from mechanical_librarian.adapters.persistence.cover_considerations import (
     SQLiteCoverConsiderationRepository,
 )
@@ -92,6 +93,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
 )
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
+    CatalogueError,
 )
 from mechanical_librarian.application.cover_consideration import (
     cover_currentness_from_facts,
@@ -190,6 +192,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._authority = authority
         self._owns_authority = owns_authority
         self.identity = identity
+        self._library_catalogue: CatalogueReadAdmission | None = None
         self._recovery_outbox = SQLiteRecoveryOutboxRepository(connection)
         self._proposal_sets = SQLiteProposalSetRepository(
             connection,
@@ -1441,10 +1444,26 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         offset: int,
         attention: bool | None,
     ) -> ReviewLibrarySnapshot:
-        with self.browse_observation():
-            return self._review_projections.read_review_library(
-                search, limit, offset, attention
-            )
+        try:
+            with (
+                self.browse_observation(),
+                (
+                    self._library_catalogue.attach(self._connection)
+                    if self._library_catalogue is not None
+                    else nullcontext()
+                ),
+            ):
+                return self._review_projections.read_review_library(
+                    search, limit, offset, attention
+                )
+        except (CatalogueError, OSError, sqlite3.Error) as error:
+            raise MetadataReportError("review library is unavailable") from error
+
+    def bind_library_catalogue(self, path: Path, fingerprint: str) -> None:
+        if self._library_catalogue is not None:
+            raise MetadataReportError("library catalogue is already bound")
+        self._library_catalogue = CatalogueReadAdmission(path, fingerprint)
+        self._review_cases.catalogue = self._library_catalogue
 
     def read_review_attention(
         self, search: str | None, limit: int, offset: int
@@ -2194,6 +2213,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._reports.artifact_is_referenced(digest)
 
     def close(self) -> None:
+        if self._library_catalogue is not None:
+            self._library_catalogue.close()
         if self._owns_authority and self._admission is not None:
             self._admission.close()
         try:

@@ -3072,7 +3072,7 @@ def test_linked_audiobook_identifier_evidence_is_not_duplicated(tmp_path):
         ]
         assert len(items) == 1
         assert items[0]["role"] == "external_corroboration"
-        assert items[0]["observation"] == "Metadata: B08G9PRS1K"
+        assert items[0]["observation"] == "ASIN: B08G9PRS1K"
     finally:
         repository.close()
 
@@ -3196,3 +3196,62 @@ def test_unrecorded_synopsis_does_not_reconstruct_a_refusal(mode):
         if mode == "automatic"
         else None
     )
+
+
+def test_identifier_relationship_preserves_actual_claim_value() -> None:
+    from mechanical_librarian.application.review_web import (
+        _choice_evidence,
+        _evidence_by_reference,
+    )
+    from tests.support.proposal_evidence import _image_unavailable_isbn_report
+
+    report = _image_unavailable_isbn_report()
+    evidence = _evidence_by_reference(report)
+    for relationship in report.identifier_evidence:
+        retained = evidence[relationship.reference]
+        fact = json.loads(retained["fact"])
+        assert retained["source"] in {"local", "provider_claim"}
+        assert fact["kind"] == "isbn"
+        expected = fact.get("value", fact.get("observed"))
+        assert expected
+        assert _choice_evidence(retained)["observation"] == f"ISBN: {expected}"
+        changed = {**retained, "fact": json.dumps({**fact, "value": "9780593135204"})}
+        assert _choice_evidence(changed)["observation"] == "ISBN: 9780593135204"
+
+
+@pytest.mark.parametrize(
+    "fact",
+    [
+        None,
+        "{",
+        "[]",
+        '{"kind":"isbn","value":{"secret":"never displayed"}}',
+        '{"kind":"isbn","value":["never displayed",null]}',
+    ],
+)
+def test_choice_observation_does_not_invent_nested_values(fact: str | None) -> None:
+    from mechanical_librarian.application.review_web import _choice_observation
+
+    text = _choice_observation({"source": "provider_claim", "fact": fact})
+    assert "never displayed" not in text
+    assert "supports" not in text
+
+
+@pytest.mark.parametrize("provider", [None, "unknown-provider"])
+def test_unknown_choice_authority_is_observation_not_corroboration(
+    provider: str | None,
+) -> None:
+    from mechanical_librarian.application.review_web import _choice_evidence
+
+    projected = _choice_evidence(
+        {
+            "source": "provider_claim",
+            "provider": provider,
+            "fact": '{"kind":"isbn","value":"9780593135204"}',
+        }
+    )
+    assert projected == {
+        "observation": "ISBN: 9780593135204",
+        "role": "external_observation",
+        "source": "Retained observation (provider name unavailable)",
+    }

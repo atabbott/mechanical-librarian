@@ -898,3 +898,71 @@ def test_attached_reviewer_selection_returns_success_and_supported_invalidations
     finally:
         application.updates.release(subscription)
         persisted.close()
+
+
+def test_library_display_rename_preserves_case_and_target_identity(repository):
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v4",
+            "revision": 1,
+            "connections": [{"name": "primary", "endpoint": "https://example.invalid"}],
+            "libraries": [
+                {
+                    "name": "ebooks",
+                    "connection": "primary",
+                    "library_id": "library",
+                    "media_kind": "ebook",
+                    "display_name": "Reading Room",
+                }
+            ],
+        }
+    )
+
+    class Settings:
+        reads = 0
+
+        def read(self):
+            self.reads += 1
+            return SimpleNamespace(document=document)
+
+    settings = Settings()
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=repository,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        session_digest=lambda token: hashlib.sha256(token.encode()).hexdigest(),
+        clock=lambda: _NOW,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        settings=OwnerSettingsOperations(cast("object", settings)),
+    )
+    before = application.library(
+        lens="all", search=None, limit=20, cursor=None
+    ).to_data()
+    assert settings.reads == 1
+    identity = application.case_detail(repository.case.review_case_id).to_data()
+    assert settings.reads == 2
+    document = document.model_copy(
+        update={
+            "revision": 2,
+            "libraries": tuple(
+                item.model_copy(update={"display_name": "Renamed Room"})
+                for item in document.libraries
+            ),
+        }
+    )
+    after = application.library(
+        lens="all", search=None, limit=20, cursor=None
+    ).to_data()
+    renamed = application.case_detail(repository.case.review_case_id).to_data()
+    assert settings.reads == 4
+    assert before["items"][0].pop("library_display_name") == "Reading Room"
+    assert after["items"][0].pop("library_display_name") == "Renamed Room"
+    assert before == after
+    assert identity["target"].pop("library_display_name") == "Reading Room"
+    assert renamed["target"].pop("library_display_name") == "Renamed Room"
+    assert identity == renamed

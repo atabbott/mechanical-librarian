@@ -44,6 +44,7 @@ from collections.abc import Callable
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.catalogue import CatalogueReadAdmission
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.proposal_sets import (
     _validate_proposal_row,
@@ -58,6 +59,8 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
+    _TERMINAL_LIBRARY_SEARCH_SQL,
+    _terminal_library_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -124,6 +127,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         self._policy_destinations_for = policy_destinations_for
         self._current_cover_authority = current_cover_authority
         self._record_browse_unavailable_exception = record_browse_unavailable_exception
+        self.catalogue: CatalogueReadAdmission | None = None
 
     @local_operation
     def admit_review_case(self, proposal_set: ProposalSet) -> str:
@@ -525,10 +529,17 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 condition = "attention=1"
             elif attention is None:
                 condition = "1"
+            attached = self.catalogue is not None and self.catalogue.active
             terminal_union = ""
             parameters: list[object] = [
+                *(
+                    [self.catalogue.fingerprint]
+                    if attached and self.catalogue is not None
+                    else []
+                ),
                 *cover_authority,
                 query,
+                pattern,
                 pattern,
                 pattern,
                 pattern,
@@ -538,23 +549,19 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             if attention is not True:
                 terminal_union = (
                     " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-                    "item_id,NULL,1,0,'preparation unavailable','',work_id,attempt,"
-                    "stage,failure_root,recovery_attempt,failure_code "
-                    "FROM review_preparation_work "
-                    "WHERE state='failed' AND failure_code IS NOT NULL AND NOT EXISTS ("
-                    "SELECT 1 FROM current_review_packages p WHERE "
-                    "p.connection_name=review_preparation_work.connection_name AND "
-                    "p.library_name=review_preparation_work.library_name AND "
-                    "p.item_id=review_preparation_work.item_id) AND "
-                    "(?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR "
-                    "ml_casefold(library_name) LIKE ? ESCAPE '\\' OR "
-                    "ml_casefold('Preparation unavailable') LIKE ? ESCAPE '\\' OR "
-                    "ml_casefold('unknown') LIKE ? ESCAPE '\\')"
+                    "item_id,NULL,1,0,ml_casefold(display_title),'',work_id,attempt,"
+                    "stage,failure_root,recovery_attempt,failure_code,"
+                    "display_title,display_authors,display_format FROM terminal"
+                    + _TERMINAL_LIBRARY_SEARCH_SQL
                 )
-                parameters.extend((query, pattern, pattern, pattern, pattern))
+                parameters.extend(
+                    (query, pattern, pattern, pattern, pattern, pattern, pattern)
+                )
             parameters.extend((limit, offset))
             rows = self._connection.execute(
-                "WITH candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
+                "WITH "
+                + _terminal_library_sql(attached)
+                + ", candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
                 "mr.report_id,"
                 "CASE WHEN "
                 "rc.proposal_set_id=ml.proposal_set_id AND rc.report_id=ml.report_id "
@@ -579,7 +586,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) AS title_order,"
                 "COALESCE(rc.review_case_id,'') AS case_order,"
                 "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
-                "NULL AS recovery_attempt,NULL AS failure_code "
+                "NULL AS recovery_attempt,NULL AS failure_code, NULL AS display_title,"
+                "NULL AS display_authors,NULL AS display_format "
                 + _CURRENT_LIBRARY_FROM_SQL
                 + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
                 + _REVIEW_SEARCH_SQL
@@ -588,7 +596,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
                 "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
                 "AS provider_order,title_order,case_order,work_id,attempt,stage,"
-                "failure_root,recovery_attempt,failure_code FROM candidates WHERE "
+                "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
                 + condition
                 + terminal_union
                 + " ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
@@ -598,7 +606,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
                 "'library',page.library_name,'recovery_attempt',page.recovery_attempt,"
                 "'schema_version','review-terminal-work-v1','status',page.failure_code,"
-                "'work_id',page.work_id) ELSE mr.document END,page.proposal_set_id,"
+                "'work_id',page.work_id,'title',page.display_title,'authors',json(page.display_authors),"
+                "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
                 "page.connection_name,page.library_name,page.item_id,page.outcome "
                 "FROM page LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
                 "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
@@ -672,7 +681,16 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             cover_authority = self._current_cover_authority()
             row = self._connection.execute(
                 _CURRENT_REVIEW_CASE_COUNT_SQL,
-                (*cover_authority, query, pattern, pattern, pattern, pattern, pattern),
+                (
+                    *cover_authority,
+                    query,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                ),
             ).fetchone()
             if (
                 row is None
@@ -681,12 +699,26 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 or row[1] > row[0]
             ):
                 raise MetadataReportError("review library count is invalid")
+            attached = self.catalogue is not None and self.catalogue.active
             terminal = self._connection.execute(
-                "SELECT count(*) FROM review_preparation_work WHERE state='failed' AND failure_code IS NOT NULL "
-                "AND NOT EXISTS (SELECT 1 FROM current_review_packages p WHERE p.connection_name=review_preparation_work.connection_name AND p.library_name=review_preparation_work.library_name AND p.item_id=review_preparation_work.item_id) "
-                "AND (?='' OR ml_casefold(item_id) LIKE ? ESCAPE '\\' OR ml_casefold(library_name) LIKE ? ESCAPE '\\' "
-                "OR ml_casefold('Preparation unavailable') LIKE ? ESCAPE '\\' OR ml_casefold('unknown') LIKE ? ESCAPE '\\')",
-                (query, pattern, pattern, pattern, pattern),
+                "WITH "
+                + _terminal_library_sql(attached)
+                + " SELECT count(*) FROM terminal"
+                + _TERMINAL_LIBRARY_SEARCH_SQL,
+                (
+                    *(
+                        [self.catalogue.fingerprint]
+                        if attached and self.catalogue is not None
+                        else []
+                    ),
+                    query,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                ),
             ).fetchone()
             if terminal is None or type(terminal[0]) is not int or terminal[0] < 0:
                 raise MetadataReportError("review library count is invalid")
@@ -759,6 +791,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     pattern,
                     pattern,
                     pattern,
+                    pattern,
                     limit,
                     offset,
                 ),
@@ -818,7 +851,16 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + _REVIEW_FIELD_ATTENTION_SQL
                 + _EPUB_INAPPLICABLE_ATTENTION_SQL
                 + _REVIEW_SEARCH_SQL,
-                (*cover_authority, query, pattern, pattern, pattern, pattern, pattern),
+                (
+                    *cover_authority,
+                    query,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                ),
             ).fetchone()
             if row is None or len(row) != 1 or type(row[0]) is not int or row[0] < 0:
                 raise MetadataReportError("review attention count is invalid")

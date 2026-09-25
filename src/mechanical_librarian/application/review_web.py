@@ -1925,6 +1925,9 @@ def _choice_evidence(
         "observation": _choice_observation(evidence),
         "role": "local_presence"
         if _choice_is_local(evidence)
+        else "external_observation"
+        if evidence["source"] == "identifier"
+        or evidence["provider"] not in PROVIDER_LABELS
         else "external_corroboration",
         "source": _choice_source_label(evidence),
     }
@@ -1952,9 +1955,11 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
     try:
         fact = json.loads(evidence["fact"] or "{}")
     except (TypeError, ValueError):
-        return "A retained observation supports this choice."
+        return "The retained observation has no readable value."
     if type(fact) is not dict:
-        return "A retained observation supports this choice."
+        return "The retained observation has no readable value."
+    if evidence["source"] == "identifier" and "relation" in fact:
+        return "Identifier relationship retained; no value observation is available."
     kind = cast(
         "dict[object, str]",
         {
@@ -1963,6 +1968,7 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
             "description": "Description",
             "duration": "Running time",
             "isbn": "ISBN",
+            "asin": "ASIN",
             "performance_type": "Performance",
             "publication_date": "Publication date",
             "series": "Series membership",
@@ -2203,6 +2209,10 @@ def _evidence_by_reference(
                 )
     for fact in cast("list[object]", data["identifier_evidence"]):
         assert type(fact) is dict
+        if fact.get("reference") in values:
+            # Identifier relationships annotate an admitted claim; they do not
+            # replace the actual value at that same retained reference.
+            continue
         add(
             "identifier",
             fact,
@@ -2612,8 +2622,18 @@ def _library_item(
                     or type(library) is not str
                 ):
                     raise ValueError
+                title = terminal.get("title", "Preparation unavailable")
+                authors = terminal.get("authors", [])
+                media_kind = terminal.get("media_kind", "unknown")
+                if (
+                    type(title) is not str
+                    or type(authors) is not list
+                    or any(type(author) is not str for author in authors)
+                    or type(media_kind) is not str
+                ):
+                    raise ValueError
                 return {
-                    "authors": [],
+                    "authors": authors,
                     "attention_count": 0,
                     "attention_state": "no_attention_needed",
                     "detail_url": None,
@@ -2621,9 +2641,9 @@ def _library_item(
                     "dispositions": ["terminal_failure"],
                     "item": item,
                     "library": library,
-                    "media_kind": "unknown",
+                    "media_kind": media_kind,
                     "review_case_id": None,
-                    "title": "Preparation unavailable",
+                    "title": title,
                     "work_id": work_id,
                     "preparation": {
                         "attempt": terminal["attempt"],

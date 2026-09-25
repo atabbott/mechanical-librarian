@@ -3195,3 +3195,145 @@ def test_recorded_cause_and_current_suspension_share_one_snapshot(tmp_path, susp
         if thread.ident is not None:
             thread.join(5)
         reader.close()
+
+
+def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count() -> (
+    None
+):
+    from dataclasses import replace
+
+    from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        catalogue = open_catalogue(root / "catalogue.sqlite", create=True)
+        entries = tuple(
+            CatalogueEntry(
+                "primary",
+                "fiction",
+                "lib-1",
+                f"item-{index}",
+                1,
+                "Shared 100%_ title",
+                (f"Author {index}",),
+                True,
+                False,
+                "singular-supported",
+                f"{index + 1:064x}",
+                "/synthetic.epub",
+                "epub",
+                "/media",
+            )
+            for index in range(3)
+        )
+        catalogue.acquire_refresh()
+        generation = catalogue.publish("a" * 64, entries)
+        repository = open_repository(root / "review.sqlite")
+        repository.bind_library_catalogue(root / "catalogue.sqlite", "a" * 64)
+        repository.request_review_scan("primary", "fiction", "lib-1", "f" * 64, 10)
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, generation, "a" * 64, entries, 12
+        )
+        tick = 13
+        while action := repository.claim_review_pipeline_action(tick):
+            repository.fail_review_pipeline_action(
+                action, "unreadable_media", False, tick + 1, "track_1"
+            )
+            tick += 2
+        browser = BrowseReviewLibrary(repository)
+        first = browser.library(lens="all", search="100%_", limit=2, cursor=None)
+        assert first["counts"] == {
+            "all": 3,
+            "needs_attention": 0,
+            "no_attention_needed": 3,
+        }
+        items = cast(list[dict[str, object]], first["items"])
+        assert [item["title"] for item in items] == ["Shared 100%_ title"] * 2
+        assert [item["authors"] for item in items] == [["Author 0"], ["Author 1"]]
+        assert all(
+            item["media_kind"] == "epub" and item["detail_url"] is None
+            for item in items
+        )
+        assert all(
+            len(row) == 8
+            for row in repository.read_review_library(None, 10, 0, None).rows
+        )
+        second = browser.library(
+            lens="all", search="100%_", limit=2, cursor=cast(str, first["next_cursor"])
+        )
+        assert len(cast(list[object], second["items"])) == 1
+        assert (
+            browser.library(lens="all", search="100XX", limit=2, cursor=None)["items"]
+            == []
+        )
+        assert (
+            len(
+                cast(
+                    list[object],
+                    browser.library(
+                        lens="all", search="Author 2", limit=2, cursor=None
+                    )["items"],
+                )
+            )
+            == 1
+        )
+        assert repository.read_review_attention(None, 10, 0).total == 0
+        from mechanical_librarian.application.metadata_report import MetadataReportError
+
+        with (
+            patch.object(
+                repository,
+                "count_current_review_cases",
+                side_effect=sqlite3.OperationalError("injected count failure"),
+            ),
+            pytest.raises(MetadataReportError, match="review snapshot is unavailable"),
+        ):
+            repository.read_review_library(None, 10, 0, None)
+        assert not repository._connection.in_transaction
+        assert "retained_catalogue" not in {
+            row[1] for row in repository._connection.execute("PRAGMA database_list")
+        }
+        assert repository.read_review_library(None, 10, 0, None).total == 3
+        # Refresh between page and count must not split this request's catalogue snapshot.
+        original_list = repository.list_current_review_case_documents
+        refreshed = tuple(replace(entry, title="Refreshed") for entry in entries)
+
+        def publish_after_page(
+            search: str | None, limit: int, offset: int, attention: bool | None
+        ) -> tuple[tuple[str | None, str], ...]:
+            rows = original_list(search, limit, offset, attention)
+            catalogue.acquire_refresh()
+            catalogue.publish("a" * 64, refreshed)
+            return rows
+
+        with patch.object(
+            repository,
+            "list_current_review_case_documents",
+            side_effect=publish_after_page,
+        ):
+            snapshot = repository.read_review_library("100%_", 10, 0, None)
+        assert len(snapshot.rows) == snapshot.total == 3
+        assert repository.read_review_library("100%_", 10, 0, None).total == 0
+        assert repository.read_review_library("Refreshed", 10, 0, None).total == 3
+        # Another library's key and a stale configuration must never lend their identity.
+        catalogue.acquire_refresh()
+        catalogue.publish(
+            "a" * 64, tuple(replace(entry, library_id="other") for entry in refreshed)
+        )
+        assert repository.read_review_library("Refreshed", 10, 0, None).total == 0
+        assert (
+            repository.read_review_library("Preparation unavailable", 10, 0, None).total
+            == 3
+        )
+        catalogue.acquire_refresh()
+        catalogue.publish("b" * 64, refreshed)
+        assert repository.read_review_library("Refreshed", 10, 0, None).total == 0
+        assert not repository._connection.in_transaction
+        assert "retained_catalogue" not in {
+            row[1] for row in repository._connection.execute("PRAGMA database_list")
+        }
+        repository.close()
+        catalogue.close()

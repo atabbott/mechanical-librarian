@@ -369,6 +369,7 @@ def _server(
     synopsis_destination: str = "automatic",
     ebook_synopsis: bool = False,
     isbn_fixture: bool = False,
+    library_identity_fixture: bool = False,
     isbn_destination: str = "automatic",
     series_fixture: str | None = None,
     series_destination: str = "automatic",
@@ -398,6 +399,7 @@ def _server(
         "retry_succeeded",
     ]
     | None = None,
+    long_descriptions: bool = False,
     provider_recovery: bool = False,
     retained_decoration: tuple[str, bool] | None = None,
     retained_component_text: str | None = None,
@@ -426,6 +428,20 @@ def _server(
                 "description_advice": DescriptionAdviceSettings(
                     automatic_application=True
                 )
+            }
+        )
+    if library_identity_fixture and settings_document is not None:
+        settings_document = settings_document.model_copy(
+            update={
+                "libraries": [
+                    settings_document.libraries[0].model_copy(
+                        update={
+                            "name": "audio",
+                            "media_kind": "audiobook",
+                            "display_name": "Listening Room",
+                        }
+                    )
+                ]
             }
         )
     settings = None
@@ -599,6 +615,89 @@ def _server(
             repository.persist_shadow_outcome(admitted, 4)
         transition = repository.metadata_policy_transition()
         assert transition is not None and transition.state == "completed"
+    elif library_identity_fixture:
+        from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+        from mechanical_librarian.domain.metadata_policy import (
+            human_review_destinations,
+        )
+        from tests.support.audiobook_reports import (
+            publish_audiobook_preview,
+            synthetic_audiobook_isbn_reason_report,
+        )
+
+        report = synthetic_audiobook_isbn_reason_report("conflict")
+        case_id, identity_policy = publish_audiobook_preview(
+            repository,
+            report,
+            ("isbn_form",),
+            selected_options={"isbn_form": "preserve_exact"},
+        )
+        proposal_set = evaluate_report(
+            report,
+            identity_policy.resolved_id,
+            human_review_destinations(identity_policy),
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        sibling = MetadataReport.create(
+            target=TargetFacts(
+                report.target.connection,
+                report.target.library,
+                "same-title-sibling",
+                tuple(
+                    replace(field, value=("Another Author",))
+                    if field.destination is TargetDestination.AUTHORS
+                    else field
+                    for field in report.target.fields
+                ),
+            ),
+            file=report.file,
+            local_claims=(),
+            local_reasons=report.local_reasons,
+            providers=(),
+            audio=report.audio,
+        )
+        repository.publish(sibling, lambda: True)
+        sibling_proposal = evaluate_report(
+            sibling,
+            identity_policy.resolved_id,
+            human_review_destinations(identity_policy),
+        )
+        repository.publish_proposal(sibling_proposal)
+        repository.admit_review_case(sibling_proposal)
+        entry = CatalogueEntry(
+            "primary",
+            report.target.library,
+            "library",
+            "terminal-item",
+            1,
+            "Retained Terminal Title",
+            ("Retained Writer",),
+            True,
+            False,
+            "singular-supported",
+            "b" * 64,
+            "/synthetic.epub",
+            "epub",
+            "/media",
+        )
+        catalogue_path = database.parent / "catalogue.sqlite"
+        with closing(open_catalogue(catalogue_path, create=True)) as catalogue:
+            catalogue.acquire_refresh()
+            generation = catalogue.publish("a" * 64, (entry,))
+        repository.bind_library_catalogue(catalogue_path, "a" * 64)
+        repository.request_review_scan(
+            "primary", report.target.library, "library", "f" * 64, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, generation, "a" * 64, (entry,), 12
+        )
+        action = repository.claim_review_pipeline_action(13)
+        assert action is not None
+        repository.fail_review_pipeline_action(
+            action, "unreadable_media", False, 14, "track_1"
+        )
     elif isbn_fixture:
         from mechanical_librarian.domain.metadata_policy import (
             human_review_destinations,
@@ -958,6 +1057,49 @@ def _server(
         report, category, option, _ = _automatic_no_change_inputs(
             "description_preserved"
         )
+        if long_descriptions:
+            from tests.support.description_advice import _description_candidate
+
+            current_description = (
+                (
+                    "The local catalogue describes a quiet coastal archive. "
+                    "Its keeper records the letters of families separated by the sea. "
+                )
+                * 9
+            ).strip()
+            proposed_description = (
+                (
+                    "The publisher follows a travelling historian through mountain towns. "
+                    "Each recovered notebook changes her understanding of the journey. "
+                )
+                * 10
+            ).strip()
+            report = MetadataReport.create(
+                target=replace(
+                    report.target,
+                    fields=tuple(
+                        replace(field, value=current_description)
+                        if field.destination is TargetDestination.DESCRIPTION
+                        else field
+                        for field in report.target.fields
+                    ),
+                ),
+                file=report.file,
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=tuple(
+                    replace(
+                        provider,
+                        candidates=(
+                            _description_candidate(
+                                "catalogue", "edition-1", "work-1", proposed_description
+                            ),
+                        ),
+                    )
+                    for provider in report.providers
+                ),
+                cover_sources=report.cover_sources,
+            )
         if description_fixture == "no_alternatives":
             report = MetadataReport.create(
                 target=report.target,
@@ -1031,6 +1173,14 @@ def _server(
                 if description_fixture == "no_change"
                 else "A synthetic reader explores an old library.\nIts stories bring distant communities together. <strong>Authored text stays text.</strong>"
             )
+            if long_descriptions:
+                text = (
+                    (
+                        "An archivist and a historian uncover the lives behind a scattered collection. "
+                        "Their search connects distant communities through stories of memory and belonging. "
+                    )
+                    * 11
+                ).strip()
             if len(description_calls) > 1:
                 text = "A new authored description from the explicit retry."
             return canonical_json(

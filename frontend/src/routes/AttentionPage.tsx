@@ -93,7 +93,7 @@ export default function AttentionPage({
                 <header>
                   <div>
                     <p className="eyebrow">
-                      {work.library} · {fieldLabel(work.mediaKind)}
+                      {work.libraryDisplayName ?? work.library} · {fieldLabel(work.mediaKind)}
                     </p>
                     <h2>{work.title}</h2>
                     <p>{authors(work)}</p>
