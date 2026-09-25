@@ -9143,6 +9143,15 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
 
     path = tmp_path / "isbn.sqlite"
     report = _image_unavailable_isbn_report(state, review_choice=mode == "ignore")
+    cover_result = next(
+        result
+        for result in evaluate_report(report).results
+        if result.destination is TargetDestination.COVER
+    )
+    assert cover_result.outcome.value == "defer"
+    assert cover_result.reasons == ("cover_gallery_incomplete",)
+    assert cover_result.selected_alternative_id is None
+    assert cover_result.alternatives == ()
     repository = open_repository(path)
     case_id, _ = publish_audiobook_preview(
         repository,
@@ -9157,7 +9166,8 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
     assert field.policy_destination == mode
     assert (
         repository._connection.execute(
-            "SELECT count(*) FROM automatic_decisions WHERE destination='cover'"
+            "SELECT (SELECT count(*) FROM cover_selection_authorities) + "
+            "(SELECT count(*) FROM current_cover_selection_authorities)"
         ).fetchone()[0]
         == 0
     )
