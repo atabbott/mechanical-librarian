@@ -3021,7 +3021,7 @@ _COVER_CONTAINMENT = """(selector) => {
 # The first two are the incumbent and the embedded candidate. #864's prepared
 # Library comparison keeps those alongside every qualified replacement, so
 # the widest ratio spread lands together on the surface with the least room.
-_COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280))
+_COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280), (300, 200))
 _LIBRARY_SHAPES = _COVER_SHAPES
 
 
@@ -3124,6 +3124,44 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     shapes=_LIBRARY_SHAPES,
                 )
 
+                # A scrolled pointer must hit disclosure, never a sticky choice
+                # covering it. Keyboard-only tests cannot detect this overlap.
+                disclosure = page.get_by_role(
+                    "button", name="Evidence for Current cover", exact=True
+                )
+                disclosure.evaluate(
+                    "node => window.scrollBy(0, node.getBoundingClientRect().top - 450)"
+                )
+                bounds = disclosure.bounding_box()
+                assert bounds is not None
+                page.mouse.click(
+                    bounds["x"] + bounds["width"] / 2,
+                    bounds["y"] + bounds["height"] / 2,
+                )
+                expect(disclosure).to_have_attribute("aria-expanded", "true")
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_have_count(0)
+                assert (
+                    page.locator(".library-cover-card[aria-pressed='true']").count()
+                    == 0
+                )
+                cards = page.locator(".library-cover-gallery .cover-choice")
+                assert cards.count() == 4
+                boxes = [cards.nth(index).bounding_box() for index in range(4)]
+                assert all(box is not None for box in boxes)
+                first, second, third, last = boxes
+                assert first is not None and second is not None
+                assert third is not None and last is not None
+                assert last["y"] >= max(
+                    box["y"] + box["height"] for box in (first, second, third)
+                )
+                current_box = page.locator(
+                    ".library-cover-pinned > aside .cover-choice"
+                ).bounding_box()
+                assert current_box is not None
+                assert current_box["height"] > first["height"]
+
                 # 200% zoom is a halved CSS-pixel viewport at twice the device
                 # scale, which is exactly the layout the owner gets when they
                 # zoom a 1440x900 window to 200%.
@@ -3158,8 +3196,16 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 expect(page.locator(".cover-track-hint")).to_be_visible()
 
                 track.evaluate("node => { node.scrollLeft = 0 }")
-                last_choice = track.locator(".cover-choice").last
-                last_choice.get_by_role("button").first.focus()
+                # Unconfirmed choices remain visible but correctly disabled.
+                # Reach the last actual disclosure, not a disabled choice button.
+                assert track.locator(".cover-choice.is-unconfirmed").count() > 0
+                last_choice = track.locator(
+                    ".cover-choice:has(.choice-evidence-toggle)"
+                ).last
+                focus_control = last_choice.locator(".choice-evidence-toggle")
+                assert focus_control.is_enabled()
+                focus_control.focus()
+                assert focus_control.evaluate("node => document.activeElement === node")
                 forward_scroll = cast(
                     "float", track.evaluate("node => node.scrollLeft")
                 )

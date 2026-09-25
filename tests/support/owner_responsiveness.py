@@ -238,6 +238,7 @@ class OwnerResponsivenessFixture:
                 (),
                 review=review,
             )
+            self.configuration = configuration
             activity, close_activity = (
                 composition.open_field_effect_activity_projection(
                     configuration,

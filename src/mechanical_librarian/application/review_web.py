@@ -2021,7 +2021,7 @@ def _review_unselectable_evidence(
                     if unknown
                     else "Retained for review only; "
                 )
-                + f"not an eligible choice. Reference: {local_claim.reference}."
+                + "not an eligible choice."
             ),
         }
     for provider in report.providers:
@@ -2104,9 +2104,7 @@ def _review_unselectable_evidence(
                             f"{label}: {value}. Retained for review only; "
                             f"not an eligible choice. {reason}"
                             f"Scope: {claim.scope.value}; state: {claim.state.value}; "
-                            f"applicability: {claim.applicability}. "
-                            f"Source record: {_choice_text(candidate.identity)}. "
-                            f"Reference: {claim.reference}."
+                            f"applicability: {claim.applicability}."
                         ),
                     },
                 )

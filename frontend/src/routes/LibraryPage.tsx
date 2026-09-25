@@ -470,7 +470,18 @@ const PreparationDetail = ({
 const bounded = (value: string, fallback: string) =>
   opaqueSource.test(value) ? fallback : value.length > 160 ? `${value.slice(0, 157)}…` : value
 const decisionValue = (field: ReviewField) => {
+  if (authoredOwnerRecorded(field) && field.descriptionAdvice?.selected_advice)
+    return field.descriptionAdvice.selected_advice.candidate.output.description
   const selected = (field.humanDecision ?? field.automaticDecision)?.selected_value
+  if (field.destination === 'cover') {
+    const candidates = field.coverConsideration?.candidates ?? []
+    const candidate = candidates.find((item) => item.artifactId === selected?.value)
+    return candidate?.incumbent || !selected
+      ? 'Current cover'
+      : candidate
+        ? `Alternative ${String(candidates.filter((item) => !item.incumbent).indexOf(candidate) + 1)} cover`
+        : 'Selected cover'
+  }
   return selected === null || selected === undefined
     ? field.currentValue
     : displayValue(selected.value)
@@ -556,13 +567,15 @@ const effectSummary = (field: ReviewField) => {
         }
 }
 const completionOutcome = (field: ReviewField) =>
-  field.humanDecision?.outcome === 'reject'
-    ? 'No action recorded'
-    : field.humanDecision?.outcome === 'keep_current'
-      ? 'Current value retained'
-      : field.humanDecision?.outcome === 'accept'
-        ? 'Proposed value selected'
-        : 'Recorded outcome'
+  authoredOwnerRecorded(field)
+    ? 'Advised description selected'
+    : field.humanDecision?.outcome === 'reject'
+      ? 'No action recorded'
+      : field.humanDecision?.outcome === 'keep_current'
+        ? 'Current value retained'
+        : field.humanDecision?.outcome === 'accept'
+          ? 'Proposed value selected'
+          : 'Recorded outcome'
 const sameSelectedValue = (
   left: DecisionCommand['selectedValue'],
   right: DecisionCommand['selectedValue'],
@@ -917,11 +930,12 @@ const revealFocusedCoverChoice = (event: SyntheticEvent<HTMLElement>) => {
   if (!track) return
   const trackBounds = track.getBoundingClientRect()
   const choiceBounds = choice.getBoundingClientRect()
+  // Match the track's start snap points so snapping cannot clip the focused card.
   const delta =
     choiceBounds.left < trackBounds.left
       ? choiceBounds.left - trackBounds.left
       : choiceBounds.right > trackBounds.right
-        ? choiceBounds.right - trackBounds.right
+        ? choiceBounds.left - trackBounds.left
         : 0
   if (delta !== 0) track.scrollLeft += delta
 }
@@ -1065,7 +1079,9 @@ function MetadataChoice({
   const adviceSource =
     retainedAdvice && advice?.selected_advice ? advice.selected_advice.candidate : advice
   const evidenceId = `choice-evidence-${current ? 'current' : (context?.alternativeId ?? 'alternative')}`
-  const evidenceLabel = `Evidence for ${label}: ${value}`
+  const evidenceLabel = longDescription
+    ? `Evidence for ${label} description`
+    : `Evidence for ${label}: ${value}`
   const hasEvidence = Boolean(context && (context.evidence.length || context.limitations.length))
   return (
     <article
@@ -1080,7 +1096,7 @@ function MetadataChoice({
       <button
         type="button"
         className="value-choice choice-select"
-        aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} value: ${value}`}
+        aria-label={`Choose ${advice ? 'advised' : current ? 'current' : 'proposed'} ${longDescription ? 'description' : `value: ${value}`}`}
         aria-pressed={selected}
         disabled={disabled}
         onClick={onChoose}
@@ -1723,6 +1739,7 @@ function LibraryCoverChoicesContent({
       >
         <button
           type="button"
+          aria-label={`Choose ${label}`}
           aria-pressed={actionableCandidate ? selected : false}
           className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
           disabled={disabled || !actionableCandidate}
@@ -1878,6 +1895,7 @@ function LibraryCoverChoicesContent({
             <article className="cover-choice" onFocusCapture={revealFocusedCoverChoice}>
               <button
                 type="button"
+                aria-label="Keep current cover"
                 aria-pressed={choiceSelected(field, progress, 'keep_current')}
                 className={`library-cover-card is-current${choiceSelected(field, progress, 'keep_current') ? ' is-selected' : ''}`}
                 disabled={disabled || !keeps}
@@ -3656,7 +3674,7 @@ export default function LibraryPage({
                         }))
                       }}
                     >
-                      {`Show ${String(omittedFields.length)} empty field${omittedFields.length === 1 ? '' : 's'}`}
+                      {`Show ${String(omittedFields.length)} additional field${omittedFields.length === 1 ? '' : 's'}`}
                     </button>
                   ) : null}
                 </nav>
@@ -3685,6 +3703,11 @@ export default function LibraryPage({
                       <li key={field.destination}>
                         <button
                           type="button"
+                          aria-label={
+                            field.destination === 'description' && decisionValue(field).length > 240
+                              ? `Revisit description: ${completionOutcome(field)}`
+                              : undefined
+                          }
                           onClick={() => {
                             setCompletionInspection(field.destination)
                             selectCase(selectedReviewCaseId, field.destination)
@@ -4188,10 +4211,12 @@ export default function LibraryPage({
               ) : (
                 <p>This work has no fields requiring a decision.</p>
               )}
-              <section aria-label="Whole-work context">
-                <h3>Whole-work context</h3>
-                <RecordingIdentityBasis value={detail.data.recordingIdentityBasis} />
-              </section>
+              {detail.data.recordingIdentityBasis ? (
+                <section aria-label="Whole-work context">
+                  <h3>Whole-work context</h3>
+                  <RecordingIdentityBasis value={detail.data.recordingIdentityBasis} />
+                </section>
+              ) : null}
               {contextualFields.length ? (
                 <details className="automatic-resolution-details">
                   <summary>

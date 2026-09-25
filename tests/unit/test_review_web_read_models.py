@@ -2899,6 +2899,7 @@ def test_current_policy_exposes_exact_accepted_audiobook_operations(web):
 def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
     tmp_path, shape
 ):
+    from collections import Counter
     from pathlib import Path
 
     from argon2 import PasswordHasher
@@ -2931,7 +2932,7 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
         reference for field in detail["fields"] for reference in field["provenance"]
     }
     claims = {
-        claim.reference: (candidate, claim)
+        claim.reference: (provider.authority, candidate, claim)
         for provider in report.providers
         for candidate in (*provider.candidates, *provider.recording_lookup_candidates)
         for claim in candidate.claims
@@ -2943,28 +2944,44 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
         item for item in expected["items"] if item["role"] == "external_observation"
     ]
     assert len(observations) == len(claims)
-    for reference, (candidate, claim) in claims.items():
-        matching = [
-            item
-            for item in observations
-            if f"Reference: {reference}." in item["observation"]
-        ]
-        assert len(matching) == 1
-        item = matching[0]
-        assert item["destinations"] == [claim.kind.value]
-        assert f"Source record: {candidate.identity}." in item["observation"]
-        assert (
-            f"Scope: {claim.scope.value}; state: {claim.state.value}; applicability: {claim.applicability}."
-            in item["observation"]
+    expected_facts: Counter[tuple[str, str, tuple[str, ...], str]] = Counter()
+    for reference, (authority, candidate, claim) in claims.items():
+        fact = (
+            claim.value
+            if claim.state is FieldState.VALID
+            else "No valid identifier retained"
         )
-        assert "not an eligible choice" in item["observation"]
-        if claim.state is FieldState.VALID:
-            assert f"{claim.kind.value.upper()}: {claim.value}." in item["observation"]
-        else:
-            assert "No valid identifier retained" in item["observation"]
+        expected_facts[
+            (
+                {"audible_catalog": "Audible", "audnexus": "Audnexus"}[authority],
+                "external_observation",
+                (claim.kind.value,),
+                f"{claim.kind.value.upper()}: {fact}. Retained for review only; "
+                f"not an eligible choice. Scope: {claim.scope.value}; "
+                f"state: {claim.state.value}; applicability: {claim.applicability}.",
+            )
+        ] += 1
+        assert all(reference not in item["observation"] for item in observations)
+        assert all(
+            candidate.identity not in item["observation"] for item in observations
+        )
+    assert (
+        Counter(
+            (
+                item["source"],
+                item["role"],
+                tuple(item["destinations"]),
+                item["observation"],
+            )
+            for item in observations
+        )
+        == expected_facts
+    )
     if shape == "conflict":
         assert {
-            claim.value for _, claim in claims.values() if claim.kind is ClaimKind.ISBN
+            claim.value
+            for _, _, claim in claims.values()
+            if claim.kind is ClaimKind.ISBN
         } == {"9781250077004", "9780593135204"}
         assert {fact.reference for fact in report.identifier_evidence} <= set(claims)
     if shape == "malformed":
@@ -3035,9 +3052,7 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
             assert fixture == {"detail": response.json(), "evidence": expected}
         retained = [item for item in items if item["role"] == "external_observation"]
         assert retained == observations
-        assert len({json.dumps(item, sort_keys=True) for item in retained}) == len(
-            claims
-        )
+        assert len(retained) == sum(expected_facts.values())
         assert repository.get_review_case_decisions(case_id) == before
         assert inspector.run(case_id) == detail
         assert repository._connection.execute(
@@ -3153,8 +3168,7 @@ def test_conflicting_recording_statements_remain_nonselectable_evidence(statemen
         "Narrator: Ray Porter. Retained for review only; not an eligible choice. "
         "Recording variant conflicts with this item. "
         f"Scope: {claim.scope.value}; state: {claim.state.value}; "
-        f"applicability: {claim.applicability}. Source record: {candidate.identity}. "
-        f"Reference: {claim.reference}."
+        f"applicability: {claim.applicability}."
     )
     assert claim.reference not in _review_unselectable_evidence(
         reopened, {claim.reference}

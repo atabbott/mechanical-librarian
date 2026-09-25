@@ -3132,7 +3132,7 @@ describe('Library route', () => {
     await user.keyboard('{Enter}')
     expect(http.recordDecision).not.toHaveBeenCalled()
 
-    const fullValue = screen.getByRole('button', { name: /^Choose current value:/u })
+    const fullValue = screen.getByRole('button', { name: 'Choose current description' })
     await user.click(fullValue)
     await waitFor(() => expect(http.recordDecision).toHaveBeenCalledOnce())
   })
@@ -3402,7 +3402,7 @@ describe('Library route', () => {
     const mixedComparison = await screen.findByLabelText('Choose a cover')
     const pinnedTrack = mixedComparison.querySelector<HTMLElement>('.library-cover-pinned')
     const currentCard = within(mixedComparison).getByRole('button', {
-      name: /Current cover.*Same book/u,
+      name: 'Choose Current cover',
     })
     const forwardCard = within(mixedComparison).getByRole('button', {
       name: /Alternative 3 cover/u,
@@ -3428,14 +3428,14 @@ describe('Library route', () => {
       width: 190,
     } as DOMRect)
     forwardCard.focus()
-    expect(pinnedTrack.scrollLeft).toBe(250)
+    expect(pinnedTrack.scrollLeft).toBe(310)
     vi.spyOn(currentChoice, 'getBoundingClientRect').mockReturnValue({
       left: -120,
       right: 70,
       width: 190,
     } as DOMRect)
     currentCard.focus()
-    expect(pinnedTrack.scrollLeft).toBe(130)
+    expect(pinnedTrack.scrollLeft).toBe(190)
 
     await user.click(
       within(mixedComparison).getByRole('button', { name: 'Evidence for Alternative 4 cover' }),
@@ -3453,7 +3453,9 @@ describe('Library route', () => {
     )
     await user.click(within(mixedComparison).getByLabelText('Alternative 1 cover evidence'))
     expect(recordDecision).not.toHaveBeenCalled()
-    await user.click(within(mixedComparison).getByRole('button', { name: /^Alternative 1 cover/u }))
+    await user.click(
+      within(mixedComparison).getByRole('button', { name: /^Choose Alternative 1 cover/u }),
+    )
     expect(recordDecision).toHaveBeenCalledOnce()
 
     cleanup()
@@ -3618,7 +3620,7 @@ describe('Library route', () => {
       })
 
       const currentCover = await screen.findByRole('button', {
-        name: /Current cover.*Unavailable/u,
+        name: 'Keep current cover',
       })
       expect(currentCover).toBeVisible()
       expect(currentCover.closest('.library-cover-layout')?.firstElementChild).toBe(
@@ -3652,7 +3654,7 @@ describe('Library route', () => {
       )
       expect(screen.getByText('Local presence')).toBeVisible()
       expect(screen.getByText('Preview unavailable')).toBeVisible()
-      expect(screen.getByRole('button', { name: /Current cover.*Unavailable/u })).toHaveAttribute(
+      expect(screen.getByRole('button', { name: 'Keep current cover' })).toHaveAttribute(
         'aria-pressed',
         'false',
       )
@@ -3698,9 +3700,7 @@ describe('Library route', () => {
         })),
       }
       renderRoute('/library?lens=all&preview=case-1&field=cover', acceptOnlyHttp)
-      expect(
-        await screen.findByRole('button', { name: /Current cover.*Unavailable/u }),
-      ).toBeDisabled()
+      expect(await screen.findByRole('button', { name: 'Keep current cover' })).toBeDisabled()
       expect(screen.getByRole('button', { name: /Alternative 1 cover/u })).toBeEnabled()
       await user.click(screen.getByRole('button', { name: /Evidence for Current cover/u }))
       expect(screen.queryByRole('button', { name: 'Choose Current cover' })).not.toBeInTheDocument()
@@ -7228,9 +7228,11 @@ describe('Library route', () => {
     expect(within(rail).getByRole('button', { name: /^Authors/u })).toBeVisible()
     expect(within(rail).getByRole('button', { name: /^Description/u })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /^Subtitle/u })).toBeNull()
-    expect(within(rail).getByRole('button', { name: 'Show 3 empty fields' })).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Show 3 additional fields' })).toBeVisible()
 
-    await userEvent.setup().click(within(rail).getByRole('button', { name: 'Show 3 empty fields' }))
+    await userEvent
+      .setup()
+      .click(within(rail).getByRole('button', { name: 'Show 3 additional fields' }))
     const names = within(rail)
       .getAllByRole('button')
       .map((button) => button.querySelector('strong')?.textContent)
@@ -7266,14 +7268,16 @@ describe('Library route', () => {
 
     const rail = await screen.findByRole('navigation', { name: 'Review fields' })
     expect(screen.getByText('0 remaining · no field selected')).toBeVisible()
-    expect(within(rail).getByRole('button', { name: 'Show 2 empty fields' })).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Show 2 additional fields' })).toBeVisible()
     expect(within(rail).queryByRole('button', { name: /^Title/u })).toBeNull()
 
-    await userEvent.setup().click(within(rail).getByRole('button', { name: 'Show 2 empty fields' }))
+    await userEvent
+      .setup()
+      .click(within(rail).getByRole('button', { name: 'Show 2 additional fields' }))
     expect(within(rail).getByRole('button', { name: /^Title/u })).toHaveFocus()
   })
 
-  it('synchronously reveals and selects an empty field named in the URL', async () => {
+  it('synchronously reveals and selects an additional field named in the URL', async () => {
     const titleField = detail.fields[0]
     if (!titleField) throw new Error('workspace fixture requires a title field')
     const emptySubtitle = {
@@ -7349,14 +7353,14 @@ describe('Library route', () => {
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1', http)
 
     const rail = await screen.findByRole('navigation', { name: 'Review fields' })
-    expect(within(rail).getByRole('button', { name: 'Show 2 empty fields' })).toBeVisible()
+    expect(within(rail).getByRole('button', { name: 'Show 2 additional fields' })).toBeVisible()
     authoritative = true
     await act(async () => {
       await queryClient.refetchQueries({ queryKey: ['review-case', 'case-1'] })
     })
     await waitFor(() => expect(within(rail).getByRole('button', { name: /^Title/u })).toBeVisible())
     expect(within(rail).getByRole('button', { name: /^Subtitle/u })).toBeVisible()
-    expect(within(rail).queryByRole('button', { name: /Show .* empty field/u })).toBeNull()
+    expect(within(rail).queryByRole('button', { name: /Show .* additional field/u })).toBeNull()
   })
 
   it('keeps applicable unavailable fields inspectable without making them actionable', async () => {
@@ -8316,6 +8320,21 @@ it('offers advised text in the ordinary Description chooser with its immutable a
   const advice = field.descriptionAdvice
   if (!advice?.candidate) throw new Error('description fixture requires its candidate')
   const candidate = advice.candidate
+  const proposed = field.proposedValues[0]
+  if (!proposed) throw new Error('description fixture requires proposed text')
+  // Retain the earlier ordinary choice when the authored selection supersedes it.
+  field.humanDecision = {
+    actor: 'owner',
+    application: 'apply',
+    decision_id: 'prior-description',
+    destination: 'description',
+    occurred_at: 1,
+    outcome: 'accept',
+    proposal_id: field.proposalId,
+    review_case_id: 'case-1',
+    selected_value: proposed,
+    target_fingerprint: field.targetFingerprint,
+  }
   const http = createHttp()
   http.getCaseDetail = vi.fn(async () => ({ ...authored, id: 'case-1', fields: [field] }))
   http.recordDecision = vi.fn<ReviewHttp['recordDecision']>(async () => ({
@@ -8374,6 +8393,9 @@ it('offers advised text in the ordinary Description chooser with its immutable a
     }),
   ).toBeVisible()
   expect(screen.queryByRole('article', { name: 'Advised description' })).toBeNull()
+  expect(
+    screen.getByRole('button', { name: 'Choose proposed value: A qualified description.' }),
+  ).toHaveAttribute('aria-pressed', 'true')
   await userEvent.setup().click(option)
   await waitFor(() => expect(http.recordDecision).toHaveBeenCalled())
   const call = vi.mocked(http.recordDecision).mock.calls[0]
@@ -8385,12 +8407,22 @@ it('offers advised text in the ordinary Description chooser with its immutable a
   })
   expect(command.idempotencyKey).toBeTruthy()
   await screen.findByRole('heading', { name: 'Review complete' })
+  const completed = screen.getByRole('button', {
+    name: 'Description · Advised description selectedAuthored synthetic description.',
+  })
+  expect(completed).not.toHaveTextContent('A qualified description.')
   await userEvent.setup().click(
     within(screen.getByRole('navigation', { name: 'Review fields' })).getByRole('button', {
       name: /^Description/,
     }),
   )
   expect(await screen.findByText('Choice recorded.')).toBeVisible()
+  expect(
+    screen.getByRole('button', { name: 'Choose advised value: Authored synthetic description.' }),
+  ).toHaveAttribute('aria-pressed', 'true')
+  expect(
+    screen.getByRole('button', { name: 'Choose proposed value: A qualified description.' }),
+  ).toHaveAttribute('aria-pressed', 'false')
   expect(screen.queryByText('Recorded. Opening the next field…')).toBeNull()
 })
 
