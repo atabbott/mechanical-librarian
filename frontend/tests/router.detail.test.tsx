@@ -213,7 +213,13 @@ describe('Library review ownership', () => {
     expect(await screen.findByText(/ISBN: 9781250077004/u)).toBeVisible()
     expect(screen.getByText(/ISBN: 9780593135204/u)).toBeVisible()
     const observations = evidence.items.filter((item) => item.role === 'external_observation')
-    for (const item of observations) expect(screen.getByText(item.observation)).toBeVisible()
+    for (const observation of new Set(observations.map((item) => item.observation))) {
+      const rendered = screen.getAllByText(observation)
+      expect(rendered).toHaveLength(
+        observations.filter((item) => item.observation === observation).length,
+      )
+      for (const fact of rendered) expect(fact).toBeVisible()
+    }
     expect(screen.getAllByText(/External observation/u)).toHaveLength(observations.length)
     expect(screen.queryByRole('button', { name: /Choose|Accept|Apply/u })).toBeNull()
     expect(current.fields.find((field) => field.destination === 'isbn')?.proposedValues).toEqual([])

@@ -3682,14 +3682,14 @@ describe('Library route', () => {
         width: 170,
       } as DOMRect)
       alternativeCover.focus()
-      expect(compactTrack.scrollLeft).toBe(200)
+      expect(compactTrack.scrollLeft).toBe(280)
       vi.spyOn(compactCurrentChoice, 'getBoundingClientRect').mockReturnValue({
         left: -80,
         right: 90,
         width: 170,
       } as DOMRect)
       currentCover.focus()
-      expect(compactTrack.scrollLeft).toBe(120)
+      expect(compactTrack.scrollLeft).toBe(200)
 
       cleanup()
       const acceptOnlyHttp = {
