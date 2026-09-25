@@ -82,7 +82,7 @@ class AutomaticDecisionError(ValueError):
 
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
-F19A_QUALIFICATION_MANIFEST_SHA256 = "490665701e73254e165acb45701781ea34628f48f0280bdbf76cb5c9df6cc214"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "0f59b668db9c95502cc3bd02d7eb3d75e5abdae3ae45e15ec927f7cdd7160aa6"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",

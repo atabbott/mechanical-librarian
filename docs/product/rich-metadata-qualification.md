@@ -779,3 +779,8 @@ population accuracy estimate. Historical evaluators, gold and spent holdout were
 unchanged. All three shared compact authorities rotate while preserving their
 exact permission sets and decoding-only historical identities. Clean rebuild
 required; cover authority and existing guarded-effect requirements are unchanged.
+
+Synthetic Inventaire ISBN responses without an image also traverse the actual
+adapter, cover observer, report constructor and persisted owner outcome. They
+retain exact edition/work provenance without image acquisition; missing binding,
+unknown media and work-search controls confer no ISBN authority.

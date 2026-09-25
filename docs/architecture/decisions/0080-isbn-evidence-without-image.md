@@ -14,7 +14,10 @@ Remove only the retrieved-image prerequisite from empty ebook ISBN election.
 Retain valid edition-scoped ebook claims, exact accepted provider/candidate/work
 and reference binding, resolved work, unrelated-evidence refusal, publication
 compatibility, and one verified ISBN family. Keep the existing single-caller
-identity helper as the directly testable boundary. Do not change cover authority.
+identity helper as the directly testable boundary. Inventaire ISBN lookup retains
+its existing exact edition/work provenance in an absent-cover descriptor when no
+image is supplied. Malformed images still reject; work searches gain no edition
+authority. Do not change cover acquisition or selection authority.
 
 ## Consequences
 

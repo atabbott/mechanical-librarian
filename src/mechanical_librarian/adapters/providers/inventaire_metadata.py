@@ -45,6 +45,7 @@ from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
     CoverSourceKind,
+    CoverSourceState,
     cover_source_id,
 )
 from mechanical_librarian.domain.evidence_bounds import (
@@ -1166,7 +1167,7 @@ def _cover_descriptor(
     wait: Callable[[float | None], bool],
 ) -> ProviderCoverDescriptor | None:
     value = _image_path(edition)
-    if value is None:
+    if value is None and query_kind is not ProviderQueryKind.ISBN:
         return None
     edition_uri = _entity_uri(edition)
     work_uri = _one_optional_uri(edition, "wdt:P629")
@@ -1179,7 +1180,7 @@ def _cover_descriptor(
             CoverSourceKind.INVENTAIRE,
             f"{provider}:edition:{edition_uri}",
         ),
-        INVENTAIRE_ORIGIN + value,
+        None if value is None else INVENTAIRE_ORIGIN + value,
         CoverProvenance(
             provider,
             (
@@ -1193,6 +1194,7 @@ def _cover_descriptor(
         wait,
         False,
         INVENTAIRE_USER_AGENT,
+        CoverSourceState.ABSENT if value is None else None,
     )
 
 
