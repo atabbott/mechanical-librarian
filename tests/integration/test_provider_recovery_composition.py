@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import tempfile
+from contextlib import nullcontext
 from dataclasses import replace
 from pathlib import Path
 from threading import Lock
@@ -28,6 +29,7 @@ from mechanical_librarian.adapters.providers.inventaire_metadata import (
     InventairePacer,
 )
 from mechanical_librarian.adapters.providers.retry_safety import ProviderRequestPacer
+from mechanical_librarian.application import provider_retry_successor
 from mechanical_librarian.application.catalogue import CatalogueReader
 from mechanical_librarian.application.configuration import (
     ApplicationConfiguration,
@@ -925,6 +927,17 @@ def test_three_work_shared_failure_then_real_f22_cutover(
 
         with (
             patch.object(composition.time, "time", side_effect=lambda: clock[0]),
+            # The real successor deadline and synthetic SDK must share a clock
+            # domain, independent of the host's monotonic uptime.
+            (
+                patch.object(
+                    provider_retry_successor,
+                    "time",
+                    SimpleNamespace(monotonic=lambda: float(clock[0])),
+                )
+                if burst
+                else nullcontext()
+            ),
             patch.object(composition, "GoogleBooksPacer", return_value=burst_pacer),
             patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
             patch.object(composition, "_IsolatedEpubInspector", _Inspector),
