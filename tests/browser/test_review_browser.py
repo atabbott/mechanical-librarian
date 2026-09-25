@@ -6042,7 +6042,7 @@ def test_provider_recovery_rail_explains_exact_automatic_withholding():
                 )
                 row.click()
                 page.get_by_role("button", name=re.compile("^Series ")).click()
-                reason = "Automatic decision withheld: a contributing provider lookup did not supply usable evidence. You can review this field."
+                reason = "A contributing ISBN lookup did not supply usable evidence."
                 expect(page.get_by_text(reason)).to_be_visible()
                 expect(
                     page.get_by_role(
