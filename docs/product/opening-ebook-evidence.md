@@ -188,6 +188,24 @@ multi-volume work, included novella, or supplemental material. Structural facts
 remain distinct from bibliographic claims. A chapter heading does not become a
 book title merely because it appears near the start.
 
+### Full-work identity and body completeness
+
+An applicable opening ISBN identifies an observed edition claim; it does not
+prove that the file contains the complete work. A full work, excerpt, preview,
+omnibus, or file with misleading front matter can share the same admitted
+opening title and ISBN while their bodies differ. Bounded opening extraction
+stops at the body boundary; chapter headings and unrelated preview ISBNs do not
+supply title authority. Neither file length nor provider vote counts establish
+body completeness.
+
+When retained package/prologue and full-work evidence materially conflict,
+keep the alternatives for owner review. Independent comparison of the body may
+support an owner's adjudication, but it is not an application observation unless
+a supported evidence seam actually supplied it. Contained-work awareness
+tracked in #989 supplies no title or identity authority. This
+boundary does not change qualified title election or owner-final, Ask, and
+Ignore choices (#1079).
+
 ## Deterministic selection
 
 ### Semantic pass

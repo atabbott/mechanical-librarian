@@ -362,6 +362,26 @@ def test_supported_title_is_independent_and_retains_alternatives(options):
         {"titles": ("Example Title", "Example Title: An Abridgement")},
         {"titles": ("Example Title", "Example Title: A Translation")},
         {"titles": ("Example Title", "Example Title: An Adaptation")},
+        pytest.param(
+            {
+                "current": "Example Work: Prologue",
+                "content_title": "Example Work: Prologue",
+                "titles": ("Example Work",),
+            },
+            id="package-prologue-versus-full-work",
+        ),
+        pytest.param(
+            {"titles": ("Example Work", "Example Work: An Excerpt")},
+            id="full-work-versus-excerpt",
+        ),
+        pytest.param(
+            {"titles": ("Example Work", "Example Work: Omnibus")},
+            id="full-work-versus-omnibus",
+        ),
+        pytest.param(
+            {"titles": ("Example Work", "Example Work", "Example Work: Preview")},
+            id="provider-majority-versus-preview",
+        ),
     ],
 )
 def test_material_conflict_cannot_gain_title_authority(options):
@@ -369,9 +389,16 @@ def test_material_conflict_cannot_gain_title_authority(options):
     proposal = evaluate_report(report)
     result = next(r for r in proposal.results if r.destination.value == "title")
     assert result.reasons != (EVIDENCE_LED_TITLE_REASON,)
+    assert result.selected_alternative_id is None
+    assert len(result.alternatives) >= 2
+    if "titles" in options:
+        assert result.outcome.value == "unresolved_choice"
+        assert result.reasons == ("isbn_title_material_conflict",)
+        assert set(options["titles"]) <= {a.value.value for a in result.alternatives}
     packet = ShadowReviewPacket.create(
         ReviewCase.create(proposal, report), proposal, report
     )
+    packet = ShadowReviewPacket.from_json(packet.to_json(), report, proposal)
     assert all(
         not c["decision_summary"]["independent_title"]
         for p in packet.proposals

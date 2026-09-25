@@ -214,6 +214,51 @@ def test_plain_chapter_heading_never_becomes_a_book_title() -> None:
     assert not report.claims
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param("<p>A beginning, a middle, and an ending.</p>", id="full-work"),
+        pytest.param("<p>Only the opening scene.</p>", id="excerpt"),
+        pytest.param("<p>A sample of the forthcoming work.</p>", id="preview"),
+        pytest.param(
+            "<h1>First Work</h1><p>First ending.</p>"
+            "<h1>Second Work</h1><p>Second ending.</p>",
+            id="omnibus",
+        ),
+        pytest.param(
+            "<h1>Entirely Different Work</h1><p>Other prose.</p>",
+            id="misleading-front-matter",
+        ),
+    ],
+)
+def test_opening_observation_does_not_establish_body_completeness(body: str) -> None:
+    # Synthetic body truth is known to this test, not to the opening extractor.
+    report = _extract(
+        _single(
+            _xhtml(
+                '<h1 epub:type="fulltitle">Example Work</h1>'
+                '<section epub:type="copyright-page">'
+                "<p>eBook ISBN 9780306406157</p></section>"
+                '<aside epub:type="preview"><p>eBook ISBN 9781861972712</p></aside>'
+                '<main epub:type="bodymatter">' + body + "</main>"
+            )
+        )
+    )
+    assert report.outcome == EpubInspectionOutcome.SUCCESS
+    assert "body_transition_reached" in report.warnings
+    assert {
+        (claim.field, claim.normalized_value, claim.applicability)
+        for claim in report.claims
+    } == {
+        (OpeningField.TITLE, "Example Work", EpubObservationApplicability.WORK),
+        (
+            OpeningField.IDENTIFIER,
+            "9780306406157",
+            EpubObservationApplicability.EDITION,
+        ),
+    }
+
+
 def test_landmark_terms_require_landmarks_ancestry_and_epub_namespace() -> None:
     package = _opening_package(
         items=(

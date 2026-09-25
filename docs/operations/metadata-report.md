@@ -28,6 +28,16 @@ An exact current report can be evaluated by the separate fixed-policy
 this evidence without changing or duplicating the report and performs no
 provider call.
 
+## Retained identity conflicts
+
+Conflicting package/prologue and full-work evidence remains for owner review.
+Keep external identity adjudication separate from observed application inputs.
+Unsupported historical report schemas cannot be replayed by the current parser;
+do not relabel them or rewrite evidence to make them replayable. Current
+synthetic proof is separate from historical replay. See
+[opening evidence](../product/opening-ebook-evidence.md#full-work-identity-and-body-completeness)
+for the body-completeness limit (#1079).
+
 ## Preconditions
 
 - The database path is absent for the first invocation or already contains the
