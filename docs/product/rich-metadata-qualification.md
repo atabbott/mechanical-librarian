@@ -760,3 +760,22 @@ English/code grouping, unknown exclusion, source-bound observed-form selection
 and persisted effects; it is not new library-wide quality scoring. Report v48,
 proposal policy v29, action policy v5, decision policy v16 and outcome v8 require
 a clean rebuild. Proposal shape v8, packet v9 and automatic-decision v1 remain.
+
+
+## Image-independent ISBN evidence (#1077)
+
+Both existing F20 ISBN options retain their permissions under proposal policy
+v32. A frozen subset of 19 exposed development cases was reconstructed through
+current constructors and round-trip validation against unchanged accepted gold.
+For each option, original and labelled image-unavailable scenarios each produced
+15 distinct correct positives with precision 1.0 across missing/null/empty
+states, with zero wrong, invented or preview-bypass results. The baseline reached
+9 distinct positives on original reports and none after image unavailability;
+removing exact-edition provenance yielded no predictions in either version.
+
+Sixteen development cases remained unavailable (10 missing WORK lineage, six
+unmapped). This bounded correspondence evidence is neither a fresh holdout nor a
+population accuracy estimate. Historical evaluators, gold and spent holdout were
+unchanged. All three shared compact authorities rotate while preserving their
+exact permission sets and decoding-only historical identities. Clean rebuild
+required; cover authority and existing guarded-effect requirements are unchanged.

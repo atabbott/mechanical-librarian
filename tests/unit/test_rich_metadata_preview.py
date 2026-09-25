@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.cover_evidence import CoverSourceState
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyProfile,
     resolve_policy,
@@ -3221,7 +3222,13 @@ def test_isbn_options_preserve_or_select_only_exact_admitted_forms() -> None:
     )
 
 
-def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> None:
+@pytest.mark.parametrize(
+    "state", (TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY)
+)
+@pytest.mark.parametrize("image_available", (True, False))
+def test_isbn_family_preview_selects_exact_local_or_isbn13_representation(
+    state: TargetFieldState, image_available: bool
+) -> None:
     local = _local_isbn("0306406152", "valid_isbn_10")
     provider = _provider(
         "catalogue",
@@ -3238,12 +3245,18 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
         ),
     )
     report = _report(
-        fields=_fields(
-            isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
-        ),
+        fields=_fields(isbn=TargetField(TargetDestination.ISBN, state)),
         local_claims=(local,),
         providers=(provider,),
-        covers=(_exact_edition_cover(),),
+        covers=(
+            _exact_edition_cover()
+            if image_available
+            else replace(
+                _exact_edition_cover(),
+                state=CoverSourceState.UNAVAILABLE,
+                artifact=None,
+            ),
+        ),
     )
 
     exact = _preview_field(report, "isbn_form", "preserve_exact")
@@ -3288,12 +3301,18 @@ def test_isbn_family_preview_selects_exact_local_or_isbn13_representation() -> N
         ),
     )
     family_report = _report(
-        fields=_fields(
-            isbn=TargetField(TargetDestination.ISBN, TargetFieldState.MISSING)
-        ),
+        fields=_fields(isbn=TargetField(TargetDestination.ISBN, state)),
         local_claims=(local13,),
         providers=(family_provider,),
-        covers=(_exact_edition_cover(),),
+        covers=(
+            _exact_edition_cover()
+            if image_available
+            else replace(
+                _exact_edition_cover(),
+                state=CoverSourceState.UNAVAILABLE,
+                artifact=None,
+            ),
+        ),
     )
     for option in ("preserve_exact", "prefer_isbn13"):
         field = _preview_field(family_report, "isbn_form", option)

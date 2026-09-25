@@ -96,7 +96,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v31"
+POLICY_VERSION = "fixed-conservative-v32"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -4594,12 +4594,12 @@ def _accepted_provider_manifestation_anchor(
     )
 
 
-def _verified_provider_manifestation_cover(
+def _verified_provider_manifestation_identity(
     report: MetadataReport,
     provider: ProviderObservation,
     candidate: ProviderCandidate,
 ) -> bool:
-    """Apply the existing exact provider-cover manifestation verifier."""
+    """Verify retained exact-edition identity independently of image retrieval."""
     if candidate.work_identity == "unresolved":
         return False
     if any(
@@ -4611,8 +4611,7 @@ def _verified_provider_manifestation_cover(
     ):
         return False
     return manifestation_publication_compatible(candidate, report.local_claims) and any(
-        source.state is CoverSourceState.RETRIEVED
-        and source.provenance is not None
+        source.provenance is not None
         and source.provenance.designation is CoverDesignation.EXACT_EDITION
         and source.provenance.provider == provider.provider
         and source.provenance.edition_identity == candidate.identity
@@ -4650,7 +4649,9 @@ def _accepted_provider_manifestation_isbn_anchor(
         or claim.applicability != "ebook"
     ):
         return False
-    return _verified_provider_manifestation_cover(report, provider, candidate) and any(
+    return _verified_provider_manifestation_identity(
+        report, provider, candidate
+    ) and any(
         evidence.relation is IdentifierRelation.ACCEPTED
         and evidence.provider == provider.provider
         and evidence.candidate_identity == candidate.identity

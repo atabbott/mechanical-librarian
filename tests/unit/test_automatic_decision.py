@@ -192,6 +192,7 @@ def test_f38_contributor_consensus_binds_its_own_manifest() -> None:
         "4ede15a2aa84e8726ea2dff4e4f9f0d04b27a70276ed53c400c2de5f7619d445",
         "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
         "4420a5d1ea34f2e46e9c854b07c068e827324fbce942b4da8c301b3cd7409168",
+        "28b95c60856b1c6a5f88b6e67f7cba9c55b215c10567eeb3b29d2a7e98233175",
     ),
 )
 def test_v11_v12_series_history_survives_narrowed_current_authority(

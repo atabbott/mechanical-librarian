@@ -3,9 +3,9 @@
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v49`, `proposal-set-v8` under
-`fixed-conservative-v31`, `shadow-review-packet-v9`, `shadow-outcome-set-v9`,
-and `deterministic-shadow-decision-policy-v18`. #1076 changes automatic ebook
-synopsis semantics and the exact-current SQL bindings. **Clean rebuild required**
+`fixed-conservative-v32`, `shadow-review-packet-v9`, `shadow-outcome-set-v9`,
+and `deterministic-shadow-decision-policy-v18`. #1077 removes only the image
+retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.
 No migration, adoption, conversion, import or downgrade is supplied. Historical
 automatic records remain readable evidence, without current effect authority.

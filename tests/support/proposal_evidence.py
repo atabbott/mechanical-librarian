@@ -875,3 +875,58 @@ def retained_decoration_report(
         local_claims=local,
         providers=(consensus_provider_title("open_library", plain), source),
     )
+
+
+def _image_unavailable_isbn_report(
+    state: TargetFieldState = TargetFieldState.MISSING,
+    *,
+    review_choice: bool = False,
+) -> MetadataReport:
+    """Exact ebook identity with both lexical forms and unavailable image bytes."""
+    from dataclasses import replace
+
+    local = LocalClaim.create(
+        kind=ClaimKind.ISBN,
+        observed="0306406152",
+        canonical="0306406152",
+        excerpt="0306406152",
+        applicability="ebook",
+        checksum="valid_isbn_10",
+        applicability_basis="ebook",
+        scope=ClaimScope.EDITION,
+    )
+    return _report(
+        title="Synthetic ISBN Journey",
+        fields=_fields(
+            "Synthetic ISBN Journey", isbn=TargetField(TargetDestination.ISBN, state)
+        ),
+        local_claims=(
+            local,
+            _local_subtitle("A retained subtitle choice", ClaimScope.WORK),
+        )
+        if review_choice
+        else (local,),
+        providers=(
+            _provider(
+                "catalogue",
+                "edition-1",
+                (
+                    _claim(
+                        "catalogue",
+                        "edition-1",
+                        ClaimKind.ISBN,
+                        "9780306406157",
+                        scope=ClaimScope.EDITION,
+                        applicability="ebook",
+                    ),
+                ),
+            ),
+        ),
+        covers=(
+            replace(
+                _exact_edition_cover(),
+                state=CoverSourceState.UNAVAILABLE,
+                artifact=None,
+            ),
+        ),
+    )
