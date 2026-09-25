@@ -796,3 +796,14 @@ proof protects this source change; it is not a new population qualification,
 historical rescore or real-provider success measurement. Historical v44 evidence
 and the earlier 1,624-report and final 1,916-report observations remain separate,
 immutable snapshots, not counts of individually failed HTTP requests.
+
+## Durable refusal source closure (#1081)
+
+F19a, F20 and F46 advance semantic revision 3 to 4 for final refusal preservation
+and the snapshot reader. The 12, 13 and 76 permitted operations, F20's 19
+dispositions and F46's paired operation are unchanged. Exact revision-3 documents
+decode as history and cannot mint current authority. Outcome v10 rejects v9 state
+before mutation: **clean rebuild required**, with no adoption. The compact base
+fixture binds the actual predecessor table, complete object-inventory digest and
+three producer-created decisions. Current reason counts may use the refined codes;
+retained #877/v44 measurements remain historical, partial and curtailed.

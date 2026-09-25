@@ -632,3 +632,25 @@ title replacement, sequence exemption or series-identity merge. Existing
 association, title-witness, policy, owner-final, consent, backup, currentness,
 read-back and audit checks remain mandatory. Proposal policy v31 requires a
 clean rebuild; report v49 remains unchanged. No new egress or write scope exists.
+
+## Recorded automatic refusals (#1081)
+
+Final evaluations retain field-specific refusal codes. Missing eligible evidence,
+contradicted work applicability, unproved association, missing edition evidence,
+unusable current values and unavailable contributing sources remain distinct.
+The compiler's first applicable refusal governs; ISBN checks retain malformed or
+incomplete evidence, conflicting families, insufficient association, unavailable
+source, then absent-value precedence. A failed unrelated lookup does not veto a
+supported value. No new option, disposition or effect permission is introduced.
+
+Library and Evidence read the immutable final evaluation without recompiling its
+report. A missing record is described as unavailable recorded evaluation; a legacy
+generic reason says that no more specific reason was recorded. Neither implies
+missing evidence or conflict. Current automatic suspension is a separate overlay
+from the same snapshot, labelled separately from the recorded evaluation. Owner
+choices and Ask/Ignore retain precedence. Explicit draft previews and selected-value
+effect validation still compile retained evidence through their existing guards.
+
+Outcome v10: **clean rebuild required** for prior derived stores;
+there is no adoption or migration. F19a, F20 and F46 semantic revision 4 preserves
+the existing permission sets. Earlier documents remain historical decoding only.

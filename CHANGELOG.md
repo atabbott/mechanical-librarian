@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Preserve precise automatic refusal reasons across restarts and show them in
+  Library, Evidence and Policy preview. Expanded preview results follow the
+  policy choices in document flow. Clean rebuild required (#1081).
+
 - Pause new Google Books requests during an observed shared burst window and
   retain its remaining wait through provider recovery. iTunes overflow remains
   safely bounded and terminal; no additional provider requests are implied (#1082).

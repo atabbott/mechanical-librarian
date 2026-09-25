@@ -48,7 +48,7 @@ from mechanical_librarian.domain.shadow_decision import (
 )
 from mechanical_librarian.domain.shadow_review import MAX_CITATIONS
 
-SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v9"
+SHADOW_OUTCOME_SCHEMA = "shadow-outcome-set-v10"
 MAX_SHADOW_OUTCOME_BYTES = 1_048_576
 
 _POLICY_CATEGORY_BY_DESTINATION = {
@@ -129,7 +129,86 @@ _ISBN_ELECTION_REASONS = frozenset(
         "source_value_absent",
     }
 )
-_REASON_CODES = _ISBN_ELECTION_REASONS | frozenset(
+_RICH_REFUSAL_REASONS = {
+    "subtitle": frozenset(
+        {
+            "no_candidate",
+            "ambiguous_evidence",
+            "atomic_bundle_unavailable",
+            "corroborated_split_unavailable",
+            "subtitle_local_corroboration_required",
+            "subtitle_segment_provider_dissent",
+            "subtitle_segment_decorated_consensus",
+        }
+    ),
+    "series": frozenset(
+        {
+            "no_candidate",
+            "ambiguous_evidence",
+            "series_membership_incomplete",
+            "series_conflicting_membership",
+            "series_provider_evidence_required",
+            "series_provider_failure_isbn",
+            "series_provider_failure_work",
+            "series_provider_failure_asin",
+            "target_work_applicability_unproved",
+            "atomic_bundle_unavailable",
+        }
+    ),
+    "genres": frozenset(
+        {
+            "no_candidate",
+            "ambiguous_evidence",
+            "target_work_contradicted",
+            "policy_option_unavailable",
+            "target_projection_oversized",
+        }
+    ),
+    "tags": frozenset(
+        {
+            "no_candidate",
+            "ambiguous_evidence",
+            "target_work_applicability_unproved",
+            "policy_option_unavailable",
+            "target_projection_oversized",
+            "policy_off",
+        }
+    ),
+    "description": frozenset(
+        {
+            "no_candidate",
+            "ambiguous_evidence",
+            "target_work_applicability_unproved",
+            "description_quality_floor_not_met",
+            "policy_option_unavailable",
+            "option_evidence_unavailable",
+        }
+    ),
+    "isbn": _ISBN_ELECTION_REASONS
+    | frozenset(
+        {
+            "no_candidate",
+            "manifestation_verification_required",
+            "policy_option_unavailable",
+            "option_evidence_unavailable",
+        }
+    ),
+    "asin": frozenset(
+        {
+            "no_candidate",
+            "ambiguous_evidence",
+            "policy_option_unavailable",
+            "option_evidence_unavailable",
+        }
+    ),
+    "explicit": frozenset({"explicit_unsupported"}),
+}
+_RICH_REFUSAL_REASONS = {
+    destination: reasons | {"automatic_unqualified", "target_state_unusable"}
+    for destination, reasons in _RICH_REFUSAL_REASONS.items()
+}
+_RICH_REASON_CODES = frozenset().union(*_RICH_REFUSAL_REASONS.values())
+_REASON_CODES = _RICH_REASON_CODES | frozenset(
     {
         "ambiguous_eligible_actions",
         "bibliographic_combination_unresolved",
@@ -273,11 +352,16 @@ class ShadowFieldOutcome:
             )
             or self.reason_code not in _REASON_CODES
             or (
-                self.reason_code in _ISBN_ELECTION_REASONS
+                self.reason_code in _RICH_REASON_CODES
                 and (
-                    self.destination != "isbn"
-                    or self.policy_destination != "automatic"
-                    or self.disposition != "abstention"
+                    self.reason_code
+                    not in _RICH_REFUSAL_REASONS.get(self.destination, ())
+                    or (
+                        self.destination == "subtitle"
+                        and self.policy_category != "subtitle"
+                    )
+                    or self.policy_destination not in {"automatic", "ask"}
+                    or self.disposition not in {"abstention", "manual"}
                 )
             )
             or self.outcome_id != "shadow_outcome_" + _digest(self._identity_data())
@@ -325,6 +409,7 @@ def _rich_field_outcome(
     proposal_id: str,
     catalogue_sha256: str,
     policy_option: str | None = None,
+    requested_destination: str | None = None,
 ) -> ShadowFieldOutcome:
     candidate_id = (
         preview.source_candidate_id if preview.outcome == "projected" else None
@@ -355,12 +440,13 @@ def _rich_field_outcome(
         else "no_eligible_action"
     )
     if (
-        destination == "isbn"
-        and policy_destination == "automatic"
-        and disposition == "abstention"
-        and preview.reason in _ISBN_ELECTION_REASONS
+        (requested_destination or policy_destination) == "automatic"
+        and disposition in {"abstention", "manual"}
+        and preview.reason in _RICH_REFUSAL_REASONS[destination]
     ):
         reason_code = preview.reason
+    elif requested_destination == "automatic" and policy_destination == "ask":
+        reason_code = "automatic_unqualified"
     action_id = "action_" + _digest(
         {
             "candidate_id": candidate_id,
@@ -719,6 +805,7 @@ class ShadowOutcomeSet:
                     category=category,
                     destination=destination,
                     policy_destination=rich_destination,
+                    requested_destination=destinations[category],
                     proposal_id=proposals[destination],
                     catalogue_sha256=decisions.catalogue_sha256,
                     policy_option=rich_option,
@@ -743,6 +830,7 @@ class ShadowOutcomeSet:
                     rich["subtitle"],
                     category="subtitle",
                     destination="subtitle",
+                    requested_destination=destinations["subtitle"],
                     policy_destination=_audiobook_destination(
                         _audiobook_policy_identity(
                             "subtitle",

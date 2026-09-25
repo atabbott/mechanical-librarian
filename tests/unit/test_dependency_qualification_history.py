@@ -100,3 +100,23 @@ def test_actual_v48_genre_decision_remains_historical():
         AutomaticDecision.create(
             **cast("dict[str, Any]", decision._core()), occurred_at=decision.occurred_at
         )
+
+
+@pytest.mark.parametrize("family", ("F19A", "F20", "F46"))
+def test_revision_three_documents_decode_without_current_authority(family):
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/shadow-outcome-v9.json").read_text()
+    )
+    assert fixture["source_sha"] == "08ae544e20ea79037f7e4a1d5f66b482554ed1dc"
+    raw = fixture["decisions"][family]
+    decision = AutomaticDecision.from_json(raw)
+    assert decision.to_json() == raw
+    assert not qualification_manifest_is_current(
+        decision.policy_category,
+        decision.policy_option,
+        decision.qualification_manifest_sha256,
+    )
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(
+            **cast("dict[str, Any]", decision._core()), occurred_at=decision.occurred_at
+        )

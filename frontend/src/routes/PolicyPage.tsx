@@ -22,7 +22,7 @@ import type {
 } from '../api/http'
 import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
 import { Dropdown } from '../components/Dropdown'
-import { fieldLabel } from '../labels'
+import { automaticRefusalReasons, fieldLabel } from '../labels'
 import { policyRoute, useReviewContext } from '../router'
 import type { PolicyCritical } from '../router'
 
@@ -616,51 +616,15 @@ export const policyImpactDisplay = (field: PolicyPreviewField): PolicyImpactDisp
       detail: 'Current value is unavailable or unreadable — inspect the source before deciding',
       technicalDetail,
     }
-  if (field.field === 'description_fill' && field.outcome === 'abstain') {
-    const explanations: Record<string, string> = {
-      no_candidate: 'No eligible automatic synopsis is available — inspect the retained evidence',
-      description_quality_floor_not_met:
-        'No eligible automatic synopsis — inspect the retained source evidence',
-      target_work_applicability_unproved:
-        'Automatic synopsis withheld — the source text is not proved to describe this work',
-      ambiguous_evidence:
-        'Automatic synopsis withheld — the retained descriptions contain unresolved conflicting evidence',
-    }
-    const explanation = explanations[field.reason ?? '']
-    if (explanation)
-      return {
-        changed: false,
-        title: field.reason === 'ambiguous_evidence' ? 'Needs review' : 'No change',
-        detail: explanation,
-        technicalDetail,
-      }
-  }
-  if (field.reason === 'ambiguous_evidence')
+  if (field.outcome === 'abstain')
     return {
       changed: false,
-      title: 'Needs review',
-      detail: `${current} remains — ${humanReason(field.reason)}`,
-      technicalDetail,
-    }
-  if (field.reason === 'policy_ignored' || field.reason === 'policy_off')
-    return {
-      changed: false,
-      title: 'No change',
-      detail: `remains ${current} — ${humanReason(field.reason)}`,
-      technicalDetail,
-    }
-  if (field.reason === 'explicit_unsupported')
-    return {
-      changed: false,
-      title: 'No change',
-      detail: `${current} remains — ${humanReason(field.reason)}`,
-      technicalDetail,
-    }
-  if (field.reason === 'target_work_contradicted')
-    return {
-      changed: false,
-      title: 'No supported value found',
-      detail: `${currentIsDisplayable ? `${current} remains` : 'remains empty'} — ${humanReason(field.reason)}`,
+      title: field.reason === 'ambiguous_evidence' ? 'Needs review' : 'No change',
+      detail:
+        field.reason === 'policy_ignored'
+          ? `remains ${current} — ${humanReason(field.reason)}`
+          : (automaticRefusalReasons[field.reason ?? ''] ??
+            'The preview did not select an automatic action; no more specific reason is available.'),
       technicalDetail,
     }
   if (field.outcome === 'no_op' || sameMetadataValue(field.current_value, field.desired_value))
@@ -1473,6 +1437,130 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             })}
           </div>
         </section>
+        {(stage === 'preview' || stage === 'activation') && preview ? (
+          <section className="cm-policy-result">
+            <aside>
+              <header>
+                <span>
+                  <Check />
+                </span>
+                <div>
+                  <strong>Validated and saved</strong>
+                  <small>Immutable snapshot for this preview</small>
+                </div>
+              </header>
+              <dl>
+                <div>
+                  <dt>Structure</dt>
+                  <dd>Passed</dd>
+                </div>
+                <div>
+                  <dt>Qualification</dt>
+                  <dd>Passed</dd>
+                </div>
+                <div>
+                  <dt>Scope</dt>
+                  <dd>
+                    {impactTotals?.libraries
+                      ? `${String(impactTotals.libraries)} ${impactTotals.libraries === 1 ? 'library' : 'libraries'}`
+                      : 'Current'}
+                  </dd>
+                </div>
+              </dl>
+            </aside>
+            <div className="cm-policy-preview">
+              <header>
+                <div>
+                  <strong>Impact preview</strong>
+                  <small>Current unapplied work only · no metadata writes</small>
+                </div>
+                <b
+                  aria-label={`${String(impactTotals?.changedWorks ?? 0)} sampled works with changes`}
+                >
+                  {String(impactTotals?.changedWorks ?? 0)}
+                </b>
+              </header>
+              <div id="policy-preview-outcomes" className="cm-policy-preview-list">
+                {previewRows.length
+                  ? previewRows.slice(0, expandedPreview === preview ? undefined : 6).map((row) => (
+                      <div key={row.id} className={row.impact.changed ? 'is-change' : ''}>
+                        <span className="cm-policy-work-mark" aria-hidden="true">
+                          {row.work.slice(0, 2).toUpperCase()}
+                        </span>
+                        <span>
+                          <strong>{row.work}</strong>
+                          <small>
+                            {row.library} · {row.field}
+                          </small>
+                        </span>
+                        <span className="cm-policy-impact">
+                          <b>{row.impact.title}</b>
+                          <small>· {row.impact.detail}</small>
+                          <details>
+                            <summary>Technical detail</summary>
+                            <code>{row.impact.technicalDetail}</code>
+                          </details>
+                        </span>
+                      </div>
+                    ))
+                  : preview.libraries.map((library) => (
+                      <div key={library.library}>
+                        <span className="cm-policy-work-mark" aria-hidden="true">
+                          {library.library.slice(0, 2).toUpperCase()}
+                        </span>
+                        <span>
+                          <strong>{library.library}</strong>
+                          <small>
+                            {library.affected_categories.map(readableCategory).join(', ') ||
+                              'No changed fields'}
+                          </small>
+                        </span>
+                        <span className="cm-policy-impact">
+                          <b>
+                            {library.current_unapplied_count === 0 ? 'No change' : 'Needs review'}
+                          </b>
+                          <small>
+                            ·{' '}
+                            {library.current_unapplied_count === 0
+                              ? 'No current unapplied work remains to inspect'
+                              : `No sampled field outcome; ${String(library.current_unapplied_count)} current unapplied ${library.current_unapplied_count === 1 ? 'work remains' : 'works remain'} to inspect`}
+                          </small>
+                        </span>
+                      </div>
+                    ))}
+              </div>
+              {previewRows.length > 6 ? (
+                <footer>
+                  <button
+                    type="button"
+                    aria-expanded={expandedPreview === preview}
+                    aria-controls="policy-preview-outcomes"
+                    onClick={() =>
+                      setExpandedPreview(expandedPreview === preview ? undefined : preview)
+                    }
+                  >
+                    {expandedPreview === preview
+                      ? 'Show fewer outcomes'
+                      : `Show ${String(previewRows.length - 6)} more ${previewRows.length === 7 ? 'outcome' : 'outcomes'}`}
+                  </button>
+                </footer>
+              ) : preview.libraries.some((library) => library.cases_truncated) ? (
+                <footer>
+                  Additional current cases are included in the authoritative preview total.
+                </footer>
+              ) : null}
+            </div>
+            {stage === 'activation' ? (
+              <footer className="cm-policy-activation">
+                <strong>Activate this reviewed draft?</strong>
+                <span>
+                  The active policy changes only after this guarded command succeeds. Applied
+                  history remains untouched.
+                </span>
+              </footer>
+            ) : null}
+          </section>
+        ) : null}
         <section
           className={`cm-policy-finish stage-${stage}`}
           aria-label="Whole policy draft impact and activation"
@@ -1583,132 +1671,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   </div>
                 </li>
               </ul>
-            </section>
-          ) : null}
-          {(stage === 'preview' || stage === 'activation') && preview ? (
-            <section className="cm-policy-result">
-              <aside>
-                <header>
-                  <span>
-                    <Check />
-                  </span>
-                  <div>
-                    <strong>Validated and saved</strong>
-                    <small>Immutable snapshot for this preview</small>
-                  </div>
-                </header>
-                <dl>
-                  <div>
-                    <dt>Structure</dt>
-                    <dd>Passed</dd>
-                  </div>
-                  <div>
-                    <dt>Qualification</dt>
-                    <dd>Passed</dd>
-                  </div>
-                  <div>
-                    <dt>Scope</dt>
-                    <dd>
-                      {impactTotals?.libraries
-                        ? `${String(impactTotals.libraries)} ${impactTotals.libraries === 1 ? 'library' : 'libraries'}`
-                        : 'Current'}
-                    </dd>
-                  </div>
-                </dl>
-              </aside>
-              <div className="cm-policy-preview">
-                <header>
-                  <div>
-                    <strong>Impact preview</strong>
-                    <small>Current unapplied work only · no metadata writes</small>
-                  </div>
-                  <b
-                    aria-label={`${String(impactTotals?.changedWorks ?? 0)} sampled works with changes`}
-                  >
-                    {String(impactTotals?.changedWorks ?? 0)}
-                  </b>
-                </header>
-                <div id="policy-preview-outcomes" className="cm-policy-preview-list">
-                  {previewRows.length
-                    ? previewRows
-                        .slice(0, expandedPreview === preview ? undefined : 6)
-                        .map((row) => (
-                          <div key={row.id} className={row.impact.changed ? 'is-change' : ''}>
-                            <span className="cm-policy-work-mark" aria-hidden="true">
-                              {row.work.slice(0, 2).toUpperCase()}
-                            </span>
-                            <span>
-                              <strong>{row.work}</strong>
-                              <small>
-                                {row.library} · {row.field}
-                              </small>
-                            </span>
-                            <span className="cm-policy-impact">
-                              <b>{row.impact.title}</b>
-                              <small>· {row.impact.detail}</small>
-                              <details>
-                                <summary>Technical detail</summary>
-                                <code>{row.impact.technicalDetail}</code>
-                              </details>
-                            </span>
-                          </div>
-                        ))
-                    : preview.libraries.map((library) => (
-                        <div key={library.library}>
-                          <span className="cm-policy-work-mark" aria-hidden="true">
-                            {library.library.slice(0, 2).toUpperCase()}
-                          </span>
-                          <span>
-                            <strong>{library.library}</strong>
-                            <small>
-                              {library.affected_categories.map(readableCategory).join(', ') ||
-                                'No changed fields'}
-                            </small>
-                          </span>
-                          <span className="cm-policy-impact">
-                            <b>
-                              {library.current_unapplied_count === 0 ? 'No change' : 'Needs review'}
-                            </b>
-                            <small>
-                              ·{' '}
-                              {library.current_unapplied_count === 0
-                                ? 'No current unapplied work remains to inspect'
-                                : `No sampled field outcome; ${String(library.current_unapplied_count)} current unapplied ${library.current_unapplied_count === 1 ? 'work remains' : 'works remain'} to inspect`}
-                            </small>
-                          </span>
-                        </div>
-                      ))}
-                </div>
-                {previewRows.length > 6 ? (
-                  <footer>
-                    <button
-                      type="button"
-                      aria-expanded={expandedPreview === preview}
-                      aria-controls="policy-preview-outcomes"
-                      onClick={() =>
-                        setExpandedPreview(expandedPreview === preview ? undefined : preview)
-                      }
-                    >
-                      {expandedPreview === preview
-                        ? 'Show fewer outcomes'
-                        : `Show ${String(previewRows.length - 6)} more ${previewRows.length === 7 ? 'outcome' : 'outcomes'}`}
-                    </button>
-                  </footer>
-                ) : preview.libraries.some((library) => library.cases_truncated) ? (
-                  <footer>
-                    Additional current cases are included in the authoritative preview total.
-                  </footer>
-                ) : null}
-              </div>
-              {stage === 'activation' ? (
-                <footer className="cm-policy-activation">
-                  <strong>Activate this reviewed draft?</strong>
-                  <span>
-                    The active policy changes only after this guarded command succeeds. Applied
-                    history remains untouched.
-                  </span>
-                </footer>
-              ) : null}
             </section>
           ) : null}
           {stage === 'activated' ? (

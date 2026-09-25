@@ -2685,14 +2685,22 @@ def test_provider_withheld_reason_requires_exact_contributing_automatic_evidence
     assert (series["automatic_withheld_reason"] is not None) is expected
     if expected:
         assert series["needs_attention"] is True
-        assert "contributing provider lookup" in series["automatic_withheld_reason"]
+        assert "contributing ISBN lookup" in series["automatic_withheld_reason"]
     assert tuple(repository._connection.iterdump()) == before
     assert repository._connection.total_changes == changes
     repository.close()
 
 
 @pytest.mark.parametrize(
-    "mode", ("admission_only", "absent", "mismatched", "human", "malformed")
+    "mode",
+    (
+        "admission_only",
+        "absent",
+        "mismatched",
+        "human",
+        "malformed",
+        "outcome_malformed",
+    ),
 )
 def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode):
     from dataclasses import replace
@@ -2752,11 +2760,13 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
             ).canonical_json
         )
         snapshot = replace(snapshot, resolved_policy_document=document)
+    if mode == "outcome_malformed":
+        snapshot = replace(snapshot, final_outcome_document="{}")
     # A snapshot collaborator isolates absent/unmatched authority from production
     # policy persistence, whose validator correctly refuses corrupt later state.
     store = Mock()
     store.read_current_review_case.return_value = snapshot
-    if mode == "malformed":
+    if mode in {"malformed", "mismatched", "outcome_malformed"}:
         with pytest.raises(ReviewWebError, match="unavailable"):
             InspectCurrentReviewCase(store).run(case_id)
     else:
@@ -2766,10 +2776,26 @@ def test_provider_withheld_reason_never_invents_policy_authority(tmp_path, mode)
             for f in detail["fields"]
             if f["automatic_withheld_reason"] is not None
         }
-        assert set(reasons) == (
-            {"description"} if mode in {"admission_only", "human"} else set()
-        )
+        if mode == "absent":
+            assert reasons == {}
+        elif mode == "admission_only":
+            assert (
+                reasons["series"]
+                == "No recorded automatic evaluation is available for this field."
+            )
+            assert all(value == reasons["series"] for value in reasons.values())
+        else:
+            assert "series" not in reasons
+            assert (
+                reasons["description"]
+                == "No eligible value was found in the retained evidence."
+            )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
+        if mode == "human":
+            assert (
+                reasons["title"]
+                == "The recorded evaluation did not select an automatic action; no more specific reason was recorded."
+            )
     repository.close()
 
 
@@ -2884,7 +2910,14 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
             for f in detail["fields"]
             if f["automatic_withheld_reason"] is not None
         }
-        assert set(reasons) == {"series", "description"}
+        assert (
+            reasons["series"]
+            == "A contributing ISBN lookup did not supply usable evidence."
+        )
+        assert (
+            reasons["description"]
+            == "No eligible value was found in the retained evidence."
+        )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
         writer_thread.join(timeout=5)
         assert not writer_thread.is_alive()
@@ -2908,7 +2941,11 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
             for f in after["fields"]
             if f["automatic_withheld_reason"] is not None
         }
-        assert set(reasons) == {"description"}
+        assert "series" not in reasons
+        assert (
+            reasons["description"]
+            == "No eligible value was found in the retained evidence."
+        )
         assert all(isinstance(reason, str) and reason for reason in reasons.values())
     finally:
         if started:
@@ -3010,7 +3047,10 @@ def test_non_provider_abstention_keeps_review_without_provider_claim(tmp_path):
         if field["destination"] == "series"
     )
     assert field["needs_attention"] is True
-    assert field["automatic_withheld_reason"] is None
+    assert (
+        field["automatic_withheld_reason"]
+        == "The retained evidence does not resolve series membership for automatic handling."
+    )
     repository.close()
 
 
@@ -3070,3 +3110,88 @@ def test_generated_author_policy_routes_owner_attention_without_automatic_leak(
             assert after["total"] == attention["total"] - 1
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize("suspension", ("pause", "category"))
+def test_recorded_cause_and_current_suspension_share_one_snapshot(tmp_path, suspension):
+    from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+    from tests.support.provider_recovery_rail import publish_provider_failure_case
+
+    reader = open_repository(tmp_path / "snapshot.sqlite")
+    case_id, _, _, _ = publish_provider_failure_case(reader)
+    before = reader.read_current_review_case(case_id, None).final_outcome_document
+    writer_path = (
+        reader._binding.alias_path if reader._binding else tmp_path / "snapshot.sqlite"
+    )
+    attempted = threading.Event()
+    errors = []
+
+    def suspend():
+        connection = sqlite3.connect(writer_path, isolation_level=None)
+        connection.execute("PRAGMA busy_timeout=5000")
+        connection.set_trace_callback(
+            lambda sql: (
+                attempted.set()
+                if sql.startswith("UPDATE automatic_safety_state")
+                else None
+            )
+        )
+        writer = SQLiteMetadataReportRepository(connection)
+        try:
+            if suspension == "pause":
+                writer.pause_automatic_safety(True, 5)
+            else:
+                writer._decisions._set_automatic_safety_state(
+                    AutomaticSafetyState(
+                        False, None, (("series", "authority_binding"),)
+                    ),
+                    5,
+                )
+        except BaseException as error:
+            errors.append(error)
+        finally:
+            writer.close()
+            attempted.set()
+
+    original = reader.get_review_case
+    thread = threading.Thread(target=suspend)
+    started = False
+
+    def interleave(identity):
+        nonlocal started
+        document = original(identity)
+        if not started:
+            started = True
+            thread.start()
+            assert attempted.wait(5)
+        return document
+
+    try:
+        with patch.object(reader, "get_review_case", side_effect=interleave):
+            detail = InspectCurrentReviewCase(reader).run(case_id)
+        thread.join(5)
+        assert not thread.is_alive()
+        assert errors == []
+        series = next(
+            field for field in detail["fields"] if field["destination"] == "series"
+        )
+        assert (
+            series["automatic_withheld_reason"]
+            == "A contributing ISBN lookup did not supply usable evidence."
+        )
+        successor = InspectCurrentReviewCase(reader).run(case_id)
+        series = next(
+            field for field in successor["fields"] if field["destination"] == "series"
+        )
+        assert (
+            series["automatic_withheld_reason"]
+            == "Automatic handling is currently suspended. Recorded evaluation: A contributing ISBN lookup did not supply usable evidence."
+        )
+        assert (
+            reader.read_current_review_case(case_id, None).final_outcome_document
+            == before
+        )
+    finally:
+        if thread.ident is not None:
+            thread.join(5)
+        reader.close()

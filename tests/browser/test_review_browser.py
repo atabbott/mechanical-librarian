@@ -364,6 +364,7 @@ def _server(
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
     automatic_fixture: bool = False,
+    refusal_fixture: bool = False,
     synopsis_fixture: str | None = None,
     synopsis_destination: str = "automatic",
     ebook_synopsis: bool = False,
@@ -546,7 +547,59 @@ def _server(
         )
     else:
         report = _report()
-    if isbn_fixture:
+    if refusal_fixture:
+        from types import SimpleNamespace
+
+        from mechanical_librarian.domain.metadata_policy import (
+            human_review_destinations,
+        )
+        from tests.support.automatic_decisions import _automatic_decisions
+        from tests.support.ebook_synopsis import synopsis_report as refusal_report
+
+        report = refusal_report(summaries=("",))
+        assert (
+            _automatic_decisions(
+                SimpleNamespace(repository=repository),
+                report,
+                "description_fill",
+                "safe_plain_text",
+                qualified=True,
+            )
+            == ()
+        )
+        policy = repository.current_resolved_metadata_policy(report.target.library)
+        assert policy is not None
+        proposal_set = evaluate_report(
+            report, policy.resolved_id, human_review_destinations(policy)
+        )
+        case_id = ReviewCase.create(proposal_set, report).review_case_id
+        for index in range(1, 10):
+            base = refusal_report(
+                summaries=(
+                    "A voyage reveals a hidden city."
+                    if index == 9
+                    else "294 pages;22 cm",
+                )
+            )
+            other = MetadataReport.create(
+                target=replace(base.target, item=f"refusal-{index}"),
+                file=base.file,
+                local_claims=base.local_claims,
+                local_reasons=base.local_reasons,
+                providers=base.providers,
+            )
+            proposal = evaluate_report(
+                other, policy.resolved_id, human_review_destinations(policy)
+            )
+            repository.publish(other, lambda: True)
+            repository.publish_proposal(proposal)
+            admitted = json.loads(repository.admit_review_case(proposal))[
+                "review_case_id"
+            ]
+            repository.persist_shadow_outcome(admitted, 4)
+        transition = repository.metadata_policy_transition()
+        assert transition is not None and transition.state == "completed"
+    elif isbn_fixture:
         from mechanical_librarian.domain.metadata_policy import (
             human_review_destinations,
         )
@@ -1182,6 +1235,7 @@ def _server(
         session_store=session_store,
         clock=lambda: 1_000,
         close_repository=True,
+        policy_libraries=((report.target.library, None),) if refusal_fixture else (),
         field_application=(
             _BrowserActivityApplication()
             if not isbn_fixture
@@ -7164,3 +7218,101 @@ def test_ebook_isbn_owner_journey(destination):
                 expect(event.get_by_text(selected, exact=True)).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
+
+
+def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_path):
+    hash_path = tmp_path / "owner.hash"
+    hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+    hash_path.chmod(0o600)
+    with (
+        closing(ReservedPort()) as port,
+        _server(
+            database=tmp_path / "review.sqlite",
+            hash_path=hash_path,
+            certificate=tmp_path / "unused.crt",
+            key=tmp_path / "unused.key",
+            port=port,
+            transport_mode="insecure",
+            refusal_fixture=True,
+            settings_document=None,
+        ) as (origin, case_id),
+        sync_playwright() as playwright,
+    ):
+        browser = playwright.chromium.launch(
+            args=[
+                "--host-resolver-rules=MAP review-transport.test 127.0.0.1",
+                "--no-proxy-server",
+            ]
+        )
+        context = browser.new_context(viewport={"width": 1440, "height": 900})
+        page = context.new_page()
+        try:
+            _login(page, origin)
+            active_policy = page.evaluate(
+                "async () => (await fetch('/api/v1/metadata-policy/state')).json()"
+            )
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=description")
+            expect(
+                page.get_by_text(
+                    "No eligible value was found in the retained evidence.", exact=True
+                )
+            ).to_be_visible()
+            page.goto(f"{origin}/policy?section=curation")
+            genres = page.get_by_role("region", name="Genres", exact=True)
+            genres.get_by_role("button", name="Ignore", exact=True).click()
+            page.get_by_role("button", name="Validate and preview", exact=True).click()
+            result = page.locator(".cm-policy-result")
+            expect(result).to_be_visible()
+            assert (
+                result.locator("xpath=..").get_attribute("class") == "cm-policy-editor"
+            )
+            assert page.locator(".cm-policy-finish .cm-policy-result").count() == 0
+            for theme in ("light", "dark"):
+                page.locator("html").evaluate(
+                    "(node, theme) => node.dataset.theme = theme", theme
+                )
+                for width in (1440, 390, 320):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    expand = result.get_by_role(
+                        "button", name=re.compile(r"Show .* more")
+                    )
+                    expand.focus()
+                    page.keyboard.press("Enter")
+                    last = page.locator(".cm-policy-preview-list > div").last
+                    last.scroll_into_view_if_needed()
+                    expect(last).to_be_in_viewport()
+                    assert page.locator(".cm-policy-preview-list").evaluate(
+                        "node => node.scrollHeight <= node.clientHeight"
+                    )
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= innerWidth"
+                    )
+                    collapse = result.get_by_role("button", name="Show fewer outcomes")
+                    collapse.focus()
+                    page.keyboard.press("Enter")
+                    expect(
+                        result.get_by_role("button", name=re.compile(r"Show .* more"))
+                    ).to_be_focused()
+                    page.get_by_role(
+                        "button", name="Review activation", exact=True
+                    ).scroll_into_view_if_needed()
+                    expect(
+                        page.get_by_role("button", name="Review activation", exact=True)
+                    ).to_be_visible()
+            page.emulate_media(reduced_motion="reduce")
+            page.locator("html").evaluate("node => node.style.fontSize = '200%'")
+            page.set_viewport_size({"width": 320, "height": 900})
+            result.get_by_role("button", name=re.compile(r"Show .* more")).click()
+            last = page.locator(".cm-policy-preview-list > div").last
+            last.scroll_into_view_if_needed()
+            expect(last).to_be_in_viewport()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            assert (
+                page.evaluate(
+                    "async () => (await fetch('/api/v1/metadata-policy/state')).json()"
+                )
+                == active_policy
+            )
+        finally:
+            context.close()
+            browser.close()

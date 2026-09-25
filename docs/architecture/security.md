@@ -1621,3 +1621,14 @@ excluded from persisted configuration identity and never grants currentness or
 write authority. Actual generic 429 and conflicting rate-limit evidence retain
 precedence. No transaction spans provider work; no schema, restart-wide hold,
 new egress, credential access, quota budget or effect authority is introduced.
+
+## Durable refusal explanations (#1081)
+
+Outcome v10 retains closed destination-specific compiler refusal codes without
+changing candidate election, disposition or write authority. The current-case
+snapshot reads the latest matching final document independently of automatic
+decisions and validates its canonical identity and row/current-policy bindings.
+Explanatory reads do not compile reports; selected-value effect validation and
+explicit draft preview retain authoritative compilation. Snapshot-consistent
+current suspension does not rewrite an immutable recorded cause. Invalid records
+fail closed. **Clean rebuild required**; no adoption or historical rewriting.

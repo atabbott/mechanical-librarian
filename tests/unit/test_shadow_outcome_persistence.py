@@ -7309,7 +7309,7 @@ def _assert_retained_decoration_automatic_value(component, option, keep, *, appl
             assert preview.outcome == "abstain"
             assert preview.reason == "target_work_applicability_unproved"
             assert field.disposition == "abstention"
-            assert field.reason_code == "no_eligible_action"
+            assert field.reason_code == "target_work_applicability_unproved"
             assert field.candidate_id is None
             assert next(
                 value
@@ -9228,3 +9228,224 @@ def test_image_unavailable_isbn_persists_exact_owner_authority(
         assert selected["human_decision"]["outcome"] == "keep_current"
         assert not selected["needs_attention"]
     repository.close()
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_reason", "expected_message"),
+    [
+        (
+            "absent",
+            "no_candidate",
+            "No eligible value was found in the retained evidence.",
+        ),
+        (
+            "quality",
+            "description_quality_floor_not_met",
+            "Retained source text does not meet the automatic synopsis rules.",
+        ),
+        (
+            "unproved",
+            "target_work_applicability_unproved",
+            "The retained evidence does not establish that this value describes this work.",
+        ),
+        (
+            "competition",
+            "ambiguous_evidence",
+            "The retained evidence does not select one value for automatic handling.",
+        ),
+        (
+            "unusable",
+            "target_state_unusable",
+            "The current field value cannot be used safely for this automatic operation.",
+        ),
+        (
+            "unavailable",
+            "series_provider_failure_isbn",
+            "A contributing ISBN lookup did not supply usable evidence.",
+        ),
+        (
+            "edition",
+            "manifestation_verification_required",
+            "The retained evidence does not verify the ISBN for this edition.",
+        ),
+        (
+            "unqualified",
+            "automatic_unqualified",
+            "This policy option is not qualified for automatic handling.",
+        ),
+        (
+            "contradicted",
+            "target_work_contradicted",
+            "The retained evidence contradicts applicability to this work.",
+        ),
+    ],
+)
+def test_recorded_refusal_survives_reopen_without_explanatory_compilation(
+    tmp_path, monkeypatch, scenario, expected_reason, expected_message
+):
+    from contextlib import closing
+
+    from tests.support.automatic_decisions import _automatic_decisions
+    from tests.support.description_advice import _description_candidate
+    from tests.support.ebook_synopsis import ambiguous_synopsis_report, synopsis_report
+    from tests.support.proposal_evidence import (
+        _claim,
+        _target_work_candidate,
+        _target_work_report,
+    )
+    from tests.support.provider_recovery_rail import provider_failure_report
+
+    category, option, destination = "description_fill", "safe_plain_text", "description"
+    report = synopsis_report(
+        summaries=("294 pages;22 cm" if scenario == "quality" else "",)
+    )
+    if scenario == "competition":
+        report = ambiguous_synopsis_report(same_record=True)
+    elif scenario == "unproved":
+        report = _target_work_report(
+            (
+                (
+                    "catalogue",
+                    "hardcover",
+                    (
+                        _description_candidate(
+                            "catalogue", "edition-1", "work-1", "A voyage begins."
+                        ),
+                    ),
+                    True,
+                ),
+            ),
+            target_authors=None,
+        )
+    elif scenario == "unavailable":
+        report = provider_failure_report()
+        category, option, destination = "series", "primary_narrative", "series"
+    elif scenario == "edition":
+        report = synopsis_report()
+        category, option, destination = "isbn_form", "preserve_exact", "isbn"
+    elif scenario == "unqualified":
+        report = corroborated_audiobook_report()
+        report = MetadataReport.create(
+            target=replace(
+                report.target,
+                fields=tuple(
+                    TargetField(
+                        TargetDestination.ASIN, TargetFieldState.VALUE, "B0CW1KL2QD"
+                    )
+                    if field.destination is TargetDestination.ASIN
+                    else field
+                    for field in report.target.fields
+                ),
+            ),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+            audio=report.audio,
+        )
+        category, option, destination = "asin", "preserve_exact", "asin"
+    elif scenario == "contradicted":
+        candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+        candidate = replace(
+            candidate,
+            claims=(
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.TITLE,
+                    "Different Book",
+                    scope=ClaimScope.WORK,
+                ),
+                _claim(
+                    "catalogue",
+                    "edition-1",
+                    ClaimKind.CREATOR,
+                    "Other Author",
+                    scope=ClaimScope.WORK,
+                    role="author",
+                ),
+                *(
+                    claim
+                    for claim in candidate.claims
+                    if claim.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR}
+                ),
+            ),
+        )
+        report = _target_work_report((("catalogue", "hardcover", (candidate,), True),))
+        category, option, destination = "genres", "fill_empty", "genres"
+    elif scenario == "unusable":
+        report = MetadataReport.create(
+            target=replace(
+                report.target,
+                fields=tuple(
+                    TargetField(
+                        TargetDestination.DESCRIPTION, TargetFieldState.MALFORMED
+                    )
+                    if field.destination is TargetDestination.DESCRIPTION
+                    else field
+                    for field in report.target.fields
+                ),
+            ),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+        )
+    path = tmp_path / "recorded-refusal.sqlite"
+    with closing(open_repository(path)) as repository:
+        decisions = _automatic_decisions(
+            SimpleNamespace(repository=repository),
+            report,
+            category,
+            option,
+            qualified=True,
+        )
+        assert decisions == ()
+        case_id = repository._connection.execute(
+            "SELECT review_case_id FROM review_cases"
+        ).fetchone()[0]
+        document = repository.read_current_review_case(
+            case_id, None
+        ).final_outcome_document
+        assert document is not None
+        outcome = ShadowOutcomeSet.from_json(document)
+        field = next(
+            value for value in outcome.outcomes if value.destination == destination
+        )
+        assert field.reason_code == expected_reason
+        assert field.disposition == (
+            "manual" if scenario == "unqualified" else "abstention"
+        )
+        if scenario == "unqualified":
+            assert field.policy_destination == "ask"
+            assert field.candidate_id is not None
+        else:
+            assert field.candidate_id is None
+        assert ShadowOutcomeSet.from_json(outcome.to_json()) == outcome
+    before = path.read_bytes()
+    with closing(open_repository(path, create=False)) as repository:
+        changes = repository._connection.total_changes
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("explanation must read the recorded outcome")
+
+        monkeypatch.setattr(
+            "mechanical_librarian.domain.rich_metadata_preview.compile_rich_metadata_preview",
+            forbidden,
+        )
+        monkeypatch.setattr(
+            "mechanical_librarian.domain.shadow_outcome.compile_rich_metadata_preview",
+            forbidden,
+        )
+        monkeypatch.setattr(
+            "mechanical_librarian.domain.proposal_set.evaluate_report", forbidden
+        )
+        field = next(
+            value
+            for value in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if value["destination"] == destination
+        )
+        assert field["automatic_withheld_reason"] == expected_message
+        assert field["automatic_decision"] is None
+        assert repository._connection.total_changes == changes
+    assert path.read_bytes() == before

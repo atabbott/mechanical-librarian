@@ -345,7 +345,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-policy-preview > header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.6rem .75rem; border-bottom:1px solid var(--line); }
 .cm-policy-preview > header > div { display:grid; gap:.08rem; }
 .cm-policy-preview > header b { display:grid; width:28px; height:28px; place-items:center; border-radius:50%; color:var(--surface); background:var(--accent-strong); font-size:.66rem; }
-.cm-policy-preview-list { display:grid; max-height:20rem; overflow:auto; }
+.cm-policy-preview-list { display:grid; }
 .cm-policy-preview-list > div { display:grid; grid-template-columns:26px minmax(160px,1fr) minmax(150px,.9fr); align-items:center; gap:.55rem; min-height:44px; padding:.35rem .75rem; border-bottom:1px solid var(--line); }
 .cm-policy-preview-list > div.is-change { background:color-mix(in srgb,var(--accent-soft) 42%,transparent); }
 .cm-policy-work-mark { display:grid; width:26px; height:32px; place-items:center; border-radius:.2rem .35rem .35rem .2rem; color:#f5ead2; background:#3b5550; font:700 .53rem/1 Georgia,serif; }

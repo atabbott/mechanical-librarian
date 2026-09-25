@@ -778,3 +778,17 @@ shows unchanged title authority and the separate series name/position choice;
 Evidence keeps provider membership provenance, History retains the disposition,
 and Activity records decisions and guarded effects. Ask and Ignore retain their
 normal controls, and an owner decision remains final.
+
+### Recorded refusal explanations (#1081)
+
+An inspected Library field can explain its last automatic evaluation even when it
+has no choice action. Evidence retains the same explanation. Current suspension
+and the recorded cause are visibly separate; an owner-final choice, Ask or Ignore
+does not acquire an automatic-withheld claim. Unknown recorded reasons are stated
+as unknown, never relabelled as missing values or conflicting evidence.
+
+Policy preview shows the actual abstention cause before empty-value or equality
+fallbacks. Expanded outcomes follow the choices in document flow; the compact
+summary and actions retain their existing finish area. Document scrolling reaches
+the last result without a nested results-height limit. Preview remains a retained
+input comparison and does not activate a draft or authorize an effect.

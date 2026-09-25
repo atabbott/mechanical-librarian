@@ -651,39 +651,37 @@ def test_preexisting_unknown_database_is_rejected_without_change() -> None:
         assert path.read_bytes() == before
 
 
-def test_prior_shadow_outcome_schema_is_rejected_without_change() -> None:
-    with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "prior-shadow.sqlite"
-        repository = open_repository(path)
-        repository.close()
-        connection = sqlite3.connect(path)
-        row = connection.execute(
-            "SELECT sql FROM sqlite_schema WHERE type='table' "
-            "AND name='shadow_decision_outcomes'"
-        ).fetchone()
-        assert row is not None
-        old_sql = row[0].replace(
-            " AND json_extract(document,'$.schema_version')='shadow-outcome-set-v9'",
-            " AND json_extract(document,'$.schema_version')='shadow-outcome-set-v4'",
-        )
-        assert row[0] != old_sql
-        connection.execute("PRAGMA writable_schema=ON")
-        connection.execute(
-            "UPDATE sqlite_schema SET sql=? WHERE type='table' "
-            "AND name='shadow_decision_outcomes'",
-            (old_sql,),
-        )
-        schema_version = connection.execute("PRAGMA schema_version").fetchone()[0]
-        connection.execute(f"PRAGMA schema_version={schema_version + 1}")
-        connection.execute("PRAGMA writable_schema=OFF")
-        connection.commit()
-        connection.close()
-        before = path.read_bytes()
+def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkeypatch):
+    from contextlib import closing
 
-        with pytest.raises(MetadataReportError):
-            open_repository(path, create=False)
+    from mechanical_librarian.adapters.persistence import schema
 
-        assert before == path.read_bytes()
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/shadow-outcome-v9.json").read_text()
+    )
+    assert fixture["source_sha"] == "08ae544e20ea79037f7e4a1d5f66b482554ed1dc"
+    path = tmp_path / "prior-shadow.sqlite"
+    with monkeypatch.context() as old:
+        old.setattr(
+            schema,
+            "_SHADOW_DECISION_OUTCOMES_SQL",
+            fixture["shadow_decision_outcomes_sql"],
+        )
+        with closing(open_repository(path)) as repository:
+            rows = repository._connection.execute(
+                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+            ).fetchall()
+            assert len(rows) == 104
+            assert (
+                hashlib.sha256(
+                    json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode()
+                ).hexdigest()
+                == fixture["schema_inventory_sha256"]
+            )
+    before = path.read_bytes()
+    with pytest.raises(MetadataReportError):
+        open_repository(path, create=False)
+    assert before == path.read_bytes()
 
 
 def test_preview_digest_requires_exact_report_binding() -> None:
