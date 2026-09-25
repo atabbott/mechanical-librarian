@@ -2363,9 +2363,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             '[{"name":"Old order","sequence":"1"}]', exact=False
         ).wait_for()
         page.get_by_text('["Fantasy"] → ["Fantasy","Epic"]', exact=False).wait_for()
-        page.get_by_text(
-            "· remains empty — this policy leaves the field unchanged", exact=True
-        ).wait_for()
+        page.get_by_text("· Tag handling is off.", exact=True).wait_for()
         more_outcomes = page.get_by_role(
             "button", name="Show 2 more outcomes", exact=True
         )

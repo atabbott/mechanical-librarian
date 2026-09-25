@@ -104,13 +104,14 @@ describe('policy impact projections', () => {
         desired_value: null,
         field: 'subtitle',
         outcome: 'abstain',
-        reason: 'no_supported_evidence',
+        reason: 'unrecognized_retained_reason',
         target_state: 'missing',
       }),
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'remains empty — no supported value found',
+      detail:
+        'The preview did not select an automatic action; no more specific reason is available.',
     })
     expect(
       policyImpactDisplay({
@@ -152,7 +153,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'empty remains — this policy leaves the explicit-content flag unchanged',
+      detail: 'Automatic explicit-content handling is unavailable for this option.',
     })
     expect(
       policyImpactDisplay({
@@ -180,7 +181,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'Needs review',
-      detail: 'Current title remains — evidence is ambiguous',
+      detail: 'The retained evidence does not select one value for automatic handling.',
     })
     expect(
       policyImpactDisplay({
@@ -193,8 +194,8 @@ describe('policy impact projections', () => {
       }),
     ).toMatchObject({
       changed: false,
-      title: 'No supported value found',
-      detail: 'remains empty — the retained provider evidence names a different work',
+      title: 'No change',
+      detail: 'The retained evidence contradicts applicability to this work.',
     })
     expect(
       policyImpactDisplay({
@@ -222,7 +223,7 @@ describe('policy impact projections', () => {
     ).toMatchObject({
       changed: false,
       title: 'No change',
-      detail: 'Current title remains — this policy leaves the explicit-content flag unchanged',
+      detail: 'Automatic explicit-content handling is unavailable for this option.',
     })
     expect(
       policyImpactTotals([
@@ -370,14 +371,11 @@ describe('policy impact projections', () => {
 })
 
 it.each([
-  ['source_value_absent', 'the source supplied no ISBN'],
-  ['source_unavailable', 'the ISBN source could not be reached'],
-  ['source_value_malformed_or_incomplete', 'source ISBN data is malformed or incomplete'],
-  ['source_values_conflict', 'sources supply competing ISBNs'],
-  [
-    'source_value_insufficient_association',
-    'the supplied ISBN is not sufficiently linked to this recording',
-  ],
+  ['source_value_absent', 'No ISBN value was supplied.'],
+  ['source_unavailable', 'Source evidence is unavailable.'],
+  ['source_value_malformed_or_incomplete', 'ISBN evidence is malformed or incomplete.'],
+  ['source_values_conflict', 'Conflicting ISBN values remain.'],
+  ['source_value_insufficient_association', 'Association with this recording is insufficient.'],
 ])('keeps the specific ISBN refusal visible: %s', (reason, explanation) => {
   expect(
     policyImpactDisplay({
@@ -388,18 +386,22 @@ it.each([
       reason,
       target_state: 'missing',
     }),
-  ).toMatchObject({ changed: false, title: 'No change', detail: `remains empty — ${explanation}` })
+  ).toMatchObject({ changed: false, title: 'No change', detail: explanation })
 })
 
 describe('ebook synopsis refusals', () => {
   it.each([
-    ['description_quality_floor_not_met', 'No eligible automatic synopsis', 'No change'],
-    ['target_work_applicability_unproved', 'not proved to describe this work', 'No change'],
     [
-      'ambiguous_evidence',
-      'retained descriptions contain unresolved conflicting evidence',
-      'Needs review',
+      'description_quality_floor_not_met',
+      'Retained source text does not meet the automatic synopsis rules.',
+      'No change',
     ],
+    [
+      'target_work_applicability_unproved',
+      'does not establish that this value describes this work',
+      'No change',
+    ],
+    ['ambiguous_evidence', 'does not select one value for automatic handling', 'Needs review'],
   ])('explains %s without claiming no retained source', (reason, text, title) => {
     const display = policyImpactDisplay({
       field: 'description_fill',
@@ -414,4 +416,27 @@ describe('ebook synopsis refusals', () => {
     expect(display.detail).not.toContain('explicit choice')
     expect(display.changed).toBe(false)
   })
+})
+
+it.each([
+  [
+    'manifestation_verification_required',
+    'The retained evidence does not verify the ISBN for this edition.',
+  ],
+  ['series_provider_failure_work', 'A contributing work lookup did not supply usable evidence.'],
+  [
+    'target_work_applicability_unproved',
+    'The retained evidence does not establish that this value describes this work.',
+  ],
+])('preserves specific empty-value refusal before equality: %s', (reason, detail) => {
+  expect(
+    policyImpactDisplay({
+      current_value: null,
+      desired_value: null,
+      field: 'isbn_form',
+      outcome: 'abstain',
+      reason,
+      target_state: 'missing',
+    }),
+  ).toMatchObject({ changed: false, detail })
 })

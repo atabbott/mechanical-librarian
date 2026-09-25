@@ -1094,6 +1094,8 @@ def _automatic_description_candidate(
         )
         if references:
             candidates.append((alternative, references))
+    if not candidates:
+        return None, (), "no_candidate"
     if evidence.audiobook:
         candidates = [
             (candidate, references)

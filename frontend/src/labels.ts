@@ -74,3 +74,44 @@ export const fieldLabel = (value: string) =>
 export const labelWords = (value: string) => value.replaceAll('_', ' ')
 // Server identifiers with no meaning for a reader; never shown as a label.
 export const opaqueSource = /^(?:local|evidence|provider)_[0-9a-f]+$/iu
+
+export const automaticRefusalReasons: Readonly<Record<string, string>> = {
+  no_candidate: 'No eligible value was found in the retained evidence.',
+  ambiguous_evidence: 'The retained evidence does not select one value for automatic handling.',
+  target_work_contradicted: 'The retained evidence contradicts applicability to this work.',
+  target_work_applicability_unproved:
+    'The retained evidence does not establish that this value describes this work.',
+  target_state_unusable:
+    'The current field value cannot be used safely for this automatic operation.',
+  automatic_unqualified: 'This policy option is not qualified for automatic handling.',
+  manifestation_verification_required:
+    'The retained evidence does not verify the ISBN for this edition.',
+  description_quality_floor_not_met:
+    'Retained source text does not meet the automatic synopsis rules.',
+  series_membership_incomplete:
+    'Series membership or position evidence is incomplete or malformed.',
+  series_conflicting_membership:
+    'The retained evidence does not resolve series membership for automatic handling.',
+  series_provider_evidence_required: 'Provider evidence supporting this series value is required.',
+  subtitle_local_corroboration_required: 'Independent evidence does not corroborate this subtitle.',
+  subtitle_segment_provider_dissent:
+    'Provider subtitle evidence disagrees with the proposed title split.',
+  subtitle_segment_decorated_consensus:
+    'The retained title evidence does not support separating this text into a subtitle.',
+  atomic_bundle_unavailable: 'The required linked field selection is unavailable.',
+  corroborated_split_unavailable:
+    'The corroborated title and subtitle do not match the current combined title.',
+  option_evidence_unavailable: 'Evidence required by the selected representation is unavailable.',
+  policy_option_unavailable: 'The selected policy option is unavailable for this projection.',
+  target_projection_oversized: 'The resulting field would exceed the supported size limit.',
+  policy_off: 'Tag handling is off.',
+  explicit_unsupported: 'Automatic explicit-content handling is unavailable for this option.',
+  source_value_malformed_or_incomplete: 'ISBN evidence is malformed or incomplete.',
+  source_values_conflict: 'Conflicting ISBN values remain.',
+  source_value_insufficient_association: 'Association with this recording is insufficient.',
+  source_unavailable: 'Source evidence is unavailable.',
+  source_value_absent: 'No ISBN value was supplied.',
+  series_provider_failure_isbn: 'A contributing ISBN lookup did not supply usable evidence.',
+  series_provider_failure_work: 'A contributing work lookup did not supply usable evidence.',
+  series_provider_failure_asin: 'A contributing ASIN lookup did not supply usable evidence.',
+}

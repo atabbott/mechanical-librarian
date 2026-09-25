@@ -3622,16 +3622,16 @@ export default function LibraryPage({
                       {selectedActionable ? (
                         <>
                           <p>{`${fieldLabel(selected.destination)} · ${fieldReason(selected)}`}</p>
-                          {selected.automaticWithheldReason ? (
-                            <p className="automatic-withheld-reason">
-                              {selected.automaticWithheldReason}
-                            </p>
-                          ) : null}
                         </>
                       ) : selectedRevisitable ? (
                         <p>
                           The recorded outcome is marked below. You can select another eligible
                           value.
+                        </p>
+                      ) : null}
+                      {selected.automaticWithheldReason ? (
+                        <p className="automatic-withheld-reason">
+                          {selected.automaticWithheldReason}
                         </p>
                       ) : null}
                     </div>

@@ -1,6 +1,11 @@
 {
   "meaning": "Immutable historical evidence only; never runtime authority or an ordinary validation input.",
   "records": {
+    "08ae544e20ea79037f7e4a1d5f66b482554ed1dc": {
+      "docs/reference/f19a-qualification-current.json": "f23ba4fdd67e6a10be8e51c7aa9f82993c8072c847c739d27ceca5afcae30a23",
+      "docs/reference/f20-rich-metadata-qualification-current.json": "71307b84b627906ca803c093d67501a6d14644708b40c1af7a7f39be777b9eab",
+      "docs/reference/f46-audiobook-qualification-current.json": "2f40137a867cb3a4210993f05177b9fb8068e942e9fea0190011df8b44df16ea"
+    },
     "608854ea0de96b71931e0c2338d97312dc8f469e": {
       "docs/reference/f19a-qualification-manifest-v1.json": "cb48d6a0dff269fd576ac9c8fbe7bbe313f291d0368251b097c9178ade456b37",
       "docs/reference/f19a-qualification-manifest-v10-010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae.json": "010c06261591a6f4fd959c8c1fe0cc8e1346b3fc58a7923daf4de1ec93049cae",

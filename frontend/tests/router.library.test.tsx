@@ -8130,6 +8130,26 @@ describe('Provider evidence rail', () => {
     },
   )
 
+  it('shows a recorded refusal for an actionless contextual field', async () => {
+    const reason = 'No eligible value was found in the retained evidence.'
+    const http = createHttp()
+    http.getCaseDetail = vi.fn(async () => ({
+      ...detail,
+      fields: [
+        {
+          ...providerRailField,
+          needsAttention: false,
+          classification: 'context_only' as const,
+          proposedValues: [],
+          automaticWithheldReason: reason,
+        },
+      ],
+    }))
+    renderRoute('/library?lens=all&preview=case-1&field=title', http)
+    expect(await screen.findByText(reason)).toBeVisible()
+    expect(screen.queryByRole('button', { name: /New title/ })).toBeNull()
+  })
+
   it('shows the field-local reason while keeping direct choices available', async () => {
     const reason =
       'Automatic decision withheld: a contributing provider lookup did not supply usable evidence. You can review this field.'

@@ -203,9 +203,10 @@ def test_current_authority_and_predecessor_refusal_without_history(
         qualification_manifest_is_current,
     )
 
-    fixture = Path(__file__).parents[1] / "fixtures/qualification-authority-predecessor"
-    historical = (fixture / "decision.json").read_text().strip()
-    predecessor = (fixture / "empty-v8.sql").read_text()
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/shadow-outcome-v9.json").read_text()
+    )
+    assert fixture["source_sha"] == "08ae544e20ea79037f7e4a1d5f66b482554ed1dc"
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PATH", "")
     assert not Path("docs").exists()
@@ -227,19 +228,77 @@ def test_current_authority_and_predecessor_refusal_without_history(
         )
     with closing(open_repository(path, create=False)) as repository:
         assert document in repository.get_review_case_decisions(case)
-    old = AutomaticDecision.from_json(historical)
-    assert old.to_json() == historical
-    assert not qualification_manifest_is_current(
-        old.policy_category, old.policy_option, old.qualification_manifest_sha256
-    )
-    with pytest.raises(AutomaticDecisionError):
-        AutomaticDecision.create(
-            **cast("dict[str, Any]", old._core()), occurred_at=old.occurred_at
+    for historical in fixture["decisions"].values():
+        old = AutomaticDecision.from_json(historical)
+        assert old.to_json() == historical
+        assert not qualification_manifest_is_current(
+            old.policy_category, old.policy_option, old.qualification_manifest_sha256
         )
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **cast("dict[str, Any]", old._core()), occurred_at=old.occurred_at
+            )
+    import hashlib
+    from types import SimpleNamespace
+
+    from tests.support.automatic_decisions import _automatic_decisions
+
+    from mechanical_librarian.adapters.persistence import schema
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+
     old_path = tmp_path / "prior.sqlite"
-    with closing(sqlite3.connect(old_path)) as connection:
-        connection.executescript(predecessor)
+    with monkeypatch.context() as old_schema:
+        old_schema.setattr(
+            schema,
+            "_SHADOW_DECISION_OUTCOMES_SQL",
+            fixture["shadow_decision_outcomes_sql"],
+        )
+        with closing(open_repository(old_path)) as repository:
+            rows = repository._connection.execute(
+                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+            ).fetchall()
+            assert len(rows) == 104
+            assert (
+                hashlib.sha256(
+                    json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode()
+                ).hexdigest()
+                == fixture["schema_inventory_sha256"]
+            )
     before = old_path.read_bytes()
     with pytest.raises(MetadataReportError):
         open_repository(old_path, create=False)
     assert old_path.read_bytes() == before
+    refusal_path = tmp_path / "refusal.sqlite"
+    with closing(open_repository(refusal_path)) as repository:
+        assert (
+            _automatic_decisions(
+                SimpleNamespace(repository=repository),
+                synopsis_report(summaries=("",)),
+                "description_fill",
+                "safe_plain_text",
+                qualified=True,
+            )
+            == ()
+        )
+        refusal_case = repository._connection.execute(
+            "SELECT review_case_id FROM review_cases"
+        ).fetchone()[0]
+    with closing(open_repository(refusal_path, create=False)) as repository:
+
+        def forbidden(*args, **kwargs):
+            raise AssertionError("installed explanation compiled evidence")
+
+        monkeypatch.setattr(
+            "mechanical_librarian.domain.shadow_outcome.compile_rich_metadata_preview",
+            forbidden,
+        )
+        field = next(
+            f
+            for f in InspectCurrentReviewCase(repository).run(refusal_case)["fields"]
+            if f["destination"] == "description"
+        )
+        assert (
+            field["automatic_withheld_reason"]
+            == "No eligible value was found in the retained evidence."
+        )
+        assert repository._connection.total_changes == 0

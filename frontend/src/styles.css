@@ -334,7 +334,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-policy-validation li:nth-child(3) > span { animation-delay:300ms; }
 .cm-policy-validation li div { display:grid; gap:.08rem; }
 .cm-policy-validation li strong { font-size:.66rem; }
-.cm-policy-result { display:grid; grid-template-columns:minmax(190px,.48fr) minmax(0,1.52fr); overflow:hidden; border-top:1px solid var(--line); background:var(--surface); }
+.cm-policy-result { display:grid; grid-column:2; grid-template-columns:minmax(190px,.48fr) minmax(0,1.52fr); overflow:hidden; border-top:1px solid var(--line); background:var(--surface); }
 .cm-policy-result > aside { display:grid; align-content:center; gap:.65rem; padding:.75rem; border:0; border-right:1px solid var(--line); border-radius:0; background:var(--surface-strong); }
 .cm-policy-result aside > header > span, .cm-policy-activated > span { display:grid; flex:0 0 28px; width:28px; height:28px; place-items:center; border-radius:50%; color:var(--surface); background:var(--accent-strong); }
 .cm-policy-result aside svg, .cm-policy-activated svg { width:16px; fill:none; stroke:currentColor; stroke-width:2.2; stroke-linecap:round; stroke-linejoin:round; }
@@ -345,7 +345,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 .cm-policy-preview > header { display:flex; align-items:center; justify-content:space-between; gap:1rem; padding:.6rem .75rem; border-bottom:1px solid var(--line); }
 .cm-policy-preview > header > div { display:grid; gap:.08rem; }
 .cm-policy-preview > header b { display:grid; width:28px; height:28px; place-items:center; border-radius:50%; color:var(--surface); background:var(--accent-strong); font-size:.66rem; }
-.cm-policy-preview-list { display:grid; max-height:20rem; overflow:auto; }
+.cm-policy-preview-list { display:grid; }
 .cm-policy-preview-list > div { display:grid; grid-template-columns:26px minmax(160px,1fr) minmax(150px,.9fr); align-items:center; gap:.55rem; min-height:44px; padding:.35rem .75rem; border-bottom:1px solid var(--line); }
 .cm-policy-preview-list > div.is-change { background:color-mix(in srgb,var(--accent-soft) 42%,transparent); }
 .cm-policy-work-mark { display:grid; width:26px; height:32px; place-items:center; border-radius:.2rem .35rem .35rem .2rem; color:#f5ead2; background:#3b5550; font:700 .53rem/1 Georgia,serif; }
@@ -441,6 +441,7 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 }
 @media (max-width:860px) {
   .cm-policy-editor { grid-template-columns:1fr; overflow:visible; }
+  .cm-policy-result { grid-column:1; }
   .cm-policy-sidebar { position:static; min-height:0; border-right:0; border-bottom:1px solid var(--line); border-radius:1rem 1rem 0 0; }
   .cm-policy-sidebar > header { grid-template-columns:minmax(0,1fr) auto; align-items:center; }
   .cm-policy-sidebar > header span { display:none; }
@@ -518,8 +519,8 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
   .cm-policy-finish li { gap:.25rem; }
   .cm-policy-finish li > span { width:24px; height:24px; }
   .cm-policy-finish li small { font-size:.64rem; }
-  .cm-policy-finish-actions { grid-column:1; grid-row:auto; width:100%; }
-  .cm-policy-finish-actions button { min-width:0; flex:1; white-space:normal; overflow-wrap:anywhere; }
+  .cm-policy-finish-actions { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,9rem),1fr)); grid-column:1; grid-row:auto; width:100%; }
+  .cm-policy-finish-actions button { min-width:0; white-space:normal; overflow-wrap:normal; }
   .cm-policy-finish li small { overflow-wrap:anywhere; white-space:normal; }
   .cm-policy-validation { grid-template-columns:1fr; gap:.65rem; }
   .cm-policy-validation ul { grid-template-columns:1fr; }

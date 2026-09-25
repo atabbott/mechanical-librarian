@@ -245,6 +245,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 else policy.canonical_json,
                 decision_documents=decision_documents,
                 automatic_source_outcome_documents=source_documents,
+                final_outcome_document=self._latest_final_outcome_document(
+                    case_document, policy
+                ),
                 automatic_selected_values=self._automatic_selected_values(
                     case_document, report, decision_documents, source_documents
                 ),
@@ -287,6 +290,44 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 ),
             )
         return snapshot
+
+    def _latest_final_outcome_document(
+        self, case_document: str, policy: ResolvedMetadataPolicy | None
+    ) -> str | None:
+        """Read retained explanation independently of effect-bearing decisions."""
+        if policy is None:
+            return None
+        case = ReviewCase.create_from_data(json.loads(case_document)["case"])
+        row = self._connection.execute(
+            "SELECT o.document,o.outcome_set_id,o.source_decision_set_id,s.generation "
+            "FROM shadow_decision_outcomes o CROSS JOIN metadata_policy_state s "
+            "WHERE s.singleton=1 AND o.review_case_id=? AND o.report_id=? "
+            "AND o.proposal_set_id=? AND o.resolved_policy_id=? "
+            "AND json_extract(o.document,'$.policy_generation')=s.generation "
+            "ORDER BY o.evaluated_at DESC,o.outcome_set_id DESC LIMIT 1",
+            (
+                case.review_case_id,
+                case.report_id,
+                case.proposal_set_id,
+                policy.resolved_id,
+            ),
+        ).fetchone()
+        if row is None:
+            return None
+        outcome = ShadowOutcomeSet.from_json(row[0])
+        if (
+            outcome.outcome_set_id != row[1]
+            or outcome.source_decision_set_id != row[2]
+            or outcome.policy_generation != row[3]
+            or outcome.review_case_id != case.review_case_id
+            or outcome.report_id != case.report_id
+            or outcome.proposal_set_id != case.proposal_set_id
+            or outcome.target_fingerprint != case.target_fingerprint
+            or outcome.resolved_policy_id != policy.resolved_id
+            or outcome.policy_profile_id != policy.profile_id
+        ):
+            raise MetadataReportError("review case snapshot is unavailable")
+        return outcome.to_json()
 
     def _automatic_selected_values(
         self,

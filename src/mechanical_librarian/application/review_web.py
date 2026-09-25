@@ -60,7 +60,6 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.proposal_set import (
     canonical_target_fields,
-    evaluate_report,
 )
 from mechanical_librarian.domain.review_browse import browse_report
 from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
@@ -68,10 +67,39 @@ from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
     classify_review_field,
 )
-from mechanical_librarian.domain.rich_metadata_preview import (
-    compile_rich_metadata_preview,
-)
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+
+_AUTOMATIC_REFUSAL_TEXT = {
+    "no_candidate": "No eligible value was found in the retained evidence.",
+    "ambiguous_evidence": "The retained evidence does not select one value for automatic handling.",
+    "target_work_contradicted": "The retained evidence contradicts applicability to this work.",
+    "target_work_applicability_unproved": "The retained evidence does not establish that this value describes this work.",
+    "target_state_unusable": "The current field value cannot be used safely for this automatic operation.",
+    "automatic_unqualified": "This policy option is not qualified for automatic handling.",
+    "manifestation_verification_required": "The retained evidence does not verify the ISBN for this edition.",
+    "description_quality_floor_not_met": "Retained source text does not meet the automatic synopsis rules.",
+    "series_membership_incomplete": "Series membership or position evidence is incomplete or malformed.",
+    "series_conflicting_membership": "The retained evidence does not resolve series membership for automatic handling.",
+    "series_provider_evidence_required": "Provider evidence supporting this series value is required.",
+    "subtitle_local_corroboration_required": "Independent evidence does not corroborate this subtitle.",
+    "subtitle_segment_provider_dissent": "Provider subtitle evidence disagrees with the proposed title split.",
+    "subtitle_segment_decorated_consensus": "The retained title evidence does not support separating this text into a subtitle.",
+    "atomic_bundle_unavailable": "The required linked field selection is unavailable.",
+    "corroborated_split_unavailable": "The corroborated title and subtitle do not match the current combined title.",
+    "option_evidence_unavailable": "Evidence required by the selected representation is unavailable.",
+    "policy_option_unavailable": "The selected policy option is unavailable for this projection.",
+    "target_projection_oversized": "The resulting field would exceed the supported size limit.",
+    "policy_off": "Tag handling is off.",
+    "explicit_unsupported": "Automatic explicit-content handling is unavailable for this option.",
+    "source_value_malformed_or_incomplete": "ISBN evidence is malformed or incomplete.",
+    "source_values_conflict": "Conflicting ISBN values remain.",
+    "source_value_insufficient_association": "Association with this recording is insufficient.",
+    "source_unavailable": "Source evidence is unavailable.",
+    "source_value_absent": "No ISBN value was supplied.",
+    "series_provider_failure_isbn": "A contributing ISBN lookup did not supply usable evidence.",
+    "series_provider_failure_work": "A contributing work lookup did not supply usable evidence.",
+    "series_provider_failure_asin": "A contributing ASIN lookup did not supply usable evidence.",
+}
 
 CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
 
@@ -138,6 +166,7 @@ class CurrentReviewCaseSnapshot:
     report_document: str
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
+    final_outcome_document: str | None = None
     automatic_source_outcome_documents: tuple[str, ...] = ()
     automatic_selected_values: tuple[tuple[str, dict[str, object]], ...] = ()
     automatic_attention_destinations: tuple[str, ...] = ()
@@ -752,52 +781,79 @@ class InspectCurrentReviewCase:
             case = ReviewCase.create_from_data(
                 json.loads(snapshot.case_document)["case"]
             )
-            proposal = evaluate_report(
-                report, policy.resolved_id, dict(policy.destinations)
+            outcome_set = (
+                None
+                if snapshot.final_outcome_document is None
+                else ShadowOutcomeSet.from_json(snapshot.final_outcome_document)
             )
-            if proposal.proposal_set_id != case.proposal_set_id:
-                return detail
-            preview = compile_rich_metadata_preview(policy, report, proposal)
-            withheld: dict[str, str] = {}
-            for preview_field in preview.fields:
-                if (
-                    dict(policy.destinations).get(preview_field.field) != "automatic"
-                    or preview_field.outcome != "abstain"
-                ):
-                    continue
-                if preview_field.field == "description_fill":
-                    message = {
-                        "no_candidate": "No eligible automatic synopsis is available. You can inspect the retained evidence.",
-                        "description_quality_floor_not_met": "No eligible automatic synopsis: retained source text does not meet the automatic synopsis rules. You can inspect the retained evidence.",
-                        "target_work_applicability_unproved": "Automatic synopsis withheld: the source text is not proved to describe this work.",
-                        "ambiguous_evidence": "Automatic synopsis withheld: the retained descriptions contain unresolved conflicting evidence.",
-                    }.get(preview_field.reason or "")
-                    if message is not None:
-                        withheld["description"] = message
-                elif preview_field.reason in {
-                    "series_provider_failure_isbn",
-                    "series_provider_failure_work",
-                    "series_provider_failure_asin",
-                }:
-                    withheld[preview_field.field] = (
-                        "Automatic decision withheld: a contributing provider lookup "
-                        "did not supply usable evidence. You can review this field."
-                    )
+            if outcome_set is not None and (
+                outcome_set.review_case_id != case.review_case_id
+                or outcome_set.report_id != case.report_id
+                or outcome_set.proposal_set_id != case.proposal_set_id
+                or outcome_set.target_fingerprint != case.target_fingerprint
+                or outcome_set.resolved_policy_id != policy.resolved_id
+                or outcome_set.policy_profile_id != policy.profile_id
+            ):
+                raise ReviewWebError("unavailable")
+            recorded = (
+                {}
+                if outcome_set is None
+                else {value.destination: value for value in outcome_set.outcomes}
+            )
             fields = detail["fields"]
             assert type(fields) is list
             for field in fields:
                 assert type(field) is dict
-                message = withheld.get(str(field["destination"]))
-                if (
-                    message is not None
-                    and (
-                        field["destination"] == "description"
-                        or field["needs_attention"] is True
+                destination = str(field["destination"])
+                outcome = recorded.get(destination)
+                category = {
+                    "description": "description_fill",
+                    "isbn": "isbn_form",
+                    "title": "title_layout",
+                    "authors": "contributor_names",
+                    "narrators": "contributor_names",
+                    "language": "language_rendering",
+                    "publishedDate": "date_precision",
+                    "publisher": "publisher_preference",
+                    "cover": "cover_order",
+                }.get(destination, destination)
+                if outcome is not None and outcome.policy_category is not None:
+                    category = (
+                        "title_layout"
+                        if outcome.policy_category == "title"
+                        else outcome.policy_category
                     )
-                    and field["human_decision"] is None
-                    and field["automatic_decision"] is None
+                if (
+                    dict(policy.destinations).get(category) != "automatic"
+                    or field["human_decision"] is not None
+                    or field["automatic_decision"] is not None
                 ):
-                    field["automatic_withheld_reason"] = message
+                    continue
+                if outcome is None:
+                    message = (
+                        "No recorded automatic evaluation is available for this field."
+                    )
+                elif outcome.disposition in {
+                    "abstention",
+                    "conflict",
+                    "manual",
+                    "unsupported",
+                }:
+                    message = _AUTOMATIC_REFUSAL_TEXT.get(
+                        outcome.reason_code,
+                        "The recorded evaluation did not select an automatic action; no more specific reason was recorded.",
+                    )
+                else:
+                    continue
+                if destination in (
+                    *snapshot.automatic_safety_suspended_destinations,
+                    *snapshot.suspended_destinations,
+                ):
+                    message = (
+                        "Automatic handling is currently suspended. Recorded evaluation: "
+                        + message
+                    )
+                field["automatic_withheld_reason"] = message
         except Exception as error:
             raise ReviewWebError("unavailable") from error
         return detail
