@@ -801,7 +801,7 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
                 provider="catalogue",
                 candidate=candidate,
                 kind=ClaimKind.DESCRIPTION,
-                value="d" * MAX_DESCRIPTION_CHARACTERS,
+                value="📚" * MAX_DESCRIPTION_CHARACTERS,
                 state=FieldState.VALID,
                 scope=ClaimScope.WORK,
                 applicability="not_applicable",
@@ -839,8 +839,11 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
             ),
         )
 
-    reports = [large_report(index) for index in range(25)]
+    reports = [large_report(index) for index in range(7)]
     documents = {report.report_id: report.to_json() for report in reports}
+    assert sum(len(value) for value in documents.values()) <= (
+        _ACTIVITY_PAGE_CACHE_MAX_BYTES
+    )
     assert sum(len(value.encode("utf-8")) for value in documents.values()) > (
         _ACTIVITY_PAGE_CACHE_MAX_BYTES
     )
@@ -896,8 +899,8 @@ def test_activity_page_cache_declines_valid_reports_over_its_byte_budget(
         cross_thread=True,
     )
     projection = reader._field_effect_activity
-    first_documents = dict(list(documents.items())[:15])
-    second_documents = dict(list(documents.items())[15:])
+    first_documents = dict(list(documents.items())[:4])
+    second_documents = dict(list(documents.items())[4:])
     first_bytes = sum(len(value.encode("utf-8")) for value in first_documents.values())
     second_bytes = sum(
         len(value.encode("utf-8")) for value in second_documents.values()
@@ -6283,16 +6286,17 @@ def test_isbn_refusal_history_pagination_filter_and_reader_cache(tmp_path):
     from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
     from tests.support.audiobook_reports import synthetic_audiobook_isbn_reason_report
 
+    shapes = ("absent", "unavailable", "malformed", "conflict", "unassociated")
+    base_reports = {
+        shape: synthetic_audiobook_isbn_reason_report(shape) for shape in shapes
+    }
     path = tmp_path / "isbn-history.sqlite"
     repository = open_repository(path)
     reader = None
     expected_ids = []
     try:
         for index in range(30):
-            shape = ("absent", "unavailable", "malformed", "conflict", "unassociated")[
-                index % 5
-            ]
-            raw = synthetic_audiobook_isbn_reason_report(shape)
+            raw = base_reports[shapes[index % 5]]
             report = MetadataReport.create(
                 target=replace(raw.target, item=f"item-{index}"),
                 file=raw.file,

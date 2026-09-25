@@ -505,14 +505,10 @@ class FakeReviewRepository:
             ).casefold()
         ]
 
-    def list_current_review_case_documents(
-        self,
-        search: str | None,
-        limit: int,
-        offset: int,
-        attention: bool | None,
-    ) -> tuple[tuple[str | None, str], ...]:
-        rows = [
+    def _current_review_cases(
+        self, search: str | None, attention: bool | None
+    ) -> list[tuple[ReviewCase | None, MetadataReport]]:
+        rows: list[tuple[ReviewCase | None, MetadataReport]] = [
             (case, report)
             for case, report in self._searched(search)
             if attention is None or self._attention(case) is attention
@@ -547,9 +543,20 @@ class FakeReviewRepository:
                 "" if value[0] is None else value[0].review_case_id,
             )
         )
+        return rows
+
+    def list_current_review_case_documents(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        attention: bool | None,
+    ) -> tuple[tuple[str | None, str], ...]:
         return tuple(
             (None if case is None else case.to_json(), report.to_json())
-            for case, report in rows[offset : offset + limit]
+            for case, report in self._current_review_cases(search, attention)[
+                offset : offset + limit
+            ]
         )
 
     def read_current_report_document(
@@ -574,11 +581,9 @@ class FakeReviewRepository:
         return None
 
     def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
-        rows = self.list_current_review_case_documents(search, 100_000, 0, None)
+        rows = self._current_review_cases(search, None)[:100_000]
         return len(rows), sum(
-            case_document is not None
-            and self._attention(ReviewCase.from_json(case_document))
-            for case_document, _ in rows
+            case is not None and self._attention(case) for case, _ in rows
         )
 
     def read_review_library(
@@ -644,7 +649,14 @@ class FakeReviewRepository:
     def list_current_attention_documents(
         self, search: str | None, limit: int, offset: int
     ) -> tuple[_AttentionRow, ...]:
-        rows: list[_AttentionRow] = [
+        rows = [
+            (case, report, proposal)
+            for case, report in self._searched(search)
+            for proposal in case.proposals
+            if self._field_attention(case, proposal)
+            or proposal["destination"] in self.policy_attention_destinations
+        ]
+        projected: list[_AttentionRow] = [
             (
                 case.to_json(),
                 report.to_json(),
@@ -654,12 +666,9 @@ class FakeReviewRepository:
                 self.attention_causes.get(cast(str, proposal["destination"])),
                 proposal["destination"] in self.policy_attention_destinations,
             )
-            for case, report in self._searched(search)
-            for proposal in case.proposals
-            if self._field_attention(case, proposal)
-            or proposal["destination"] in self.policy_attention_destinations
+            for case, report, proposal in rows[offset : offset + limit]
         ]
-        return tuple(rows[offset : offset + limit])
+        return tuple(projected)
 
     def count_current_attention_fields(self, search: str | None) -> int:
         return sum(
