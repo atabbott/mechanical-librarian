@@ -701,7 +701,7 @@
     "tests/unit/test_setup_state_store.py": "f69347e23008015821c87eee2550bb1595d061985ee0baef30f4d0a04ebc9afe",
     "tests/unit/test_setup_web.py": "4aca217f13fa09f6b61c7950afa3214b16942381c107315161fbc7a93e76f137",
     "tests/unit/test_shadow_decision.py": "07d55b1c0405c018c28f1ee164663c41c24802c631edc263f9447232efc92659",
-    "tests/unit/test_shadow_outcome_persistence.py": "fbfac8fe8c4b3eccdf3e0d11125ee405d68699fdacbf38dfb7c52d7f8f8e2c1f",
+    "tests/unit/test_shadow_outcome_persistence.py": "df3200cd4843cd142d366ad2cb6614fdc2057c34afe3ae49e22060f0cbc96e23",
     "tests/unit/test_shadow_review_actions.py": "d3da5ec7fa2b23cf26e88fd5e092e5e236fdc440bdd0317910e66aa143dc5a6b",
     "tests/unit/test_shadow_review_packets.py": "cc6a9b23ffc04c150bdb0522bf5cad6930fd8d6a34543909290e7db7efadfb56",
     "tests/unit/test_sqlite_row_delta_audit.py": "013e6a009bdff0208e11cdb9abf36eb240fec76b035f079801fc7580962a8221",

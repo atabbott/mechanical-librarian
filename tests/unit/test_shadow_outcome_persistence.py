@@ -3801,6 +3801,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             for category in OPTION_CATALOGUE
         }
         destinations["cover_order"] = "automatic"
+        destinations["isbn_form"] = "ignore"
         profile = MetadataPolicyProfile.create(
             "Deterministic confirmed covers", options, destinations
         )
@@ -4228,6 +4229,7 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
             for category in OPTION_CATALOGUE
         }
         destinations["cover_order"] = "automatic"
+        destinations["isbn_form"] = "ignore"
         profile = MetadataPolicyProfile.create(
             "Deterministic confirmed covers", options, destinations
         )
