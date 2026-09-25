@@ -30,19 +30,12 @@ provider call.
 
 ## Retained identity conflicts
 
-Keep observed report inputs separate from independently adjudicated identity.
-The retained #877 full-work/prologue case already contained opening full-work
-ISBNs alongside package/prologue identity and competing provider identities.
-Its `unresolved_choice` and `isbn_title_material_conflict` disposition supports
-owner review, not a missing-ISBN fix or automatic admission. External body
-comparison supports the adjudication but was not an observed application input.
-
-Those immutable `metadata-report-v44` reports cannot be parsed as current
-`metadata-report-v49` reports. Current historical replay is unavailable, not a
-failed identity evaluation; do not relabel the schema or rewrite historical
-evidence to make it replayable. Current synthetic report-constructor tests
-prove the supported conflict boundary separately and do not reconstruct the
-private case. See [opening evidence](../product/opening-ebook-evidence.md#full-work-identity-and-body-completeness)
+Conflicting package/prologue and full-work evidence remains for owner review.
+Keep external identity adjudication separate from observed application inputs.
+Unsupported historical report schemas cannot be replayed by the current parser;
+do not relabel them or rewrite evidence to make them replayable. Current
+synthetic proof is separate from historical replay. See
+[opening evidence](../product/opening-ebook-evidence.md#full-work-identity-and-body-completeness)
 for the body-completeness limit (#1079).
 
 ## Preconditions

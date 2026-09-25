@@ -201,8 +201,8 @@ body completeness.
 When retained package/prologue and full-work evidence materially conflict,
 keep the alternatives for owner review. Independent comparison of the body may
 support an owner's adjudication, but it is not an application observation unless
-a supported evidence seam actually supplied it. The description-source
-containment tracked in #989 supplies no title or identity authority. This
+a supported evidence seam actually supplied it. Contained-work awareness
+tracked in #989 supplies no title or identity authority. This
 boundary does not change qualified title election or owner-final, Ask, and
 Ignore choices (#1079).
 
