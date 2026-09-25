@@ -7273,11 +7273,29 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                 )
                 for width in (1440, 390, 320):
                     page.set_viewport_size({"width": width, "height": 900})
+                    if width == 1440:
+                        result.scroll_into_view_if_needed()
+                        assert result.evaluate("""node => {
+                            const result = node.getBoundingClientRect();
+                            const rail = document.querySelector('.cm-policy-sidebar')
+                                .getBoundingClientRect();
+                            return result.right <= rail.left || result.left >= rail.right
+                                || result.bottom <= rail.top || result.top >= rail.bottom;
+                        }""")
                     expand = result.get_by_role(
                         "button", name=re.compile(r"Show .* more")
                     )
                     expand.focus()
                     page.keyboard.press("Enter")
+                    if width == 1440:
+                        result.locator("aside").scroll_into_view_if_needed()
+                        assert result.evaluate("""node => {
+                            const panel = node.querySelector('aside').getBoundingClientRect();
+                            const rail = document.querySelector('.cm-policy-sidebar')
+                                .getBoundingClientRect();
+                            return panel.right <= rail.left || panel.left >= rail.right
+                                || panel.bottom <= rail.top || panel.top >= rail.bottom;
+                        }""")
                     last = page.locator(".cm-policy-preview-list > div").last
                     last.scroll_into_view_if_needed()
                     expect(last).to_be_in_viewport()
@@ -7307,6 +7325,23 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             last.scroll_into_view_if_needed()
             expect(last).to_be_in_viewport()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            actions = page.locator(".cm-policy-finish-actions")
+            actions.scroll_into_view_if_needed()
+            assert actions.evaluate("""node => {
+                const [back, activate] = [...node.querySelectorAll('button')];
+                const first = back.getBoundingClientRect();
+                const second = activate.getBoundingClientRect();
+                return first.bottom <= second.top && first.width >= node.clientWidth - 1
+                    && second.width >= node.clientWidth - 1
+                    && [back, activate].every(button =>
+                        button.getBoundingClientRect().height <=
+                        parseFloat(getComputedStyle(button).fontSize) * 5);
+            }""")
+            result.get_by_role("button", name="Show fewer outcomes").focus()
+            page.keyboard.press("Enter")
+            expect(
+                result.get_by_role("button", name=re.compile(r"Show .* more"))
+            ).to_be_focused()
             assert (
                 page.evaluate(
                     "async () => (await fetch('/api/v1/metadata-policy/state')).json()"
