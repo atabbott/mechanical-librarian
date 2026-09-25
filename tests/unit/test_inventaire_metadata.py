@@ -189,8 +189,10 @@ def test_isbn_hydrates_linked_work_labels_and_repeated_query_parameters() -> Non
 
 
 @pytest.mark.parametrize("missing_isbn", (False, True))
+@pytest.mark.parametrize("image_present", (False, True))
 def test_work_search_hydrates_discovery_identity_before_mapping(
     missing_isbn: bool,
+    image_present: bool,
 ) -> None:
     requests: list[httpx.Request] = []
 
@@ -228,9 +230,15 @@ def test_work_search_hydrates_discovery_identity_before_mapping(
                         "wd:Q100": {
                             "uri": "wd:Q100",
                             "labels": {"en": "Example Book"},
-                            "image": {
-                                "url": "/img/entities/abcdef0123456789abcdef0123456789abcdef01"
-                            },
+                            **(
+                                {
+                                    "image": {
+                                        "url": "/img/entities/abcdef0123456789abcdef0123456789abcdef01"
+                                    }
+                                }
+                                if image_present
+                                else {}
+                            ),
                             "claims": {
                                 "wdt:P1476": ["Example Book"],
                                 "wdt:P50": ["wd:Q42"],
@@ -301,11 +309,42 @@ def test_work_search_hydrates_discovery_identity_before_mapping(
     assert observation.candidates[0].claims[0].kind is ClaimKind.TITLE
     assert len(requests) == 3 + int(missing_isbn)
     # A work entity image remains work-scoped; no edition identity is invented.
-    descriptor = provider_result.cover_descriptors[0]
-    assert descriptor.provenance is not None
-    assert descriptor.provenance.designation is CoverDesignation.WORK
-    assert descriptor.provenance.edition_identity is None
-    assert descriptor.provenance.work_identity == "inventaire-work-wd-Q100"
+    assert len(provider_result.cover_descriptors) == int(image_present)
+    for descriptor in provider_result.cover_descriptors:
+        assert descriptor.provenance is not None
+        assert descriptor.provenance.designation is CoverDesignation.WORK
+        assert descriptor.provenance.edition_identity is None
+        assert descriptor.provenance.work_identity == "inventaire-work-wd-Q100"
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetFieldState,
+    )
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    seed = synthetic_report("Example Book")
+    report = MetadataReport.create(
+        target=replace(
+            seed.target,
+            fields=tuple(
+                replace(field, state=TargetFieldState.VALUE, value=("Ada Example",))
+                if field.destination is TargetDestination.AUTHORS
+                else field
+                for field in seed.target.fields
+            ),
+        ),
+        file=seed.file,
+        local_claims=lookup.local_claims,
+        local_reasons=("opening_claims",),
+        providers=(observation,),
+    )
+    isbn = next(
+        value
+        for value in evaluate_report(report).results
+        if value.destination.value == "isbn"
+    )
+    assert isbn.outcome.value != "propose_change"
     assert requests[int(missing_isbn)].url.path == "/api/search"
     assert requests[1 + int(missing_isbn)].url.path == "/api/entities/by-uris"
 
@@ -449,7 +488,16 @@ def test_malformed_isbn_redirects_are_rejected(redirects: dict[str, str]) -> Non
     assert observation.status is ProviderStatus.MALFORMED
 
 
-def test_hostile_cover_path_rejects_the_candidate_projection() -> None:
+@pytest.mark.parametrize(
+    "image",
+    (
+        "https://attacker.invalid/cover.jpg",
+        {},
+        {"url": "https://attacker.invalid/cover.jpg"},
+        {"url": None},
+    ),
+)
+def test_hostile_cover_path_rejects_the_candidate_projection(image) -> None:
     def respond(request: httpx.Request) -> httpx.Response:
         uris = request.url.params.get_list("uris")
         if uris == ["isbn:9780306406157"]:
@@ -459,7 +507,7 @@ def test_hostile_cover_path_rejects_the_candidate_projection() -> None:
                     "entities": {
                         "isbn:9780306406157": {
                             "uri": "inv:edition-one",
-                            "image": "https://attacker.invalid/cover.jpg",
+                            "image": image,
                             "labels": {"en": "Example Book"},
                             "claims": {
                                 "wdt:P212": ["9780306406157"],
@@ -1411,3 +1459,134 @@ def test_complete_discovery_preserves_negative_only_creator_equivalence(
     )
     assert observation.lanes
     assert report.schema_version == "metadata-report-v49"
+
+
+@pytest.mark.parametrize(
+    "shape", ("absent", "null", "missing_binding", "unknown_media")
+)
+def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
+    from contextlib import closing
+    from unittest.mock import Mock, patch
+
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.configuration import (
+        ProviderConnectionConfiguration,
+    )
+    from mechanical_librarian.application.metadata_report import TargetSnapshot
+    from mechanical_librarian.application.review_web import InspectCurrentReviewCase
+    from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
+    from mechanical_librarian.domain.cover_evidence import CoverSourceState
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.audiobook_reports import publish_audiobook_preview
+    from tests.support.proposal_evidence import _publication_local_isbn
+
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        uris = request.url.params.get_list("uris")
+        if uris == ["isbn:9780306406157"]:
+            claims = {"wdt:P212": ["9780306406157"]}
+            if shape != "missing_binding":
+                claims["wdt:P629"] = ["wd:Q100"]
+            entity: dict[str, object] = {
+                "uri": "inv:edition-one",
+                "labels": {"en": "Example Book"},
+                "claims": claims,
+            }
+            if shape == "null":
+                entity["image"] = None
+            entities = {"inv:edition-one": entity}
+            redirects = {"isbn:9780306406157": "inv:edition-one"}
+        else:
+            assert uris == ["wd:Q100"]
+            entities = {
+                "wd:Q100": {
+                    "uri": "wd:Q100",
+                    "labels": {"en": "Example Book"},
+                    "claims": {},
+                }
+            }
+            redirects = {}
+        return httpx.Response(200, json={"entities": entities, "redirects": redirects})
+
+    local = _publication_local_isbn() if shape == "unknown_media" else _isbn()
+    result = _provider(httpx.MockTransport(respond)).observe(
+        MetadataLookup(ProviderQueryKind.ISBN, (local,), matched_family="9780306406157")
+    )
+    assert result.observation.status is ProviderStatus.CANDIDATES
+    assert len(requests) == (1 if shape == "missing_binding" else 2)
+    assert len(result.cover_descriptors) == int(shape != "missing_binding")
+    for descriptor in result.cover_descriptors:
+        assert descriptor.url is None
+        assert descriptor.terminal_state is CoverSourceState.ABSENT
+        assert descriptor.provenance is not None
+        assert descriptor.provenance.designation is CoverDesignation.EXACT_EDITION
+        candidate = result.observation.candidates[0]
+        assert descriptor.provenance.edition_identity == candidate.identity
+        assert descriptor.provenance.work_identity == candidate.work_identity
+    target = Mock()
+    with patch(
+        "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+    ) as fetch:
+        covers = _CoverEvidenceObserver(
+            target,
+            CoverArtifactStore(tmp_path / "artifacts"),
+            (ProviderConnectionConfiguration("inventaire", True, True, None),),
+        ).observe(
+            TargetSnapshot("ebook", "Example Book", (), None),
+            (result.observation,),
+            (),
+            result.cover_descriptors,
+        )
+    fetch.assert_not_called()
+    target.read_cover.assert_not_called()
+    assert all(cover.state is CoverSourceState.ABSENT for cover in covers)
+    assert all(cover.artifact is None for cover in covers)
+    seed = synthetic_report("Example Book")
+    report = MetadataReport.create(
+        target=seed.target,
+        file=seed.file,
+        local_claims=(local,),
+        local_reasons=("opening_claims",),
+        providers=(result.observation,),
+        cover_sources=covers,
+    )
+    assert MetadataReport.from_json(report.to_json()) == report
+    proposal = evaluate_report(report)
+    isbn = next(
+        value for value in proposal.results if value.destination.value == "isbn"
+    )
+    eligible = shape in {"absent", "null"}
+    assert (isbn.outcome.value == "propose_change") is eligible
+    cover = next(
+        value for value in proposal.results if value.destination.value == "cover"
+    )
+    assert cover.selected_alternative_id is None
+    assert cover.alternatives == ()
+    if eligible:
+        with closing(open_repository(tmp_path / "state.sqlite")) as repository:
+            case_id, _ = publish_audiobook_preview(repository, report, ("isbn_form",))
+            repository.persist_shadow_outcome(case_id, 4)
+        with closing(open_repository(tmp_path / "state.sqlite")) as repository:
+            detail = InspectCurrentReviewCase(repository).run(case_id)
+            field = next(
+                value for value in detail["fields"] if value["destination"] == "isbn"
+            )
+            assert field["automatic_decision"]["selected_value"] == {
+                "kind": "text",
+                "value": "9780306406157",
+            }
+            assert (
+                repository._connection.execute(
+                    "SELECT (SELECT count(*) FROM cover_selection_authorities) + "
+                    "(SELECT count(*) FROM current_cover_selection_authorities) + "
+                    "(SELECT count(*) FROM field_effects)"
+                ).fetchone()[0]
+                == 0
+            )

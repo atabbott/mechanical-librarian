@@ -19,7 +19,7 @@ The current installed contract is intentionally narrow:
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v49` plus `proposal-set-v8` under
-  `fixed-conservative-v31`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v32`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v18`,

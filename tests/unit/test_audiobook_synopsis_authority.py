@@ -290,7 +290,7 @@ def test_actual_predecessor_artifacts_and_ebook_comparison():
 
     from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
     from mechanical_librarian.domain.metadata_report import MetadataReport
-    from mechanical_librarian.domain.proposal_set import ProposalSet
+    from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
     from mechanical_librarian.domain.rich_metadata_preview import (
         compile_rich_metadata_preview,
     )
@@ -323,9 +323,10 @@ def test_actual_predecessor_artifacts_and_ebook_comparison():
         MetadataReport.from_json(
             (root / f"{scenario}-report.json").read_text().removesuffix("\n")
         )
-        ProposalSet.from_json(
-            (root / f"{scenario}-proposal.json").read_text().removesuffix("\n")
-        )
+        with pytest.raises(ValueError, match="proposal document is invalid"):
+            ProposalSet.from_json(
+                (root / f"{scenario}-proposal.json").read_text().removesuffix("\n")
+            )
         for kind, parser in [
             ("shadow-decision", ShadowDecisionSet),
             ("outcome", ShadowOutcomeSet),
@@ -354,15 +355,24 @@ def test_actual_predecessor_artifacts_and_ebook_comparison():
     report = MetadataReport.from_json(
         (root / "ebook-report.json").read_text().removesuffix("\n")
     )
-    proposal = ProposalSet.from_json(
-        (root / "ebook-proposal.json").read_text().removesuffix("\n")
-    )
+    with pytest.raises(ValueError, match="proposal document is invalid"):
+        ProposalSet.from_json(
+            (root / "ebook-proposal.json").read_text().removesuffix("\n")
+        )
     policy = ResolvedMetadataPolicy.from_data(
         json.loads((root / "ebook-policy.json").read_text().removesuffix("\n"))
     )
-    assert json.loads(
-        json.dumps(compile_rich_metadata_preview(policy, report, proposal).to_data())
-    ) == json.loads((root / "ebook-preview.json").read_text().removesuffix("\n"))
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    expected = json.loads((root / "ebook-preview.json").read_text().removesuffix("\n"))
+    expected["proposal_set_id"] = proposal.proposal_set_id
+    assert (
+        json.loads(
+            json.dumps(
+                compile_rich_metadata_preview(policy, report, proposal).to_data()
+            )
+        )
+        == expected
+    )
 
 
 def test_genuine_predecessor_store_refuses_before_row_validation(tmp_path):

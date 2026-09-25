@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Fill empty ebook ISBNs from verified retained edition evidence even when its
+  associated image is unavailable. Representation, owner choices and write
+  safeguards remain unchanged. Clean rebuild required (#1077).
+
+- Show admitted ISBN choices when the owner selects Ask (#1077).
+
 - Qualification maintenance separates current automatic authority from evidence
   provenance while preserving historical decisions. Earlier derived stores require
   a clean rebuild; automatic grants and write safeguards are unchanged (#1102).

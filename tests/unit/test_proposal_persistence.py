@@ -193,17 +193,25 @@ def test_prior_policy_store_schema_is_rejected_without_mutation() -> None:
 
 @pytest.mark.parametrize(
     "prior_policy",
-    ("fixed-conservative-v20", "fixed-conservative-v22", "fixed-conservative-v23"),
+    (
+        "fixed-conservative-v20",
+        "fixed-conservative-v22",
+        "fixed-conservative-v23",
+        "fixed-conservative-v31",
+    ),
 )
+@pytest.mark.parametrize("populated", (False, True))
 def test_persisted_prior_proposal_state_is_rejected_during_bootstrap(
     prior_policy,
+    populated,
 ) -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / "reports.sqlite"
         repository = open_repository(path)
         report = _report("Title", "b" * 64)
-        repository.publish(report, lambda: True)
-        repository.publish_proposal(evaluate_report(report))
+        if populated:
+            repository.publish(report, lambda: True)
+            repository.publish_proposal(evaluate_report(report))
         repository.close()
 
         connection = sqlite3.connect(path)

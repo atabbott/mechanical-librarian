@@ -3801,6 +3801,7 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             for category in OPTION_CATALOGUE
         }
         destinations["cover_order"] = "automatic"
+        destinations["isbn_form"] = "ignore"
         profile = MetadataPolicyProfile.create(
             "Deterministic confirmed covers", options, destinations
         )
@@ -4228,6 +4229,7 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
             for category in OPTION_CATALOGUE
         }
         destinations["cover_order"] = "automatic"
+        destinations["isbn_form"] = "ignore"
         profile = MetadataPolicyProfile.create(
             "Deterministic confirmed covers", options, destinations
         )
@@ -9124,4 +9126,105 @@ def test_title_recovery_reblocked_projection_is_reconsidered_on_resume(
     repository.advance_review_pipeline_action(action, None, 39)
     assert repository.claim_review_pipeline_action(40) is None
     assert len(repository.get_review_case_decisions(case_id)) == 1
+    repository.close()
+
+
+@pytest.mark.parametrize("mode", ("automatic", "ask", "ignore"))
+@pytest.mark.parametrize(
+    "option, expected",
+    (("preserve_exact", "0306406152"), ("prefer_isbn13", "9780306406157")),
+)
+@pytest.mark.parametrize(
+    "state", (TargetFieldState.MISSING, TargetFieldState.NULL, TargetFieldState.EMPTY)
+)
+def test_image_unavailable_isbn_persists_exact_owner_authority(
+    tmp_path, mode, option, expected, state
+):
+    from tests.support.audiobook_reports import publish_audiobook_preview
+    from tests.support.proposal_evidence import _image_unavailable_isbn_report
+
+    path = tmp_path / "isbn.sqlite"
+    report = _image_unavailable_isbn_report(state, review_choice=mode == "ignore")
+    cover_result = next(
+        result
+        for result in evaluate_report(report).results
+        if result.destination is TargetDestination.COVER
+    )
+    assert cover_result.outcome.value == "defer"
+    assert cover_result.reasons == ("cover_gallery_incomplete",)
+    assert cover_result.selected_alternative_id is None
+    assert cover_result.alternatives == ()
+    repository = open_repository(path)
+    case_id, _ = publish_audiobook_preview(
+        repository,
+        report,
+        ("tags",),
+        selected_options={"isbn_form": option, "tags": "fill_empty"},
+        selected_destinations={"isbn_form": mode},
+    )
+    document = repository.persist_shadow_outcome(case_id, 4)
+    outcome = ShadowOutcomeSet.from_json(document)
+    field = next(value for value in outcome.outcomes if value.destination == "isbn")
+    assert field.policy_destination == mode
+    assert (
+        repository._connection.execute(
+            "SELECT (SELECT count(*) FROM cover_selection_authorities) + "
+            "(SELECT count(*) FROM current_cover_selection_authorities)"
+        ).fetchone()[0]
+        == 0
+    )
+    decisions = repository._connection.execute(
+        "SELECT document FROM automatic_decisions WHERE destination='isbn'"
+    ).fetchall()
+    assert len(decisions) == int(mode == "automatic")
+    repository.close()
+    repository = open_repository(path)
+    detail = InspectCurrentReviewCase(repository).run(case_id)
+    isbn = next(value for value in detail["fields"] if value["destination"] == "isbn")
+    assert isbn["editable"] is (mode != "ignore")
+    assert isbn["needs_attention"] is (mode == "ask")
+    assert repository.count_current_attention_fields(None) == int(
+        mode in {"ask", "ignore"}
+    )
+    if mode == "ignore":
+        assert isbn["decision_actions"] == []
+    if mode == "automatic":
+        decision = AutomaticDecision.from_json(decisions[0][0])
+        authority = repository.field_effect_authority_source(decision)
+        assert authority["decision_value"] == {"kind": "text", "value": expected}
+        assert (
+            isbn["automatic_decision"]["selected_value"] == authority["decision_value"]
+        )
+        assert tuple(field.citation_ids) == tuple(
+            sorted(
+                (
+                    report.local_claims[0].reference,
+                    report.providers[0].candidates[0].claims[0].reference,
+                )
+            )
+        )
+    if mode != "ignore":
+        acknowledgement = RecordHumanDecision(repository, clock=lambda: 10).run(
+            case_id,
+            proposal_id=isbn["proposal_id"],
+            target_fingerprint=isbn["target_fingerprint"],
+            destination="isbn",
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key="isbn-owner-final-rejection-0001",
+        )
+        repository.persist_shadow_outcome(case_id, 11)
+        repository.close()
+        repository = open_repository(path)
+        selected = next(
+            value
+            for value in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+            if value["destination"] == "isbn"
+        )
+        assert (
+            selected["human_decision"]["decision_id"] == acknowledgement["decision_id"]
+        )
+        assert selected["human_decision"]["outcome"] == "keep_current"
+        assert not selected["needs_attention"]
     repository.close()

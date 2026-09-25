@@ -101,3 +101,5 @@ an accepted ADR to make history match current preference; supersede it.
 | [0078](0078-preparation-claim-and-crash-recovery.md) | accepted | Retain preparation ownership and admit verified private crash recovery |
 
 | [0079](0079-supported-title-preservation-and-recovery.md) | accepted | Preserve supported unchanged titles and atomically requeue explicit recovery |
+
+| [0080](0080-isbn-evidence-without-image.md) | accepted | Verify ebook ISBN identity independently of image retrieval |

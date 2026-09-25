@@ -2360,21 +2360,54 @@ def test_every_supported_shape_plans_and_no_ops_do_not_mutate(
 @pytest.mark.parametrize(
     "guard", (None, "backup", "target", "readback", "consent", "authority")
 )
-def test_isbn_title_uses_persisted_authority_for_only_title_effect(
+@pytest.mark.parametrize("destination", ("title", "isbn"))
+def test_isbn_uses_persisted_guarded_effect_authority(
     effects: _EffectEnvironment,
     guard: str | None,
+    destination: str,
 ) -> None:
-    from tests.support.evidence_led_titles import isbn_title_report, publish_title_case
+    from tests.support.audiobook_reports import publish_audiobook_preview
+    from tests.support.proposal_evidence import _image_unavailable_isbn_report
 
-    publish_title_case(effects.repository, isbn_title_report())
+    if destination == "isbn":
+        case_id, _ = publish_audiobook_preview(
+            effects.repository,
+            _image_unavailable_isbn_report(),
+            ("isbn_form",),
+            selected_options={"isbn_form": "prefer_isbn13"},
+        )
+        effects.repository.persist_shadow_outcome(case_id, 4)
+    else:
+        from tests.support.evidence_led_titles import (
+            isbn_title_report,
+            publish_title_case,
+        )
+
+        publish_title_case(effects.repository, isbn_title_report())
     document = effects.repository._connection.execute(
-        "SELECT document FROM automatic_decisions WHERE destination='title'"
+        "SELECT document FROM automatic_decisions WHERE destination=?", (destination,)
     ).fetchone()[0]
     decision = AutomaticDecision.from_json(document)
     authority = PersistedFieldEffectAuthority(effects.repository)
     snapshot = authority.resolve(decision)
+    service = effects.persisted_service(effects.repository, effects.target, authority)
+    with pytest.raises(GuardedApplicationError, match="consent"):
+        service.plan(
+            decision,
+            connection=snapshot.connection,
+            library=snapshot.library,
+            work_id=snapshot.work_id,
+            destination=destination,
+            pre_value=snapshot.pre_value,
+            desired_value=snapshot.decision_value,
+            target_fingerprint=snapshot.target_fingerprint,
+            target_version=snapshot.target_version,
+            dependency_digests=snapshot.dependency_digests,
+            capability_digest=CAPABILITY,
+        )
+    assert not effects.target._values
     effects.repository.grant_field_effect_consents(
-        snapshot.connection, (snapshot.library,), ("title",), 5
+        snapshot.connection, (snapshot.library,), (destination,), 5
     )
     service = effects.persisted_service(effects.repository, effects.target, authority)
     result = service.plan(
@@ -2382,7 +2415,7 @@ def test_isbn_title_uses_persisted_authority_for_only_title_effect(
         connection=snapshot.connection,
         library=snapshot.library,
         work_id=snapshot.work_id,
-        destination="title",
+        destination=destination,
         pre_value=snapshot.pre_value,
         desired_value=snapshot.decision_value,
         target_fingerprint=snapshot.target_fingerprint,
@@ -2396,7 +2429,7 @@ def test_isbn_title_uses_persisted_authority_for_only_title_effect(
     if guard == "backup":
         effects.backup.ready_value = False
     elif guard == "target":
-        effects.target.drift(result.plan, "Owner changed title")
+        effects.target.drift(result.plan, "9780140328721")
     elif guard == "readback":
         effects.target.fail_read_after_apply_for.add(result.plan.plan_id)
     elif guard == "consent":
@@ -2433,9 +2466,11 @@ def test_isbn_title_uses_persisted_authority_for_only_title_effect(
         key for key, value in effects.target._values.items() if before.get(key) != value
     }
     assert changed == {
-        (snapshot.connection, snapshot.library, snapshot.work_id, "title")
+        (snapshot.connection, snapshot.library, snapshot.work_id, destination)
     }
-    assert effects.target._values[next(iter(changed))] == "Example Title"
+    assert effects.target._values[next(iter(changed))] == (
+        "9780306406157" if destination == "isbn" else "Example Title"
+    )
 
 
 def test_an_activated_audiobook_tranche_plans_through_the_same_guarded_path(

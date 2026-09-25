@@ -6,7 +6,7 @@ preparation; source-only contributor inspection uses the typed workbench and is
 not an installed runtime capability. The operation reopens the exact report, revalidates its
 current Audiobookshelf target projection, selected EPUB bytes, ABS cover, and
 both blobs of every referenced private cover artifact, then evaluates the built-in
-`fixed-conservative-v31` policy. It does not construct or contact a metadata or
+`fixed-conservative-v32` policy. It does not construct or contact a metadata or
 cover provider.
 
 An exact ProposalSet can be reopened offline through the application repository
@@ -44,7 +44,7 @@ older same-schema result is historical and receives one current successor.
 Success is exactly one canonical `proposal-set-v8` JSON document plus a
 newline. Failure emits no document and one value-free diagnostic.
 
-Only `proposal-set-v8` documents under `fixed-conservative-v31` and the exact current
+Only `proposal-set-v8` documents under `fixed-conservative-v32` and the exact current
 `proposal_sets` table envelope are accepted. A database with the earlier
 `fixed-conservative-v1`, `fixed-conservative-v2`, `fixed-conservative-v3`, or
 `fixed-conservative-v4`, `fixed-conservative-v5`, `fixed-conservative-v6`,
@@ -381,7 +381,7 @@ ProposalSet and report rather than acquiring new evidence (#1073).
 
 Genre applicability now uses accepted closed creator display equivalence only to
 remove false explicit contradictions (#1074). Publication-date votes share this
-negative-only classification. Exact current report v49/proposal policy v31 state
+negative-only classification. Exact current report v49/proposal policy v32 state
 is required; report v48 and proposal policy v29 are historical and cannot be
 replayed as current authority. **Clean rebuild required**, with no adoption.
 
@@ -397,3 +397,16 @@ association, competing positions and independent title evidence retain their
 existing authority. Ask, Ignore and owner-final decisions remain authoritative.
 Proposal policy v31 requires a clean rebuild; report v49 remains readable and
 can be re-evaluated. Old proposal/store state is rejected before mutation.
+
+
+## Image-independent ebook ISBN election (#1077)
+
+An empty ISBN may be filled from a valid ebook edition claim with exact accepted
+provider/candidate/work/reference binding and retained exact-edition provenance,
+even when the associated image is absent or unavailable. A resolved work,
+compatible publication/format facts and exactly one verified ISBN family remain
+mandatory. Missing provenance, unrelated evidence and competing families refuse.
+The selected lexical value follows `preserve_exact` or `prefer_isbn13`; no ISBN
+is invented. Populated values, Ask, Ignore and owner-final decisions are unchanged.
+This grants no cover selection or write consent. Policy v32 requires a clean
+rebuild; report v49 and outcome v9 retain their existing document shapes.

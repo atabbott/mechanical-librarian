@@ -268,9 +268,10 @@ def test_actual_predecessors_refuse_authority_and_store_before_mutation():
             MetadataReport.from_json(
                 (capture / f"{scenario}-report.json").read_text().strip()
             )
-            ProposalSet.from_json(
-                (capture / f"{scenario}-proposal.json").read_text().strip()
-            )
+            with pytest.raises(ValueError, match="proposal document is invalid"):
+                ProposalSet.from_json(
+                    (capture / f"{scenario}-proposal.json").read_text().strip()
+                )
             for kind, parser in [
                 ("shadow-decision", ShadowDecisionSet),
                 ("outcome", ShadowOutcomeSet),

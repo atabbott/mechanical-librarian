@@ -1694,6 +1694,73 @@ def test_not_for_sale_prepublication_proof_keeps_exact_work_isbn_electable() -> 
     assert 3 == len(result.alternatives[0].evidence_references)
 
 
+@pytest.mark.parametrize(
+    "transport",
+    (
+        CoverSourceState.ABSENT,
+        CoverSourceState.UNAVAILABLE,
+        CoverSourceState.DECODE_FAILED,
+    ),
+)
+def test_empty_isbn_election_retains_identity_without_image(
+    transport: CoverSourceState,
+) -> None:
+    cover = _exact_edition_cover()
+    provider = _provider(
+        "catalogue",
+        "edition-1",
+        (
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.ISBN,
+                "9780306406157",
+                scope=ClaimScope.EDITION,
+                applicability="ebook",
+            ),
+        ),
+    )
+
+    def result(source: CoverSource) -> object:
+        return _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        isbn=TargetField(
+                            TargetDestination.ISBN, TargetFieldState.MISSING
+                        )
+                    ),
+                    local_claims=(_explicit_local_ebook_isbn(),),
+                    providers=(provider,),
+                    covers=(source,),
+                )
+            ),
+            TargetDestination.ISBN,
+        )
+
+    retrieved = result(cover)
+    unavailable = result(replace(cover, state=transport, artifact=None))
+    assert unavailable == retrieved
+    assert (
+        _result(
+            evaluate_report(
+                _report(
+                    fields=_fields(
+                        isbn=TargetField(
+                            TargetDestination.ISBN, TargetFieldState.MISSING
+                        )
+                    ),
+                    local_claims=(_explicit_local_ebook_isbn(),),
+                    providers=(provider,),
+                    covers=(),
+                )
+            ),
+            TargetDestination.ISBN,
+        ).selected_alternative_id
+        is None
+    )
+
+
 def test_empty_isbn_rejects_an_unresolved_provider_work_identity() -> None:
     local = _local_isbn("0306406152", "valid_isbn_10")
     provider = _provider(
@@ -1733,7 +1800,7 @@ def test_empty_isbn_rejects_an_unresolved_provider_work_identity() -> None:
     assert 1 == len(result.alternatives)
 
 
-def test_empty_isbn_requires_an_exact_retrieved_provider_cover() -> None:
+def test_empty_isbn_requires_retained_exact_edition_provenance() -> None:
     accepted = _explicit_local_ebook_isbn()
     provider = _provider(
         "catalogue",
