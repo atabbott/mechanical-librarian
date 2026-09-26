@@ -3127,8 +3127,7 @@ def test_library_description_controls_preserve_words_at_enlarged_text() -> None:
                             const range = document.createRange();
                             range.setStart(text, match.index);
                             range.setEnd(text, match.index + match[0].length);
-                            const rects = [...range.getClientRects()];
-                            result.push({word: match[0], lines: new Set(rects.map(rect => rect.top)).size});
+                            result.push({word: match[0], lines: new Set([...range.getClientRects()].map(rect => rect.top)).size});
                           }
                         }
                         return result;
@@ -3379,39 +3378,98 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 )
                 expect(page.locator(".cover-track-hint")).to_be_visible()
 
-                track.evaluate("node => { node.scrollLeft = 0 }")
-                # Unconfirmed choices remain visible but correctly disabled.
-                # Reach the last actual disclosure, not a disabled choice button.
-                assert track.locator(".cover-choice.is-unconfirmed").count() > 0
-                last_choice = track.locator(
-                    ".cover-choice:has(.choice-evidence-toggle)"
-                ).last
-                focus_control = last_choice.locator(".choice-evidence-toggle")
-                assert focus_control.is_enabled()
-                focus_control.focus()
-                assert focus_control.evaluate("node => document.activeElement === node")
-                forward_scroll = cast(
-                    "float", track.evaluate("node => node.scrollLeft")
-                )
-                assert forward_scroll > 0
-                assert last_choice.evaluate(
-                    "node => { const track = node.closest('.library-cover-pinned, "
-                    ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
-                    "const bounds = track.getBoundingClientRect(); return choice.left >= "
-                    "bounds.left - 1 && choice.right <= bounds.right + 1 }"
-                )
-                first_choice = track.locator(".cover-choice").first
-                first_choice.get_by_role("button").first.focus()
-                reverse_scroll = cast(
-                    "float", track.evaluate("node => node.scrollLeft")
-                )
-                assert reverse_scroll < forward_scroll
-                assert first_choice.evaluate(
-                    "node => { const track = node.closest('.library-cover-pinned, "
-                    ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
-                    "const bounds = track.getBoundingClientRect(); return choice.left >= "
-                    "bounds.left - 1 && choice.right <= bounds.right + 1 }"
-                )
+                for width, size in ((390, "100%"), (390, "200%"), (320, "200%")):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.evaluate(
+                        "size => document.documentElement.style.fontSize = size", size
+                    )
+                    track.evaluate("node => { node.scrollLeft = 0 }")
+                    # Unconfirmed choices remain visible but correctly disabled.
+                    # Reach the last actual disclosure, not a disabled choice button.
+                    assert track.locator(".cover-choice.is-unconfirmed").count() > 0
+                    last_choice = track.locator(
+                        ".cover-choice:has(.choice-evidence-toggle)"
+                    ).last
+                    focus_control = last_choice.locator(".choice-evidence-toggle")
+                    assert focus_control.is_enabled()
+                    focus_control.focus()
+                    assert focus_control.evaluate(
+                        "node => document.activeElement === node"
+                    )
+                    forward_scroll = cast(
+                        "float", track.evaluate("node => node.scrollLeft")
+                    )
+                    assert forward_scroll > 0
+                    assert last_choice.evaluate(
+                        "node => { const track = node.closest('.library-cover-pinned, "
+                        ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
+                        "const bounds = track.getBoundingClientRect(); return choice.left >= "
+                        "bounds.left - 1 && choice.right <= bounds.right + 1 }"
+                    )
+                    first_choice = track.locator(".cover-choice").first
+                    first_choice.get_by_role("button").first.focus()
+                    reverse_scroll = cast(
+                        "float", track.evaluate("node => node.scrollLeft")
+                    )
+                    assert reverse_scroll < forward_scroll
+                    assert first_choice.evaluate(
+                        "node => { const track = node.closest('.library-cover-pinned, "
+                        ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
+                        "const bounds = track.getBoundingClientRect(); return choice.left >= "
+                        "bounds.left - 1 && choice.right <= bounds.right + 1 }"
+                    )
+
+                for width in (1440, 320):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.wait_for_function(
+                        "width => window.innerWidth === width && "
+                        "window.matchMedia('(max-width: 700px)').matches === (width <= 700)",
+                        arg=width,
+                    )
+                    # Viewport changes reach responsive layout on a rendering frame.
+                    # Measure settled text, rather than the previous desktop tracks.
+                    page.evaluate(
+                        "() => new Promise(resolve => requestAnimationFrame(() => "
+                        "requestAnimationFrame(resolve)))"
+                    )
+                    words = page.evaluate("""() => {
+                      const targets = document.querySelectorAll(
+                        '.library-cover-card > span:last-child, .cover-choice .choice-evidence, .cover-choice .choice-evidence-toggle, .cover-observation');
+                      return [...targets].flatMap(node => {
+                        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+                        const result = [];
+                        while (walker.nextNode()) {
+                          const text = walker.currentNode;
+                          for (const match of text.textContent.matchAll(/\\S+/g)) {
+                            const range = document.createRange();
+                            range.setStart(text, match.index);
+                            range.setEnd(text, match.index + match[0].length);
+                            const rects = [...range.getClientRects()].map(rect => rect.toJSON());
+                            const parent = text.parentElement;
+                            const style = getComputedStyle(parent);
+                            result.push({word: match[0], lines: new Set(rects.map(rect => rect.top)).size,
+                              rects, tag: parent.tagName, cls: parent.className,
+                              parent: parent.getBoundingClientRect().toJSON(),
+                              card: parent.closest('.cover-choice')?.getBoundingClientRect().toJSON(),
+                              font: style.font, lineHeight: style.lineHeight, padding: style.padding,
+                              columns: style.gridTemplateColumns, width: style.width});
+                          }
+                        }
+                        return result;
+                      });
+                    }""")
+                    assert words and all(word["lines"] == 1 for word in words), (
+                        width,
+                        [word for word in words if word["lines"] != 1],
+                        page.evaluate(
+                            """() => [...document.querySelectorAll('.library-cover-pinned, .cover-choice, .library-cover-card strong')].map(el => ({cls:el.className, width:el.getBoundingClientRect().width, font:getComputedStyle(el).fontSize, columns:getComputedStyle(el).gridAutoColumns}))"""
+                        ),
+                    )
+                    assert (
+                        page.evaluate("document.documentElement.scrollWidth") <= width
+                    )
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 390, "height": 844})
 
                 assert errors == []
                 # A cover whose bytes never arrive keeps a bounded, labelled
