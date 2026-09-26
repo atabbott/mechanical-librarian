@@ -470,6 +470,20 @@ def _server(
         # other case exists, because confirmation requires a settled
         # transition.
         _publish_audiobook_tranche_case(repository)
+    origin = (
+        f"http://review-transport.test:{port.number}"
+        if transport_mode == "insecure"
+        else f"http://127.0.0.1:{port.number}"
+        if transport_mode == "http"
+        else f"https://127.0.0.1:{port.number}"
+    )
+    review_configuration = ReviewWebConfiguration(
+        tls_certificate_file=str(certificate) if transport_mode == "direct" else None,
+        tls_private_key_file=str(key) if transport_mode == "direct" else None,
+        trusted_proxy_ips=("127.0.0.1",) if transport_mode == "proxy" else (),
+        canonical_origin=origin,
+        owner_password_hash_file=str(hash_path),
+    )
     reviewer_access: ReviewerAccessOperations | Mock | None = None
     if configured_cover_reviewer:
         from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
@@ -560,32 +574,49 @@ def _server(
         ):
             if source.artifact is not None:
                 artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
-        cover_considerations = CoverConsiderationService(
-            repository,
-            read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
-                next(
-                    source.artifact.preview_digest
-                    for source in sources
-                    if source.artifact is not None
-                    and source.artifact.artifact_id == artifact_id
-                )
-            ),
-            read_preview_digest=artifacts.read_preview_digest,
-            clock=lambda: 1_000,
-            bind_policy=repository.bind_current_cover_authority,
-            reviewer_dispatch=(
-                reviewer_access.dispatch_cover_observation if reviewer_access else None
-            ),
-            reviewer_identity=(
-                reviewer_access.current_cover_observation_identity
-                if reviewer_access
-                else None
-            ),
-            reviewer_revision_current=(
-                reviewer_access.revision_is_current if reviewer_access else None
-            ),
-        )
-        cover_considerations.update_policy(CoverPolicy())
+        if configured_cover_reviewer:
+            from mechanical_librarian.bootstrap.composition import (
+                _compose_cover_considerations,
+            )
+
+            assert isinstance(reviewer_access, ReviewerAccessOperations)
+            cover_considerations = _compose_cover_considerations(
+                repository,
+                database.parent / "cover-artifacts",
+                review_configuration,
+                reviewer_access,
+            )
+        else:
+            cover_considerations = CoverConsiderationService(
+                repository,
+                read_preview=lambda artifact_id, _variant: (
+                    artifacts.read_preview_digest(
+                        next(
+                            source.artifact.preview_digest
+                            for source in sources
+                            if source.artifact is not None
+                            and source.artifact.artifact_id == artifact_id
+                        )
+                    )
+                ),
+                read_preview_digest=artifacts.read_preview_digest,
+                clock=lambda: 1_000,
+                bind_policy=repository.bind_current_cover_authority,
+                reviewer_dispatch=(
+                    reviewer_access.dispatch_cover_observation
+                    if reviewer_access
+                    else None
+                ),
+                reviewer_identity=(
+                    reviewer_access.current_cover_observation_identity
+                    if reviewer_access
+                    else None
+                ),
+                reviewer_revision_current=(
+                    reviewer_access.revision_is_current if reviewer_access else None
+                ),
+            )
+            cover_considerations.update_policy(CoverPolicy())
     elif retained_decoration is not None:
         from tests.support.proposal_evidence import retained_decoration_report
 
@@ -1042,13 +1073,6 @@ def _server(
         _publish_audiobook(repository, chapter_runtime)
     if audiobook_case:
         _publish_audiobook_case(repository, chapter_runtime)
-    origin = (
-        f"http://review-transport.test:{port.number}"
-        if transport_mode == "insecure"
-        else f"http://127.0.0.1:{port.number}"
-        if transport_mode == "http"
-        else f"https://127.0.0.1:{port.number}"
-    )
     listener_port = ReservedPort() if transport_mode == "proxy" else port
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
@@ -1406,15 +1430,7 @@ def _server(
         )
     app = create_transport_test_app(
         repository,
-        ReviewWebConfiguration(
-            tls_certificate_file=str(certificate)
-            if transport_mode == "direct"
-            else None,
-            tls_private_key_file=str(key) if transport_mode == "direct" else None,
-            trusted_proxy_ips=("127.0.0.1",) if transport_mode == "proxy" else (),
-            canonical_origin=origin,
-            owner_password_hash_file=str(hash_path),
-        ),
+        review_configuration,
         session_store=session_store,
         clock=lambda: 1_000,
         close_repository=True,
@@ -3069,7 +3085,11 @@ _COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280), (300, 200))
 _LIBRARY_SHAPES = _COVER_SHAPES
 
 
-def test_library_description_controls_preserve_words_at_enlarged_text() -> None:
+@pytest.mark.parametrize("identity", [False, True])
+@pytest.mark.parametrize("dark", [False, True])
+def test_library_description_controls_preserve_words_at_enlarged_text(
+    identity: bool, dark: bool
+) -> None:
     """Text enlargement keeps each control word intact without page overflow."""
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -3091,16 +3111,19 @@ def test_library_description_controls_preserve_words_at_enlarged_text() -> None:
                     certificate=certificate,
                     key=key,
                     port=port,
-                    description_fixture="ready",
+                    description_fixture=None if identity else "ready",
+                    library_identity_fixture=identity,
                     long_descriptions=True,
                 ) as (origin, case_id),
                 _closing_context(context),
             ):
                 _login(page, origin)
+                if dark:
+                    page.get_by_role("button", name="Use dark mode").click()
                 page.goto(
-                    f"{origin}/library?lens=all&preview={case_id}&field=description"
+                    f"{origin}/library?lens=all&preview={case_id}&field={'isbn' if identity else 'description'}"
                 )
-                page.get_by_role("button", name="Choose current description").wait_for()
+                page.locator(".recorded-field-observations").wait_for()
                 for width, size in (
                     (1440, "100%"),
                     (390, "100%"),
@@ -3112,9 +3135,14 @@ def test_library_description_controls_preserve_words_at_enlarged_text() -> None:
                     page.evaluate(
                         "size => document.documentElement.style.fontSize = size", size
                     )
+                    page.evaluate(
+                        "() => new Promise(resolve => requestAnimationFrame(() => "
+                        "requestAnimationFrame(resolve)))"
+                    )
                     words = page.evaluate("""() => {
                       const targets = [
                         ...document.querySelectorAll('.lenses a'),
+                        ...document.querySelectorAll('.selected-work-header h2, .recorded-field-observations h3, .context-value dd'),
                         ...document.querySelectorAll('.description-value button'),
                         ...document.querySelectorAll('.description-choice-content + .choice-select strong'),
                       ].filter(node => node.getClientRects().length);
@@ -3141,22 +3169,23 @@ def test_library_description_controls_preserve_words_at_enlarged_text() -> None:
                     assert (
                         page.evaluate("document.documentElement.scrollWidth") <= width
                     )
-                disclosure = page.get_by_role(
-                    "button", name="Read full description"
-                ).first
-                disclosure.click()
-                expect(
-                    page.get_by_role("button", name="Read full description")
-                ).to_have_count(2)
-                expect(
-                    page.get_by_role("button", name="Show less description")
-                ).to_have_count(1)
-                expect(
-                    page.get_by_role("button", name="Choose current description")
-                ).to_have_attribute("aria-pressed", "true")
-                expect(
-                    page.get_by_role("heading", name="Review complete")
-                ).to_have_count(0)
+                if not identity:
+                    disclosure = page.get_by_role(
+                        "button", name="Read full description"
+                    ).first
+                    disclosure.click()
+                    expect(
+                        page.get_by_role("button", name="Read full description")
+                    ).to_have_count(2)
+                    expect(
+                        page.get_by_role("button", name="Show less description")
+                    ).to_have_count(1)
+                    expect(
+                        page.get_by_role("button", name="Choose current description")
+                    ).to_have_attribute("aria-pressed", "true")
+                    expect(
+                        page.get_by_role("heading", name="Review complete")
+                    ).to_have_count(0)
             browser.close()
 
 
@@ -3205,6 +3234,23 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                     page.locator(".library-cover-card[aria-pressed='true']").count()
                     == 0
                 )
+                page.goto(f"{origin}/settings?group=reviewer")
+                page.get_by_role("button", name="Continue without a reviewer").click()
+                page.get_by_text("No reviewer", exact=True).wait_for()
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                expect(retry).to_have_count(0)
+                expect(page.get_by_text("1 remaining · field 1 of 1")).to_be_visible()
+                library = page.request.get(f"{origin}/api/v1/library?lens=all").json()
+                attention = page.request.get(f"{origin}/api/v1/attention").json()
+                assert library["counts"]["needs_attention"] == 1, library
+                assert attention["total"] == 1, attention
+                page.get_by_role(
+                    "button", name="Choose Alternative 1 cover", exact=True
+                ).click()
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_be_visible()
             browser.close()
 
 
