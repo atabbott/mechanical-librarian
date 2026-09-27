@@ -3124,6 +3124,15 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                     f"{origin}/library?lens=all&preview={case_id}&field={'isbn' if identity else 'description'}"
                 )
                 page.locator(".recorded-field-observations").wait_for()
+                if not identity:
+                    page.get_by_role(
+                        "button",
+                        name="Evidence for Current value description",
+                        exact=True,
+                    ).click()
+                    expect(page.locator("#choice-evidence-current")).to_contain_text(
+                        "Local library recordLocal presence"
+                    )
                 for width, size in (
                     (1440, "100%"),
                     (390, "100%"),
@@ -3144,6 +3153,7 @@ def test_library_description_controls_preserve_words_at_enlarged_text(
                         ...document.querySelectorAll('.lenses a'),
                         ...document.querySelectorAll('.selected-work-header h2, .recorded-field-observations h3, .context-value dd'),
                         ...document.querySelectorAll('.description-value button'),
+                        ...document.querySelectorAll('#choice-evidence-current li strong, #choice-evidence-current li > span, #choice-evidence-current li p'),
                         ...document.querySelectorAll('.description-choice-content + .choice-select strong'),
                       ].filter(node => node.getClientRects().length);
                       return targets.flatMap(node => {
