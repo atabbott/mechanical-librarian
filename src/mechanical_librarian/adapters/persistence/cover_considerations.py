@@ -139,10 +139,15 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         resolved = ResolvedMetadataPolicy.from_data(json.loads(state[2]))
         if dict(resolved.destinations).get("cover_order") != "automatic" or dict(
             resolved.options
-        ).get("cover_order") not in (
-            {"fixed_source_order", "replace_if_strictly_better"}
-            if report.audio is not None
-            else {"fixed_source_order"}
+        ).get("cover_order") not in {
+            "fixed_source_order",
+            "replace_if_strictly_better",
+        }:
+            return
+        if (
+            report.audio is None
+            and dict(resolved.options)["cover_order"] == "replace_if_strictly_better"
+            and policy_report.get("actual_target_state") != "known_empty"
         ):
             return
         material_replacement = (

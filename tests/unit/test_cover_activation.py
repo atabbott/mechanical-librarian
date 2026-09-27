@@ -73,9 +73,11 @@ from tests.unit.test_shadow_outcome_persistence import (
 )
 
 
+@pytest.mark.parametrize("option", ("fixed_source_order", "replace_if_strictly_better"))
 @pytest.mark.parametrize("scenario", ("known_empty", "upgrade", "downgrade"))
 def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
     scenario: str,
+    option: str,
 ) -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
@@ -117,7 +119,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             )
 
         options = dict(DEFAULT_OPTIONS)
-        options["cover_order"] = "fixed_source_order"
+        options["cover_order"] = option
         destinations = {
             category: "unsupported" if category == "explicit" else "ask"
             for category in OPTION_CATALOGUE
@@ -181,7 +183,9 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             "JOIN cover_selection_authorities selection "
             "ON selection.selection_id=current.selection_id"
         ).fetchall()
-        if scenario == "downgrade":
+        if scenario == "downgrade" or (
+            option == "replace_if_strictly_better" and scenario == "upgrade"
+        ):
             assert selection_rows == []
             assert repository.pending_field_effect_decision_documents(1) == ()
             assert repository._connection.execute(
