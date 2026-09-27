@@ -223,7 +223,7 @@
     "frontend/src/queryWork.ts": "7394a8879e9cef78f6b7bea171cc93f9e6255e57bb5aeae0eff7eed8164a20c4",
     "frontend/src/reviewDecisionController.ts": "167581af6a87e38347560b1896e8f8071f4f8361d89bd70dbd0c24c6e9f9e533",
     "frontend/src/router.tsx": "6c202aa5504a8315b10617ba05b4d714cffba00dca5b4056766472d4a9312344",
-    "frontend/src/routes/ActivityPage.tsx": "09d03c4e14889d6b6ca00f609fdc2eb4ab8dd3254fd3613a0f5b55eeee6fb9e2",
+    "frontend/src/routes/ActivityPage.tsx": "981631096ba0303473eb933eb7dc6e5d96f33a09a20cd7ef3a25ce325d470682",
     "frontend/src/routes/AttentionPage.tsx": "6c961c8fb596013c0950efd5f57ad0c6acbdfa55bff20607448fbe66a9c67332",
     "frontend/src/routes/DetailPage.tsx": "1ab4b84cacbfb6f75a893252c47c349b1fd35cd5891af2d73bd1852b62eb9065",
     "frontend/src/routes/LibraryPage.tsx": "9b9a12e835d6be9215cdadc8c0dd93b7417578df5e7c57ec47faa897f61bb0cf",

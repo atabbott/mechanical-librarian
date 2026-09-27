@@ -466,7 +466,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   useEffect(() => {
     if (!mutation.isError || !status) return
     commandStatusRef.current?.focus({ preventScroll: true })
-    commandStatusRef.current?.scrollIntoView({ block: 'nearest' })
+    commandStatusRef.current?.scrollIntoView({ block: 'center' })
   }, [mutation.isError, status])
   const selectedGrants = selectable.flatMap((library) => {
     const name = library.library
