@@ -2046,7 +2046,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # A fresh container activated nothing. The seeded built-in
                 # policy is named as the active baseline and never reported as
                 # a completed owner activation over zero works.
-                page.get_by_text("Active baseline \u00b7", exact=False).wait_for()
+                page.locator(".cm-policy-sidebar > header").get_by_text(
+                    "Active baseline", exact=True
+                ).wait_for()
                 policy_body = page.locator("body").inner_text()
                 assert "Activation complete" not in policy_body
                 assert "Policy update complete" not in policy_body
@@ -2160,7 +2162,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     "Draft matches the active policy", exact=True
                 ).wait_for()
                 page.get_by_text("Draft matches active policy.", exact=True).wait_for()
-                page.get_by_text("draft matches active", exact=False).first.wait_for()
+                page.locator(".cm-policy-route > header").get_by_text(
+                    "Draft matches active policy", exact=True
+                ).wait_for()
                 assert page.get_by_role(
                     "button", name="Validate and preview"
                 ).is_disabled()
@@ -2342,9 +2346,19 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # intervention needed" directly above its own
                 # `3 Awaiting permission`, which is the claim #639 forbids.
                 page.get_by_role(
-                    "heading", name="Prepared work needs your permission"
+                    "heading", name="3 prepared changes are ready. Writes are off."
                 ).wait_for()
-                expect(page.get_by_text("Awaiting permission")).to_be_visible()
+                expect(
+                    page.get_by_text("Ready for permission", exact=True)
+                ).to_have_count(1)
+                expect(
+                    page.get_by_text("Awaiting permission", exact=True)
+                ).to_have_count(0)
+                expect(
+                    page.get_by_role(
+                        "heading", name="Prepared work needs your permission"
+                    )
+                ).to_have_count(0)
                 for calm in (
                     "No intervention needed",
                     "No action required",
