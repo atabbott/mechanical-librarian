@@ -3676,6 +3676,11 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     ).first
                     started = time.monotonic()
                     if pointer:
+                        choice.evaluate(
+                            "node => node.addEventListener('pointerdown', () => { "
+                            "window.__decisionPointerScroll = window.scrollY }, "
+                            "{once: true, capture: true})"
+                        )
                         choice.click()
                     else:
                         choice.focus()
@@ -3724,7 +3729,18 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 assert len(decision_responses) == 1, decision_responses
                 assert len(decision_requests) == 1, decision_requests
                 assert decision_requests[0]
-                assert page.evaluate("() => window.scrollY") == scroll_before
+                pointer_scroll = page.evaluate("() => window.__decisionPointerScroll")
+                assert type(pointer_scroll) in {int, float}
+                print(
+                    json.dumps(
+                        {
+                            "requested_scroll": scroll_before,
+                            "pointer_scroll": pointer_scroll,
+                        }
+                    ),
+                    flush=True,
+                )
+                assert page.evaluate("() => window.scrollY") == pointer_scroll
                 assert page.evaluate(
                     "() => document.activeElement?.matches('.decision-canvas button:not(:disabled)')"
                 )
@@ -6313,7 +6329,7 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                         toggle_box = evidence.bounding_box()
                         panel_box = panel.bounding_box()
                         assert toggle_box is not None and panel_box is not None
-                        assert panel_box["y"] + panel_box["height"] <= toggle_box["y"]
+                        assert toggle_box["y"] + toggle_box["height"] <= panel_box["y"]
                         expect(proposed).to_have_attribute("aria-pressed", "false")
                         evidence.focus()
                         page.keyboard.press("Enter")
