@@ -582,7 +582,7 @@
     "tests/integration/test_owner_responsiveness.py": "5dba461576e003616db48b87502fa3c25c25fe38c529a6bfe302f8987461c872",
     "tests/integration/test_preparation_claim_recovery.py": "877e9ab0c0265c8f9577304fb6a3a416bb7bec6bf6120c73cc4779f4a4e837cd",
     "tests/integration/test_review_case_lifecycle.py": "ac5792c564620395df9db2d8defd796f52d83b02acfaab8d4c1280af40ac3f9c",
-    "tests/slow/test_owner_browser_responsiveness.py": "69e68df24c18bd1d601ea3a08b7c9ec70bcd15a81552717956b1eff895c8d3b7",
+    "tests/slow/test_owner_browser_responsiveness.py": "536e83ded9c90ae1696adce583a689577784f264184ca0d500aff5b147b12397",
     "tests/slow/test_owner_responsiveness.py": "2cd71f9cbe59b1fd9a2380e85dfd20f813512656339c04f05cd94218d836bcea",
     "tests/support/audiobook_covers.py": "c2df1ff212ef459f966da8d6be5b484a55d190c85aac2dc0c3077c01fe5e1d50",
     "tests/support/audiobook_predecessors/README.md": "bdb1ed8a2e74345bfc827a12cdb34b9df6180570c60c6a182eb7ec23c918fa28",
