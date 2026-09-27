@@ -244,7 +244,7 @@
     "frontend/tests/router.activity.test.tsx": "b92dedf697b32460f5415b3ff7f93e0c53937608162598764da056bafda1014d",
     "frontend/tests/router.detail.test.tsx": "91223aac0133ab5a52ffb7873002f761618f6fac61fdb34c2c8d453170a5d6df",
     "frontend/tests/router.library.test.tsx": "e9f4253373b515e226d601a36d5fef75df991fd73bc47540cc80ecbebd74df4d",
-    "frontend/tests/router.policy.test.tsx": "508c936d8a7fd95bc95180bd1d14bfc1e6e61e8d4d0960143e820e045789551a",
+    "frontend/tests/router.policy.test.tsx": "feaa14715dc2ccaef7762a35a554458b3e2ded7406240bef9e0b63141d7bfd30",
     "frontend/tests/router.settings.test.tsx": "bca19478faf91f44e2055890ac84d6985d81c9bb70d3985d6934f626e4541cd1",
     "frontend/tests/router.shell.test.tsx": "3e3cd4d082f4629d5c8c91fa9d8ae88d30287e97de4358b587ff22e30d594cba",
     "scripts/audit_sqlite_row_deltas.py": "f4d14606f3aff0915f3f467d197f7cf37296c3b18b1dcf4a369d6fdb283d52a0",
