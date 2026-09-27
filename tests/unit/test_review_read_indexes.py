@@ -449,7 +449,7 @@ def _count_with_step_limit(
         maximum,
         lambda: connection.execute(
             _CURRENT_REVIEW_CASE_COUNT_SQL,
-            (None, None, None, "", "", "", "", ""),
+            (None, None, None, "", "", "", "", "", ""),
         ).fetchone(),
     )
     assert row is not None
