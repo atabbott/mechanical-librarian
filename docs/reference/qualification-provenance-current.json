@@ -229,7 +229,7 @@
     "frontend/src/routes/LibraryPage.tsx": "9b9a12e835d6be9215cdadc8c0dd93b7417578df5e7c57ec47faa897f61bb0cf",
     "frontend/src/routes/PolicyPage.tsx": "47877e4196895c2da50f9f9495fb4e6ee7e5a3e43c3f69f956101fd121aa29d4",
     "frontend/src/routes/SettingsPage.tsx": "20c5bc4d175d60b3095f9589294bb9400619ea13603ce2b23c436fc8369ae82a",
-    "frontend/src/styles.css": "c167a03c5c472ff91073bbd84612cdea5dc679331e02e17b031ca879efb74b9a",
+    "frontend/src/styles.css": "92e10aaff709059ead3fcd072e5d6f07b7a1c8d3db4c56aae5bfd722e1e32d6f",
     "frontend/tests/decisionCaseOwnership.test.ts": "b287a134927c341fe9f47b6a616d9be3c3e3119af1b86ea9a4d9227c56a20f07",
     "frontend/tests/decisionConfirmation.test.ts": "9b3f2d13b8efbd37da3114ec3faaa6753cd7a68c3fcc1fd6156facce92fce3c3",
     "frontend/tests/fixtures.tsx": "bae5ec6bf9f264441e476fd378c4035e99b935e1bab4d28d228258222b7eb049",
