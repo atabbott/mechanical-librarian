@@ -1,6 +1,7 @@
 """Real report-to-persisted-decision language authority regressions."""
 
 import json
+from collections import Counter
 from contextlib import closing
 
 import pytest
@@ -232,13 +233,50 @@ def test_undetermined_evidence_is_authenticated_paged_and_nonselectable(
                     break
             language = [item for item in items if item["destinations"] == ["language"]]
             assert len(language) == 2 + provider_fact
-            assert len({item["observation"] for item in language}) == 2 + provider_fact
-            for claim in report.local_claims:
-                if claim.kind.value == "language":
-                    assert (
-                        sum(claim.reference in item["observation"] for item in language)
-                        == 1
+            expected = Counter(
+                (
+                    "Local metadata",
+                    "local_presence",
+                    ("language",),
+                    f"Language: {claim.observed}. Undetermined language; "
+                    "not an eligible choice.",
+                )
+                for claim in report.local_claims
+                if claim.kind.value == "language"
+            )
+            if provider_fact:
+                claim = provider.candidates[0].claims[0]
+                expected[
+                    (
+                        "Provider (name unavailable)",
+                        "external_observation",
+                        ("language",),
+                        f"Language: {claim.value}. Retained for review only; "
+                        "not an eligible choice. Undetermined language. "
+                        f"Scope: {claim.scope.value}; state: {claim.state.value}; "
+                        f"applicability: {claim.applicability}.",
                     )
+                ] += 1
+                assert all(
+                    claim.reference not in item["observation"] for item in language
+                )
+            assert (
+                Counter(
+                    (
+                        item["source"],
+                        item["role"],
+                        tuple(item["destinations"]),
+                        item["observation"],
+                    )
+                    for item in language
+                )
+                == expected
+            )
+            assert all(
+                claim.reference not in item["observation"]
+                for claim in report.local_claims
+                for item in language
+            )
             assert all(
                 "Undetermined" in item["observation"]
                 and "not an eligible choice" in item["observation"]

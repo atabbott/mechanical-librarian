@@ -7,11 +7,12 @@ import os
 import sqlite3
 import stat
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import cast
+from typing import Iterator, cast
 from urllib.parse import quote
 
-from mechanical_librarian.adapters.persistence.metadata_reports import (
+from mechanical_librarian.adapters.persistence.binding import (
     _LinuxDirectoryChain,
 )
 from mechanical_librarian.application.batch import CatalogueSnapshot
@@ -29,6 +30,71 @@ _SQL = (
     "CREATE UNIQUE INDEX catalogue_one_current ON catalogue_generations(current) WHERE current = 1;",
     "CREATE TABLE catalogue_entries (generation INTEGER NOT NULL REFERENCES catalogue_generations(generation), connection TEXT NOT NULL, library TEXT NOT NULL, library_id TEXT NOT NULL, item_id TEXT NOT NULL, updated_at INTEGER NOT NULL, title TEXT NOT NULL, authors TEXT NOT NULL, has_ebook INTEGER NOT NULL CHECK(has_ebook IN (0,1)), has_audio INTEGER NOT NULL CHECK(has_audio IN (0,1)), classification TEXT NOT NULL CHECK(classification IN ('none','singular-supported','needs-attention')), file_identity TEXT, service_path TEXT, format TEXT, mount TEXT, source_fingerprint TEXT NOT NULL CHECK(length(source_fingerprint)=64 AND source_fingerprint NOT GLOB '*[^0-9a-f]*'), PRIMARY KEY(generation, connection, library, item_id));",
 )
+
+
+def _require_bound_name(
+    path: Path, chain: _LinuxDirectoryChain | None, expected: os.stat_result
+) -> None:
+    if chain is None:
+        actual = path.lstat()
+        if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (
+            expected.st_dev,
+            expected.st_ino,
+        ):
+            raise CatalogueError("catalogue database pathname changed while opening")
+        return
+    current = chain.open_current_parent()
+    try:
+        actual = os.stat(path.name, dir_fd=current, follow_symlinks=False)
+    finally:
+        os.close(current)
+    if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (
+        expected.st_dev,
+        expected.st_ino,
+    ):
+        raise CatalogueError("catalogue database pathname changed while opening")
+
+
+def _validate_schema(
+    connection: sqlite3.Connection,
+    rows: list[tuple[str, str, str | None]] | None = None,
+) -> None:
+    rows = (
+        rows
+        if rows is not None
+        else connection.execute(
+            "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
+        ).fetchall()
+    )
+    expected = sorted(
+        (
+            ("index", "catalogue_one_current", _SQL[2]),
+            ("index", "sqlite_autoindex_catalogue_entries_1", None),
+            ("index", "sqlite_autoindex_catalogue_schema_1", None),
+            ("table", "catalogue_entries", _SQL[3]),
+            ("table", "catalogue_generations", _SQL[1]),
+            ("table", "catalogue_schema", _SQL[0]),
+        )
+    )
+
+    def canonical(value: str) -> str:
+        return " ".join(value.replace(";", "").split()).lower()
+
+    if (
+        len(rows) != len(expected)
+        or any(
+            actual[:2] != expected_item[:2]
+            or (actual[2] is None) != (expected_item[2] is None)
+            or actual[2] is not None
+            and canonical(actual[2]) != canonical(cast(str, expected_item[2]))
+            for actual, expected_item in zip(rows, expected, strict=True)
+        )
+        or connection.execute("SELECT version FROM catalogue_schema").fetchall()
+        != [(_SCHEMA,)]
+        or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
+        or connection.execute("PRAGMA foreign_key_check").fetchall()
+    ):
+        raise CatalogueError("catalogue schema is unsupported")
 
 
 class SQLiteCatalogueRepository:
@@ -117,26 +183,7 @@ class SQLiteCatalogueRepository:
                 os.close(descriptor)
 
     def _require_bound_name(self, expected: os.stat_result) -> None:
-        if self._chain is None:
-            actual = self._path.lstat()
-            if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (
-                expected.st_dev,
-                expected.st_ino,
-            ):
-                raise CatalogueError(
-                    "catalogue database pathname changed while opening"
-                )
-            return
-        current = self._chain.open_current_parent()
-        try:
-            actual = os.stat(self._path.name, dir_fd=current, follow_symlinks=False)
-        finally:
-            os.close(current)
-        if not stat.S_ISREG(actual.st_mode) or (actual.st_dev, actual.st_ino) != (
-            expected.st_dev,
-            expected.st_ino,
-        ):
-            raise CatalogueError("catalogue database pathname changed while opening")
+        _require_bound_name(self._path, self._chain, expected)
 
     def _validate_existing_readonly(self) -> None:
         connection = sqlite3.connect(
@@ -146,7 +193,7 @@ class SQLiteCatalogueRepository:
             isolation_level=None,
         )
         try:
-            self._validate_schema(connection)
+            _validate_schema(connection)
         finally:
             connection.close()
 
@@ -167,49 +214,7 @@ class SQLiteCatalogueRepository:
                 self._connection.execute("ROLLBACK")
                 raise
             return
-        self._validate_schema(self._connection, rows)
-
-    def _validate_schema(
-        self,
-        connection: sqlite3.Connection,
-        rows: list[tuple[str, str, str | None]] | None = None,
-    ) -> None:
-        rows = (
-            rows
-            if rows is not None
-            else connection.execute(
-                "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
-            ).fetchall()
-        )
-        expected = sorted(
-            (
-                ("index", "catalogue_one_current", _SQL[2]),
-                ("index", "sqlite_autoindex_catalogue_entries_1", None),
-                ("index", "sqlite_autoindex_catalogue_schema_1", None),
-                ("table", "catalogue_entries", _SQL[3]),
-                ("table", "catalogue_generations", _SQL[1]),
-                ("table", "catalogue_schema", _SQL[0]),
-            )
-        )
-
-        def canonical(value: str) -> str:
-            return " ".join(value.replace(";", "").split()).lower()
-
-        if (
-            len(rows) != len(expected)
-            or any(
-                actual[:2] != expected_item[:2]
-                or (actual[2] is None) != (expected_item[2] is None)
-                or actual[2] is not None
-                and canonical(actual[2]) != canonical(cast(str, expected_item[2]))
-                for actual, expected_item in zip(rows, expected, strict=True)
-            )
-            or connection.execute("SELECT version FROM catalogue_schema").fetchall()
-            != [(_SCHEMA,)]
-            or connection.execute("PRAGMA integrity_check").fetchall() != [("ok",)]
-            or connection.execute("PRAGMA foreign_key_check").fetchall()
-        ):
-            raise CatalogueError("catalogue schema is unsupported")
+        _validate_schema(self._connection, rows)
 
     def acquire_refresh(self) -> None:
         try:
@@ -418,6 +423,114 @@ class SQLiteCatalogueRepository:
         finally:
             if self._chain is not None:
                 self._chain.close()
+
+
+class CatalogueReadAdmission:
+    """One catalogue admission, with short readonly Library attachments.
+
+    The retained descriptor prevents inode reuse; a replacement or schema change
+    refuses until the owning review repository closes and is reopened.
+    """
+
+    def __init__(self, path: Path, fingerprint: str) -> None:
+        self._path = path.absolute()
+        self.fingerprint = fingerprint
+        self.active = False
+        self._chain = (
+            _LinuxDirectoryChain.open(self._path.parent)
+            if sys.platform.startswith("linux")
+            else None
+        )
+        self._descriptor = -1
+        self._identity: os.stat_result | None = None
+        self._schema_version: int | None = None
+
+    def close(self) -> None:
+        try:
+            if self._descriptor >= 0:
+                os.close(self._descriptor)
+                self._descriptor = -1
+        finally:
+            if self._chain is not None:
+                self._chain.close()
+
+    def _require_current(self, connection: sqlite3.Connection) -> None:
+        assert self._identity is not None
+        _require_bound_name(self._path, self._chain, self._identity)
+        if connection.execute(
+            "PRAGMA retained_catalogue.schema_version"
+        ).fetchone() != (self._schema_version,):
+            raise CatalogueError("catalogue schema changed after admission")
+
+    @contextmanager
+    def attach(self, connection: sqlite3.Connection) -> Iterator[None]:
+        if connection.in_transaction or self.active:
+            raise CatalogueError("catalogue attachment requires an idle connection")
+        attached = False
+        descriptor = -1
+        try:
+            parent = (
+                os.fstat(self._chain.parent_descriptor)
+                if self._chain is not None
+                else self._path.parent.stat()
+            )
+            if parent.st_uid != os.geteuid() or parent.st_mode & 0o077:
+                raise CatalogueError("catalogue database parent is unsafe")
+            try:
+                descriptor = os.open(
+                    self._path if self._chain is None else self._path.name,
+                    os.O_RDONLY
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    **(
+                        {}
+                        if self._chain is None
+                        else {"dir_fd": self._chain.parent_descriptor}
+                    ),
+                )
+            except FileNotFoundError as error:
+                if self._identity is not None:
+                    raise CatalogueError("catalogue pathname changed") from error
+                yield
+                return
+            information = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(information.st_mode)
+                or information.st_uid != os.geteuid()
+                or information.st_mode & 0o022
+            ):
+                raise CatalogueError("catalogue database is unsafe")
+            _require_bound_name(self._path, self._chain, self._identity or information)
+            uri = f"file:{quote(str(self._path))}?mode=ro"
+            if self._identity is None:
+                validation = sqlite3.connect(
+                    uri, uri=True, isolation_level=None, timeout=0
+                )
+                try:
+                    validation.execute("BEGIN")
+                    _validate_schema(validation)
+                    self._schema_version = validation.execute(
+                        "PRAGMA schema_version"
+                    ).fetchone()[0]
+                finally:
+                    validation.close()
+                _require_bound_name(self._path, self._chain, information)
+                self._identity = information
+                self._descriptor, descriptor = descriptor, -1
+            connection.execute("ATTACH DATABASE ? AS retained_catalogue", (uri,))
+            attached = True
+            self._require_current(connection)
+            self.active = True
+            try:
+                yield
+            finally:
+                self._require_current(connection)
+        finally:
+            self.active = False
+            if descriptor >= 0:
+                os.close(descriptor)
+            if attached:
+                connection.execute("DETACH DATABASE retained_catalogue")
 
 
 def open_catalogue(path: Path, *, create: bool = False) -> SQLiteCatalogueRepository:

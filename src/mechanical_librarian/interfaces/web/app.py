@@ -516,7 +516,7 @@ class _ReviewField(_ClosedModel):
 
 class _ChoiceEvidence(_ClosedModel):
     observation: str
-    role: Literal["external_corroboration", "local_presence"]
+    role: Literal["external_corroboration", "local_presence", "external_observation"]
     source: str
 
 
@@ -535,6 +535,7 @@ class _TargetIdentity(_ClosedModel):
     connection: str = Field(max_length=512)
     item: str = Field(max_length=512)
     library: str = Field(max_length=512)
+    library_display_name: str | None = Field(default=None, max_length=512)
     media_kind: str = Field(max_length=64)
     title: str = Field(max_length=512)
 
@@ -829,6 +830,7 @@ class _LibraryWork(_ClosedModel):
     dispositions: list[str]
     item: str
     library: str
+    library_display_name: str | None = Field(default=None, max_length=512)
     media_kind: str
     review_case_id: str | None
     summary: _LibraryWorkSummary | None = None
@@ -881,6 +883,7 @@ class _ReportDetailResponse(_ClosedModel):
     evidence_truncated: bool
     item: str = Field(max_length=512)
     library: str = Field(max_length=512)
+    library_display_name: str | None = Field(default=None, max_length=512)
     media_kind: str = Field(max_length=32)
     # What is wrong with the media, separate from what the evidence says about
     # the work. Bounded by the domain's own ceiling of one observation per kind
@@ -922,6 +925,7 @@ class _AttentionItem(_ClosedModel):
     detail_url: str
     item: str
     library: str
+    library_display_name: str | None = Field(default=None, max_length=512)
     media_kind: str
     notices: list[str]
     provenance: list[str]

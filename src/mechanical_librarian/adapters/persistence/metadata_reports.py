@@ -10,7 +10,7 @@ import stat
 import sys
 from _thread import RLock
 from collections.abc import Callable, Iterator
-from contextlib import AbstractContextManager, contextmanager
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from pathlib import Path
 from typing import cast
 from urllib.parse import quote
@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.persistence.binding import (
     _validate_connection_binding,
     _validate_delete_mode_header,
 )
+from mechanical_librarian.adapters.persistence.catalogue import CatalogueReadAdmission
 from mechanical_librarian.adapters.persistence.cover_considerations import (
     SQLiteCoverConsiderationRepository,
 )
@@ -92,6 +93,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
 )
 from mechanical_librarian.application.catalogue import (
     CatalogueEntry,
+    CatalogueError,
 )
 from mechanical_librarian.application.cover_consideration import (
     cover_currentness_from_facts,
@@ -111,6 +113,7 @@ from mechanical_librarian.application.review_pipeline import (
 from mechanical_librarian.application.review_web import (
     CoverReadObservation,
     CurrentReviewCaseSnapshot,
+    LibraryLabels,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
@@ -190,6 +193,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self._authority = authority
         self._owns_authority = owns_authority
         self.identity = identity
+        self._library_catalogue: CatalogueReadAdmission | None = None
         self._recovery_outbox = SQLiteRecoveryOutboxRepository(connection)
         self._proposal_sets = SQLiteProposalSetRepository(
             connection,
@@ -460,22 +464,28 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             list_current_review_case_documents=(
-                lambda search, limit, offset, attention: (
+                lambda search, limit, offset, attention, library_labels: (
                     self.list_current_review_case_documents(
-                        search, limit, offset, attention
+                        search, limit, offset, attention, library_labels
                     )
                 )
             ),
             count_current_review_cases=(
-                lambda search: self.count_current_review_cases(search)
+                lambda search, library_labels: self.count_current_review_cases(
+                    search, library_labels
+                )
             ),
             list_current_attention_documents=(
-                lambda search, limit, offset: self.list_current_attention_documents(
-                    search, limit, offset
+                lambda search, limit, offset, library_labels: (
+                    self.list_current_attention_documents(
+                        search, limit, offset, library_labels
+                    )
                 )
             ),
             count_current_attention_fields=(
-                lambda search: self.count_current_attention_fields(search)
+                lambda search, library_labels: self.count_current_attention_fields(
+                    search, library_labels
+                )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
         )
@@ -1440,17 +1450,40 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         limit: int,
         offset: int,
         attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> ReviewLibrarySnapshot:
-        with self.browse_observation():
-            return self._review_projections.read_review_library(
-                search, limit, offset, attention
-            )
+        try:
+            with (
+                self.browse_observation(),
+                (
+                    self._library_catalogue.attach(self._connection)
+                    if self._library_catalogue is not None
+                    else nullcontext()
+                ),
+            ):
+                return self._review_projections.read_review_library(
+                    search, limit, offset, attention, library_labels
+                )
+        except (CatalogueError, OSError, sqlite3.Error) as error:
+            raise MetadataReportError("review library is unavailable") from error
+
+    def bind_library_catalogue(self, path: Path, fingerprint: str) -> None:
+        if self._library_catalogue is not None:
+            raise MetadataReportError("library catalogue is already bound")
+        self._library_catalogue = CatalogueReadAdmission(path, fingerprint)
+        self._review_cases.catalogue = self._library_catalogue
 
     def read_review_attention(
-        self, search: str | None, limit: int, offset: int
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot:
         with self.browse_observation():
-            return self._review_projections.read_review_attention(search, limit, offset)
+            return self._review_projections.read_review_attention(
+                search, limit, offset, library_labels
+            )
 
     def read_current_report_document(
         self, connection: str, library: str, item: str
@@ -1465,29 +1498,44 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         limit: int,
         offset: int,
         attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> tuple[tuple[str | None, str], ...]:
         with self.browse_observation():
             return self._review_cases.list_current_review_case_documents(
-                search, limit, offset, attention
+                search, limit, offset, attention, library_labels
             )
 
-    def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
+    def count_current_review_cases(
+        self,
+        search: str | None,
+        library_labels: LibraryLabels = (),
+    ) -> tuple[int, int]:
         with self.browse_observation():
-            return self._review_cases.count_current_review_cases(search)
+            return self._review_cases.count_current_review_cases(search, library_labels)
 
     def list_current_attention_documents(
-        self, search: str | None, limit: int, offset: int
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
     ) -> tuple[
         tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
     ]:
         with self.browse_observation():
             return self._review_cases.list_current_attention_documents(
-                search, limit, offset
+                search, limit, offset, library_labels
             )
 
-    def count_current_attention_fields(self, search: str | None) -> int:
+    def count_current_attention_fields(
+        self,
+        search: str | None,
+        library_labels: LibraryLabels = (),
+    ) -> int:
         with self.browse_observation():
-            return self._review_cases.count_current_attention_fields(search)
+            return self._review_cases.count_current_attention_fields(
+                search, library_labels
+            )
 
     def shadow_posture(self) -> str:
         return self._metadata_policy.shadow_posture()
@@ -2194,6 +2242,8 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._reports.artifact_is_referenced(digest)
 
     def close(self) -> None:
+        if self._library_catalogue is not None:
+            self._library_catalogue.close()
         if self._owns_authority and self._admission is not None:
             self._admission.close()
         try:

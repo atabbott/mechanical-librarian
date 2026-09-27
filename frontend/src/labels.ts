@@ -1,3 +1,5 @@
+import type { EvidenceRole } from './api/http'
+
 const ownerFieldLabels: Record<string, string> = {
   isbn_creator_supported_title: 'ISBN and author evidence support this title',
   isbn_title_material_conflict:
@@ -115,3 +117,10 @@ export const automaticRefusalReasons: Readonly<Record<string, string>> = {
   series_provider_failure_work: 'A contributing work lookup did not supply usable evidence.',
   series_provider_failure_asin: 'A contributing ASIN lookup did not supply usable evidence.',
 }
+
+export const evidenceRoleLabel = (role: EvidenceRole) =>
+  ({
+    local_presence: 'Local presence',
+    external_corroboration: 'External corroboration',
+    external_observation: 'External observation',
+  })[role]

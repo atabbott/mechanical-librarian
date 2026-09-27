@@ -1632,3 +1632,18 @@ Explanatory reads do not compile reports; selected-value effect validation and
 explicit draft preview retain authoritative compilation. Snapshot-consistent
 current suspension does not rewrite an immutable recorded cause. Invalid records
 fail closed. **Clean rebuild required**; no adoption or historical rewriting.
+
+
+### Library catalogue identity reads
+
+Library may attach the app-owned retained catalogue read-only to name terminal
+preparation failures. Exact schema and integrity admission happens once per
+owning review repository lifetime. Each short attachment checks retained file
+and directory identity and the schema version before and after the existing
+read snapshot, then detaches after commit or rollback. Missing catalogues are
+not created; an admitted file that disappears or changes is refused until
+close and reopen. Ordinary SQLite WAL/SHM coordination is permitted; logical
+catalogue writes through this read path are not. Identity joins require the
+current configured fingerprint, current catalogue generation and all target
+keys. Page and count observe consistent per-store snapshots, not an atomic
+cross-file publication or cross-request pagination guarantee.

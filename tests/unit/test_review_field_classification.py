@@ -208,7 +208,8 @@ def test_attention_continues_after_two_contradictory_batches() -> None:
         def __init__(self) -> None:
             self.offsets: list[int] = []
 
-        def read_review_attention(self, search, limit, offset):
+        def read_review_attention(self, search, limit, offset, library_labels=()):
+            del library_labels  # These fixtures isolate pagination and read failure.
             self.offsets.append(offset)
             rows = tuple(
                 ("case", "report", f"invalid-{index}", 1, None, None, False)
@@ -230,15 +231,18 @@ def test_attention_continues_after_two_contradictory_batches() -> None:
 
 def test_attention_fetch_failure_remains_unavailable() -> None:
     class Repository:
-        def read_review_attention(self, search, limit, offset):
+        def read_review_attention(self, search, limit, offset, library_labels=()):
+            del library_labels  # These fixtures isolate pagination and read failure.
             raise RuntimeError("offline")
 
-    with pytest.raises(ReviewWebError, match="unavailable"):
+    with pytest.raises(ReviewWebError, match="unavailable") as failure:
         BrowseReviewLibrary(Repository()).attention(
             search=None,
             limit=1,
             cursor=None,
         )
+    assert type(failure.value.__cause__) is RuntimeError
+    assert str(failure.value.__cause__) == "offline"
 
 
 def test_attention_backfills_a_valid_successor_and_ends_honestly() -> None:
@@ -249,7 +253,8 @@ def test_attention_backfills_a_valid_successor_and_ends_honestly() -> None:
     )
 
     class Repository:
-        def read_review_attention(self, search, limit, offset):
+        def read_review_attention(self, search, limit, offset, library_labels=()):
+            del library_labels  # These fixtures isolate pagination and read failure.
             return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
     browse = BrowseReviewLibrary(Repository())
@@ -271,7 +276,8 @@ def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total() -> No
     )
 
     class Repository:
-        def read_review_attention(self, search, limit, offset):
+        def read_review_attention(self, search, limit, offset, library_labels=()):
+            del library_labels  # These fixtures isolate pagination and read failure.
             return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
     with patch(
@@ -300,7 +306,8 @@ def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion() -> 
         def __init__(self) -> None:
             self.offsets: list[int] = []
 
-        def read_review_attention(self, search, limit, offset):
+        def read_review_attention(self, search, limit, offset, library_labels=()):
+            del library_labels  # These fixtures isolate pagination and read failure.
             self.offsets.append(offset)
             return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
@@ -324,7 +331,8 @@ def test_attention_terminal_contradictory_lookahead_has_no_empty_successor() -> 
     )
 
     class Repository:
-        def read_review_attention(self, search, limit, offset):
+        def read_review_attention(self, search, limit, offset, library_labels=()):
+            del library_labels  # These fixtures isolate pagination and read failure.
             return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 
     with patch(
@@ -352,7 +360,8 @@ def test_attention_visible_successor_remains_at_next_cursor() -> None:
         def __init__(self) -> None:
             self.offsets: list[int] = []
 
-        def read_review_attention(self, search, limit, offset):
+        def read_review_attention(self, search, limit, offset, library_labels=()):
+            del library_labels  # These fixtures isolate pagination and read failure.
             self.offsets.append(offset)
             return ReviewAttentionSnapshot(rows[offset : offset + limit], len(rows))
 

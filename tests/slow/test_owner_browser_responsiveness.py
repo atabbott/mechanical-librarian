@@ -322,7 +322,7 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     "choice_confirmation",
                                     lambda page=page: page.get_by_role(
                                         "button",
-                                        name="Current cover Current cover Same edition Keep the cover currently held by the local library. No recommendation retained",
+                                        name="Choose Current cover",
                                         exact=True,
                                     ).click(),
                                     lambda page=page: expect(

@@ -360,6 +360,7 @@ def _server(
     port: ReservedPort,
     transport_mode: str = "direct",
     cover: bool = False,
+    configured_cover_reviewer: bool = False,
     sole_cover_timeout: bool = False,
     stale_cover_successor: bool = False,
     stale_cover_same_case: bool = False,
@@ -369,6 +370,7 @@ def _server(
     synopsis_destination: str = "automatic",
     ebook_synopsis: bool = False,
     isbn_fixture: bool = False,
+    library_identity_fixture: bool = False,
     isbn_destination: str = "automatic",
     series_fixture: str | None = None,
     series_destination: str = "automatic",
@@ -398,6 +400,7 @@ def _server(
         "retry_succeeded",
     ]
     | None = None,
+    long_descriptions: bool = False,
     provider_recovery: bool = False,
     retained_decoration: tuple[str, bool] | None = None,
     retained_component_text: str | None = None,
@@ -428,6 +431,20 @@ def _server(
                 )
             }
         )
+    if library_identity_fixture and settings_document is not None:
+        settings_document = settings_document.model_copy(
+            update={
+                "libraries": [
+                    settings_document.libraries[0].model_copy(
+                        update={
+                            "name": "audio",
+                            "media_kind": "audiobook",
+                            "display_name": "Listening Room",
+                        }
+                    )
+                ]
+            }
+        )
     settings = None
     if settings_document is not None:
         connection = sqlite3.connect(database)
@@ -453,6 +470,40 @@ def _server(
         # other case exists, because confirmation requires a settled
         # transition.
         _publish_audiobook_tranche_case(repository)
+    origin = (
+        f"http://review-transport.test:{port.number}"
+        if transport_mode == "insecure"
+        else f"http://127.0.0.1:{port.number}"
+        if transport_mode == "http"
+        else f"https://127.0.0.1:{port.number}"
+    )
+    review_configuration = ReviewWebConfiguration(
+        tls_certificate_file=str(certificate) if transport_mode == "direct" else None,
+        tls_private_key_file=str(key) if transport_mode == "direct" else None,
+        trusted_proxy_ips=("127.0.0.1",) if transport_mode == "proxy" else (),
+        canonical_origin=origin,
+        owner_password_hash_file=str(hash_path),
+    )
+    reviewer_access: ReviewerAccessOperations | Mock | None = None
+    if configured_cover_reviewer:
+        from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+        from tests.unit.test_reviewer_access_application import _Auth, _OpenRouter
+
+        assert cover
+        reviewer_access = ReviewerAccessOperations(
+            repository.reviewer_access_store(),
+            codex_auth=_Auth("usable"),
+            codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+            codex_binding=lambda: (
+                "synthetic-contained-model",
+                b"synthetic-cover-profile",
+                lambda *_args: "{}",
+            ),
+            openrouter_factory=lambda key, model: _OpenRouter(key, model, []),
+        )
+        reviewer_access.configure_openrouter(
+            expected_revision=1, api_key="synthetic-key", model="synthetic/cover-a"
+        )
     cover_considerations = None
     if cover:
         # Real pixel dimensions, because containment is a property of the
@@ -523,21 +574,49 @@ def _server(
         ):
             if source.artifact is not None:
                 artifacts.stage(source.artifact, f"original-{index}".encode(), payload)
-        cover_considerations = CoverConsiderationService(
-            repository,
-            read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
-                next(
-                    source.artifact.preview_digest
-                    for source in sources
-                    if source.artifact is not None
-                    and source.artifact.artifact_id == artifact_id
-                )
-            ),
-            read_preview_digest=artifacts.read_preview_digest,
-            clock=lambda: 1_000,
-            bind_policy=repository.bind_current_cover_authority,
-        )
-        cover_considerations.update_policy(CoverPolicy())
+        if configured_cover_reviewer:
+            from mechanical_librarian.bootstrap.composition import (
+                _compose_cover_considerations,
+            )
+
+            assert isinstance(reviewer_access, ReviewerAccessOperations)
+            cover_considerations = _compose_cover_considerations(
+                repository,
+                database.parent / "cover-artifacts",
+                review_configuration,
+                reviewer_access,
+            )
+        else:
+            cover_considerations = CoverConsiderationService(
+                repository,
+                read_preview=lambda artifact_id, _variant: (
+                    artifacts.read_preview_digest(
+                        next(
+                            source.artifact.preview_digest
+                            for source in sources
+                            if source.artifact is not None
+                            and source.artifact.artifact_id == artifact_id
+                        )
+                    )
+                ),
+                read_preview_digest=artifacts.read_preview_digest,
+                clock=lambda: 1_000,
+                bind_policy=repository.bind_current_cover_authority,
+                reviewer_dispatch=(
+                    reviewer_access.dispatch_cover_observation
+                    if reviewer_access
+                    else None
+                ),
+                reviewer_identity=(
+                    reviewer_access.current_cover_observation_identity
+                    if reviewer_access
+                    else None
+                ),
+                reviewer_revision_current=(
+                    reviewer_access.revision_is_current if reviewer_access else None
+                ),
+            )
+            cover_considerations.update_policy(CoverPolicy())
     elif retained_decoration is not None:
         from tests.support.proposal_evidence import retained_decoration_report
 
@@ -599,6 +678,89 @@ def _server(
             repository.persist_shadow_outcome(admitted, 4)
         transition = repository.metadata_policy_transition()
         assert transition is not None and transition.state == "completed"
+    elif library_identity_fixture:
+        from mechanical_librarian.adapters.persistence.catalogue import open_catalogue
+        from mechanical_librarian.domain.metadata_policy import (
+            human_review_destinations,
+        )
+        from tests.support.audiobook_reports import (
+            publish_audiobook_preview,
+            synthetic_audiobook_isbn_reason_report,
+        )
+
+        report = synthetic_audiobook_isbn_reason_report("conflict")
+        case_id, identity_policy = publish_audiobook_preview(
+            repository,
+            report,
+            ("isbn_form",),
+            selected_options={"isbn_form": "preserve_exact"},
+        )
+        proposal_set = evaluate_report(
+            report,
+            identity_policy.resolved_id,
+            human_review_destinations(identity_policy),
+        )
+        repository.persist_shadow_outcome(case_id, 4)
+        sibling = MetadataReport.create(
+            target=TargetFacts(
+                report.target.connection,
+                report.target.library,
+                "same-title-sibling",
+                tuple(
+                    replace(field, value=("Another Author",))
+                    if field.destination is TargetDestination.AUTHORS
+                    else field
+                    for field in report.target.fields
+                ),
+            ),
+            file=report.file,
+            local_claims=(),
+            local_reasons=report.local_reasons,
+            providers=(),
+            audio=report.audio,
+        )
+        repository.publish(sibling, lambda: True)
+        sibling_proposal = evaluate_report(
+            sibling,
+            identity_policy.resolved_id,
+            human_review_destinations(identity_policy),
+        )
+        repository.publish_proposal(sibling_proposal)
+        repository.admit_review_case(sibling_proposal)
+        entry = CatalogueEntry(
+            "primary",
+            report.target.library,
+            "library",
+            "terminal-item",
+            1,
+            "Retained Terminal Title",
+            ("Retained Writer",),
+            True,
+            False,
+            "singular-supported",
+            "b" * 64,
+            "/synthetic.epub",
+            "epub",
+            "/media",
+        )
+        catalogue_path = database.parent / "catalogue.sqlite"
+        with closing(open_catalogue(catalogue_path, create=True)) as catalogue:
+            catalogue.acquire_refresh()
+            generation = catalogue.publish("a" * 64, (entry,))
+        repository.bind_library_catalogue(catalogue_path, "a" * 64)
+        repository.request_review_scan(
+            "primary", report.target.library, "library", "f" * 64, 10
+        )
+        discovery = repository.claim_review_pipeline_action(11)
+        assert discovery is not None
+        repository.complete_review_discovery(
+            discovery, generation, "a" * 64, (entry,), 12
+        )
+        action = repository.claim_review_pipeline_action(13)
+        assert action is not None
+        repository.fail_review_pipeline_action(
+            action, "unreadable_media", False, 14, "track_1"
+        )
     elif isbn_fixture:
         from mechanical_librarian.domain.metadata_policy import (
             human_review_destinations,
@@ -911,13 +1073,6 @@ def _server(
         _publish_audiobook(repository, chapter_runtime)
     if audiobook_case:
         _publish_audiobook_case(repository, chapter_runtime)
-    origin = (
-        f"http://review-transport.test:{port.number}"
-        if transport_mode == "insecure"
-        else f"http://127.0.0.1:{port.number}"
-        if transport_mode == "http"
-        else f"https://127.0.0.1:{port.number}"
-    )
     listener_port = ReservedPort() if transport_mode == "proxy" else port
     session_store = SQLiteReviewSessionRepository.open(
         database.with_name("review-sessions.sqlite")
@@ -935,7 +1090,8 @@ def _server(
         ),
         openrouter=ReviewerEngineStatus(engine="openrouter", state="unconfigured"),
     )
-    reviewer_access: ReviewerAccessOperations | Mock = unconfigured_reviewer
+    if reviewer_access is None:
+        reviewer_access = unconfigured_reviewer
     if description_fixture is not None:
         from types import SimpleNamespace
 
@@ -958,6 +1114,49 @@ def _server(
         report, category, option, _ = _automatic_no_change_inputs(
             "description_preserved"
         )
+        if long_descriptions:
+            from tests.support.description_advice import _description_candidate
+
+            current_description = (
+                (
+                    "The local catalogue describes a quiet coastal archive. "
+                    "Its keeper records the letters of families separated by the sea. "
+                )
+                * 9
+            ).strip()
+            proposed_description = (
+                (
+                    "The publisher follows a travelling historian through mountain towns. "
+                    "Each recovered notebook changes her understanding of the journey. "
+                )
+                * 10
+            ).strip()
+            report = MetadataReport.create(
+                target=replace(
+                    report.target,
+                    fields=tuple(
+                        replace(field, value=current_description)
+                        if field.destination is TargetDestination.DESCRIPTION
+                        else field
+                        for field in report.target.fields
+                    ),
+                ),
+                file=report.file,
+                local_claims=report.local_claims,
+                local_reasons=report.local_reasons,
+                providers=tuple(
+                    replace(
+                        provider,
+                        candidates=(
+                            _description_candidate(
+                                "catalogue", "edition-1", "work-1", proposed_description
+                            ),
+                        ),
+                    )
+                    for provider in report.providers
+                ),
+                cover_sources=report.cover_sources,
+            )
         if description_fixture == "no_alternatives":
             report = MetadataReport.create(
                 target=report.target,
@@ -1031,6 +1230,14 @@ def _server(
                 if description_fixture == "no_change"
                 else "A synthetic reader explores an old library.\nIts stories bring distant communities together. <strong>Authored text stays text.</strong>"
             )
+            if long_descriptions:
+                text = (
+                    (
+                        "An archivist and a historian uncover the lives behind a scattered collection. "
+                        "Their search connects distant communities through stories of memory and belonging. "
+                    )
+                    * 11
+                ).strip()
             if len(description_calls) > 1:
                 text = "A new authored description from the explicit retry."
             return canonical_json(
@@ -1223,15 +1430,7 @@ def _server(
         )
     app = create_transport_test_app(
         repository,
-        ReviewWebConfiguration(
-            tls_certificate_file=str(certificate)
-            if transport_mode == "direct"
-            else None,
-            tls_private_key_file=str(key) if transport_mode == "direct" else None,
-            trusted_proxy_ips=("127.0.0.1",) if transport_mode == "proxy" else (),
-            canonical_origin=origin,
-            owner_password_hash_file=str(hash_path),
-        ),
+        review_configuration,
         session_store=session_store,
         clock=lambda: 1_000,
         close_repository=True,
@@ -2714,9 +2913,20 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                 current_comparison.get_by_role(
                     "button", name="Evidence for Alternative 1 cover"
                 ).click()
-                current_comparison.get_by_label("Alternative 1 cover evidence").press(
-                    "Enter"
+                disclosure = current_comparison.get_by_role(
+                    "button", name="Evidence for Alternative 1 cover", exact=True
                 )
+                disclosure.focus()
+                assert disclosure.evaluate("node => document.activeElement === node")
+                disclosure.press("Enter")
+                expect(disclosure).to_have_attribute("aria-expanded", "false")
+                assert decision_statuses == [409]
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_have_count(0)
+                current_comparison.get_by_role(
+                    "button", name="Choose Alternative 1 cover", exact=True
+                ).click()
                 page.get_by_role("heading", name="Review complete").wait_for()
                 assert decision_statuses == [409, 200]
                 assert errors and all("409" in error for error in errors), errors
@@ -2871,8 +3081,187 @@ _COVER_CONTAINMENT = """(selector) => {
 # The first two are the incumbent and the embedded candidate. #864's prepared
 # Library comparison keeps those alongside every qualified replacement, so
 # the widest ratio spread lands together on the surface with the least room.
-_COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280))
+_COVER_SHAPES = ((120, 480), (320, 140), (200, 300), (280, 280), (300, 200))
 _LIBRARY_SHAPES = _COVER_SHAPES
+
+
+@pytest.mark.parametrize("identity", [False, True])
+@pytest.mark.parametrize("dark", [False, True])
+def test_library_description_controls_preserve_words_at_enlarged_text(
+    identity: bool, dark: bool
+) -> None:
+    """Text enlargement keeps each control word intact without page overflow."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, reduced_motion="reduce"
+            )
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    description_fixture=None if identity else "ready",
+                    library_identity_fixture=identity,
+                    long_descriptions=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                if dark:
+                    page.get_by_role("button", name="Use dark mode").click()
+                page.goto(
+                    f"{origin}/library?lens=all&preview={case_id}&field={'isbn' if identity else 'description'}"
+                )
+                page.locator(".recorded-field-observations").wait_for()
+                if not identity:
+                    page.get_by_role(
+                        "button",
+                        name="Evidence for Current value description",
+                        exact=True,
+                    ).click()
+                    expect(page.locator("#choice-evidence-current")).to_contain_text(
+                        "Local library recordLocal presence"
+                    )
+                for width, size in (
+                    (1440, "100%"),
+                    (390, "100%"),
+                    (320, "100%"),
+                    (1440, "200%"),
+                    (320, "200%"),
+                ):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.evaluate(
+                        "size => document.documentElement.style.fontSize = size", size
+                    )
+                    page.evaluate(
+                        "() => new Promise(resolve => requestAnimationFrame(() => "
+                        "requestAnimationFrame(resolve)))"
+                    )
+                    words = page.evaluate("""() => {
+                      const targets = [
+                        ...document.querySelectorAll('.lenses a'),
+                        ...document.querySelectorAll('.selected-work-header h2, .recorded-field-observations h3, .context-value dd'),
+                        ...document.querySelectorAll('.description-value button'),
+                        ...document.querySelectorAll('#choice-evidence-current li strong, #choice-evidence-current li > span, #choice-evidence-current li p'),
+                        ...document.querySelectorAll('.description-choice-content + .choice-select strong'),
+                      ].filter(node => node.getClientRects().length);
+                      return targets.flatMap(node => {
+                        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+                        const result = [];
+                        while (walker.nextNode()) {
+                          const text = walker.currentNode;
+                          for (const match of text.textContent.matchAll(/\\S+/g)) {
+                            const range = document.createRange();
+                            range.setStart(text, match.index);
+                            range.setEnd(text, match.index + match[0].length);
+                            result.push({word: match[0], lines: new Set([...range.getClientRects()].map(rect => rect.top)).size});
+                          }
+                        }
+                        return result;
+                      });
+                    }""")
+                    assert words and all(word["lines"] == 1 for word in words), (
+                        width,
+                        size,
+                        words,
+                    )
+                    assert (
+                        page.evaluate("document.documentElement.scrollWidth") <= width
+                    )
+                if not identity:
+                    disclosure = page.get_by_role(
+                        "button", name="Read full description"
+                    ).first
+                    disclosure.click()
+                    expect(
+                        page.get_by_role("button", name="Read full description")
+                    ).to_have_count(2)
+                    expect(
+                        page.get_by_role("button", name="Show less description")
+                    ).to_have_count(1)
+                    expect(
+                        page.get_by_role("button", name="Choose current description")
+                    ).to_have_attribute("aria-pressed", "true")
+                    expect(
+                        page.get_by_role("heading", name="Review complete")
+                    ).to_have_count(0)
+            browser.close()
+
+
+def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
+    """Real reviewer configuration and dispatch reach the Library retry control."""
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD), encoding="utf-8")
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(ignore_https_errors=True)
+            page = context.new_page()
+            with (
+                closing(ReservedPort()) as port,
+                _server(
+                    database=root / "review.sqlite3",
+                    hash_path=hash_path,
+                    certificate=certificate,
+                    key=key,
+                    port=port,
+                    cover=True,
+                    configured_cover_reviewer=True,
+                ) as (origin, case_id),
+                _closing_context(context),
+            ):
+                _login(page, origin)
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                retry = page.get_by_role("button", name="Retry advisory review")
+                expect(retry).to_be_enabled()
+                with page.expect_response(
+                    lambda response: response.url.endswith(
+                        "/cover-considerations/retry"
+                    )
+                ) as response:
+                    retry.click()
+                assert response.value.status == 200
+                expect(retry).to_be_enabled()
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_have_count(0)
+                assert (
+                    page.locator(".library-cover-card[aria-pressed='true']").count()
+                    == 0
+                )
+                page.goto(f"{origin}/settings?group=reviewer")
+                page.get_by_role("button", name="Continue without a reviewer").click()
+                page.get_by_text("No reviewer", exact=True).wait_for()
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                page.get_by_role("button", name="Prepare cover comparison").click()
+                expect(retry).to_have_count(0)
+                expect(page.get_by_text("1 remaining · field 1 of 1")).to_be_visible()
+                library = page.request.get(f"{origin}/api/v1/library?lens=all").json()
+                attention = page.request.get(f"{origin}/api/v1/attention").json()
+                assert library["counts"]["needs_attention"] == 1, library
+                assert attention["total"] == 1, attention
+                page.get_by_role(
+                    "button", name="Choose Alternative 1 cover", exact=True
+                ).click()
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_be_visible()
+            browser.close()
 
 
 def test_protected_cover_comparison_contains_every_image_without_cropping() -> None:
@@ -2974,6 +3363,44 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                     shapes=_LIBRARY_SHAPES,
                 )
 
+                # A scrolled pointer must hit disclosure, never a sticky choice
+                # covering it. Keyboard-only tests cannot detect this overlap.
+                disclosure = page.get_by_role(
+                    "button", name="Evidence for Current cover", exact=True
+                )
+                disclosure.evaluate(
+                    "node => window.scrollBy(0, node.getBoundingClientRect().top - 450)"
+                )
+                bounds = disclosure.bounding_box()
+                assert bounds is not None
+                page.mouse.click(
+                    bounds["x"] + bounds["width"] / 2,
+                    bounds["y"] + bounds["height"] / 2,
+                )
+                expect(disclosure).to_have_attribute("aria-expanded", "true")
+                expect(
+                    page.get_by_role("heading", name="Review complete")
+                ).to_have_count(0)
+                assert (
+                    page.locator(".library-cover-card[aria-pressed='true']").count()
+                    == 0
+                )
+                cards = page.locator(".library-cover-gallery .cover-choice")
+                assert cards.count() == 4
+                boxes = [cards.nth(index).bounding_box() for index in range(4)]
+                assert all(box is not None for box in boxes)
+                first, second, third, last = boxes
+                assert first is not None and second is not None
+                assert third is not None and last is not None
+                assert last["y"] >= max(
+                    box["y"] + box["height"] for box in (first, second, third)
+                )
+                current_box = page.locator(
+                    ".library-cover-pinned > aside .cover-choice"
+                ).bounding_box()
+                assert current_box is not None
+                assert current_box["height"] > first["height"]
+
                 # 200% zoom is a halved CSS-pixel viewport at twice the device
                 # scale, which is exactly the layout the owner gets when they
                 # zoom a 1440x900 window to 200%.
@@ -3007,31 +3434,98 @@ def test_protected_cover_comparison_contains_every_image_without_cropping() -> N
                 )
                 expect(page.locator(".cover-track-hint")).to_be_visible()
 
-                track.evaluate("node => { node.scrollLeft = 0 }")
-                last_choice = track.locator(".cover-choice").last
-                last_choice.get_by_role("button").first.focus()
-                forward_scroll = cast(
-                    "float", track.evaluate("node => node.scrollLeft")
-                )
-                assert forward_scroll > 0
-                assert last_choice.evaluate(
-                    "node => { const track = node.closest('.library-cover-pinned, "
-                    ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
-                    "const bounds = track.getBoundingClientRect(); return choice.left >= "
-                    "bounds.left - 1 && choice.right <= bounds.right + 1 }"
-                )
-                first_choice = track.locator(".cover-choice").first
-                first_choice.get_by_role("button").first.focus()
-                reverse_scroll = cast(
-                    "float", track.evaluate("node => node.scrollLeft")
-                )
-                assert reverse_scroll < forward_scroll
-                assert first_choice.evaluate(
-                    "node => { const track = node.closest('.library-cover-pinned, "
-                    ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
-                    "const bounds = track.getBoundingClientRect(); return choice.left >= "
-                    "bounds.left - 1 && choice.right <= bounds.right + 1 }"
-                )
+                for width, size in ((390, "100%"), (390, "200%"), (320, "200%")):
+                    page.set_viewport_size({"width": width, "height": 844})
+                    page.evaluate(
+                        "size => document.documentElement.style.fontSize = size", size
+                    )
+                    track.evaluate("node => { node.scrollLeft = 0 }")
+                    # Unconfirmed choices remain visible but correctly disabled.
+                    # Reach the last actual disclosure, not a disabled choice button.
+                    assert track.locator(".cover-choice.is-unconfirmed").count() > 0
+                    last_choice = track.locator(
+                        ".cover-choice:has(.choice-evidence-toggle)"
+                    ).last
+                    focus_control = last_choice.locator(".choice-evidence-toggle")
+                    assert focus_control.is_enabled()
+                    focus_control.focus()
+                    assert focus_control.evaluate(
+                        "node => document.activeElement === node"
+                    )
+                    forward_scroll = cast(
+                        "float", track.evaluate("node => node.scrollLeft")
+                    )
+                    assert forward_scroll > 0
+                    assert last_choice.evaluate(
+                        "node => { const track = node.closest('.library-cover-pinned, "
+                        ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
+                        "const bounds = track.getBoundingClientRect(); return choice.left >= "
+                        "bounds.left - 1 && choice.right <= bounds.right + 1 }"
+                    )
+                    first_choice = track.locator(".cover-choice").first
+                    first_choice.get_by_role("button").first.focus()
+                    reverse_scroll = cast(
+                        "float", track.evaluate("node => node.scrollLeft")
+                    )
+                    assert reverse_scroll < forward_scroll
+                    assert first_choice.evaluate(
+                        "node => { const track = node.closest('.library-cover-pinned, "
+                        ".library-cover-layout'); const choice = node.getBoundingClientRect(); "
+                        "const bounds = track.getBoundingClientRect(); return choice.left >= "
+                        "bounds.left - 1 && choice.right <= bounds.right + 1 }"
+                    )
+
+                for width in (1440, 320):
+                    page.set_viewport_size({"width": width, "height": 900})
+                    page.wait_for_function(
+                        "width => window.innerWidth === width && "
+                        "window.matchMedia('(max-width: 700px)').matches === (width <= 700)",
+                        arg=width,
+                    )
+                    # Viewport changes reach responsive layout on a rendering frame.
+                    # Measure settled text, rather than the previous desktop tracks.
+                    page.evaluate(
+                        "() => new Promise(resolve => requestAnimationFrame(() => "
+                        "requestAnimationFrame(resolve)))"
+                    )
+                    words = page.evaluate("""() => {
+                      const targets = document.querySelectorAll(
+                        '.library-cover-card > span:last-child, .cover-choice .choice-evidence, .cover-choice .choice-evidence-toggle, .cover-observation');
+                      return [...targets].flatMap(node => {
+                        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+                        const result = [];
+                        while (walker.nextNode()) {
+                          const text = walker.currentNode;
+                          for (const match of text.textContent.matchAll(/\\S+/g)) {
+                            const range = document.createRange();
+                            range.setStart(text, match.index);
+                            range.setEnd(text, match.index + match[0].length);
+                            const rects = [...range.getClientRects()].map(rect => rect.toJSON());
+                            const parent = text.parentElement;
+                            const style = getComputedStyle(parent);
+                            result.push({word: match[0], lines: new Set(rects.map(rect => rect.top)).size,
+                              rects, tag: parent.tagName, cls: parent.className,
+                              parent: parent.getBoundingClientRect().toJSON(),
+                              card: parent.closest('.cover-choice')?.getBoundingClientRect().toJSON(),
+                              font: style.font, lineHeight: style.lineHeight, padding: style.padding,
+                              columns: style.gridTemplateColumns, width: style.width});
+                          }
+                        }
+                        return result;
+                      });
+                    }""")
+                    assert words and all(word["lines"] == 1 for word in words), (
+                        width,
+                        [word for word in words if word["lines"] != 1],
+                        page.evaluate(
+                            """() => [...document.querySelectorAll('.library-cover-pinned, .cover-choice, .library-cover-card strong')].map(el => ({cls:el.className, width:el.getBoundingClientRect().width, font:getComputedStyle(el).fontSize, columns:getComputedStyle(el).gridAutoColumns}))"""
+                        ),
+                    )
+                    assert (
+                        page.evaluate("document.documentElement.scrollWidth") <= width
+                    )
+                page.evaluate("document.documentElement.style.fontSize = ''")
+                page.set_viewport_size({"width": 390, "height": 844})
 
                 assert errors == []
                 # A cover whose bytes never arrive keeps a bounded, labelled
@@ -3192,6 +3686,11 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                     ).first
                     started = time.monotonic()
                     if pointer:
+                        choice.evaluate(
+                            "node => node.addEventListener('pointerdown', () => { "
+                            "window.__decisionPointerScroll = window.scrollY }, "
+                            "{once: true, capture: true})"
+                        )
                         choice.click()
                     else:
                         choice.focus()
@@ -3240,7 +3739,18 @@ def test_recorded_decision_advances_without_whole_library_projection() -> None:
                 assert len(decision_responses) == 1, decision_responses
                 assert len(decision_requests) == 1, decision_requests
                 assert decision_requests[0]
-                assert page.evaluate("() => window.scrollY") == scroll_before
+                pointer_scroll = page.evaluate("() => window.__decisionPointerScroll")
+                assert type(pointer_scroll) in {int, float}
+                print(
+                    json.dumps(
+                        {
+                            "requested_scroll": scroll_before,
+                            "pointer_scroll": pointer_scroll,
+                        }
+                    ),
+                    flush=True,
+                )
+                assert page.evaluate("() => window.scrollY") == pointer_scroll
                 assert page.evaluate(
                     "() => document.activeElement?.matches('.decision-canvas button:not(:disabled)')"
                 )
@@ -5829,7 +6339,7 @@ def test_retained_decoration_is_visible_through_real_library(component, long_com
                         toggle_box = evidence.bounding_box()
                         panel_box = panel.bounding_box()
                         assert toggle_box is not None and panel_box is not None
-                        assert panel_box["y"] + panel_box["height"] <= toggle_box["y"]
+                        assert toggle_box["y"] + toggle_box["height"] <= panel_box["y"]
                         expect(proposed).to_have_attribute("aria-pressed", "false")
                         evidence.focus()
                         page.keyboard.press("Enter")

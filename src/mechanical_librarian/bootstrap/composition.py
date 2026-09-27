@@ -3240,6 +3240,9 @@ def compose_store_runtime_generation(
             for name, value in stored_credentials.items()
         }
         configuration = store_runtime_configuration(settings_view, bootstrap)
+        repository.bind_library_catalogue(
+            catalogue_path, batch_catalogue_fingerprint(configuration)
+        )
         review = configuration.review
         if review is None:
             raise ConfigurationError("review configuration is unavailable")
@@ -3726,6 +3729,9 @@ def run_review_server(
         active_review_application: ReviewApplication | None = None
         try:
             assert configuration is not None and review is not None
+            repository.bind_library_catalogue(
+                catalogue_path, batch_catalogue_fingerprint(configuration)
+            )
             credentials = _load_batch_credentials(
                 configuration,
                 {item.name for item in configuration.connections},

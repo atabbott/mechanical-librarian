@@ -35,7 +35,10 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 from mechanical_librarian.adapters.persistence.owner_settings import OwnerSettingsStore
 from mechanical_librarian.adapters.persistence.review_preparation import _FAILURE_CODES
 from mechanical_librarian.application.catalogue import CatalogueEntry
-from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    ReviewWebConfiguration,
+)
 from mechanical_librarian.application.operations import (
     OperationalStatus,
     support_preparation_incidents,
@@ -2082,8 +2085,12 @@ def test_composition_uses_one_application_owner_for_worker_threads(
         ),
         patch(
             "mechanical_librarian.bootstrap.composition.load_configuration_file",
-            return_value=SimpleNamespace(
-                review=configuration, connections=(), providers=(), libraries=()
+            return_value=ApplicationConfiguration(
+                review=configuration,
+                connections=(),
+                providers=(),
+                libraries=(),
+                mounts=(),
             ),
         ),
         patch(
@@ -2144,8 +2151,8 @@ def test_store_composition_fault_preserves_pending_restart_acknowledgement(
         tls_certificate_file="/synthetic/certificate.pem",
         tls_private_key_file="/synthetic/private-key.pem",
     )
-    configuration = SimpleNamespace(
-        review=review, connections=(), providers=(), libraries=()
+    configuration = ApplicationConfiguration(
+        review=review, connections=(), providers=(), libraries=(), mounts=()
     )
     tls = SimpleNamespace(
         certificate_file="/synthetic/certificate.pem",
@@ -2222,8 +2229,12 @@ def test_served_composition_keeps_automatic_safety_reachable(
         with (
             patch(
                 "mechanical_librarian.bootstrap.composition.load_configuration_file",
-                return_value=SimpleNamespace(
-                    review=configuration, connections=(), providers=(), libraries=()
+                return_value=ApplicationConfiguration(
+                    review=configuration,
+                    connections=(),
+                    providers=(),
+                    libraries=(),
+                    mounts=(),
                 ),
             ),
             patch(

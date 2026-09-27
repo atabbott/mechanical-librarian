@@ -242,6 +242,10 @@ class CurrentReviewCaseStore(Protocol):
     ) -> CurrentReviewCaseSnapshot: ...
 
 
+# One active-settings snapshot: connection, stable library name, display label.
+LibraryLabels = tuple[tuple[str, str, str], ...]
+
+
 class ReviewLibraryStore(Protocol):
     def read_review_library(
         self,
@@ -249,9 +253,14 @@ class ReviewLibraryStore(Protocol):
         limit: int,
         offset: int,
         attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> ReviewLibrarySnapshot: ...
     def read_review_attention(
-        self, search: str | None, limit: int, offset: int
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot: ...
     def read_current_report_document(
         self, connection: str, library: str, item: str
@@ -1283,6 +1292,7 @@ class BrowseReviewLibrary:
         search: str | None,
         limit: int,
         cursor: str | None,
+        library_labels: LibraryLabels = (),
     ) -> dict[str, object]:
         normalized = _review_search(search)
         if lens not in {"all", "needs_attention", "no_attention_needed"}:
@@ -1292,7 +1302,7 @@ class BrowseReviewLibrary:
         attention = None if lens == "all" else lens == "needs_attention"
         try:
             snapshot = self._repository.read_review_library(
-                normalized, bounded_limit + 1, offset, attention
+                normalized, bounded_limit + 1, offset, attention, library_labels
             )
             items = []
             for row in snapshot.rows[:bounded_limit]:
@@ -1359,6 +1369,7 @@ class BrowseReviewLibrary:
         search: str | None,
         limit: int,
         cursor: str | None,
+        library_labels: LibraryLabels = (),
     ) -> dict[str, object]:
         normalized = _review_search(search)
         bounded_limit = _review_limit(limit)
@@ -1376,7 +1387,7 @@ class BrowseReviewLibrary:
             raw_total: int | None = None
             for batch in range(2):
                 snapshot = self._repository.read_review_attention(
-                    normalized, bounded_limit + 1, scan_offset
+                    normalized, bounded_limit + 1, scan_offset, library_labels
                 )
                 raw_rows = snapshot.rows
                 if raw_total is None:
@@ -1925,6 +1936,9 @@ def _choice_evidence(
         "observation": _choice_observation(evidence),
         "role": "local_presence"
         if _choice_is_local(evidence)
+        else "external_observation"
+        if evidence["source"] == "identifier"
+        or evidence["provider"] not in PROVIDER_LABELS
         else "external_corroboration",
         "source": _choice_source_label(evidence),
     }
@@ -1952,9 +1966,11 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
     try:
         fact = json.loads(evidence["fact"] or "{}")
     except (TypeError, ValueError):
-        return "A retained observation supports this choice."
+        return "The retained observation has no readable value."
     if type(fact) is not dict:
-        return "A retained observation supports this choice."
+        return "The retained observation has no readable value."
+    if evidence["source"] == "identifier" and "relation" in fact:
+        return "Identifier relationship retained; no value observation is available."
     kind = cast(
         "dict[object, str]",
         {
@@ -1963,6 +1979,7 @@ def _choice_observation(evidence: dict[str, str | None]) -> str:
             "description": "Description",
             "duration": "Running time",
             "isbn": "ISBN",
+            "asin": "ASIN",
             "performance_type": "Performance",
             "publication_date": "Publication date",
             "series": "Series membership",
@@ -2015,7 +2032,7 @@ def _review_unselectable_evidence(
                     if unknown
                     else "Retained for review only; "
                 )
-                + f"not an eligible choice. Reference: {local_claim.reference}."
+                + "not an eligible choice."
             ),
         }
     for provider in report.providers:
@@ -2098,9 +2115,7 @@ def _review_unselectable_evidence(
                             f"{label}: {value}. Retained for review only; "
                             f"not an eligible choice. {reason}"
                             f"Scope: {claim.scope.value}; state: {claim.state.value}; "
-                            f"applicability: {claim.applicability}. "
-                            f"Source record: {_choice_text(candidate.identity)}. "
-                            f"Reference: {claim.reference}."
+                            f"applicability: {claim.applicability}."
                         ),
                     },
                 )
@@ -2203,6 +2218,10 @@ def _evidence_by_reference(
                 )
     for fact in cast("list[object]", data["identifier_evidence"]):
         assert type(fact) is dict
+        if fact.get("reference") in values:
+            # Identifier relationships annotate an admitted claim; they do not
+            # replace the actual value at that same retained reference.
+            continue
         add(
             "identifier",
             fact,
@@ -2612,8 +2631,18 @@ def _library_item(
                     or type(library) is not str
                 ):
                     raise ValueError
+                title = terminal.get("title", "Preparation unavailable")
+                authors = terminal.get("authors", [])
+                media_kind = terminal.get("media_kind", "unknown")
+                if (
+                    type(title) is not str
+                    or type(authors) is not list
+                    or any(type(author) is not str for author in authors)
+                    or type(media_kind) is not str
+                ):
+                    raise ValueError
                 return {
-                    "authors": [],
+                    "authors": authors,
                     "attention_count": 0,
                     "attention_state": "no_attention_needed",
                     "detail_url": None,
@@ -2621,9 +2650,9 @@ def _library_item(
                     "dispositions": ["terminal_failure"],
                     "item": item,
                     "library": library,
-                    "media_kind": "unknown",
+                    "media_kind": media_kind,
                     "review_case_id": None,
-                    "title": "Preparation unavailable",
+                    "title": title,
                     "work_id": work_id,
                     "preparation": {
                         "attempt": terminal["attempt"],

@@ -27,7 +27,10 @@ from mechanical_librarian.adapters.reviewers.codex_device_auth import (
     CodexDeviceAuthManager,
     CodexDeviceAuthState,
 )
-from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
+    ReviewWebConfiguration,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_pipeline import pipeline_scan_id
@@ -88,7 +91,7 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
         canonical_origin="https://library.invalid",
         owner_password_hash_file="/data/owner.hash",
     )
-    configuration = SimpleNamespace(review=review, libraries=())
+    configuration = ApplicationConfiguration((), (), (), (), review=review)
 
     with (
         patch.object(composition, "open_repository", return_value=repository),
@@ -164,6 +167,10 @@ def test_store_runtime_wires_one_owner_reviewer_authority_to_http_and_cover(
             operation_admission=OperationAdmission(),
         )
 
+    repository.bind_library_catalogue.assert_called_once_with(
+        Path("catalogue.sqlite3"),
+        composition.batch_catalogue_fingerprint(configuration),
+    )
     assert create_pipeline.call_args.args[4] is reviewer_access
     assert compose_application.call_args.kwargs["library_store"] is repository
     assert compose_application.call_args.kwargs["browse_observation"] is repository

@@ -7,6 +7,11 @@ human queue. When a person is needed, the product presents one durable,
 target-shaped decision surface backed by server-authoritative state.
 
 Terminal preparation failures remain visible in Library as noninteractive rows.
+When the current retained catalogue matches the configured library and complete
+work identity, those rows show its title, authors and format and are searchable
+before pagination. Missing identity stays an honest preparation fallback.
+Configured library display names are presentation labels; renaming one never
+changes a work, route or decision identity.
 
 ## Guided first run
 
@@ -156,7 +161,7 @@ contradiction. The displayed aggregate is the current deterministic policy
 result, not a union of historical risks or the verdict of one strongest row.
 
 The Library decision canvas projects that retained lineage onto each current or
-proposed value: local presence, named external corroboration, eligibility
+proposed value: local presence, named external corroboration, external observations, eligibility
 rationale, recommendation status, and any material limitation stay attached to
 the choice. `Recommended` appears only for an authoritative deterministic
 selection; otherwise the canvas explicitly records that there is no
@@ -176,6 +181,15 @@ link. Neither page exposes raw retained facts or internal event, decision,
 candidate, report, target, consideration, or reference identifiers. They have
 no legacy redirect or compatibility behavior. Durable cross-work diagnostics
 and history remain in Activity.
+
+Library also shows paginated, read-only Recorded observations for the selected
+field, separate from eligible choices. Incomplete reads retain continuation and
+retry controls. A choice counts each known corroborating authority once; the
+whole-work Sources ledger counts lookup attempts and retains every lane status.
+Long descriptions expand in one readable text block; choosing or revising a
+value uses a separate explicit control. Evidence disclosures never choose a
+value. Cover retry is offered only when current reviewer access permits it;
+historical failure alone is not a current capability.
 
 Evidence and History preserve the originating Library lens, bounded search,
 Library page cursor, Attention cursor and selected field through tab switches,

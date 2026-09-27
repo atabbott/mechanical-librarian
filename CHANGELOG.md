@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Find books by configured library names and retained titles or authors even
+  when preparation fails. Library shows actual field observations, distinct
+  source roles and truthful lookup status; long descriptions expand without
+  choosing, and evidence controls stay clear of text and covers. Reviewer retry
+  follows current capability (#1010).
+
 - Preserve precise automatic refusal reasons across restarts and show them in
   Library, Evidence and Policy preview. Expanded preview results follow the
   policy choices in document flow. Clean rebuild required (#1081).

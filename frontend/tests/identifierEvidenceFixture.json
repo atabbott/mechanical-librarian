@@ -805,6 +805,7 @@
       "connection": "primary",
       "item": "item-1",
       "library": "audio",
+      "library_display_name": "audio",
       "media_kind": "m4b",
       "title": "Synthetic Journey"
     },
@@ -816,13 +817,13 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
-        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audible-product-B000000002. Reference: provider_0c17fd8454d8cded359e2ad0aa7aff007ca275eb1527ada788a3dcb0344694c4."
+        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable."
       },
       {
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ISBN: 9780593135204. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown. Source record: audnexus-book-B000000002. Reference: provider_1cc10628ca1712ecbc28228be457622c2321f19e348091848cb6e49158c4ba94."
+        "observation": "ISBN: 9780593135204. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown."
       },
       {
         "destinations": ["title"],
@@ -834,7 +835,7 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audible",
-        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audible-product-B000000001. Reference: provider_36011ab5d005b4f4d2ce8a5554cd358b14faa3bbc34c1da1c56a6db0fea0501c."
+        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable."
       },
       {
         "destinations": ["narrators"],
@@ -846,7 +847,7 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audnexus-book-B000000001. Reference: provider_732cacaa908d33b4cc1d54d4acb394c78516f2ed66dcfdbd7ee6389472581668."
+        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable."
       },
       {
         "destinations": ["narrators"],
@@ -858,7 +859,7 @@
         "destinations": ["isbn"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ISBN: 9781250077004. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown. Source record: audnexus-book-B000000001. Reference: provider_8537575d1d60a6fca24731ce91262af05836f0db33a77f0d2ae487543c7c7af8."
+        "observation": "ISBN: 9781250077004. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: unknown."
       },
       {
         "destinations": ["narrators"],
@@ -888,7 +889,7 @@
         "destinations": ["asin"],
         "role": "external_observation",
         "source": "Audnexus",
-        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable. Source record: audnexus-book-B000000002. Reference: provider_f42fbcfc015b05af721e7cc6a9c45e63dc71c6c82829dabdd722036899783bcc."
+        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable."
       },
       {
         "destinations": ["narrators"],

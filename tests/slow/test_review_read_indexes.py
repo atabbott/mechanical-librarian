@@ -36,7 +36,7 @@ def test_measured_indexes_bound_representative_library_reads() -> None:
             count_plan = support._plan(
                 connection,
                 support._CURRENT_REVIEW_CASE_COUNT_SQL,
-                (None, None, None, "", "", "", "", ""),
+                (None, None, None, "", "", "", "", "", "[]", ""),
             )
             assert any(
                 "USING INDEX review_preparation_work_lineage_history" in step
@@ -142,6 +142,16 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
                 ),
             ),
             (
+                "Library active label search",
+                lambda: browse.library(
+                    lens="all",
+                    search="Active Reading Room",
+                    limit=50,
+                    cursor=None,
+                    library_labels=(("primary", "books", "Active Reading Room"),),
+                ),
+            ),
+            (
                 "Attention",
                 lambda: browse.attention(search=None, limit=50, cursor=None),
             ),
@@ -163,9 +173,7 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
             materialized = next(
                 statement
                 for statement in statements
-                if statement.lstrip()
-                .upper()
-                .startswith("WITH CANDIDATES AS MATERIALIZED")
+                if "CANDIDATES AS MATERIALIZED (SELECT" in statement.upper()
             )
             materialized_plan = support._plan(connection, materialized, ())
             assert any(
@@ -287,9 +295,7 @@ def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
                 statement = next(
                     value
                     for value in statements
-                    if value.lstrip()
-                    .upper()
-                    .startswith("WITH CANDIDATES AS MATERIALIZED")
+                    if "CANDIDATES AS MATERIALIZED (SELECT" in value.upper()
                 )
                 sorter, documents = statement.split(") SELECT rc.document", 1)
                 assert "rc.document" not in sorter

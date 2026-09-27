@@ -6,7 +6,7 @@ import { Link } from '@tanstack/react-router'
 import { MediaHealth } from '../components/MediaHealth'
 import type { CaseDetailView, EvidenceView, HistoryValueView, HistoryView } from '../api/http'
 import { displayValue } from '../api/http'
-import { fieldLabel, labelWords } from '../labels'
+import { evidenceRoleLabel, fieldLabel, labelWords } from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
@@ -267,12 +267,7 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                             <li key={`${item.source}-${String(index)}-${item.observation}`}>
                               <p>{item.observation}</p>
                               <small>
-                                {item.source} ·{' '}
-                                {item.role === 'local_presence'
-                                  ? 'Local record'
-                                  : item.role === 'external_observation'
-                                    ? 'External observation'
-                                    : 'External corroboration'}
+                                {item.source} · {evidenceRoleLabel(item.role)}
                               </small>
                             </li>
                           ))}

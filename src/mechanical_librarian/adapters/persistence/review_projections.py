@@ -57,6 +57,7 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import PipelineAction
 from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
+    LibraryLabels,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
@@ -100,17 +101,20 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             [str, int], tuple[dict[str, object], ...]
         ],
         list_current_review_case_documents: Callable[
-            [str | None, int, int, bool | None], tuple[tuple[str | None, str], ...]
+            [str | None, int, int, bool | None, LibraryLabels],
+            tuple[tuple[str | None, str], ...],
         ],
-        count_current_review_cases: Callable[[str | None], tuple[int, int]],
+        count_current_review_cases: Callable[
+            [str | None, LibraryLabels], tuple[int, int]
+        ],
         list_current_attention_documents: Callable[
-            [str | None, int, int],
+            [str | None, int, int, LibraryLabels],
             tuple[
                 tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool],
                 ...,
             ],
         ],
-        count_current_attention_fields: Callable[[str | None], int],
+        count_current_attention_fields: Callable[[str | None, LibraryLabels], int],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
         current_resolved_metadata_policy: Callable[
             [str], ResolvedMetadataPolicy | None
@@ -420,10 +424,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         limit: int,
         offset: int,
         attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> ReviewLibrarySnapshot:
         with self._consistent_review_read():
             rows = self.list_current_review_case_documents(
-                search, limit, offset, attention
+                search, limit, offset, attention, library_labels
             )
             projected_rows: list[
                 tuple[
@@ -514,7 +519,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     )
                 )
             projected = tuple(projected_rows)
-            total, attention_total = self.count_current_review_cases(search)
+            total, attention_total = self.count_current_review_cases(
+                search, library_labels
+            )
             snapshot = ReviewLibrarySnapshot(
                 rows=projected,
                 total=total,
@@ -733,11 +740,17 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             return row[0]
 
     def read_review_attention(
-        self, search: str | None, limit: int, offset: int
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot:
         with self._consistent_review_read():
             snapshot = ReviewAttentionSnapshot(
-                rows=self.list_current_attention_documents(search, limit, offset),
-                total=self.count_current_attention_fields(search),
+                rows=self.list_current_attention_documents(
+                    search, limit, offset, library_labels
+                ),
+                total=self.count_current_attention_fields(search, library_labels),
             )
         return snapshot

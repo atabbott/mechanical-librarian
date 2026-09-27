@@ -139,6 +139,43 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         parsed = urlsplit(route.request.url)
         path = parsed.path
         if path.startswith("/api/v1/"):
+            if path == "/api/v1/reviewer-access" and route.request.method == "GET":
+                route.fulfill(
+                    status=200,
+                    content_type="application/json",
+                    body=json.dumps(
+                        {
+                            "schema_version": "reviewer-access-view-v1",
+                            "revision": 1,
+                            "mapping": {"engine": "codex"},
+                            "description_mapping": None,
+                            "description_metadata": None,
+                            "description": None,
+                            "openrouter_key_configured": False,
+                            "codex": {
+                                "engine": "codex",
+                                "state": "ready",
+                                "reason": None,
+                                "model": None,
+                                "tier": None,
+                                "host_headroom_bytes": 2147483648,
+                            },
+                            "openrouter": {
+                                "engine": "openrouter",
+                                "state": "unconfigured",
+                                "reason": None,
+                                "model": None,
+                                "tier": None,
+                                "host_headroom_bytes": None,
+                            },
+                            "recommendations": [],
+                            "candidates": [],
+                            "free_tier_caveat": "Synthetic reviewer capability.",
+                            "data_use_caveat": "Synthetic cover evidence only.",
+                        }
+                    ),
+                )
+                return
             if path == "/api/v1/appearance":
                 route.fulfill(
                     status=200,
@@ -1192,8 +1229,16 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
 
         for case_id, label, retry in (
             ("case-1", "Advisory visual review complete", False),
-            ("case-2", "Deterministic confirmed choice remains available", True),
-            ("case-3", "Deterministic confirmed choice remains available", True),
+            (
+                "case-2",
+                "Visual review is unavailable. Only the eligible choices shown below can be selected.",
+                True,
+            ),
+            (
+                "case-3",
+                "Visual review is unavailable. Only the eligible choices shown below can be selected.",
+                True,
+            ),
         ):
             stage[0] = f"cover-library:{case_id}"
             page.goto(
@@ -1388,7 +1433,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         assert "Cover" in page.locator(".field-filmstrip").inner_text()
         assert "Series" in page.locator(".field-filmstrip").inner_text()
         assert "Publication date" in page.locator(".field-filmstrip").inner_text()
-        genres = page.get_by_role("button", name="Show 1 empty field")
+        genres = page.get_by_role("button", name="Show 1 additional field")
         expect(genres).to_be_visible()
         assert not (
             page.locator(".automatic-resolution-details").evaluate("node => node.open")
@@ -1417,7 +1462,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         genres_reappeared = True
         page.reload()
         page.locator(".field-filmstrip").wait_for()
-        expect(page.get_by_role("button", name="Show 1 empty field")).to_have_count(0)
+        expect(
+            page.get_by_role("button", name="Show 1 additional field")
+        ).to_have_count(0)
         assert [
             label.splitlines()[0]
             for label in page.locator(".field-filmstrip button").all_inner_texts()
@@ -1575,7 +1622,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         )
         assert "Ember Lane" in work_detail.locator(".library-work-values").inner_text()
         assert (
-            "2 consulted for this work"
+            "2 lookups recorded for this work"
             in work_detail.locator(".work-sources").inner_text()
         )
         # Browsing is reversible: the same pager walks the bounded window back.
@@ -1839,7 +1886,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         compact_context = page.locator(".automatic-resolution-details").inner_text()
         assert "Subtitle" in compact_context
         assert "Series" not in compact_context
-        compact_genres = page.get_by_role("button", name="Show 1 empty field")
+        compact_genres = page.get_by_role("button", name="Show 1 additional field")
         expect(compact_genres).to_be_visible()
         compact_genres.click()
         revealed_genres = page.get_by_role("button", name=re.compile(r"^Genres"))
@@ -2107,8 +2154,8 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/library?lens=all&preview=case-1&field=description"
         )
-        summary = page.locator(
-            ".metadata-choice.is-current .choice-description summary"
+        summary = page.locator(".metadata-choice.is-current").get_by_role(
+            "button", name="Read full description", exact=True
         )
         summary.wait_for()
         page.set_viewport_size({"width": 1440, "height": 900})
@@ -2138,10 +2185,18 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.locator("html").evaluate("node => { node.style.fontSize = '' }")
         before_description_choice = ambiguous_decisions
         summary.click()
+        expect(
+            page.locator(".metadata-choice.is-current").get_by_role(
+                "button", name="Show less description", exact=True
+            )
+        ).to_have_attribute("aria-expanded", "true")
+        expect(
+            page.locator(".metadata-choice.is-current .description-value p")
+        ).to_have_count(1)
         assert ambiguous_decisions == before_description_choice
         capture_visual_proof("library-long-description")
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current full description"
+            "button", name="Choose current description"
         )
         full_description.wait_for()
         decide(
@@ -2152,13 +2207,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/library?lens=all&preview=case-1&field=description"
         )
-        summary = page.locator(
-            ".metadata-choice.is-current .choice-description summary"
+        summary = page.locator(".metadata-choice.is-current").get_by_role(
+            "button", name="Read full description", exact=True
         )
         summary.wait_for()
         summary.click()
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current full description"
+            "button", name="Choose current description"
         )
         full_description.wait_for()
         full_description.focus()
@@ -2170,13 +2225,13 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.goto(
             "https://react-platform.invalid/library?lens=all&preview=case-1&field=description"
         )
-        summary = page.locator(
-            ".metadata-choice.is-current .choice-description summary"
+        summary = page.locator(".metadata-choice.is-current").get_by_role(
+            "button", name="Read full description", exact=True
         )
         summary.wait_for()
         summary.click()
         full_description = page.locator(".metadata-choice.is-current").get_by_role(
-            "button", name="Choose current full description"
+            "button", name="Choose current description"
         )
         full_description.wait_for()
         full_description.focus()

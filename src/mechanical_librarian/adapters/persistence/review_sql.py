@@ -158,6 +158,12 @@ _REVIEW_ATTENTION_SQL = (
     + _EPUB_INAPPLICABLE_ATTENTION_SQL
     + ")"
 )
+_LIBRARY_DISPLAY_SEARCH_SQL = (
+    "EXISTS (SELECT 1 FROM json_each(?) label "
+    "WHERE json_extract(label.value,'$[1]')=ml.library_name "
+    "AND json_extract(label.value,'$[0]')=ml.connection_name "
+    "AND ml_casefold(COALESCE(json_extract(label.value,'$[2]'),'')) LIKE ? ESCAPE '\\')"
+)
 _REVIEW_SEARCH_SQL = (
     " AND (? IS NULL OR "
     "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
@@ -168,7 +174,7 @@ _REVIEW_SEARCH_SQL = (
     "json_extract(author_field.value,'$.destination')='authors' "
     "AND ml_casefold(COALESCE(author.value,'')) LIKE ? ESCAPE '\\') "
     "OR ml_casefold(COALESCE(json_extract(mr.document,'$.file.format'),'')) "
-    "LIKE ? ESCAPE '\\')"
+    "LIKE ? ESCAPE '\\' OR " + _LIBRARY_DISPLAY_SEARCH_SQL + ")"
 )
 _CURRENT_REVIEW_CASE_COUNT_SQL = (
     "SELECT count(*),COALESCE(sum(CASE WHEN "
@@ -208,3 +214,42 @@ __all__ = [
     "_SHADOW_ABSTENTION_SQL",
     "_SHADOW_OUTCOME_HISTORY_SQL",
 ]
+
+
+_TERMINAL_LIBRARY_SEARCH_SQL = (
+    " WHERE (? IS NULL OR ml_casefold(item_id) LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(library_name) LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(display_title) LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(display_authors) LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(display_format) LIKE ? ESCAPE '\\' OR "
+    + _LIBRARY_DISPLAY_SEARCH_SQL.replace("ml.", "terminal.")
+    + ")"
+)
+
+
+def _terminal_library_sql(catalogue_attached: bool) -> str:
+    """The same current terminal identity relation feeds page and count."""
+    display = (
+        "COALESCE(NULLIF(e.title,''),'Preparation unavailable') AS display_title,"
+        "COALESCE(e.authors,'[]') AS display_authors,"
+        "COALESCE(e.format,CASE WHEN e.has_audio=1 THEN 'audio' ELSE 'unknown' END) AS display_format "
+        if catalogue_attached
+        else "'Preparation unavailable' AS display_title,'[]' AS display_authors,'unknown' AS display_format "
+    )
+    join = (
+        " LEFT JOIN retained_catalogue.catalogue_generations g ON g.current=1 AND g.fingerprint=?"
+        " LEFT JOIN retained_catalogue.catalogue_entries e ON e.generation=g.generation "
+        "AND e.connection=w.connection_name AND e.library=w.library_name "
+        "AND e.library_id=w.library_id AND e.item_id=w.item_id "
+        if catalogue_attached
+        else " "
+    )
+    return (
+        "terminal AS (SELECT w.*, "
+        + display
+        + "FROM review_preparation_work w"
+        + join
+        + "WHERE w.state='failed' AND w.failure_code IS NOT NULL AND NOT EXISTS ("
+        "SELECT 1 FROM current_review_packages p WHERE p.connection_name=w.connection_name "
+        "AND p.library_name=w.library_name AND p.item_id=w.item_id))"
+    )
