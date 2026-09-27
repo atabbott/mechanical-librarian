@@ -1,5 +1,4 @@
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
-import { useMutation } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 
 import { useLiveStream, usePreparation, useReviewContext } from '../router'
@@ -10,15 +9,14 @@ import { readWriteConsent } from '../writeConsent'
  *
  * Preparation finishing and writes being off are two halves of one moment: an
  * owner is told what is ready to browse and what will happen to it, in one
- * notice with one action, rather than being sent to a second workspace to find
- * out (#641, #639). The offer is read from the same function Activity reads, so
+ * notice with one entry to the scoped permission review (#641, #639, #1011). The offer is read from the same function Activity reads, so
  * the compact route and the long one cannot come to disagree.
  *
  * It is deliberately not a caution: nothing here has gone wrong. Work is ready
  * and a permission is available, which is a success the owner may act on.
  */
 export const WriteReadyNotice = () => {
-  const { http, queryClient } = useReviewContext()
+  const { http } = useReviewContext()
   const live = useLiveStream() === 'live'
   const preparation = usePreparation().data
   const query = useQuery({
@@ -36,17 +34,10 @@ export const WriteReadyNotice = () => {
     // why the event needs to carry nothing but the fact that it changed.
     refetchInterval: live ? false : 15_000,
   })
-  const mutation = useMutation({
-    mutationFn: (body: unknown) => http.activityCommand('activity/consent', body),
-    retry: false,
-    onSettled: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['activity'] })
-    },
-  })
   const data = query.data
   if (!data) return null
   const consent = readWriteConsent(data, {
-    enabling: mutation.isPending,
+    enabling: false,
     connectionUnavailable: (preparation?.connections ?? []).some(
       (item) => item.state !== 'recovered',
     ),
@@ -81,28 +72,29 @@ export const WriteReadyNotice = () => {
         <p>{copy}</p>
       </div>
       <div className="cm-library-handoff-action">
-        <button
-          className="cm-primary"
-          type="button"
-          disabled={consent.state !== 'off' || consent.blocked !== null}
-          onClick={() => mutation.mutate({ grants: consent.grants })}
-        >
-          {consent.state === 'off'
-            ? 'Enable writes'
-            : consent.state === 'enabling'
-              ? 'Enabling writes…'
+        {consent.state === 'off' && consent.blocked === null ? (
+          <Link
+            className="cm-primary"
+            to="/activity"
+            search={{ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }}
+            hash="activity-consent"
+          >
+            Enable writes
+          </Link>
+        ) : (
+          <button className="cm-primary" type="button" disabled>
+            {consent.state === 'off'
+              ? 'Enable writes'
               : consent.state === 'applying'
                 ? 'Applying changes…'
                 : 'Writes enabled'}
-        </button>
+          </button>
+        )}
         <Link to="/activity" search={{ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }}>
           Review write activity
         </Link>
       </div>
       {consent.blocked ? <p className="cm-library-handoff-reason">{consent.blocked}</p> : null}
-      {mutation.isError ? (
-        <p role="alert">Enabling writes did not complete. Nothing was written; try again.</p>
-      ) : null}
     </section>
   )
 }

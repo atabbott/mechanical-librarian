@@ -1125,7 +1125,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   font-size: 0.75rem;
 }
 
-.cm-policy-media-scope strong { font:inherit; font-weight:700; }
+.cm-policy-field > header .cm-policy-media-scope strong { font:inherit; font-weight:700; }
 .cm-policy-preview > p { margin:.65rem .85rem; color:var(--soft); font-size:.8rem; line-height:1.5; }
 .cm-policy-preview-list > div > span:nth-child(2) strong { font-size:.85rem; }
 .cm-policy-preview-list > div > span:nth-child(2) small { font-size:.72rem; }

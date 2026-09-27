@@ -412,7 +412,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       : new Set([...selection.names].filter((name) => selectableNames.has(name)))
   const [status, setStatus] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [consentOpen, setConsentOpen] = useState(false)
+  const [consentOpen, setConsentOpen] = useState(
+    () => router.state.location.hash === 'activity-consent',
+  )
+  useEffect(() => {
+    if (consentOpen)
+      document.getElementById('activity-consent')?.scrollIntoView({ block: 'nearest' })
+  }, [consentOpen])
   const mutation = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) =>
       http.activityCommand(path, body),
@@ -959,9 +965,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               aria-controls="activity-consent"
               onClick={() => {
                 setConsentOpen(true)
-                requestAnimationFrame(() =>
-                  document.getElementById('activity-consent')?.scrollIntoView({ block: 'nearest' }),
-                )
               }}
             >
               {consentState === 'off'
