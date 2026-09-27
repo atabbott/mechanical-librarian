@@ -372,6 +372,101 @@ selected precision. Candidate availability, Ask-mode owner-action reachability,
 and qualified automatic authority are separate; #1003 retains the current rule
 pending publication-specific usefulness evidence.
 
+## Current options by media
+
+This table reports the existing ebook F19A/F20/cover and audiobook F46
+qualification summaries. It does not grant write permission or promise that a
+particular work has sufficient evidence. A missing summary means unavailable,
+never qualification inherited from the other media kind. “Fill” requires a
+known-empty usable target; “preserve” records no target change. Other operations
+remain subject to their exact evidence and currentness envelope.
+
+| Policy field | Option | Ebook operation scope | Audiobook qualified operations |
+| --- | --- | --- | --- |
+| `title_layout` | `preserve` | fill or replace | title: fill; title: preserve; title: replace |
+| `title_layout` | `title_and_subtitle` | fill or replace | title: fill; title: preserve; title: replace |
+| `date_precision` | `year` | fill or replace | No automatic effect |
+| `date_precision` | `full_date` | fill or replace | publishedDate: fill |
+| `language_rendering` | `preserve` | fill or replace | language: fill; language: normalize; language: preserve; language: replace |
+| `language_rendering` | `display_name` | fill or replace | language: fill; language: normalize; language: preserve; language: replace |
+| `contributor_names` | `preserve` | fill or replace | authors: add; authors: fill; authors: normalize; authors: preserve; authors: replace |
+| `contributor_names` | `canonical` | fill or replace | authors: add; authors: fill; authors: normalize; authors: preserve; authors: replace; narrators: add; narrators: fill; narrators: normalize; narrators: preserve; narrators: replace |
+| `publisher_preference` | `publisher` | fill or replace | publisher: fill; publisher: preserve |
+| `publisher_preference` | `imprint` | No automatic effect | No automatic effect |
+| `subtitle` | `fill_empty` | fill | subtitle: fill |
+| `subtitle` | `corroborated_split` | No automatic effect | subtitle: fill |
+| `subtitle` | `replace_descriptive` | No automatic effect | subtitle: preserve; subtitle: replace |
+| `series` | `primary_narrative` | fill | series: fill; series: preserve |
+| `series` | `source_order` | fill | series: fill; series: preserve |
+| `series` | `all_qualified` | fill | series: fill; series: preserve |
+| `series` | `add_qualified` | No automatic effect | series: add; series: fill; series: preserve |
+| `series` | `replace_qualified` | No automatic effect | series: fill; series: normalize; series: preserve; series: replace |
+| `genres` | `fill_empty` | fill | genres: fill; genres: preserve |
+| `genres` | `add` | add | genres: add; genres: fill; genres: preserve |
+| `genres` | `replace` | replace | genres: add; genres: fill; genres: normalize; genres: preserve; genres: replace |
+| `tags` | `off` | No automatic effect | No automatic effect |
+| `tags` | `fill_empty` | fill | tags: fill |
+| `tags` | `add` | add | tags: add |
+| `tags` | `replace` | replace | No automatic effect |
+| `description_fill` | `safe_plain_text` | fill | description: fill; description: preserve |
+| `description_fill` | `google_visible_text` | No automatic effect | No automatic effect |
+| `description_fill` | `replace_safe_plain_text` | No automatic effect | description: fill; description: preserve; description: replace |
+| `isbn_form` | `preserve_exact` | fill | isbn: fill; isbn: preserve |
+| `isbn_form` | `prefer_isbn13` | fill | isbn: fill; isbn: normalize; isbn: replace |
+| `cover_order` | `fixed_source_order` | fill or replace | No automatic effect |
+| `cover_order` | `replace_if_strictly_better` | fill | cover: replace |
+| `asin` | `preserve_exact` | No automatic effect | asin: fill |
+| `asin` | `ebook_manifestation` | No automatic effect | No automatic effect |
+| `explicit` | `unsupported` | No automatic effect | No automatic effect |
+| `explicit` | `adult_product` | No automatic effect | explicit: fill; explicit: preserve; explicit: replace |
+
+The ebook `replace_if_strictly_better` cover option fills known-empty covers only;
+it does not replace a confirmed incumbent. `fixed_source_order` retains its
+existing strict-rank upgrade. Unavailable, ambiguous and owner-final cover
+states still abstain. Audiobook replacement remains the existing bounded
+small-incumbent/material-improvement operation.
+
+### Audiobook identity chapter
+
+Title and author operations require recording/work evidence under the existing
+F46 identities. Narrator changes require `contributor_names:canonical`;
+choosing Preserve does not qualify narrator writes. Subtitle fill and supported
+promotional-subtitle replacement have separate qualifications.
+
+### Audiobook publication chapter
+
+Full-date publication fills qualified original-work dates. Year-only has no
+automatic effect. Publisher fills but imprint does not. ASIN fills only under
+`preserve_exact`; ebook-manifestation selection does not authorize an audiobook
+write. ISBN and series operations follow the exact rows above.
+
+### Audiobook curation chapter
+
+Tags replacement and Google-visible description text have no automatic effect.
+Qualified description operations preserve useful prose or use the separately
+bounded replacement rule. Adult-product explicit values require the current
+qualified boolean evidence. Cover authority remains separate from ebook cover
+admission. Ask me and Ignore, owner-final choices, consent, backup and verified
+read-back remain authoritative for every chapter.
+
+### Reading a policy preview
+
+The preview captures active policy, library generation/resolutions and at most
+20 ordered current report/proposal pairs in one SQLite read snapshot. Both
+active and draft are evaluated after that read ends, using the same retained
+inputs and values. This is a captured database view, not a promise that the
+remote service or a later request is unchanged. Activation still checks the
+captured active-policy identity.
+
+Primary counts describe sampled works and fields whose selected outcome or
+meaningful candidate routing changed because of the edit. A supported
+Ask-to-Automatic candidate counts even when it equals the incumbent. Unchanged
+outcomes and projected changes against library values are separate context;
+proposal identities and explanatory wording alone are not impact. Title,
+authors, narrators, date, publisher, language and cover are outside this rich
+projection and explicitly labelled not previewed. Preview and policy activation
+grant no write permission.
+
 ## Evidence posture
 
 Evidence is evaluated for applicability, independence, and contradiction—not only by a single numerical confidence score.

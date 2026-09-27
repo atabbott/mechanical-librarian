@@ -230,6 +230,7 @@ describe('Library review ownership', () => {
       items: [
         {
           category: 'owner',
+          occurredAt: 1786000000,
           applicationReason: null,
           destination: 'title',
           outcome: 'accept',
@@ -238,6 +239,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          occurredAt: 1786000000,
           applicationReason: null,
           destination: 'language',
           outcome: 'accept',
@@ -246,6 +248,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          occurredAt: 1786000000,
           applicationReason: null,
           destination: 'publisher',
           outcome: 'accept',
@@ -254,6 +257,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          occurredAt: 1786000000,
           applicationReason: null,
           destination: 'title_reversal',
           outcome: 'keep_current',
@@ -262,6 +266,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          occurredAt: 1786000000,
           applicationReason: null,
           destination: 'subtitle',
           outcome: 'keep_current',
@@ -270,6 +275,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          occurredAt: 1786000000,
           applicationReason: null,
           destination: 'edition',
           outcome: 'keep_current',
@@ -278,6 +284,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'automatic',
+          occurredAt: 1786000000,
           destination: 'series',
           outcome: 'keep_current',
           previousValue: { kind: 'series', value: [{ name: 'Existing series', sequence: '2' }] },
@@ -285,6 +292,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'owner',
+          occurredAt: 1786000000,
           applicationReason: null,
           destination: 'isbn',
           outcome: 'reject',
@@ -293,6 +301,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'automatic',
+          occurredAt: 1786000000,
           destination: 'authors',
           outcome: 'candidate',
           previousValue: { kind: 'list', value: ['Old Author'] },
@@ -300,6 +309,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'automatic',
+          occurredAt: 1786000000,
           destination: 'description',
           outcome: 'candidate',
           previousValue: null,
@@ -307,6 +317,7 @@ describe('Library review ownership', () => {
         },
         {
           category: 'automatic',
+          occurredAt: 1786000000,
           destination: 'genres',
           outcome: 'ignore',
           previousValue: { kind: 'list', value: ['Preserved genre'] },
@@ -314,14 +325,20 @@ describe('Library review ownership', () => {
         },
         {
           category: 'automatic',
+          occurredAt: 1786000000,
           destination: 'tags',
           outcome: 'ignore',
           previousValue: null,
           selectedValue: null,
         },
-        { category: 'preview', dispositions: [{ count: 3, outcome: 'would_accept' }] },
+        {
+          category: 'preview',
+          occurredAt: 1786000000,
+          dispositions: [{ count: 3, outcome: 'would_accept' }],
+        },
         {
           category: 'cover',
+          occurredAt: 1786000000,
           candidateCount: 2,
           outcome: 'selected',
           ownerOutcome: 'accept',
@@ -333,13 +350,19 @@ describe('Library review ownership', () => {
         {
           automaticOutcome: 'candidate',
           category: 'cover',
+          occurredAt: 1786000000,
           candidateCount: 3,
           outcome: 'automatic_prepared',
           policyReasons: [],
           reviewerStatus: 'complete',
           supersedesAutomatic: true,
         },
-        { category: 'transition', outcome: 'admitted', reason: '<script>actionable</script>' },
+        {
+          category: 'transition',
+          occurredAt: null,
+          outcome: 'admitted',
+          reason: '<script>actionable</script>',
+        },
       ],
     }))
     renderRoute('/review/case-1?field=title&subview=history', { ...createHttp(), getHistory })
@@ -348,6 +371,11 @@ describe('Library review ownership', () => {
     const titleChange = title.closest('article')
     if (!titleChange) throw new Error('title change history article required')
     expect(titleChange).toHaveTextContent('Owner selected a proposed value.')
+    expect(titleChange.parentElement?.querySelector('time')).toHaveAttribute(
+      'datetime',
+      new Date(1786000000 * 1000).toISOString(),
+    )
+    expect(screen.getByText('Time unavailable — lifecycle checkpoint only')).toBeVisible()
     expect(screen.getByText('<script>previous</script>')).toBeVisible()
     expect(screen.getByText('<script>chosen</script>')).toBeVisible()
     const language = screen.getByRole('heading', { name: 'Language' }).closest('article')
@@ -1052,6 +1080,7 @@ it.each(['evidence', 'history'])(
       items: [
         {
           category: 'description' as const,
+          occurredAt: 1786000000,
           outcome: 'description_advice_recorded',
           state: 'succeeded',
           engine: candidate.engine,
@@ -1061,6 +1090,7 @@ it.each(['evidence', 'history'])(
         },
         {
           category: 'description' as const,
+          occurredAt: 1786000000,
           outcome: 'description_selected',
           state: 'superseded',
           engine: candidate.engine,
@@ -1070,6 +1100,7 @@ it.each(['evidence', 'history'])(
         },
         {
           category: 'description' as const,
+          occurredAt: 1786000000,
           outcome: 'description_application',
           state: 'verified',
           engine: candidate.engine,

@@ -2401,6 +2401,58 @@
         "title": "_ActivityWaitingReasons",
         "type": "object"
       },
+      "_AdultEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "not_qualified",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "explicit",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "const": "adult_product",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_AdultEbookQualification",
+        "type": "object"
+      },
       "_AppearanceResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2442,6 +2494,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "enum": [
               "preserve_exact",
@@ -2452,6 +2516,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -3201,6 +3266,61 @@
           "case"
         ],
         "title": "_ConfirmedDecision",
+        "type": "object"
+      },
+      "_ContributorEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": true,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "pass",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "contributor_names",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "preserve",
+              "canonical"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_ContributorEbookQualification",
         "type": "object"
       },
       "_CoverAutomaticDecisionProjection": {
@@ -4005,13 +4125,29 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
-            "const": "fixed_source_order",
+            "enum": [
+              "fixed_source_order",
+              "replace_if_strictly_better"
+            ],
             "title": "Option",
             "type": "string"
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -4019,6 +4155,61 @@
           "option"
         ],
         "title": "_CoverQualification",
+        "type": "object"
+      },
+      "_DateEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": true,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "pass",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "date_precision",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "year",
+              "full_date"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_DateEbookQualification",
         "type": "object"
       },
       "_DecisionAcknowledgement": {
@@ -4414,6 +4605,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "const": "safe_plain_text",
             "title": "Option",
@@ -4421,6 +4624,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -4428,6 +4632,58 @@
           "option"
         ],
         "title": "_DescriptionQualification",
+        "type": "object"
+      },
+      "_DescriptionReplaceEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "not_qualified",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "description_fill",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "const": "replace_safe_plain_text",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_DescriptionReplaceEbookQualification",
         "type": "object"
       },
       "_DescriptionRetryAcknowledgement": {
@@ -4683,6 +4939,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "const": "unsupported",
             "title": "Option",
@@ -4690,6 +4958,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -4722,6 +4991,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "enum": [
               "fill_empty",
@@ -4733,6 +5014,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -4765,6 +5047,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "const": "google_visible_text",
             "title": "Option",
@@ -4772,6 +5066,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -5290,6 +5585,58 @@
         "title": "_HistoryTransitionItem",
         "type": "object"
       },
+      "_ImprintEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "not_qualified",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "publisher_preference",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "const": "imprint",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_ImprintEbookQualification",
+        "type": "object"
+      },
       "_IsbnQualification": {
         "additionalProperties": false,
         "properties": {
@@ -5313,6 +5660,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "enum": [
               "preserve_exact",
@@ -5323,6 +5682,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -5330,6 +5690,61 @@
           "option"
         ],
         "title": "_IsbnQualification",
+        "type": "object"
+      },
+      "_LanguageEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": true,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "pass",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "language_rendering",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "preserve",
+              "display_name"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_LanguageEbookQualification",
         "type": "object"
       },
       "_LibraryResponse": {
@@ -6230,6 +6645,36 @@
                 },
                 {
                   "$ref": "#/components/schemas/_CoverQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_TitleEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_DateEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_LanguageEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_ContributorEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_PublisherEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_ImprintEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_SubtitleReplaceEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_SeriesEditEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_DescriptionReplaceEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_AdultEbookQualification"
                 }
               ]
             },
@@ -6347,6 +6792,36 @@
                 },
                 {
                   "$ref": "#/components/schemas/_CoverQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_TitleEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_DateEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_LanguageEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_ContributorEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_PublisherEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_ImprintEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_SubtitleReplaceEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_SeriesEditEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_DescriptionReplaceEbookQualification"
+                },
+                {
+                  "$ref": "#/components/schemas/_AdultEbookQualification"
                 }
               ]
             },
@@ -7121,6 +7596,58 @@
         "title": "_ProviderRecoveryActivity",
         "type": "object"
       },
+      "_PublisherEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": true,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "pass",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "publisher_preference",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "const": "publisher",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_PublisherEbookQualification",
+        "type": "object"
+      },
       "_RecordingIdentityBasis": {
         "additionalProperties": false,
         "properties": {
@@ -7891,6 +8418,61 @@
         "title": "_SelectedDescriptionAdvice",
         "type": "object"
       },
+      "_SeriesEditEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "not_qualified",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "series",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "add_qualified",
+              "replace_qualified"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_SeriesEditEbookQualification",
+        "type": "object"
+      },
       "_SeriesQualification": {
         "additionalProperties": false,
         "properties": {
@@ -7914,6 +8496,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "enum": [
               "primary_narrative",
@@ -7925,6 +8519,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -8418,6 +9013,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "const": "fill_empty",
             "title": "Option",
@@ -8425,6 +9032,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -8432,6 +9040,58 @@
           "option"
         ],
         "title": "_SubtitleFillQualification",
+        "type": "object"
+      },
+      "_SubtitleReplaceEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": false,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "not_qualified",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "subtitle",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "const": "replace_descriptive",
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_SubtitleReplaceEbookQualification",
         "type": "object"
       },
       "_SubtitleSplitQualification": {
@@ -8457,6 +9117,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "const": "corroborated_split",
             "title": "Option",
@@ -8464,6 +9136,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -8529,6 +9202,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "const": "off",
             "title": "Option",
@@ -8536,6 +9221,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -8568,6 +9254,18 @@
             "title": "Field",
             "type": "string"
           },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
           "option": {
             "enum": [
               "fill_empty",
@@ -8579,6 +9277,7 @@
           }
         },
         "required": [
+          "operation_scope",
           "candidate_sha256",
           "automatic_available",
           "disposition",
@@ -8693,6 +9392,61 @@
           "title"
         ],
         "title": "_TargetIdentity",
+        "type": "object"
+      },
+      "_TitleEbookQualification": {
+        "additionalProperties": false,
+        "properties": {
+          "automatic_available": {
+            "const": true,
+            "title": "Automatic Available",
+            "type": "boolean"
+          },
+          "candidate_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Candidate Sha256",
+            "type": "string"
+          },
+          "disposition": {
+            "const": "pass",
+            "title": "Disposition",
+            "type": "string"
+          },
+          "field": {
+            "const": "title_layout",
+            "title": "Field",
+            "type": "string"
+          },
+          "operation_scope": {
+            "enum": [
+              "none",
+              "fill",
+              "fill_or_replace",
+              "preserve",
+              "add",
+              "replace"
+            ],
+            "title": "Operation Scope",
+            "type": "string"
+          },
+          "option": {
+            "enum": [
+              "preserve",
+              "title_and_subtitle"
+            ],
+            "title": "Option",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_scope",
+          "candidate_sha256",
+          "automatic_available",
+          "disposition",
+          "field",
+          "option"
+        ],
+        "title": "_TitleEbookQualification",
         "type": "object"
       },
       "_UnavailableDecisionConfirmation": {

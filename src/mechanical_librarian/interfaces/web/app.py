@@ -1252,6 +1252,9 @@ class _PolicyProfile(_ClosedModel):
 
 
 class _RichQualificationBase(_ClosedModel):
+    operation_scope: Literal[
+        "none", "fill", "fill_or_replace", "preserve", "add", "replace"
+    ]
     candidate_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -1336,7 +1339,77 @@ class _CoverQualification(_RichQualificationBase):
     automatic_available: Literal[True]
     disposition: Literal["pass"]
     field: Literal["cover_order"]
-    option: Literal["fixed_source_order"]
+    option: Literal["fixed_source_order", "replace_if_strictly_better"]
+
+
+class _TitleEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["title_layout"]
+    option: Literal["preserve", "title_and_subtitle"]
+
+
+class _DateEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["date_precision"]
+    option: Literal["year", "full_date"]
+
+
+class _LanguageEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["language_rendering"]
+    option: Literal["preserve", "display_name"]
+
+
+class _ContributorEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["contributor_names"]
+    option: Literal["preserve", "canonical"]
+
+
+class _PublisherEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["publisher_preference"]
+    option: Literal["publisher"]
+
+
+class _ImprintEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["publisher_preference"]
+    option: Literal["imprint"]
+
+
+class _SubtitleReplaceEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["subtitle"]
+    option: Literal["replace_descriptive"]
+
+
+class _SeriesEditEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["series"]
+    option: Literal["add_qualified", "replace_qualified"]
+
+
+class _DescriptionReplaceEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["description_fill"]
+    option: Literal["replace_safe_plain_text"]
+
+
+class _AdultEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["explicit"]
+    option: Literal["adult_product"]
 
 
 _RichQualification: TypeAlias = (
@@ -1352,6 +1425,16 @@ _RichQualification: TypeAlias = (
     | _AsinQualification
     | _ExplicitQualification
     | _CoverQualification
+    | _TitleEbookQualification
+    | _DateEbookQualification
+    | _LanguageEbookQualification
+    | _ContributorEbookQualification
+    | _PublisherEbookQualification
+    | _ImprintEbookQualification
+    | _SubtitleReplaceEbookQualification
+    | _SeriesEditEbookQualification
+    | _DescriptionReplaceEbookQualification
+    | _AdultEbookQualification
 )
 _RICH_QUALIFICATION_ADAPTER: TypeAdapter[_RichQualification] = TypeAdapter(
     _RichQualification

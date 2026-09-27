@@ -1647,3 +1647,12 @@ catalogue writes through this read path are not. Identity joins require the
 current configured fingerprint, current catalogue generation and all target
 keys. Page and count observe consistent per-store snapshots, not an atomic
 cross-file publication or cross-request pagination guarantee.
+
+
+Policy-edit comparison (#1011) reads one bounded retained SQLite snapshot and
+compiles outside its read transaction. The transient active/draft comparison
+adds no durable authority, network access or effect scheduling. The existing
+sixteen-destination consent surface now opens one exact-scope review from every
+entry point; only explicit confirmation submits it. Fresh capability validation,
+backup, owner-final checks, optimistic concurrency and durable verified read-back
+remain unchanged. An ambiguous confirmation is read back without resending.

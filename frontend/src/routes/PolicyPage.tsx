@@ -43,7 +43,6 @@ interface FieldDefinition {
   options: readonly string[]
   optionLabels: Readonly<Record<string, string>>
   chapter: PolicySection
-  automatic: boolean
   unsupported?: boolean
 }
 
@@ -67,7 +66,6 @@ const fields: readonly FieldDefinition[] = [
       title_and_subtitle: 'Separate title and subtitle',
     },
     chapter: 'identity',
-    automatic: true,
   },
   {
     key: 'contributor_names',
@@ -76,7 +74,6 @@ const fields: readonly FieldDefinition[] = [
     options: ['preserve', 'canonical'],
     optionLabels: { preserve: 'Preserve supported form', canonical: 'Use canonical names' },
     chapter: 'identity',
-    automatic: true,
   },
   {
     key: 'language_rendering',
@@ -89,7 +86,6 @@ const fields: readonly FieldDefinition[] = [
       display_name: 'Use language display name',
     },
     chapter: 'identity',
-    automatic: true,
   },
   {
     key: 'subtitle',
@@ -102,7 +98,6 @@ const fields: readonly FieldDefinition[] = [
       corroborated_split: 'Use corroborated split',
     },
     chapter: 'identity',
-    automatic: false,
   },
   {
     key: 'date_precision',
@@ -112,7 +107,6 @@ const fields: readonly FieldDefinition[] = [
     options: ['year', 'full_date'],
     optionLabels: { year: 'Year only', full_date: 'Keep source date precision' },
     chapter: 'publication',
-    automatic: true,
   },
   {
     key: 'publisher_preference',
@@ -121,7 +115,6 @@ const fields: readonly FieldDefinition[] = [
     options: ['publisher', 'imprint'],
     optionLabels: { publisher: 'Prefer publisher', imprint: 'Prefer imprint' },
     chapter: 'publication',
-    automatic: true,
   },
   {
     key: 'isbn_form',
@@ -131,7 +124,6 @@ const fields: readonly FieldDefinition[] = [
     options: ['preserve_exact', 'prefer_isbn13'],
     optionLabels: { preserve_exact: 'Preserve exact ISBN', prefer_isbn13: 'Prefer ISBN-13' },
     chapter: 'publication',
-    automatic: false,
   },
   {
     key: 'series',
@@ -153,7 +145,6 @@ const fields: readonly FieldDefinition[] = [
       replace_qualified: 'Replace with supported memberships',
     },
     chapter: 'publication',
-    automatic: false,
   },
   {
     key: 'genres',
@@ -166,7 +157,6 @@ const fields: readonly FieldDefinition[] = [
       replace: 'Replace with source list',
     },
     chapter: 'curation',
-    automatic: false,
   },
   {
     key: 'tags',
@@ -181,7 +171,6 @@ const fields: readonly FieldDefinition[] = [
       replace: 'Replace with source list',
     },
     chapter: 'curation',
-    automatic: false,
   },
   {
     key: 'description_fill',
@@ -195,7 +184,6 @@ const fields: readonly FieldDefinition[] = [
       replace_safe_plain_text: 'Fill empty or replace safe text',
     },
     chapter: 'curation',
-    automatic: false,
   },
   {
     key: 'cover_order',
@@ -208,7 +196,6 @@ const fields: readonly FieldDefinition[] = [
       replace_if_strictly_better: 'Replace with a material improvement',
     },
     chapter: 'curation',
-    automatic: true,
   },
   {
     key: 'asin',
@@ -221,7 +208,6 @@ const fields: readonly FieldDefinition[] = [
       ebook_manifestation: 'Ebook manifestation',
     },
     chapter: 'curation',
-    automatic: false,
   },
   {
     key: 'explicit',
@@ -234,7 +220,6 @@ const fields: readonly FieldDefinition[] = [
       adult_product: 'Set from adult-product evidence',
     },
     chapter: 'unsupported',
-    automatic: false,
   },
 ]
 
@@ -547,7 +532,13 @@ export interface PolicyImpactDisplay {
   readonly changed: boolean
   readonly detail: string
   readonly technicalDetail: string
-  readonly title: 'Change' | 'Needs review' | 'No change' | 'No supported value found'
+  readonly title:
+    | 'Change'
+    | 'Needs review'
+    | 'No change'
+    | 'No supported value found'
+    | 'Policy change'
+    | 'No policy change'
 }
 
 export interface PolicyImpactRow {
@@ -656,6 +647,21 @@ export const policyImpactTotals = (rows: readonly PolicyImpactRow[]) => {
     materialChanges: changes.length,
   }
 }
+const previewFieldShape = (value: unknown): value is PolicyPreviewField => {
+  if (typeof value !== 'object' || value === null) return false
+  return (
+    'field' in value &&
+    typeof value.field === 'string' &&
+    'outcome' in value &&
+    typeof value.outcome === 'string' &&
+    'reason' in value &&
+    (value.reason === null || typeof value.reason === 'string') &&
+    'target_state' in value &&
+    typeof value.target_state === 'string' &&
+    'current_value' in value &&
+    'desired_value' in value
+  )
+}
 const isPolicyPreview = (value: unknown): value is PolicyPreviewView =>
   typeof value === 'object' &&
   value !== null &&
@@ -664,7 +670,46 @@ const isPolicyPreview = (value: unknown): value is PolicyPreviewView =>
   'active_policy_id' in value &&
   typeof value.active_policy_id === 'string' &&
   'libraries' in value &&
-  Array.isArray(value.libraries)
+  Array.isArray(value.libraries) &&
+  value.libraries.every((library: unknown) => {
+    if (
+      typeof library !== 'object' ||
+      library === null ||
+      !('cases' in library) ||
+      !Array.isArray(library.cases) ||
+      !('comparisons' in library) ||
+      !Array.isArray(library.comparisons) ||
+      library.comparisons.length !== library.cases.length
+    )
+      return false
+    return library.comparisons.every(
+      (comparison: unknown) =>
+        typeof comparison === 'object' &&
+        comparison !== null &&
+        'media_kind' in comparison &&
+        ['ebook', 'audiobook'].includes(String(comparison.media_kind)) &&
+        'fields' in comparison &&
+        Array.isArray(comparison.fields) &&
+        comparison.fields.every(
+          (field: unknown) =>
+            typeof field === 'object' &&
+            field !== null &&
+            'active' in field &&
+            previewFieldShape(field.active) &&
+            'draft' in field &&
+            previewFieldShape(field.draft) &&
+            field.active.field === field.draft.field &&
+            'changed' in field &&
+            typeof field.changed === 'boolean' &&
+            'active_destination' in field &&
+            ['ask', 'automatic', 'ignore', 'unsupported'].includes(
+              String(field.active_destination),
+            ) &&
+            'draft_destination' in field &&
+            ['ask', 'automatic', 'ignore', 'unsupported'].includes(String(field.draft_destination)),
+        ),
+    )
+  })
 const isPolicyTransition = (value: unknown): value is PolicyTransitionView =>
   typeof value === 'object' &&
   value !== null &&
@@ -710,13 +755,7 @@ const automaticQualified = (
   const entries = qualification.filter(
     (entry) => entry.field === field.key && entry.option === option,
   )
-  const rich = entries.find((entry) => entry.identity === undefined)
-  return (
-    entries.some((entry) => entry.automatic_available) ||
-    (rich === undefined &&
-      field.automatic &&
-      !(field.key === 'publisher_preference' && option === 'imprint'))
-  )
+  return entries.some((entry) => entry.automatic_available)
 }
 // The disclosure lists one consequence per representation. The catalogue's
 // admitted/transformation halves are qualification mechanics; the owner is
@@ -989,28 +1028,70 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
   const changedChapterLabels = chapters
     .filter((chapter) => changedFields.some((field) => field.chapter === chapter.key))
     .map((chapter) => chapter.label)
-  const previewRows = useMemo(() => {
-    const cases =
-      preview?.libraries.flatMap((library) =>
-        library.cases.map((rawCase, caseIndex) => {
-          const item = rawCase as unknown as {
-            readonly fields: readonly PolicyPreviewField[]
-            readonly report_id: string
-            readonly work_label: string
-          }
-          const caseId = item.report_id || String(caseIndex)
-          return item.fields.map((field) => ({
-            caseId,
-            id: `${caseId}:${field.field}`,
-            library: library.library,
-            work: item.work_label,
-            field: readableCategory(field.field),
-            impact: policyImpactDisplay(field),
-          }))
-        }),
-      ) ?? []
-    return [...cases.flatMap((rows) => rows.slice(0, 1)), ...cases.flatMap((rows) => rows.slice(1))]
-  }, [preview])
+  const previewRows = useMemo(
+    () =>
+      preview?.libraries
+        .flatMap((library) =>
+          library.cases.flatMap((item, caseIndex) => {
+            const comparison = library.comparisons[caseIndex]
+            if (!comparison) return []
+            return comparison.fields.map((field, fieldIndex) => {
+              const projected = policyImpactDisplay(field.draft)
+              const before = policyImpactDisplay(field.active)
+              return {
+                caseId: item.report_id,
+                order: fieldIndex,
+                id: `${item.report_id}:${field.draft.field}`,
+                library: library.library,
+                media: comparison.media_kind,
+                work: item.work_label,
+                field: readableCategory(field.draft.field),
+                projected,
+                impact: {
+                  changed: field.changed,
+                  title: field.changed ? ('Policy change' as const) : ('No policy change' as const),
+                  detail: field.changed
+                    ? `${field.active_destination === 'ask' ? 'Ask me' : field.active_destination}: ${before.detail} → ${field.draft_destination === 'ask' ? 'Ask me' : field.draft_destination}: ${projected.detail}`
+                    : projected.detail,
+                  technicalDetail: `Active ${before.technicalDetail}; draft ${projected.technicalDetail}`,
+                },
+              }
+            })
+          }),
+        )
+        .sort((a, b) => a.order - b.order) ?? [],
+    [preview],
+  )
+  const changedRows = previewRows.filter((row) => row.impact.changed)
+  const mediaQualification = (
+    field: FieldDefinition,
+    option: string,
+    media: 'ebook' | 'audiobook',
+  ) => {
+    const entries = (
+      media === 'ebook' ? data.state.rich_qualification : data.state.audiobook_qualification
+    ).filter((entry) => entry.field === field.key && entry.option === option)
+    const available = entries.filter((entry) => entry.automatic_available)
+    if (!available.length) return 'No automatic effect — owner review required'
+    if (media === 'ebook' && field.key === 'cover_order')
+      return option === 'replace_if_strictly_better'
+        ? 'Fill empty only — confirmed covers are preserved'
+        : 'Fill empty or replace only with a confirmed strict-rank upgrade'
+    if (media === 'audiobook' && field.key === 'cover_order')
+      return 'Replace a small incumbent only with a materially larger confirmed cover'
+    const operations = available
+      .map((entry) =>
+        'operation_scope' in entry
+          ? entry.operation_scope === 'fill'
+            ? 'Fill empty only'
+            : fieldLabel(entry.operation_scope)
+          : `${fieldLabel(entry.destination)}: ${audiobookOperationLabels[entry.operation]}`,
+      )
+      .join(' · ')
+    return media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical'
+      ? `${operations} · Narrators: no automatic effect`
+      : operations
+  }
   const impactTotals = useMemo(
     () =>
       preview
@@ -1283,6 +1364,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                       {changed ? <small>Draft changed</small> : null}
                     </span>
                     <p>{field.meaning}</p>
+                    <p className="cm-policy-media-scope">
+                      <strong>Ebooks:</strong> {mediaQualification(field, option, 'ebook')}
+                      <br />
+                      <strong>Audiobooks:</strong> {mediaQualification(field, option, 'audiobook')}
+                    </p>
                     {data.state.audiobook_qualification.some(
                       (entry) => entry.field === field.key && entry.option === option,
                     ) ? (
@@ -1439,35 +1525,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         </section>
         {(stage === 'preview' || stage === 'activation') && preview ? (
           <section className="cm-policy-result">
-            <aside>
-              <header>
-                <span>
-                  <Check />
-                </span>
-                <div>
-                  <strong>Validated and saved</strong>
-                  <small>Immutable snapshot for this preview</small>
-                </div>
-              </header>
-              <dl>
-                <div>
-                  <dt>Structure</dt>
-                  <dd>Passed</dd>
-                </div>
-                <div>
-                  <dt>Qualification</dt>
-                  <dd>Passed</dd>
-                </div>
-                <div>
-                  <dt>Scope</dt>
-                  <dd>
-                    {impactTotals?.libraries
-                      ? `${String(impactTotals.libraries)} ${impactTotals.libraries === 1 ? 'library' : 'libraries'}`
-                      : 'Current'}
-                  </dd>
-                </div>
-              </dl>
-            </aside>
             <div className="cm-policy-preview">
               <header>
                 <div>
@@ -1480,9 +1537,31 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   {String(impactTotals?.changedWorks ?? 0)}
                 </b>
               </header>
+              <p>
+                {preview.libraries.reduce((count, library) => count + library.cases.length, 0)}{' '}
+                sampled works
+                {' · '}
+                {impactTotals?.currentWorks} total current unapplied works
+                {' · '}up to 20 works across all libraries
+                {preview.libraries.some((library) => library.cases_truncated)
+                  ? ' · Additional works were not previewed'
+                  : ''}
+              </p>
+              <p>
+                {(['ebook', 'audiobook'] as const)
+                  .map((media) => {
+                    const rows = changedRows.filter((row) => row.media === media)
+                    return `${media === 'ebook' ? 'Ebooks' : 'Audiobooks'}: ${String(new Set(rows.map((row) => row.caseId)).size)} sampled works · ${String(rows.length)} changed fields`
+                  })
+                  .join(' · ')}
+              </p>
+              <p>
+                Title, authors, narrators, date, publisher, language and cover are not previewed
+                here.
+              </p>
               <div id="policy-preview-outcomes" className="cm-policy-preview-list">
-                {previewRows.length
-                  ? previewRows.slice(0, expandedPreview === preview ? undefined : 6).map((row) => (
+                {changedRows.length
+                  ? changedRows.slice(0, expandedPreview === preview ? undefined : 6).map((row) => (
                       <div key={row.id} className={row.impact.changed ? 'is-change' : ''}>
                         <span className="cm-policy-work-mark" aria-hidden="true">
                           {row.work.slice(0, 2).toUpperCase()}
@@ -1490,7 +1569,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                         <span>
                           <strong>{row.work}</strong>
                           <small>
-                            {row.library} · {row.field}
+                            {row.media === 'ebook' ? 'Ebook' : 'Audiobook'} · {row.library} ·{' '}
+                            {row.field}
                           </small>
                         </span>
                         <span className="cm-policy-impact">
@@ -1516,20 +1596,18 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           </small>
                         </span>
                         <span className="cm-policy-impact">
-                          <b>
-                            {library.current_unapplied_count === 0 ? 'No change' : 'Needs review'}
-                          </b>
+                          <b>No policy-caused changes in this sample</b>
                           <small>
                             ·{' '}
                             {library.current_unapplied_count === 0
                               ? 'No current unapplied work remains to inspect'
-                              : `No sampled field outcome; ${String(library.current_unapplied_count)} current unapplied ${library.current_unapplied_count === 1 ? 'work remains' : 'works remain'} to inspect`}
+                              : `${String(library.current_unapplied_count)} current unapplied ${library.current_unapplied_count === 1 ? 'work remains' : 'works remain'}; unchanged outcomes are separate context`}
                           </small>
                         </span>
                       </div>
                     ))}
               </div>
-              {previewRows.length > 6 ? (
+              {changedRows.length > 6 ? (
                 <footer>
                   <button
                     type="button"
@@ -1541,22 +1619,52 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   >
                     {expandedPreview === preview
                       ? 'Show fewer outcomes'
-                      : `Show ${String(previewRows.length - 6)} more ${previewRows.length === 7 ? 'outcome' : 'outcomes'}`}
+                      : `Show ${String(changedRows.length - 6)} more ${changedRows.length === 7 ? 'outcome' : 'outcomes'}`}
                   </button>
                 </footer>
               ) : preview.libraries.some((library) => library.cases_truncated) ? (
                 <footer>
-                  Additional current cases are included in the authoritative preview total.
+                  Sample limited to 20 works across all libraries; additional current works were not
+                  previewed.
                 </footer>
               ) : null}
             </div>
+            {previewRows.length ? (
+              <details className="cm-policy-projected-context">
+                <summary>
+                  Unchanged outcomes and projected library context ({previewRows.length})
+                </summary>
+                <p>
+                  These compare the draft with retained library values. They do not count as effects
+                  of editing the policy.
+                </p>
+                {previewRows.map((row) => (
+                  <p key={row.id}>
+                    <strong>
+                      {row.work} · {row.media} · {row.field}:
+                    </strong>{' '}
+                    {row.impact.title}. {row.projected.detail}
+                  </p>
+                ))}
+              </details>
+            ) : null}
             {stage === 'activation' ? (
               <footer className="cm-policy-activation">
                 <strong>Activate this reviewed draft?</strong>
                 <span>
                   The active policy changes only after this guarded command succeeds. Applied
-                  history remains untouched.
+                  history remains untouched. No write permission is granted.
                 </span>
+                <ul>
+                  {changedFields.map((field) => (
+                    <li key={field.key}>
+                      <strong>{field.label}:</strong> Ebooks —{' '}
+                      {mediaQualification(field, draft.options[field.key] ?? '', 'ebook')};
+                      Audiobooks —{' '}
+                      {mediaQualification(field, draft.options[field.key] ?? '', 'audiobook')}
+                    </li>
+                  ))}
+                </ul>
               </footer>
             ) : null}
           </section>
@@ -1691,7 +1799,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         </section>
       </div>
       <p
-        className={`policy-status ${status.tone}`}
+        className={`policy-status ${status.tone} ${['error', 'warning'].includes(status.tone) ? '' : 'sr-only'}`}
         role={status.tone === 'error' ? 'alert' : 'status'}
       >
         {status.message}

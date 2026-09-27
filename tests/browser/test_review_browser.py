@@ -7768,8 +7768,10 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                 )
             ).to_be_visible()
             page.goto(f"{origin}/policy?section=curation")
-            genres = page.get_by_role("region", name="Genres", exact=True)
-            genres.get_by_role("button", name="Ignore", exact=True).click()
+            tags = page.get_by_role("region", name="Tags", exact=True)
+            tags.get_by_role("combobox", name="Tags representation").click()
+            page.get_by_role("option", name="Fill only when empty", exact=True).click()
+            tags.get_by_role("button", name="Automatic", exact=True).click()
             page.get_by_role("button", name="Validate and preview", exact=True).click()
             result = page.locator(".cm-policy-result")
             expect(result).to_be_visible()
@@ -7798,9 +7800,11 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                     expand.focus()
                     page.keyboard.press("Enter")
                     if width == 1440:
-                        result.locator("aside").scroll_into_view_if_needed()
+                        result.locator(
+                            ".cm-policy-preview"
+                        ).scroll_into_view_if_needed()
                         assert result.evaluate("""node => {
-                            const panel = node.querySelector('aside').getBoundingClientRect();
+                            const panel = node.querySelector('.cm-policy-preview').getBoundingClientRect();
                             const rail = document.querySelector('.cm-policy-sidebar')
                                 .getBoundingClientRect();
                             return panel.right <= rail.left || panel.left >= rail.right

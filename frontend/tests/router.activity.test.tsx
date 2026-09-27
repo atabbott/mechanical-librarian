@@ -190,7 +190,7 @@ describe('Activity route', () => {
     expect(consentTrigger).toHaveAttribute('aria-controls', 'activity-consent')
     await user.click(consentTrigger)
     expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   })
 
   it.each([
@@ -319,7 +319,7 @@ describe('Activity route', () => {
     await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     await user.click(screen.getByRole('checkbox'))
     current = { ...initial, capabilities: [] }
-    await user.click(screen.getByRole('button', { name: 'Enable selected libraries' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
 
     await waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent(
@@ -372,14 +372,14 @@ describe('Activity route', () => {
     }
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
     await waitFor(() => expect(screen.getByRole('checkbox')).toBeDisabled())
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
 
     current = partial
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
     const restored = await screen.findByRole('checkbox')
     expect(restored).toBeEnabled()
     expect(restored).not.toBeChecked()
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   })
 
   it('keeps unavailable consent disabled in the protected authority view', async () => {
@@ -427,7 +427,7 @@ describe('Activity route', () => {
     await openActivityAuthority(user)
     await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(screen.getByRole('checkbox')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   })
 
   it('bounds unknown ledger types neutrally', async () => {
@@ -842,7 +842,7 @@ describe('Activity route', () => {
     await openActivityAuthority(user)
     await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(await screen.findByRole('checkbox')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   })
 
   it('does not invent a pause control after revocation', async () => {
@@ -1192,6 +1192,7 @@ describe('Activity route', () => {
   })
 
   it('never says no action is required while its own prepared work awaits consent', async () => {
+    const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
       getActivity: vi.fn(async () =>
@@ -1248,6 +1249,18 @@ describe('Activity route', () => {
     ])
       expect(screen.queryByText(calm)).toBeNull()
     expect(screen.getByText('Action needed')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Enable writes' }))
+    expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('checkbox', { name: /fiction/ }))
+    await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
+    expect(screen.queryByRole('heading', { name: 'Enable guarded writes' })).toBeNull()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Enable writes' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
+    expect(http.activityCommand).toHaveBeenCalledExactlyOnceWith('activity/consent', {
+      grants: [{ library: 'fiction', destinations: ['title'] }],
+    })
   })
 
   it('returns to a calm status once every prepared change has permission', async () => {

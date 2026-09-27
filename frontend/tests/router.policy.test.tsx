@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
 import type {
   PolicyStateView,
+  PolicyPreviewView,
   PreparationView,
   ReviewHttp,
   ShadowPostureView,
@@ -12,6 +13,15 @@ import type {
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, inertAudiobookQualification, renderRoute } from './fixtures'
 import { view } from './settingsFixtures'
+
+const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][number]['fields']) =>
+  fields.map((draft) => ({
+    active: { ...draft, desired_value: draft.current_value, qualified_value: draft.current_value },
+    draft,
+    active_destination: 'ask',
+    draft_destination: 'automatic',
+    changed: draft.desired_value !== draft.current_value,
+  }))
 
 describe('Policy route', () => {
   it('explains empty-series filling, fill and explicit add/replace representations and provider numbering limits', async () => {
@@ -188,6 +198,12 @@ describe('Policy route', () => {
     const asin = await screen.findByRole('region', { name: 'ASIN' })
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic mode not supported')).toBeNull()
+    expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+      'Ebooks: No automatic effect — owner review required',
+    )
+    expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+      'Audiobooks: Asin: Fill an empty field',
+    )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
     expect(within(asin).getByText(/Replace a valid ASIN — Review required/u)).toBeVisible()
@@ -197,6 +213,12 @@ describe('Policy route', () => {
     await user.click(within(asin).getByRole('combobox', { name: 'ASIN representation' }))
     await user.click(screen.getByRole('option', { name: 'Ebook manifestation' }))
     expect(within(asin).getByText('Automatic mode not supported')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Identity How a work/ }))
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
+    expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+      'Ebooks: No automatic effect — owner review required',
+    )
   })
 
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
@@ -251,6 +273,7 @@ describe('Policy route', () => {
               library: 'Hostile <script> library',
               affected_categories: ['title_layout', 'tags'],
               cases: [],
+              comparisons: [],
               cases_total: 0,
               cases_truncated: false,
               current_unapplied_count: 3,
@@ -278,6 +301,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'subtitle',
             option: 'fill_empty',
@@ -285,6 +309,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'not_qualified',
             field: 'subtitle',
             option: 'corroborated_split',
@@ -292,6 +317,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'series',
             option: 'primary_narrative',
@@ -299,6 +325,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'series',
             option: 'source_order',
@@ -306,6 +333,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'series',
             option: 'all_qualified',
@@ -313,6 +341,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'genres',
             option: 'fill_empty',
@@ -320,6 +349,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'policy_only',
             field: 'tags',
             option: 'off',
@@ -327,6 +357,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'isbn_form',
             option: 'preserve_exact',
@@ -334,6 +365,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'isbn_form',
             option: 'prefer_isbn13',
@@ -341,6 +373,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'description_fill',
             option: 'safe_plain_text',
@@ -348,6 +381,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'not_qualified',
             field: 'description_fill',
             option: 'google_visible_text',
@@ -355,6 +389,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'insufficient_coverage',
             field: 'asin',
             option: 'preserve_exact',
@@ -362,6 +397,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'insufficient_coverage',
             field: 'asin',
             option: 'ebook_manifestation',
@@ -369,6 +405,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'passing_human_only',
             field: 'explicit',
             option: 'unsupported',
@@ -507,9 +544,15 @@ describe('Policy route', () => {
     ).toBeVisible()
     expect(await screen.findByText('Hostile <script> library')).toBeVisible()
     expect(screen.getByText(/Title and subtitle, Tags/)).toBeVisible()
-    expect(screen.getByText('Needs review', { selector: '.cm-policy-impact > b' })).toBeVisible()
     expect(
-      screen.getByText('· No sampled field outcome; 3 current unapplied works remain to inspect'),
+      screen.getByText('No policy-caused changes in this sample', {
+        selector: '.cm-policy-impact > b',
+      }),
+    ).toBeVisible()
+    expect(
+      screen.getByText(
+        '· 3 current unapplied works remain; unchanged outcomes are separate context',
+      ),
     ).toBeVisible()
     const stateCallsBeforeChange = vi.mocked(http.getPolicyState).mock.calls.length
     // Simulate A → B during preview, then B → A before activation. The
@@ -555,7 +598,7 @@ describe('Policy route', () => {
     ])
   })
 
-  it('reveals material outcomes beyond six rows without changing preview authority', async () => {
+  it('excludes unchanged outcomes from the primary policy impact list', async () => {
     const user = userEvent.setup()
     const unchanged = Array.from({ length: 6 }, (_, index) => ({
       current_value: `Retained ${String(index)}`,
@@ -568,6 +611,20 @@ describe('Policy route', () => {
       reason: null,
       target_state: 'available',
     }))
+    const caseFields0 = [
+      ...unchanged,
+      {
+        narrowed_for_target: false,
+        outcome: 'projected',
+        reason: null,
+        target_state: 'available',
+        field: 'contributor_names',
+        option: 'canonical',
+        current_value: 'Previous narrator',
+        desired_value: 'Complete recording cast',
+        qualified_value: 'Complete recording cast',
+      },
+    ]
     const policyCommand = vi.fn<(path: string, body: unknown) => Promise<unknown>>(async (path) => {
       if (path === 'drafts')
         return { policy_id: 'policy-reviewed', schema_version: 'metadata-policy-profile-v3' }
@@ -580,23 +637,14 @@ describe('Policy route', () => {
             {
               library: 'Fiction',
               affected_categories: ['contributor_names'],
+              comparisons: [{ media_kind: 'audiobook', fields: comparisons(caseFields0) }],
               cases_total: 1,
               cases_truncated: false,
               current_unapplied_count: 1,
               resolved_policy_id: 'resolved-policy',
               cases: [
                 {
-                  fields: [
-                    ...unchanged,
-                    {
-                      ...unchanged[0],
-                      field: 'contributor_names',
-                      option: 'canonical',
-                      current_value: 'Previous narrator',
-                      desired_value: 'Complete recording cast',
-                      qualified_value: 'Complete recording cast',
-                    },
-                  ],
+                  fields: caseFields0,
                   proposal_set_id: 'proposal-1',
                   report_id: 'report-1',
                   resolved_policy_id: 'resolved-policy',
@@ -617,29 +665,18 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     await user.click(within(title).getByRole('button', { name: 'Ignore' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
-    const showMore = await screen.findByRole('button', { name: 'Show 1 more outcome' })
-    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
-    expect(showMore).toHaveAttribute('aria-expanded', 'false')
-    showMore.focus()
-    await user.keyboard('{Enter}')
-    expect(screen.getByText('· Previous narrator → Complete recording cast')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Show fewer outcomes' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
-    await user.click(screen.getByRole('button', { name: 'Show fewer outcomes' }))
-    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Show 1 more outcome' }))
-    await user.click(screen.getByRole('button', { name: 'Back to editing' }))
-    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
-    expect(await screen.findByRole('button', { name: 'Show 1 more outcome' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    )
-    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Show 1 more outcome' }))
+    expect(
+      await screen.findByText('Policy change', { selector: '.cm-policy-impact > b' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Show 1 more outcome' })).toBeNull()
+    expect(screen.getByText(/Unchanged outcomes and projected library context/)).toBeVisible()
+    expect(
+      screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Review activation' }))
-    expect(screen.getByText('· Previous narrator → Complete recording cast')).toBeVisible()
+    expect(
+      screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Activate policy' }))
     await waitFor(() =>
       expect(policyCommand).toHaveBeenCalledWith('activate', {
@@ -648,7 +685,7 @@ describe('Policy route', () => {
       }),
     )
     expect(policyCommand.mock.calls.filter(([path]) => path === 'activate')).toHaveLength(1)
-    expect(policyCommand.mock.calls.filter(([path]) => path === 'preview')).toHaveLength(2)
+    expect(policyCommand.mock.calls.filter(([path]) => path === 'preview')).toHaveLength(1)
   })
 
   it('identifies each affected work beside its exact policy outcome', async () => {
@@ -664,6 +701,22 @@ describe('Policy route', () => {
       reason: null,
       target_state: 'available',
     })
+    const caseFields0 = [
+      field('Old one', 'New one'),
+      ...Array.from({ length: 7 }, (_, index) =>
+        field(`Old extra ${String(index)}`, `New extra ${String(index)}`, `extra_${String(index)}`),
+      ),
+    ]
+    const caseFields1 = [
+      field('Old two', 'New two'),
+      ...Array.from({ length: 7 }, (_, index) =>
+        field(
+          `Second old extra ${String(index)}`,
+          `Second new extra ${String(index)}`,
+          `second_extra_${String(index)}`,
+        ),
+      ),
+    ]
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts')
         return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
@@ -677,38 +730,24 @@ describe('Policy route', () => {
             {
               library: 'Fiction',
               affected_categories: ['title_layout'],
+              comparisons: [
+                { media_kind: 'audiobook', fields: comparisons(caseFields0) },
+                { media_kind: 'audiobook', fields: comparisons(caseFields1) },
+              ],
               cases_total: 2,
               cases_truncated: true,
               current_unapplied_count: 7,
               resolved_policy_id: 'resolved-policy',
               cases: [
                 {
-                  fields: [
-                    field('Old one', 'New one'),
-                    ...Array.from({ length: 7 }, (_, index) =>
-                      field(
-                        `Old extra ${String(index)}`,
-                        `New extra ${String(index)}`,
-                        `extra_${String(index)}`,
-                      ),
-                    ),
-                  ],
+                  fields: caseFields0,
                   proposal_set_id: 'proposal-1',
                   report_id: 'report-1',
                   resolved_policy_id: 'resolved-policy',
                   work_label: 'First book',
                 },
                 {
-                  fields: [
-                    field('Old two', 'New two'),
-                    ...Array.from({ length: 7 }, (_, index) =>
-                      field(
-                        `Second old extra ${String(index)}`,
-                        `Second new extra ${String(index)}`,
-                        `second_extra_${String(index)}`,
-                      ),
-                    ),
-                  ],
+                  fields: caseFields1,
                   proposal_set_id: 'proposal-2',
                   report_id: 'report-2',
                   resolved_policy_id: 'resolved-policy',
@@ -731,11 +770,11 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
 
     expect((await screen.findAllByText('First book'))[0]).toBeVisible()
-    expect(screen.getByText('Second book')).toBeVisible()
-    expect(screen.getAllByText('Fiction · Title and subtitle')).toHaveLength(2)
-    expect(screen.getAllByText('Change')).toHaveLength(6)
-    expect(screen.getByText('· Old one → New one')).toBeVisible()
-    expect(screen.getByText('· Old two → New two')).toBeVisible()
+    expect(screen.getAllByText('Second book')[0]).toBeVisible()
+    expect(screen.getAllByText('Audiobook · Fiction · Title and subtitle')).toHaveLength(2)
+    expect(screen.getAllByText('Policy change')).toHaveLength(6)
+    expect(screen.getByText(/New one/, { selector: '.cm-policy-impact small' })).toBeVisible()
+    expect(screen.getByText(/New two/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText('2 sampled works with changes')).toBeVisible()
     expect(screen.getByText(/16 material changes in the bounded sample/)).toBeVisible()
     expect(screen.getByLabelText('2 sampled works with changes')).toHaveTextContent('2')
@@ -756,6 +795,7 @@ describe('Policy route', () => {
               library: 'Empty library',
               affected_categories: [],
               cases: [],
+              comparisons: [],
               cases_total: 0,
               cases_truncated: false,
               current_unapplied_count: 0,

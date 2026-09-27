@@ -13,7 +13,11 @@ from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     qualified_policy_bases,
 )
-from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    F19A_QUALIFIED_POLICY_OPTIONS,
+    AutomaticSafetyState,
+)
 from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
     cover_aware_qualified_policy_options,
@@ -328,6 +332,8 @@ class PolicyPreviewRepository(Protocol):
 
 
 class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
+    def current_unapplied_count(self, library: str) -> int: ...
+
     def active_metadata_policy(self) -> str: ...
 
     def create_metadata_policy_draft(self, document: str) -> str: ...
@@ -427,27 +433,25 @@ def preview_policy(
                 for report, proposal in pairs
             ):
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
-            cases = tuple(
-                compile_rich_metadata_preview(
-                    resolved,
-                    report,
+            # Keep both pure proposal results for meaningful candidate routing:
+            # a preserved incumbent has no selected source ID, but can still
+            # have a supported candidate whose review destination changed.
+            compiled_pairs = tuple(
+                tuple(
                     evaluate_report(
-                        report,
-                        resolved.resolved_id,
-                        dict(resolved.destinations),
-                    ),
+                        report, policy.resolved_id, dict(policy.destinations)
+                    )
+                    for policy in (active, resolved)
                 )
                 for report, _ in pairs
             )
             active_cases = tuple(
-                compile_rich_metadata_preview(
-                    active,
-                    report,
-                    evaluate_report(
-                        report, active.resolved_id, dict(active.destinations)
-                    ),
-                )
-                for report, _ in pairs
+                compile_rich_metadata_preview(active, report, compiled[0])
+                for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
+            )
+            cases = tuple(
+                compile_rich_metadata_preview(resolved, report, compiled[1])
+                for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
             )
             comparisons = tuple(
                 PolicyCaseComparison(
@@ -474,14 +478,24 @@ def preview_policy(
                                 and (
                                     before.source_candidate_id is not None
                                     or after.source_candidate_id is not None
+                                    or any(
+                                        result.alternatives
+                                        for compiled in compiled_pair
+                                        for result in compiled.results
+                                        if result.destination.value
+                                        == {
+                                            "description_fill": "description",
+                                            "isbn_form": "isbn",
+                                        }.get(before.field, before.field)
+                                    )
                                 )
                             ),
                         )
                         for before, after in zip(old.fields, new.fields, strict=True)
                     ),
                 )
-                for old, new, (_, proposal) in zip(
-                    active_cases, cases, pairs, strict=True
+                for old, new, (_, proposal), compiled_pair in zip(
+                    active_cases, cases, pairs, compiled_pairs, strict=True
                 )
             )
             work_labels = tuple(
@@ -537,15 +551,42 @@ def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object
     """Expose the fixed public rich-field and cover terminal dispositions."""
     if type(profile) is not MetadataPolicyProfile:
         raise MetadataPolicyApplicationError("policy validation is invalid")
-    return public_summary() + (
-        {
-            "automatic_available": True,
-            "candidate_sha256": COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
-            "disposition": "pass",
-            "field": "cover_order",
-            "option": "fixed_source_order",
-        },
-    )
+    retained = {
+        (str(item["field"]), str(item["option"])): item for item in public_summary()
+    }
+    summaries = []
+    for field, options in OPTION_CATALOGUE.items():
+        for option in options:
+            item = retained.get((field, option))
+            if item is None:
+                cover = field == "cover_order"
+                available = (
+                    cover or f"{field}:{option}" in F19A_QUALIFIED_POLICY_OPTIONS
+                )
+                item = {
+                    "automatic_available": available,
+                    "candidate_sha256": COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
+                    if cover
+                    else F19A_QUALIFICATION_MANIFEST_SHA256,
+                    "disposition": "pass" if available else "not_qualified",
+                    "field": field,
+                    "option": option,
+                }
+            scope = (
+                "none"
+                if not item["automatic_available"]
+                else "fill"
+                if (field == "cover_order" and option == "replace_if_strictly_better")
+                or field in {"subtitle", "description_fill", "isbn_form", "series"}
+                or option == "fill_empty"
+                else "add"
+                if option == "add"
+                else "replace"
+                if option == "replace"
+                else "fill_or_replace"
+            )
+            summaries.append({**item, "operation_scope": scope})
+    return tuple(summaries)
 
 
 def audiobook_qualification(

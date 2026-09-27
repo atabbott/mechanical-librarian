@@ -418,6 +418,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       http.activityCommand(path, body),
     retry: false,
     onSuccess: async () => {
+      setConsentOpen(false)
       setSelection({ source: data, names: new Set() })
       setStatus('Activity state refreshed from the authoritative server.')
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
@@ -710,7 +711,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                         event.state,
                         event.destination === 'description' && event.origin === 'adviser'
                           ? 'description'
-                          : event.destination === 'cover'
+                          : event.event_type !== 'policy' &&
+                              event.destination === 'cover' &&
+                              ['adviser', 'automatic_pipeline', 'owner_retry'].includes(
+                                event.origin,
+                              )
                             ? 'cover'
                             : undefined,
                       )}
@@ -904,46 +909,50 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               </div>
             </dl>
           </div>
-          {offer.map((item) => (
-            <div className="cm-write-consent-scope" key={item.library}>
-              <div>
-                <strong>{item.library}</strong>
-                <span>
-                  {item.eligible
-                    .map(
-                      (entry) =>
-                        `${String(entry.prepared)} ${fieldLabel(entry.destination).toLowerCase()} ${entry.prepared === 1 ? 'change' : 'changes'}`,
-                    )
-                    .join(' · ') || 'No eligible destination'}
-                </span>
-              </div>
-              <dl>
-                {[...item.eligible, ...item.excluded].map((entry) => (
-                  <div key={entry.destination}>
-                    <dt>{fieldLabel(entry.destination)}</dt>
-                    <dd>
-                      {entry.state === 'allowed'
-                        ? consentState === 'off' || consentState === 'enabling'
-                          ? 'Writes off'
-                          : 'Writes enabled'
-                        : `Excluded — ${destinationReason(entry.state)}`}
-                    </dd>
+          {!consentOpen
+            ? offer.map((item) => (
+                <div className="cm-write-consent-scope" key={item.library}>
+                  <div>
+                    <strong>{item.library}</strong>
+                    <span>
+                      {item.eligible
+                        .map(
+                          (entry) =>
+                            `${String(entry.prepared)} ${fieldLabel(entry.destination).toLowerCase()} ${entry.prepared === 1 ? 'change' : 'changes'}`,
+                        )
+                        .join(' · ') || 'No eligible destination'}
+                    </span>
                   </div>
-                ))}
-              </dl>
-            </div>
-          ))}
+                  <dl>
+                    {[...item.eligible, ...item.excluded].map((entry) => (
+                      <div key={entry.destination}>
+                        <dt>{fieldLabel(entry.destination)}</dt>
+                        <dd>
+                          {entry.state === 'allowed'
+                            ? consentState === 'off' || consentState === 'enabling'
+                              ? 'Writes off'
+                              : 'Writes enabled'
+                            : `Excluded — ${destinationReason(entry.state)}`}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ))
+            : null}
           <div className="cm-write-consent-action">
             <button
               className="cm-primary"
               type="button"
               disabled={consentState !== 'off' || consentBlocked !== null}
-              onClick={() =>
-                mutation.mutate({
-                  path: 'activity/consent',
-                  body: { grants: offeredGrants },
-                })
-              }
+              aria-expanded={consentOpen}
+              aria-controls="activity-consent"
+              onClick={() => {
+                setConsentOpen(true)
+                requestAnimationFrame(() =>
+                  document.getElementById('activity-consent')?.scrollIntoView({ block: 'nearest' }),
+                )
+              }}
             >
               {consentState === 'off'
                 ? 'Enable writes'
@@ -955,6 +964,63 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             </button>
             {consentBlocked ? <p className="cm-write-consent-reason">{consentBlocked}</p> : null}
           </div>
+        </section>
+      ) : null}
+      {consentOpen ? (
+        <section className="activity-consent-ledger" id="activity-consent">
+          <div>
+            <p className="eyebrow">Prepared, read-only work</p>
+            <h2>Enable guarded writes</h2>
+            <p>
+              Each write is checked before it starts, verified afterwards, and recorded durably.
+            </p>
+          </div>
+          {configured.map((library) => {
+            const name = library.library
+            const state = capability(name)?.state ?? 'not_ready'
+            const disabled = !selectableNames.has(name)
+            return (
+              <label className="activity-consent-library" key={name}>
+                <input
+                  type="checkbox"
+                  disabled={disabled}
+                  checked={selected.has(name)}
+                  onChange={() => toggle(name)}
+                />
+                <strong>{name}</strong>
+                <small>
+                  {preparedCount(library)} prepared · {capabilityLabel(state)}
+                  {capability(name)?.destinations.map((entry) => (
+                    <span key={entry.destination} className="cm-consent-destination">
+                      {fieldLabel(entry.destination)}:{' '}
+                      {entry.state === 'allowed'
+                        ? `Included · ${String(entry.prepared)} prepared`
+                        : `Excluded — ${destinationReason(entry.state)}`}
+                    </span>
+                  ))}
+                </small>
+              </label>
+            )
+          })}
+          <p>
+            Only the included destinations shown above are enabled. Excluded destinations remain
+            off. Backup and service capability are checked again on confirmation.
+          </p>
+          <button type="button" onClick={() => setConsentOpen(false)} disabled={mutation.isPending}>
+            Cancel permission review
+          </button>
+          <button
+            className="primary-action"
+            disabled={mutation.isPending || !data.backup_ready || selectedGrants.length === 0}
+            onClick={() =>
+              mutation.mutate({
+                path: 'activity/consent',
+                body: { grants: selectedGrants },
+              })
+            }
+          >
+            Confirm write permissions
+          </button>
         </section>
       ) : null}
       <section className="cm-activity-status" aria-labelledby="activity-status-title">
@@ -1134,51 +1200,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                     </p>
                   ))}
                 </div>
-              ) : null}
-              {consentOpen ? (
-                <section className="activity-consent-ledger" id="activity-consent">
-                  <div>
-                    <p className="eyebrow">Prepared, read-only work</p>
-                    <h2>Enable guarded writes</h2>
-                    <p>
-                      Each write is checked before it starts, verified afterwards, and recorded
-                      durably.
-                    </p>
-                  </div>
-                  {configured.map((library) => {
-                    const name = library.library
-                    const state = capability(name)?.state ?? 'not_ready'
-                    const disabled = !selectableNames.has(name)
-                    return (
-                      <label className="activity-consent-library" key={name}>
-                        <input
-                          type="checkbox"
-                          disabled={disabled}
-                          checked={selected.has(name)}
-                          onChange={() => toggle(name)}
-                        />
-                        <strong>{name}</strong>
-                        <small>
-                          {preparedCount(library)} prepared · {capabilityLabel(state)}
-                        </small>
-                      </label>
-                    )
-                  })}
-                  <button
-                    className="primary-action"
-                    disabled={
-                      mutation.isPending || !data.backup_ready || selectedGrants.length === 0
-                    }
-                    onClick={() =>
-                      mutation.mutate({
-                        path: 'activity/consent',
-                        body: { grants: selectedGrants },
-                      })
-                    }
-                  >
-                    Enable selected libraries
-                  </button>
-                </section>
               ) : null}
             </div>
           </details>

@@ -122,15 +122,25 @@ def test_revision_three_documents_decode_without_current_authority(family):
         )
 
 
+@pytest.mark.parametrize(
+    "filename,source_sha",
+    (
+        ("before-policy-impact.json", "2fb536784394f578d38b90fc8c35bde2fa2ecf62"),
+        ("before-policy-summary.json", "252f1577047c4d64ac2c18cbf4f725b36814edc5"),
+    ),
+)
 @pytest.mark.parametrize("family", ("F19A", "F20", "F46"))
-def test_policy_impact_predecessors_decode_without_current_authority(family):
+def test_policy_impact_predecessors_decode_without_current_authority(
+    family, filename, source_sha
+):
     fixture = json.loads(
         (
             Path(__file__).parents[1]
-            / "support/automatic_decision_predecessors/before-policy-impact.json"
+            / "support/automatic_decision_predecessors"
+            / filename
         ).read_bytes()
     )
-    assert fixture["source_sha"] == "2fb536784394f578d38b90fc8c35bde2fa2ecf62"
+    assert fixture["source_sha"] == source_sha
     for raw in fixture["decisions"][family]:
         decision = AutomaticDecision.from_json(raw)
         assert decision.to_json() == raw

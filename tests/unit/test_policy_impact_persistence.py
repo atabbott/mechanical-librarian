@@ -144,7 +144,9 @@ def test_limit_and_malformed_rows_fail_closed() -> None:
         repository.close()
 
 
-def test_tags_edit_compares_both_media_on_the_same_captured_inputs(tmp_path) -> None:
+def test_tags_edit_compares_both_media_on_the_same_captured_inputs(
+    tmp_path, monkeypatch
+) -> None:
     from mechanical_librarian.application.metadata_policy import preview_policy
     from mechanical_librarian.domain.metadata_policy import (
         DEFAULT_OPTIONS,
@@ -193,7 +195,20 @@ def test_tags_edit_compares_both_media_on_the_same_captured_inputs(tmp_path) -> 
         dict(active.options) | {"tags": "fill_empty"},
         destinations | {"tags": "automatic"},
     )
+    from mechanical_librarian.application import metadata_policy as policy_application
+
+    compilation_reads = []
+
+    def compile_after_read(*args, **kwargs):
+        assert not reader._connection.in_transaction
+        compilation_reads.append(args[0].report_id)
+        return evaluate_report(*args, **kwargs)
+
+    monkeypatch.setattr(policy_application, "evaluate_report", compile_after_read)
     preview = preview_policy(draft, libraries, {}, reader)
+    assert sorted(compilation_reads) == sorted(
+        report.report_id for report in reports for _ in range(2)
+    )
     comparisons = {
         case.media_kind: case
         for impact in preview.libraries
@@ -222,16 +237,18 @@ def test_tags_edit_compares_both_media_on_the_same_captured_inputs(tmp_path) -> 
         for case in impact.comparisons
         for field in case.fields
     )
+    monkeypatch.setattr(policy_application, "evaluate_report", evaluate_report)
     reader.close()
     assert database.read_bytes() == before
 
     # Transport uses the same real SQLite/application capture, not canned rows.
     from argon2 import PasswordHasher
     from fastapi.testclient import TestClient
+
     from mechanical_librarian.application.configuration import ReviewWebConfiguration
     from tests.unit.review_app_fixture import (
-        create_transport_test_app,
         TEST_REACT_BUILD_IDENTITY,
+        create_transport_test_app,
     )
 
     password = tmp_path / "owner.hash"
@@ -351,12 +368,12 @@ def test_capture_holds_one_snapshot_across_generation_and_case_changes(
         monkeypatch.setattr(
             reader._metadata_policy, "metadata_policy_preview_baseline", original
         )
-        successor = reader.capture_policy_preview(("ebooks",), 20)
-        assert successor.generation == 2
-        assert successor.libraries[0].current_unapplied_count == 1
-        assert [report.target.item for report, _ in successor.libraries[0].pairs] == [
-            "item-02"
-        ]
+        next_capture = reader.capture_policy_preview(("ebooks",), 20)
+        assert next_capture.generation == 2
+        assert next_capture.libraries[0].current_unapplied_count == 1
+        assert [
+            report.target.item for report, _ in next_capture.libraries[0].pairs
+        ] == ["item-02"]
     finally:
         begin_write.set()
         reader.close()
@@ -376,3 +393,170 @@ def test_immutable_preview_refuses_a_changed_database(tmp_path):
     finally:
         reader.close()
         owner.close()
+
+
+@pytest.mark.parametrize(
+    (
+        "current",
+        "active_option",
+        "active_route",
+        "draft_option",
+        "draft_route",
+        "changed",
+    ),
+    [
+        (("Exploration",), "fill_empty", "ask", "fill_empty", "automatic", True),
+        (("Exploration",), "fill_empty", "automatic", "fill_empty", "ask", True),
+        (None, "fill_empty", "ask", "fill_empty", "ignore", True),
+        (None, "off", "ask", "off", "ask", False),
+        (None, "fill_empty", "automatic", "fill_empty", "automatic", False),
+    ],
+)
+def test_actual_candidate_routing_is_distinct_from_library_value_change(
+    tmp_path, current, active_option, active_route, draft_option, draft_route, changed
+) -> None:
+    from mechanical_librarian.application.metadata_policy import preview_policy
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        OPTION_CATALOGUE,
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetField,
+        TargetFieldState,
+    )
+    from tests.support.ebook_synopsis import synopsis_report
+
+    source = synopsis_report()
+    report = MetadataReport.create(
+        target=TargetFacts(
+            source.target.connection,
+            source.target.library,
+            source.target.item,
+            tuple(
+                TargetField(TargetDestination.TAGS, TargetFieldState.VALUE, current)
+                if field.destination is TargetDestination.TAGS and current is not None
+                else field
+                for field in source.target.fields
+            ),
+        ),
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=source.providers,
+        cover_sources=source.cover_sources,
+    )
+    destinations = {
+        field: "unsupported" if field == "explicit" else "ask"
+        for field in OPTION_CATALOGUE
+    }
+    active = MetadataPolicyProfile.create(
+        "Active",
+        dict(DEFAULT_OPTIONS) | {"tags": active_option},
+        destinations | {"tags": active_route},
+    )
+    draft = MetadataPolicyProfile.create(
+        "Renamed draft",
+        dict(DEFAULT_OPTIONS) | {"tags": draft_option},
+        destinations | {"tags": draft_route},
+    )
+    library = report.target.library
+    resolved = resolve_policy(active, library)
+    repository = open_repository(tmp_path / "state.sqlite")
+    try:
+        repository.create_metadata_policy_draft(active.canonical_json)
+        repository.activate_metadata_policy(
+            active.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            ((library, resolved.resolved_id, resolved.canonical_json),),
+            1,
+        )
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+        preview = preview_policy(draft, (library,), {}, repository)
+        tags = next(
+            field
+            for field in preview.libraries[0].comparisons[0].fields
+            if field.draft.field == "tags"
+        )
+        assert tags.changed is changed
+        assert (tags.active_destination, tags.draft_destination) == (
+            active_route,
+            draft_route,
+        )
+        if current is not None:
+            assert tags.active.desired_value == tags.draft.desired_value == current
+            assert (
+                tags.active.source_candidate_id
+                is tags.draft.source_candidate_id
+                is None
+            )
+        assert not repository._connection.in_transaction
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "corruption", ("generation", "count", "library", "resolution", "pair")
+)
+def test_capture_rejects_malformed_or_incompatible_inputs(tmp_path, corruption) -> None:
+    from dataclasses import replace
+
+    from mechanical_librarian.application.metadata_policy import (
+        MetadataPolicyApplicationError,
+        preview_policy,
+    )
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+
+    repository = open_repository(tmp_path / "state.sqlite")
+    try:
+        report = _case_report(1)
+        proposal = evaluate_report(report)
+        repository.publish(report, lambda: True)
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+        captured = repository.capture_policy_preview(("ebooks",), 20)
+        library = captured.libraries[0]
+        if corruption == "generation":
+            captured = replace(captured, generation=0)
+        elif corruption == "count":
+            captured = replace(
+                captured, libraries=(replace(library, current_unapplied_count=0),)
+            )
+        elif corruption == "library":
+            captured = replace(captured, libraries=(replace(library, library="other"),))
+        elif corruption == "resolution":
+            active = captured.active
+            other = MetadataPolicyProfile.create(
+                "Different active", dict(active.options), dict(active.destinations)
+            )
+            captured = replace(
+                captured,
+                libraries=(
+                    replace(library, resolution=resolve_policy(other, "ebooks")),
+                ),
+            )
+        else:
+            captured = replace(
+                captured,
+                libraries=(replace(library, pairs=((_case_report(2), proposal),)),),
+            )
+
+        class CapturedRepository:
+            def capture_policy_preview(self, libraries, limit):
+                return captured
+
+        with pytest.raises(MetadataPolicyApplicationError, match="unavailable"):
+            preview_policy(captured.active, ("ebooks",), {}, CapturedRepository())
+        assert not repository._connection.in_transaction
+    finally:
+        repository.close()

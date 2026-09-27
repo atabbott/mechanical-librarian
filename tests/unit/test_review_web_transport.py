@@ -1720,6 +1720,32 @@ def test_openapi_is_deterministic_and_secret_free(
     assert {
         **dict(F20_OPTION_DISPOSITIONS),
         "cover_order:fixed_source_order": "pass",
+        "cover_order:replace_if_strictly_better": "pass",
+        **{
+            key: "pass"
+            for key in (
+                "title_layout:preserve",
+                "title_layout:title_and_subtitle",
+                "date_precision:year",
+                "date_precision:full_date",
+                "language_rendering:preserve",
+                "language_rendering:display_name",
+                "contributor_names:preserve",
+                "contributor_names:canonical",
+                "publisher_preference:publisher",
+            )
+        },
+        **{
+            key: "not_qualified"
+            for key in (
+                "publisher_preference:imprint",
+                "subtitle:replace_descriptive",
+                "series:add_qualified",
+                "series:replace_qualified",
+                "description_fill:replace_safe_plain_text",
+                "explicit:adult_product",
+            )
+        },
     } == closed_qualification
     assert "HTTPValidationError" not in schemas
     assert all(

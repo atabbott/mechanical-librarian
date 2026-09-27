@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Policy preview shows active-to-draft changes from one retained snapshot, with
+  separate ebook/audiobook qualification and sample counts. Write activation
+  opens one scoped confirmation; history shows event times and distinguishes
+  recorded choices from verified effects (#1011).
+
 - Ebook cover correction: “Replace if strictly better” fills a known-empty
   cover using existing deterministic admission; it does not replace a confirmed
   ebook cover. Fixed-source upgrades and audiobook replacement stay unchanged (#1011).

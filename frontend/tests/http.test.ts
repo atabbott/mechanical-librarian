@@ -1052,6 +1052,7 @@ describe('ReviewApiClient', () => {
       items: [
         {
           category: 'owner',
+          occurredAt: 2,
           applicationReason: null,
           destination: 'title',
           outcome: 'accept',
@@ -1060,14 +1061,21 @@ describe('ReviewApiClient', () => {
         },
         {
           category: 'automatic',
+          occurredAt: 1,
           destination: 'authors',
           outcome: 'ignore',
           previousValue: null,
           selectedValue: null,
         },
-        { category: 'transition', outcome: 'admitted', reason: '<script>actionable</script>' },
         {
           category: 'transition',
+          occurredAt: null,
+          outcome: 'admitted',
+          reason: '<script>actionable</script>',
+        },
+        {
+          category: 'transition',
+          occurredAt: null,
           outcome: 'superseded',
           reason: 'A newer review replaced this one.',
         },
@@ -1091,6 +1099,7 @@ describe('ReviewApiClient', () => {
       items: [
         {
           category: 'cover',
+          occurredAt: 3,
           candidateCount: 1,
           outcome: 'selected',
           ownerOutcome: 'accept',
@@ -1105,6 +1114,7 @@ describe('ReviewApiClient', () => {
       items: [
         {
           category: 'cover',
+          occurredAt: 3,
           candidateCount: 1,
           outcome: 'superseded',
           ownerOutcome: 'accept',
@@ -1130,6 +1140,7 @@ describe('ReviewApiClient', () => {
         {
           automaticOutcome: 'candidate',
           category: 'cover',
+          occurredAt: 3,
           candidateCount: 1,
           outcome: 'selected',
           policyReasons: ['policy_satisfied'],
@@ -1652,6 +1663,7 @@ describe('ReviewApiClient', () => {
     const rich = [
       {
         automatic_available: false,
+        operation_scope: 'none',
         candidate_sha256: 'a'.repeat(64),
         disposition: 'insufficient_coverage',
         field: 'asin',
@@ -1659,6 +1671,7 @@ describe('ReviewApiClient', () => {
       },
       {
         automatic_available: true,
+        operation_scope: 'fill',
         candidate_sha256: 'a'.repeat(64),
         disposition: 'passing_automatic',
         field: 'series',
