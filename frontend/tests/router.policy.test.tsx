@@ -2,7 +2,12 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
+import {
+  AmbiguousMutationError,
+  ApiError,
+  BuildMismatchError,
+  ReviewApiClient,
+} from '../src/api/http'
 import type {
   PolicyStateView,
   PolicyPreviewView,
@@ -254,6 +259,17 @@ describe('Policy route', () => {
     let validationCalls = 0
     let draftSaves = 0
     let activePolicyId = 'opaque-policy-identity'
+    const staleResponse = vi.fn(async () =>
+      Response.json(
+        { schema_version: 'review-error-v1', error: { code: 'policy_activation_is_stale' } },
+        { status: 409 },
+      ),
+    )
+    const transport = new ReviewApiClient({
+      buildIdentity: 'a'.repeat(64),
+      csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+      fetch: staleResponse,
+    })
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Vitest retains the body in mock.calls assertions.
     const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
       if (path === 'validate' && ++validationCalls === 1) throw new ApiError(422, 'invalid_policy')
@@ -280,7 +296,7 @@ describe('Policy route', () => {
           ],
         }
       }
-      if (path === 'activate') throw new ApiError(409, 'policy_activation_is_stale')
+      if (path === 'activate') return transport.policyCommand(path, body)
       return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
@@ -577,6 +593,7 @@ describe('Policy route', () => {
       policy_id: 'policy-draft',
       expected_active_policy_id: 'policy-preview-authority',
     })
+    expect(staleResponse).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Activate policy' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
