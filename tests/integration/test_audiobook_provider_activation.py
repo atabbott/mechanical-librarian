@@ -1484,8 +1484,8 @@ def test_recording_collision_cannot_add_owner_choices(
                     assert explanation in retained[0]["observation"]
                     if collision == "language":
                         assert "Recording timing" not in retained[0]["observation"]
-                    assert claim.reference in retained[0]["observation"]
-                    assert other.identity in retained[0]["observation"]
+                    assert claim.reference not in retained[0]["observation"]
+                    assert other.identity not in retained[0]["observation"]
                     assert (
                         f"Scope: {claim.scope.value}; state: {claim.state.value}"
                         in retained[0]["observation"]

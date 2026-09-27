@@ -22,6 +22,7 @@ from uvicorn.server import ServerState
 
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.application.configuration import (
+    ApplicationConfiguration,
     ConfigurationError,
     ReviewWebConfiguration,
 )
@@ -407,8 +408,8 @@ def test_server_uses_validated_tls_before_opening_the_database(mode: str) -> Non
             ) as identity,
             patch(
                 "mechanical_librarian.bootstrap.composition.load_configuration_file",
-                return_value=SimpleNamespace(
-                    review=review, connections=(), providers=(), libraries=()
+                return_value=ApplicationConfiguration(
+                    review=review, connections=(), providers=(), libraries=(), mounts=()
                 ),
             ),
             patch(
