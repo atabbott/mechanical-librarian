@@ -3302,9 +3302,13 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
         refreshed = tuple(replace(entry, title="Refreshed") for entry in entries)
 
         def publish_after_page(
-            search: str | None, limit: int, offset: int, attention: bool | None
+            search: str | None,
+            limit: int,
+            offset: int,
+            attention: bool | None,
+            library_labels=(),
         ) -> tuple[tuple[str | None, str], ...]:
-            rows = original_list(search, limit, offset, attention)
+            rows = original_list(search, limit, offset, attention, library_labels)
             catalogue.acquire_refresh()
             catalogue.publish("a" * 64, refreshed)
             return rows
@@ -3337,3 +3341,216 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
         }
         repository.close()
         catalogue.close()
+
+
+@pytest.mark.parametrize("file_backed", (False, True))
+def test_active_labels_filter_current_and_terminal_before_count_and_page(
+    tmp_path, file_backed
+):
+    from mechanical_librarian.adapters.persistence.review_sessions import (
+        SQLiteReviewSessionRepository,
+    )
+    from mechanical_librarian.application.catalogue import CatalogueEntry
+    from mechanical_librarian.application.owner_settings import (
+        FileOwnerSettingsRepository,
+        OwnerSettingsOperations,
+    )
+    from mechanical_librarian.application.review_application import (
+        compose_review_application,
+    )
+    from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    report = _report()
+    library, connection = report.target.library, report.target.connection
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    repository.admit_review_case(proposal)
+    repository.request_review_scan(connection, library, "library-id", "f" * 64, 10)
+    action = repository.claim_review_pipeline_action(11)
+    entry = CatalogueEntry(
+        connection,
+        library,
+        "library-id",
+        "terminal-only",
+        1,
+        "Terminal",
+        (),
+        True,
+        False,
+        "singular-supported",
+        "a" * 64,
+        "/synthetic.epub",
+        "epub",
+        "/media",
+    )
+    repository.complete_review_discovery(action, "generation", "b" * 64, (entry,), 12)
+    action = repository.claim_review_pipeline_action(13)
+    repository.fail_review_pipeline_action(action, "unreadable_media", False, 14)
+    document = OwnerSettingsDocument.model_validate(
+        {
+            "schema_version": "owner-settings-v4",
+            "revision": 1,
+            "connections": [
+                {"name": connection, "endpoint": "https://example.invalid"}
+            ],
+            "libraries": [
+                {
+                    "name": library,
+                    "connection": connection,
+                    "library_id": "library-id",
+                    "media_kind": "ebook",
+                    "display_name": "Stale Store Label",
+                }
+            ],
+        }
+    )
+    repository._connection.execute(
+        "INSERT INTO owner_settings VALUES(1,?,?)",
+        (
+            document.revision,
+            json.dumps(document.model_dump(), separators=(",", ":"), sort_keys=True),
+        ),
+    )
+    repository._connection.commit()
+    active = document.model_copy(
+        update={
+            "libraries": list(
+                item.model_copy(update={"display_name": "Active 100%_ Room"})
+                for item in document.libraries
+            )
+        }
+    )
+    settings = (
+        FileOwnerSettingsRepository(active)
+        if file_backed
+        else repository.owner_settings_store()
+    )
+    if not file_backed:
+        repository._connection.execute(
+            "UPDATE owner_settings SET document=?",
+            (json.dumps(active.model_dump(), separators=(",", ":"), sort_keys=True),),
+        )
+        repository._connection.commit()
+    sessions = SQLiteReviewSessionRepository.open_ephemeral()
+    application = compose_review_application(
+        state_owner=repository,
+        session_store=sessions,
+        case_store=repository,
+        decision_store=repository,
+        library_store=repository,
+        policy_store=repository,
+        verify_password=lambda _: True,
+        session_digest=lambda token: "a" * 64,
+        clock=lambda: 20,
+        session_lifetime_seconds=600,
+        graceful_shutdown_seconds=30,
+        settings=OwnerSettingsOperations(settings),
+    )
+    try:
+        with patch.object(settings, "read", wraps=settings.read) as reads:
+            first = application.library(
+                lens="all", search="100%_", limit=1, cursor=None
+            ).to_data()
+            assert reads.call_count == 1
+        assert first["counts"]["all"] == 2
+        assert first["items"][0]["library_display_name"] == "Active 100%_ Room"
+        second = application.library(
+            lens="all", search="100%_", limit=1, cursor=first["next_cursor"]
+        ).to_data()
+        assert second["counts"]["all"] == 2 and len(second["items"]) == 1
+        assert second["items"][0]["library_display_name"] == "Active 100%_ Room"
+        assert {
+            item["detail_url"] is None
+            for item in cast(list[dict[str, object]], first["items"])
+            + cast(list[dict[str, object]], second["items"])
+        } == {False, True}
+        for query in ("Stale Store Label", "100XX"):
+            assert (
+                application.library(
+                    lens="all", search=query, limit=10, cursor=None
+                ).to_data()["counts"]["all"]
+                == 0
+            )
+        assert (
+            repository.read_review_library("Stale Store Label", 10, 0, None).total == 0
+        )
+        assert (
+            repository.read_review_library(
+                "Active", 10, 0, None, (("other", library, "Active"),)
+            ).total
+            == 0
+        )
+        with patch.object(settings, "read", wraps=settings.read) as reads:
+            attention = application.attention(
+                search="100%_", limit=1, cursor=None
+            ).to_data()
+            assert reads.call_count == 1
+        assert cast(int, attention["total"]) > 0 and len(attention["items"]) == 1
+        assert attention["items"][0]["library_display_name"] == "Active 100%_ Room"
+        if attention["next_cursor"] is not None:
+            following = application.attention(
+                search="100%_", limit=1, cursor=attention["next_cursor"]
+            ).to_data()
+            assert following["total"] == attention["total"]
+            assert following["items"] != attention["items"]
+        assert (
+            application.attention(
+                search="Stale Store Label", limit=10, cursor=None
+            ).to_data()["total"]
+            == 0
+        )
+        assert (
+            repository.read_review_attention(
+                "Active", 10, 0, (("other", library, "Active"),)
+            ).total
+            == 0
+        )
+        before = application.library(
+            lens="all", search=None, limit=1, cursor=None
+        ).to_data()
+        renamed_document = active.model_copy(
+            update={
+                "libraries": list(
+                    item.model_copy(update={"display_name": "Renamed Room"})
+                    for item in active.libraries
+                )
+            }
+        )
+        if file_backed:
+            assert isinstance(settings, FileOwnerSettingsRepository)
+            settings._document = renamed_document
+        else:
+            repository._connection.execute(
+                "UPDATE owner_settings SET document=?",
+                (
+                    json.dumps(
+                        renamed_document.model_dump(),
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ),
+                ),
+            )
+            repository._connection.commit()
+        after = application.library(
+            lens="all", search=None, limit=1, cursor=None
+        ).to_data()
+        assert before["items"][0].pop("library_display_name") == "Active 100%_ Room"
+        assert after["items"][0].pop("library_display_name") == "Renamed Room"
+        assert before == after
+        assert (
+            application.library(
+                lens="all", search="Active", limit=10, cursor=None
+            ).to_data()["counts"]["all"]
+            == 0
+        )
+        assert (
+            application.library(
+                lens="all", search="Renamed Room", limit=10, cursor=None
+            ).to_data()["counts"]["all"]
+            == 2
+        )
+    finally:
+        sessions.close()
+        repository.close()

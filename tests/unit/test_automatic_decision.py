@@ -1049,3 +1049,69 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
         dict(automatic_decision._PRIOR_F46_QUALIFICATION_MANIFESTS)[prior_digest]
         == expected
     )
+
+
+@pytest.mark.parametrize(
+    "digest,permissions",
+    (
+        (
+            "796b2a4d55851a997dae96f0863a527c8820a841e1a90c9712f4cf9fc50a4c29",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+        ),
+        (
+            "19939b85acb471fb17c076a44c6a0dd173f6c32e5a951986b9e65060458cfd8a",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+        ),
+        (
+            "1380202f048a6f7dbd006041c18ce6eded8d7c1ecd5522f330af6f2023b0a12c",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+        ),
+    ),
+)
+def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
+    digest, permissions
+):
+    all_permissions = (
+        automatic_decision._HISTORICAL_PERMISSIONS_2
+        | automatic_decision._HISTORICAL_PERMISSIONS_7
+        | automatic_decision._HISTORICAL_PERMISSIONS_0
+        | {"description_fill:unqualified"}
+    )
+    for identity in sorted(all_permissions):
+        category, option = identity.split(":", 1)
+        data = json.loads(
+            _f19a_title_decision_document(digest, "replace_target:decoration_tidy")
+        )
+        core = {
+            key: value
+            for key, value in data.items()
+            if key
+            not in {
+                "decision_id",
+                "idempotency_digest",
+                "occurred_at",
+                "origin",
+                "schema_version",
+            }
+        }
+        core.update(
+            policy_category=category,
+            policy_option=option,
+            bundle_id="automatic_bundle_" + "4" * 64
+            if category in {"title_layout", "date_precision"}
+            else None,
+        )
+        data.update(
+            core,
+            decision_id="automatic_decision_" + _digest({**core, "occurred_at": 1}),
+            idempotency_digest=_digest(core),
+        )
+        document = json.dumps(data, separators=(",", ":"), sort_keys=True)
+        assert not qualification_manifest_is_current(category, option, digest)
+        if identity in permissions:
+            assert AutomaticDecision.from_json(document).to_json() == document
+            with pytest.raises(AutomaticDecisionError):
+                AutomaticDecision.create(**core, occurred_at=1)
+        else:
+            with pytest.raises(AutomaticDecisionError):
+                AutomaticDecision.from_json(document)

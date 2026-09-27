@@ -2547,6 +2547,7 @@ def test_an_activated_audiobook_tranche_plans_through_the_same_guarded_path(
         "091cdf7f08f60e9e4e1860ff574a9c04c405c914d498560e9802294b69c53a30",
         "70563a47e768fe51cb911511ca67849893e4495266c84bb2e9fc7f6165ed2879",
         "4a89dfc24a27bbe2a548a9b0c5ad2793cf2da1a2b0445f9dd1ad2f9323822bc9",
+        "19939b85acb471fb17c076a44c6a0dd173f6c32e5a951986b9e65060458cfd8a",
     ),
 )
 @pytest.mark.parametrize(
@@ -2646,6 +2647,8 @@ def test_legacy_rich_decision_stays_readable_without_effect_authority(
     assert legacy.to_json() in effects.repository.get_review_case_decisions(
         legacy.review_case_id
     )
+    snapshot = effects.repository.read_review_library(None, 20, 0, None)
+    assert any(legacy.to_json() in row[2] for row in snapshot.rows)
 
     source = effects.repository.field_effect_authority_source(legacy)
     consent = effects.repository.grant_field_effect_consents(
@@ -4126,9 +4129,13 @@ def test_web_field_effect_and_review_reads_share_one_repository_lock(
                 raise RuntimeError("test release timeout")
             return repository.get_field_effect(plan_id)
 
-        def read_review_library(self, search, limit, offset, attention):
+        def read_review_library(
+            self, search, limit, offset, attention, library_labels=()
+        ):
             library_entered.set()
-            return repository.read_review_library(search, limit, offset, attention)
+            return repository.read_review_library(
+                search, limit, offset, attention, library_labels
+            )
 
     blocking = BlockingRepository()
     effects.service._repository = blocking

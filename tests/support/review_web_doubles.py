@@ -38,6 +38,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.application.review_web import (
     CurrentReviewCaseSnapshot,
+    LibraryLabels,
     ReviewAttentionSnapshot,
     ReviewLibrarySnapshot,
 )
@@ -480,7 +481,7 @@ class FakeReviewRepository:
             for proposal in case.proposals
         )
 
-    def _searched(self, search: str | None):
+    def _searched(self, search: str | None, library_labels: LibraryLabels = ()):
         if search is None:
             return self.browse_cases
         query = search.casefold()
@@ -498,6 +499,15 @@ class FakeReviewRepository:
                         and type(field.value) is tuple
                         for value in field.value
                     ),
+                    next(
+                        (
+                            label
+                            for connection, library, label in library_labels
+                            if (connection, library)
+                            == (report.target.connection, report.target.library)
+                        ),
+                        "",
+                    ),
                     report.target.library,
                     report.target.item,
                     report.file.format,
@@ -506,11 +516,14 @@ class FakeReviewRepository:
         ]
 
     def _current_review_cases(
-        self, search: str | None, attention: bool | None
+        self,
+        search: str | None,
+        attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> list[tuple[ReviewCase | None, MetadataReport]]:
         rows: list[tuple[ReviewCase | None, MetadataReport]] = [
             (case, report)
-            for case, report in self._searched(search)
+            for case, report in self._searched(search, library_labels)
             if attention is None or self._attention(case) is attention
         ]
         if attention is not True:
@@ -529,6 +542,15 @@ class FakeReviewRepository:
                             if field.destination is TargetDestination.AUTHORS
                             and type(field.value) is tuple
                             for value in cast(tuple[str, ...], field.value)
+                        ),
+                        next(
+                            (
+                                label
+                                for connection, library, label in library_labels
+                                if (connection, library)
+                                == (report.target.connection, report.target.library)
+                            ),
+                            "",
                         ),
                         report.target.library,
                         report.target.item,
@@ -551,12 +573,13 @@ class FakeReviewRepository:
         limit: int,
         offset: int,
         attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> tuple[tuple[str | None, str], ...]:
         return tuple(
             (None if case is None else case.to_json(), report.to_json())
-            for case, report in self._current_review_cases(search, attention)[
-                offset : offset + limit
-            ]
+            for case, report in self._current_review_cases(
+                search, attention, library_labels
+            )[offset : offset + limit]
         )
 
     def read_current_report_document(
@@ -580,8 +603,12 @@ class FakeReviewRepository:
                 return report.to_json()
         return None
 
-    def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
-        rows = self._current_review_cases(search, None)[:100_000]
+    def count_current_review_cases(
+        self,
+        search: str | None,
+        library_labels: LibraryLabels = (),
+    ) -> tuple[int, int]:
+        rows = self._current_review_cases(search, None, library_labels)[:100_000]
         return len(rows), sum(
             case is not None and self._attention(case) for case, _ in rows
         )
@@ -592,9 +619,12 @@ class FakeReviewRepository:
         limit: int,
         offset: int,
         attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> ReviewLibrarySnapshot:
-        rows = self.list_current_review_case_documents(search, limit, offset, attention)
-        total, attention_total = self.count_current_review_cases(search)
+        rows = self.list_current_review_case_documents(
+            search, limit, offset, attention, library_labels
+        )
+        total, attention_total = self.count_current_review_cases(search, library_labels)
         identified = [
             (
                 None
@@ -647,11 +677,15 @@ class FakeReviewRepository:
         )
 
     def list_current_attention_documents(
-        self, search: str | None, limit: int, offset: int
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
     ) -> tuple[_AttentionRow, ...]:
         rows = [
             (case, report, proposal)
-            for case, report in self._searched(search)
+            for case, report in self._searched(search, library_labels)
             for proposal in case.proposals
             if self._field_attention(case, proposal)
             or proposal["destination"] in self.policy_attention_destinations
@@ -670,20 +704,30 @@ class FakeReviewRepository:
         ]
         return tuple(projected)
 
-    def count_current_attention_fields(self, search: str | None) -> int:
+    def count_current_attention_fields(
+        self,
+        search: str | None,
+        library_labels: LibraryLabels = (),
+    ) -> int:
         return sum(
             1
-            for case, _ in self._searched(search)
+            for case, _ in self._searched(search, library_labels)
             for proposal in case.proposals
             if self._field_attention(case, proposal)
         )
 
     def read_review_attention(
-        self, search: str | None, limit: int, offset: int
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot:
         return ReviewAttentionSnapshot(
-            rows=self.list_current_attention_documents(search, limit, offset),
-            total=self.count_current_attention_fields(search),
+            rows=self.list_current_attention_documents(
+                search, limit, offset, library_labels
+            ),
+            total=self.count_current_attention_fields(search, library_labels),
         )
 
 

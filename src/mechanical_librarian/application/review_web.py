@@ -242,6 +242,10 @@ class CurrentReviewCaseStore(Protocol):
     ) -> CurrentReviewCaseSnapshot: ...
 
 
+# One active-settings snapshot: connection, stable library name, display label.
+LibraryLabels = tuple[tuple[str, str, str], ...]
+
+
 class ReviewLibraryStore(Protocol):
     def read_review_library(
         self,
@@ -249,9 +253,14 @@ class ReviewLibraryStore(Protocol):
         limit: int,
         offset: int,
         attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> ReviewLibrarySnapshot: ...
     def read_review_attention(
-        self, search: str | None, limit: int, offset: int
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot: ...
     def read_current_report_document(
         self, connection: str, library: str, item: str
@@ -1283,6 +1292,7 @@ class BrowseReviewLibrary:
         search: str | None,
         limit: int,
         cursor: str | None,
+        library_labels: LibraryLabels = (),
     ) -> dict[str, object]:
         normalized = _review_search(search)
         if lens not in {"all", "needs_attention", "no_attention_needed"}:
@@ -1292,7 +1302,7 @@ class BrowseReviewLibrary:
         attention = None if lens == "all" else lens == "needs_attention"
         try:
             snapshot = self._repository.read_review_library(
-                normalized, bounded_limit + 1, offset, attention
+                normalized, bounded_limit + 1, offset, attention, library_labels
             )
             items = []
             for row in snapshot.rows[:bounded_limit]:
@@ -1359,6 +1369,7 @@ class BrowseReviewLibrary:
         search: str | None,
         limit: int,
         cursor: str | None,
+        library_labels: LibraryLabels = (),
     ) -> dict[str, object]:
         normalized = _review_search(search)
         bounded_limit = _review_limit(limit)
@@ -1376,7 +1387,7 @@ class BrowseReviewLibrary:
             raw_total: int | None = None
             for batch in range(2):
                 snapshot = self._repository.read_review_attention(
-                    normalized, bounded_limit + 1, scan_offset
+                    normalized, bounded_limit + 1, scan_offset, library_labels
                 )
                 raw_rows = snapshot.rows
                 if raw_total is None:

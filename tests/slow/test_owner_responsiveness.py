@@ -101,7 +101,28 @@ def test_complete_cover_owner_routes_at_2300_works(tmp_path: Path) -> None:
                 assert named.json()["counts"]["all"] == 1
                 assert named.json()["items"][0]["title"] == terminal.title
                 assert named.json()["items"][0]["authors"] == ["Terminal writer"]
+                started = time.perf_counter()
+                labelled = client.get(
+                    "/api/v1/library",
+                    params={
+                        "lens": "all",
+                        "q": "Owner room " + terminal.library,
+                        "limit": 25,
+                    },
+                )
+                label_search_ms = (time.perf_counter() - started) * 1000
+                assert labelled.status_code == 200
+                assert labelled.json()["counts"]["all"] == 1 + sum(
+                    report.target.library == terminal.library
+                    for report in fixture.reports.values()
+                )
+                assert all(
+                    item["library_display_name"] == "Owner room " + terminal.library
+                    for item in labelled.json()["items"]
+                )
+                assert label_search_ms <= 2000
                 receipt = measure_owner_routes(fixture, origin, 30)
+                receipt["active_label_search_ms"] = label_search_ms
                 assert validation.call_count == 1
                 receipt["catalogue_admission_ms"] = admission_ms
         finally:

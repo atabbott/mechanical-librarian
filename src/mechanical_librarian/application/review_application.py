@@ -51,6 +51,7 @@ from mechanical_librarian.application.review_web import (
     CurrentReviewCaseStore,
     HumanDecisionStore,
     InspectCurrentReviewCase,
+    LibraryLabels,
     OwnerSessionService,
     RecordHumanDecision,
     ReviewLibraryStore,
@@ -771,23 +772,25 @@ class ReviewApplication:
         candidate = self.validate_policy(name, options, destinations)
         return candidate, self._policy.preview(candidate)
 
-    def _library_labels(self) -> dict[str, str]:
+    def _library_labels(self) -> dict[tuple[str, str], str]:
         # Settings enforce globally unique stable library names. Read once for
         # each projection; a presentation rename never rebinds a target.
         return (
             {}
             if self._settings is None
             else {
-                item.name: item.display_name or item.name
+                (item.connection, item.name): item.display_name or item.name
                 for item in self._settings.read().document.libraries
             }
         )
 
-    def _labelled_collection(self, value: dict[str, object]) -> dict[str, object]:
-        labels = self._library_labels()
+    def _labelled_collection(
+        self, value: dict[str, object], labels: dict[tuple[str, str], str]
+    ) -> dict[str, object]:
+        by_library = {library: label for (_, library), label in labels.items()}
         for item in cast(list[dict[str, object]], value["items"]):
             library = str(item["library"])
-            item["library_display_name"] = labels.get(library, library)
+            item["library_display_name"] = by_library.get(library, library)
         return value
 
     def case_detail(self, review_case_id: str) -> CaseDetailView:
@@ -796,7 +799,8 @@ class ReviewApplication:
             target = detail["target"]
             assert isinstance(target, dict)
             target["library_display_name"] = self._library_labels().get(
-                str(target["library"]), str(target["library"])
+                (str(target["connection"]), str(target["library"])),
+                str(target["library"]),
             )
             for field in cast("list[object]", detail["fields"]):
                 assert isinstance(field, dict)
@@ -879,16 +883,26 @@ class ReviewApplication:
         cursor: str | None,
         check_active: Callable[[], None] | None = None,
     ) -> LibraryView:
-        return self._browse_serialized(
-            lambda: LibraryView.from_data(
+        def read() -> LibraryView:
+            labels = self._library_labels()
+            snapshot: LibraryLabels = tuple(
+                (connection, library, label)
+                for (connection, library), label in labels.items()
+            )
+            return LibraryView.from_data(
                 self._labelled_collection(
                     self._browse.library(
-                        lens=lens, search=search, limit=limit, cursor=cursor
-                    )
+                        lens=lens,
+                        search=search,
+                        limit=limit,
+                        cursor=cursor,
+                        library_labels=snapshot,
+                    ),
+                    labels,
                 )
-            ),
-            check_active,
-        )
+            )
+
+        return self._browse_serialized(read, check_active)
 
     def attention(
         self,
@@ -898,14 +912,25 @@ class ReviewApplication:
         cursor: str | None,
         check_active: Callable[[], None] | None = None,
     ) -> AttentionView:
-        return self._browse_serialized(
-            lambda: AttentionView.from_data(
+        def read() -> AttentionView:
+            labels = self._library_labels()
+            snapshot: LibraryLabels = tuple(
+                (connection, library, label)
+                for (connection, library), label in labels.items()
+            )
+            return AttentionView.from_data(
                 self._labelled_collection(
-                    self._browse.attention(search=search, limit=limit, cursor=cursor)
+                    self._browse.attention(
+                        search=search,
+                        limit=limit,
+                        cursor=cursor,
+                        library_labels=snapshot,
+                    ),
+                    labels,
                 )
-            ),
-            check_active,
-        )
+            )
+
+        return self._browse_serialized(read, check_active)
 
     def report_detail(
         self, connection: str, library: str, item: str
@@ -915,7 +940,7 @@ class ReviewApplication:
         def read() -> dict[str, object]:
             detail = self._browse.report_detail(connection, library, item)
             detail["library_display_name"] = self._library_labels().get(
-                library, library
+                (connection, library), library
             )
             return detail
 

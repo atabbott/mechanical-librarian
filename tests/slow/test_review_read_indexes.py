@@ -36,7 +36,7 @@ def test_measured_indexes_bound_representative_library_reads() -> None:
             count_plan = support._plan(
                 connection,
                 support._CURRENT_REVIEW_CASE_COUNT_SQL,
-                (None, None, None, "", "", "", "", "", ""),
+                (None, None, None, "", "", "", "", "", "[]", ""),
             )
             assert any(
                 "USING INDEX review_preparation_work_lineage_history" in step
@@ -139,6 +139,16 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
                     search="Representative title 0198",
                     limit=50,
                     cursor=None,
+                ),
+            ),
+            (
+                "Library active label search",
+                lambda: browse.library(
+                    lens="all",
+                    search="Active Reading Room",
+                    limit=50,
+                    cursor=None,
+                    library_labels=(("primary", "books", "Active Reading Room"),),
                 ),
             ),
             (

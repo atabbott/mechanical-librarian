@@ -68,6 +68,7 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_web import LibraryLabels
 from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     human_review_destinations,
@@ -518,6 +519,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         limit: int,
         offset: int,
         attention: bool | None,
+        library_labels: LibraryLabels = (),
     ) -> tuple[tuple[str | None, str], ...]:
         try:
             query, pattern = _review_search_pattern(search)
@@ -544,6 +546,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 pattern,
                 pattern,
                 pattern,
+                json.dumps(library_labels),
                 pattern,
             ]
             if attention is not True:
@@ -555,7 +558,16 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     + _TERMINAL_LIBRARY_SEARCH_SQL
                 )
                 parameters.extend(
-                    (query, pattern, pattern, pattern, pattern, pattern, pattern)
+                    (
+                        query,
+                        pattern,
+                        pattern,
+                        pattern,
+                        pattern,
+                        pattern,
+                        json.dumps(library_labels),
+                        pattern,
+                    )
                 )
             parameters.extend((limit, offset))
             rows = self._connection.execute(
@@ -675,7 +687,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             raise MetadataReportError("review library is unavailable") from error
 
     @local_operation
-    def count_current_review_cases(self, search: str | None) -> tuple[int, int]:
+    def count_current_review_cases(
+        self,
+        search: str | None,
+        library_labels: LibraryLabels = (),
+    ) -> tuple[int, int]:
         try:
             query, pattern = _review_search_pattern(search)
             cover_authority = self._current_cover_authority()
@@ -689,6 +705,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     pattern,
                     pattern,
                     pattern,
+                    json.dumps(library_labels),
                     pattern,
                 ),
             ).fetchone()
@@ -717,6 +734,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     pattern,
                     pattern,
                     pattern,
+                    json.dumps(library_labels),
                     pattern,
                 ),
             ).fetchone()
@@ -730,7 +748,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
 
     @local_operation
     def list_current_attention_documents(
-        self, search: str | None, limit: int, offset: int
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
     ) -> tuple[
         tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
     ]:
@@ -791,6 +813,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     pattern,
                     pattern,
                     pattern,
+                    json.dumps(library_labels),
                     pattern,
                     limit,
                     offset,
@@ -839,7 +862,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             raise MetadataReportError("review attention is unavailable") from error
 
     @local_operation
-    def count_current_attention_fields(self, search: str | None) -> int:
+    def count_current_attention_fields(
+        self,
+        search: str | None,
+        library_labels: LibraryLabels = (),
+    ) -> int:
         try:
             query, pattern = _review_search_pattern(search)
             cover_authority = self._current_cover_authority()
@@ -859,6 +886,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     pattern,
                     pattern,
                     pattern,
+                    json.dumps(library_labels),
                     pattern,
                 ),
             ).fetchone()

@@ -275,7 +275,21 @@ class OwnerResponsivenessFixture:
                 close_activity_projection=close_activity,
                 preparation=self.preparation,
                 settings=OwnerSettingsOperations(
-                    FileOwnerSettingsRepository(settings.document, settings.secrets)
+                    FileOwnerSettingsRepository(
+                        settings.document.model_copy(
+                            update={
+                                "libraries": list(
+                                    item.model_copy(
+                                        update={
+                                            "display_name": "Owner room " + item.name
+                                        }
+                                    )
+                                    for item in settings.document.libraries
+                                )
+                            }
+                        ),
+                        settings.secrets,
+                    )
                 ),
                 policy_libraries=tuple((f"books-{index}", None) for index in range(5)),
             )

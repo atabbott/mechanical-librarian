@@ -159,10 +159,10 @@ _REVIEW_ATTENTION_SQL = (
     + ")"
 )
 _LIBRARY_DISPLAY_SEARCH_SQL = (
-    "EXISTS (SELECT 1 FROM owner_settings settings,json_each(settings.document,'$.libraries') label "
-    "WHERE json_extract(label.value,'$.name')=ml.library_name "
-    "AND json_extract(label.value,'$.connection')=ml.connection_name "
-    "AND ml_casefold(COALESCE(json_extract(label.value,'$.display_name'),'')) LIKE ? ESCAPE '\\')"
+    "EXISTS (SELECT 1 FROM json_each(?) label "
+    "WHERE json_extract(label.value,'$[1]')=ml.library_name "
+    "AND json_extract(label.value,'$[0]')=ml.connection_name "
+    "AND ml_casefold(COALESCE(json_extract(label.value,'$[2]'),'')) LIKE ? ESCAPE '\\')"
 )
 _REVIEW_SEARCH_SQL = (
     " AND (? IS NULL OR "
