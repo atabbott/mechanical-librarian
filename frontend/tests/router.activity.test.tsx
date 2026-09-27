@@ -1257,10 +1257,19 @@ describe('Activity route', () => {
     expect(screen.queryByRole('heading', { name: 'Enable guarded writes' })).toBeNull()
     expect(http.activityCommand).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Enable writes' }))
+    vi.mocked(http.activityCommand).mockRejectedValueOnce(new ApiError(409, 'capability'))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
-    expect(http.activityCommand).toHaveBeenCalledExactlyOnceWith('activity/consent', {
+    expect(
+      await screen.findByText(
+        'Write permissions changed during confirmation. No permission was granted. Review the refreshed included and excluded destinations, then confirm again.',
+      ),
+    ).toBeVisible()
+    expect(http.activityCommand).toHaveBeenCalledTimes(1)
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
+    expect(http.activityCommand).toHaveBeenLastCalledWith('activity/consent', {
       grants: [{ library: 'fiction', destinations: ['title'] }],
     })
+    expect(http.activityCommand).toHaveBeenCalledTimes(2)
   })
 
   it('returns to a calm status once every prepared change has permission', async () => {

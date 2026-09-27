@@ -1079,19 +1079,24 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         : 'Fill empty or replace only with a confirmed strict-rank upgrade'
     if (media === 'audiobook' && field.key === 'cover_order')
       return 'Replace a small incumbent only with a materially larger confirmed cover'
-    const operations = available
-      .map((entry) =>
-        'operation_scope' in entry
-          ? entry.operation_scope === 'fill'
-            ? 'Fill empty only'
-            : fieldLabel(entry.operation_scope)
-          : `${fieldLabel(entry.destination)}: ${audiobookOperationLabels[entry.operation]}`,
-      )
+    const grouped = new Map<string, string[]>()
+    for (const entry of available) {
+      if ('operation_scope' in entry)
+        return entry.operation_scope === 'fill'
+          ? 'Fill empty only'
+          : fieldLabel(entry.operation_scope)
+      const operations = grouped.get(entry.destination) ?? []
+      operations.push(fieldLabel(entry.operation).toLowerCase())
+      grouped.set(entry.destination, operations)
+    }
+    const operations = [...grouped]
+      .map(([destination, values]) => `${fieldLabel(destination)}: ${values.join(', ')}`)
       .join(' · ')
     return media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical'
       ? `${operations} · Narrators: no automatic effect`
       : operations
   }
+
   const impactTotals = useMemo(
     () =>
       preview
@@ -1126,6 +1131,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : undefined
   const editorRef = useRef<HTMLDivElement>(null)
   const trayRef = useRef<HTMLElement>(null)
+  const activationReviewRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    if (stage !== 'activation') return
+    activationReviewRef.current?.focus({ preventScroll: true })
+    activationReviewRef.current?.scrollIntoView({ block: 'center' })
+  }, [stage])
   const transitionCopy = activationNotice
     ? activationNotice.state === 'processing'
       ? `Applying updated policy · ${String(activationNotice.completed)} of ${String(activationNotice.total)}`
@@ -1217,11 +1228,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
         <aside className="cm-policy-sidebar">
           <header>
             <strong>{data.state.profile.name}</strong>
-            <small>
-              {`${baselinePolicy ? 'Active baseline' : 'Active policy'} · ${
-                draftDisplay.changed ? 'draft has unreviewed changes' : 'draft matches active'
-              }`}
-            </small>
+            <small>{baselinePolicy ? 'Active baseline' : 'Active policy'}</small>
           </header>
           {transitionCopy ? (
             <p className="cm-policy-transition" role="status">
@@ -1551,7 +1558,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 {(['ebook', 'audiobook'] as const)
                   .map((media) => {
                     const rows = changedRows.filter((row) => row.media === media)
-                    return `${media === 'ebook' ? 'Ebooks' : 'Audiobooks'}: ${String(new Set(rows.map((row) => row.caseId)).size)} sampled works · ${String(rows.length)} changed fields`
+                    const works = new Set(rows.map((row) => row.caseId)).size
+                    return `${media === 'ebook' ? 'Ebooks' : 'Audiobooks'}: ${String(works)} sampled ${works === 1 ? 'work' : 'works'} · ${String(rows.length)} changed ${rows.length === 1 ? 'field' : 'fields'}`
                   })
                   .join(' · ')}
               </p>
@@ -1649,7 +1657,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               </details>
             ) : null}
             {stage === 'activation' ? (
-              <footer className="cm-policy-activation">
+              <footer
+                className="cm-policy-activation"
+                ref={activationReviewRef}
+                tabIndex={-1}
+                aria-label="Review policy activation"
+              >
                 <strong>Activate this reviewed draft?</strong>
                 <span>
                   The active policy changes only after this guarded command succeeds. Applied

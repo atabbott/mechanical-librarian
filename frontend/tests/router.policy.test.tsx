@@ -75,7 +75,7 @@ describe('Policy route', () => {
     expect(await screen.findByRole('heading', { name: 'Library policy' })).toBeVisible()
     // The fresh container's seeded generation-1 row is the active baseline, not
     // an update the owner completed over zero items.
-    expect(await screen.findByText(/^Active baseline ·/u)).toBeVisible()
+    expect(await screen.findByText(/^Active baseline$/u)).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Activation complete' })).toBeNull()
     expect(screen.queryByText(/Policy update complete/u)).toBeNull()
     expect(screen.queryByText(/0 of 0/u)).toBeNull()
@@ -102,7 +102,7 @@ describe('Policy route', () => {
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Retry failed reconciliation' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss update' })).toBeVisible()
-    expect(screen.getByText(/^Active policy ·/u)).toBeVisible()
+    expect(screen.getByText(/^Active policy$/u)).toBeVisible()
   })
 
   it('does not carry a clean completion into an unrelated session', async () => {
@@ -113,7 +113,7 @@ describe('Policy route', () => {
     }
     renderRoute('/policy', http)
 
-    expect(await screen.findByText(/^Active policy ·/u)).toBeVisible()
+    expect(await screen.findByText(/^Active policy$/u)).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Activation complete' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss update' })).toBeNull()
   })
@@ -141,7 +141,7 @@ describe('Policy route', () => {
     )
     expect(screen.getByText('Draft matches active policy.')).toBeVisible()
     expect(screen.getByText('Draft matches the active policy')).toBeVisible()
-    expect(screen.getByText(/^Active policy · draft matches active$/u)).toBeVisible()
+    expect(screen.getByText(/^Active policy$/u)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeDisabled()
   })
 
@@ -201,9 +201,7 @@ describe('Policy route', () => {
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
       'Ebooks: No automatic effect — owner review required',
     )
-    expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Audiobooks: Asin: Fill an empty field',
-    )
+    expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent('Audiobooks: Asin: fill')
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
     expect(within(asin).getByText(/Replace a valid ASIN — Review required/u)).toBeVisible()
@@ -533,7 +531,7 @@ describe('Policy route', () => {
     ).toBeEnabled()
     expect(within(explicit).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(screen.queryByRole('region', { name: 'Title and subtitle' })).toBeNull()
-    expect(screen.getAllByText(/draft has unreviewed changes/u).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Draft has unreviewed changes/u).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText('The draft is not valid. Review its field choices and try again.'),

@@ -442,7 +442,17 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         }
         return
       }
-      setStatus('The requested activity change failed safely. Try again.')
+      setStatus(
+        error instanceof ApiError &&
+          command.path === 'activity/consent' &&
+          error.code === 'capability'
+          ? 'Write permissions changed during confirmation. No permission was granted. Review the refreshed included and excluded destinations, then confirm again.'
+          : error instanceof ApiError &&
+              command.path === 'activity/consent' &&
+              error.code === 'backup'
+            ? 'Backup readiness changed. No permission was granted. Restore backup readiness before confirming again.'
+            : 'The requested activity change failed safely. Try again.',
+      )
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
   })
@@ -980,26 +990,32 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             const state = capability(name)?.state ?? 'not_ready'
             const disabled = !selectableNames.has(name)
             return (
-              <label className="activity-consent-library" key={name}>
-                <input
-                  type="checkbox"
-                  disabled={disabled}
-                  checked={selected.has(name)}
-                  onChange={() => toggle(name)}
-                />
-                <strong>{name}</strong>
-                <small>
-                  {preparedCount(library)} prepared · {capabilityLabel(state)}
+              <div className="activity-consent-library" key={name}>
+                <label>
+                  <input
+                    type="checkbox"
+                    disabled={disabled}
+                    checked={selected.has(name)}
+                    onChange={() => toggle(name)}
+                  />
+                  <strong>{name}</strong>
+                  <small>
+                    {preparedCount(library)} prepared · {capabilityLabel(state)}
+                  </small>
+                </label>
+                <ul aria-label={`${name} included and excluded destinations`}>
                   {capability(name)?.destinations.map((entry) => (
-                    <span key={entry.destination} className="cm-consent-destination">
-                      {fieldLabel(entry.destination)}:{' '}
-                      {entry.state === 'allowed'
-                        ? `Included · ${String(entry.prepared)} prepared`
-                        : `Excluded — ${destinationReason(entry.state)}`}
-                    </span>
+                    <li key={entry.destination}>
+                      <span>{fieldLabel(entry.destination)}</span>
+                      <small>
+                        {entry.state === 'allowed'
+                          ? `Included · ${String(entry.prepared)} prepared`
+                          : `Excluded — ${destinationReason(entry.state)}`}
+                      </small>
+                    </li>
                   ))}
-                </small>
-              </label>
+                </ul>
+              </div>
             )
           })}
           <p>

@@ -1114,10 +1114,6 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   margin: 0.5rem 0;
   padding-left: 1.25rem;
 }
-.cm-consent-destination {
-  display: block;
-  margin-top: 0.35rem;
-}
 .activity-consent-ledger {
   scroll-margin-top: 5rem;
 }
@@ -1128,3 +1124,16 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   color: var(--soft);
   font-size: 0.75rem;
 }
+
+.cm-policy-media-scope strong { font:inherit; font-weight:700; }
+.cm-policy-preview > p { margin:.65rem .85rem; color:var(--soft); font-size:.8rem; line-height:1.5; }
+.cm-policy-preview-list > div > span:nth-child(2) strong { font-size:.85rem; }
+.cm-policy-preview-list > div > span:nth-child(2) small { font-size:.72rem; }
+.cm-policy-impact > b { font-size:.8rem; }
+.cm-policy-impact > small { font-size:.78rem; line-height:1.5; }
+.cm-policy-impact details { font-size:.72rem; }
+.cm-policy-projected-context { font-size:.82rem; line-height:1.5; }
+.cm-policy-activation { scroll-margin-block:5rem; }
+.cm-policy-activation ul { grid-column:1 / -1; font-size:.8rem; line-height:1.5; }
+.activity-consent-library input { width:auto; margin:0; }
+.activity-consent-library li { flex-wrap:wrap; }
