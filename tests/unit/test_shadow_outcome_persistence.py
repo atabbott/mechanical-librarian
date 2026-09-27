@@ -4775,8 +4775,8 @@ def test_live_cover_fetching_currentness_drives_attention_without_lock_inversion
         race_errors = []
         count_original = repository._review_cases.count_current_attention_fields
 
-        def held_count(search):
-            result = count_original(search)
+        def held_count(search, library_labels=()):
+            result = count_original(search, library_labels)
             assert admission.held and repository.operation_lock._is_owned()
             assert not repository._connection.in_transaction
             counted.set()
