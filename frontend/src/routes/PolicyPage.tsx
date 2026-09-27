@@ -1131,6 +1131,12 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
       : undefined
   const editorRef = useRef<HTMLDivElement>(null)
   const trayRef = useRef<HTMLElement>(null)
+  const policyStatusRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (!['error', 'warning'].includes(status.tone)) return
+    policyStatusRef.current?.focus({ preventScroll: true })
+    policyStatusRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [status])
   const activationReviewRef = useRef<HTMLElement>(null)
   useEffect(() => {
     if (stage !== 'activation') return
@@ -1687,9 +1693,21 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           aria-label="Whole policy draft impact and activation"
           ref={trayRef}
         >
-          <div className="cm-policy-impact-summary" aria-live="polite">
-            <strong>{finishTitle}</strong>
-            <span>{finishDetail}</span>
+          <div className="cm-policy-impact-summary">
+            {['error', 'warning'].includes(status.tone) ? null : (
+              <>
+                <strong>{finishTitle}</strong>
+                <span>{finishDetail}</span>
+              </>
+            )}
+            <p
+              className={`policy-status ${status.tone} ${['error', 'warning'].includes(status.tone) ? '' : 'sr-only'}`}
+              ref={policyStatusRef}
+              tabIndex={-1}
+              role={status.tone === 'error' ? 'alert' : 'status'}
+            >
+              {status.message}
+            </p>
           </div>
           <ol aria-label="Policy activation steps">
             {['Validate', 'Preview', 'Activate'].map((label, index) => {
@@ -1811,12 +1829,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
           ) : null}
         </section>
       </div>
-      <p
-        className={`policy-status ${status.tone} ${['error', 'warning'].includes(status.tone) ? '' : 'sr-only'}`}
-        role={status.tone === 'error' ? 'alert' : 'status'}
-      >
-        {status.message}
-      </p>
       {activationNotice ? (
         <section className="policy-cutover" aria-label="Policy activation progress">
           <h2>

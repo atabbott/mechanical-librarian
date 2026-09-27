@@ -1238,9 +1238,10 @@ describe('Activity route', () => {
     // cannot claim calm directly above the count that refutes it (#639).
     expect(await screen.findByText('3 prepared changes are ready. Writes are off.')).toBeVisible()
     expect(
-      screen.getByRole('heading', { name: 'Prepared work needs your permission' }),
-    ).toBeVisible()
-    expect(screen.getByText('Awaiting permission')).toBeVisible()
+      screen.queryByRole('heading', { name: 'Prepared work needs your permission' }),
+    ).toBeNull()
+    expect(screen.getAllByText('Ready for permission')).toHaveLength(1)
+    expect(screen.queryByText('Awaiting permission')).toBeNull()
     for (const calm of [
       'No intervention needed',
       'No action required',
@@ -1255,6 +1256,9 @@ describe('Activity route', () => {
     await user.click(screen.getByRole('checkbox', { name: /fiction/ }))
     await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
     expect(screen.queryByRole('heading', { name: 'Enable guarded writes' })).toBeNull()
+    expect(screen.getAllByText('Ready for permission')).toHaveLength(1)
+    expect(screen.queryByText('Prepared work needs your permission')).toBeNull()
+    expect(screen.queryByText('Awaiting permission')).toBeNull()
     expect(http.activityCommand).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Enable writes' }))
     vi.mocked(http.activityCommand).mockRejectedValueOnce(new ApiError(409, 'capability'))
@@ -1265,6 +1269,10 @@ describe('Activity route', () => {
       ),
     ).toBeVisible()
     expect(http.activityCommand).toHaveBeenCalledTimes(1)
+    const failure = screen.getByRole('alert')
+    expect(failure).toHaveFocus()
+    expect(failure.closest('#activity-consent')).not.toBeNull()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
     expect(http.activityCommand).toHaveBeenLastCalledWith('activity/consent', {
       grants: [{ library: 'fiction', destinations: ['title'] }],

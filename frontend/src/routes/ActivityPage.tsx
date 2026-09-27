@@ -462,6 +462,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
   })
+  const commandStatusRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (!mutation.isError || !status) return
+    commandStatusRef.current?.focus({ preventScroll: true })
+    commandStatusRef.current?.scrollIntoView({ block: 'nearest' })
+  }, [mutation.isError, status])
   const selectedGrants = selectable.flatMap((library) => {
     const name = library.library
     return selected.has(name)
@@ -595,6 +601,19 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // how one of them came to say it directly above the count that refutes it.
   const permissionNeeded = consentState === 'off' && offeredGrants.length > 0
   const hasAuthority = enabled.length > 0 || suspensions.length > 0 || needsConsent
+  const showOperationalSummary =
+    !permissionNeeded || Boolean(connection) || recoveryCount > 0 || data.paused
+  const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
+  const commandStatus = (
+    <p
+      className="activity-command-status"
+      ref={commandStatusRef}
+      tabIndex={-1}
+      role={mutation.isError ? 'alert' : 'status'}
+    >
+      {status}
+    </p>
+  )
   return (
     <div
       className="cm-activity-route"
@@ -1025,6 +1044,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             Only the included destinations shown above are enabled. Excluded destinations remain
             off. Backup and service capability are checked again on confirmation.
           </p>
+          {consentFeedback ? commandStatus : null}
           <button type="button" onClick={() => setConsentOpen(false)} disabled={mutation.isPending}>
             Cancel permission review
           </button>
@@ -1042,64 +1062,67 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </button>
         </section>
       ) : null}
-      <section className="cm-activity-status" aria-labelledby="activity-status-title">
-        <div className="cm-activity-status-copy">
-          <h2 id="activity-status-title">
-            {connection?.state === 'checking'
-              ? 'Checking library connection'
-              : connection?.state === 'paused'
-                ? 'Library connection is paused'
-                : recoveryCount
-                  ? 'Recovery needs attention'
-                  : permissionNeeded
-                    ? 'Prepared work needs your permission'
+      <section
+        className="cm-activity-status"
+        aria-labelledby={showOperationalSummary ? 'activity-status-title' : undefined}
+      >
+        {showOperationalSummary ? (
+          <div className="cm-activity-status-copy">
+            <h2 id="activity-status-title">
+              {connection?.state === 'checking'
+                ? 'Checking library connection'
+                : connection?.state === 'paused'
+                  ? 'Library connection is paused'
+                  : recoveryCount
+                    ? 'Recovery needs attention'
                     : data.paused
                       ? 'New work is paused'
                       : 'No intervention needed'}
-          </h2>
-          <p>
-            {connection?.state === 'checking'
-              ? 'Preparation remains safely paused while the authoritative connection check settles.'
-              : connection?.state === 'paused'
-                ? `${String(connection.affected)} preparation ${connection.affected === 1 ? 'work remains' : 'works remain'} safely paused for an owner connection check.`
-                : dormantRecovery
-                  ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
-                  : recoveryCount
-                    ? 'Affected work remains held until its current state can be reconciled safely.'
-                    : permissionNeeded
-                      ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready and will stay unwritten until you enable writes.`
+            </h2>
+            <p>
+              {connection?.state === 'checking'
+                ? 'Preparation remains safely paused while the authoritative connection check settles.'
+                : connection?.state === 'paused'
+                  ? `${String(connection.affected)} preparation ${connection.affected === 1 ? 'work remains' : 'works remain'} safely paused for an owner connection check.`
+                  : dormantRecovery
+                    ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
+                    : recoveryCount
+                      ? 'Affected work remains held until its current state can be reconciled safely.'
                       : data.paused
                         ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
                         : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
-          </p>
-        </div>
-        <dl>
-          <div>
-            <dt>Writes in progress</dt>
-            <dd>{writes}</dd>
+            </p>
           </div>
-          <div>
-            <dt>Awaiting permission</dt>
-            <dd>{reasons.awaiting_permission}</dd>
-          </div>
-          <div>
-            <dt>Scheduled</dt>
-            <dd>{reasons.scheduled}</dd>
-          </div>
-          <div>
-            <dt>Retrying</dt>
-            <dd>{reasons.retrying}</dd>
-          </div>
-          <div>
-            <dt>Held for recovery</dt>
-            <dd>{reasons.held_for_recovery}</dd>
-          </div>
-          <div>
-            <dt>Recovery needed</dt>
-            <dd>{recoveryCount}</dd>
-          </div>
-        </dl>
-        {waitingEvent ? (
+        ) : null}
+        {!consentActionable ? (
+          <dl>
+            <div>
+              <dt>Writes in progress</dt>
+              <dd>{writes}</dd>
+            </div>
+            <div>
+              <dt>Awaiting permission</dt>
+              <dd>{reasons.awaiting_permission}</dd>
+            </div>
+            <div>
+              <dt>Scheduled</dt>
+              <dd>{reasons.scheduled}</dd>
+            </div>
+            <div>
+              <dt>Retrying</dt>
+              <dd>{reasons.retrying}</dd>
+            </div>
+            <div>
+              <dt>Held for recovery</dt>
+              <dd>{reasons.held_for_recovery}</dd>
+            </div>
+            <div>
+              <dt>Recovery needed</dt>
+              <dd>{recoveryCount}</dd>
+            </div>
+          </dl>
+        ) : null}
+        {waitingEvent && !permissionNeeded ? (
           <div className="cm-activity-waiting">
             <span className="cm-activity-pulse" aria-hidden="true" />
             <div>
@@ -1107,11 +1130,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 {waitingEvent.work_label} · {fieldLabel(waitingEvent.destination)} update
               </strong>
               <span>
-                {permissionNeeded
-                  ? 'This change stays prepared and unwritten until you enable writes.'
-                  : data.paused
-                    ? 'Resume new work when you are ready. No automatic check will start while new work is paused.'
-                    : 'Next exact-current check runs automatically. No action is required.'}
+                {data.paused
+                  ? 'Resume new work when you are ready. No automatic check will start while new work is paused.'
+                  : 'Next exact-current check runs automatically. No action is required.'}
               </span>
             </div>
           </div>
@@ -1225,9 +1246,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         ) : null}
       </section>
       <PreparationNotice routeIdentity={routeIdentity} />
-      <p className="activity-command-status" role={mutation.isError ? 'alert' : 'status'}>
-        {status}
-      </p>
+      {!consentFeedback ? commandStatus : null}
     </div>
   )
 }

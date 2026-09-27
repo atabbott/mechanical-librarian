@@ -551,6 +551,10 @@ describe('Policy route', () => {
     expect(
       await screen.findByText('The draft is not valid. Review its field choices and try again.'),
     ).toBeVisible()
+    const failure = screen.getByRole('alert')
+    expect(failure).toHaveFocus()
+    expect(failure.closest('.cm-policy-finish')).not.toBeNull()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText('Impact preview is current. The active policy is unchanged.'),

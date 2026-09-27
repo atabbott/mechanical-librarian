@@ -1137,3 +1137,7 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
 .cm-policy-activation ul { grid-column:1 / -1; font-size:.8rem; line-height:1.5; }
 .activity-consent-library input { width:auto; margin:0; }
 .activity-consent-library li { flex-wrap:wrap; }
+
+/* Keep failed commands beside the action that can recover them. */
+.cm-policy-impact-summary > .policy-status:not(.sr-only) { margin:0; padding:.45rem .6rem; font-size:.78rem; }
+.activity-consent-ledger > .activity-command-status:not(:empty) { margin:.7rem 0; padding:.7rem; border-left:3px solid var(--danger); background:color-mix(in srgb,var(--danger) 10%,var(--surface)); }
