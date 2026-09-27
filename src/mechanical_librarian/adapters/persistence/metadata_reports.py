@@ -98,7 +98,10 @@ from mechanical_librarian.application.catalogue import (
 from mechanical_librarian.application.cover_consideration import (
     cover_currentness_from_facts,
 )
-from mechanical_librarian.application.metadata_policy import PolicyTransition
+from mechanical_librarian.application.metadata_policy import (
+    PolicyPreviewCapture,
+    PolicyTransition,
+)
 from mechanical_librarian.application.metadata_report import (
     MetadataReportError,
     ReportRepository,
@@ -1906,6 +1909,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
     ) -> ResolvedMetadataPolicy | None:
         return self._metadata_policy.metadata_policy_resolution_for_preview(library)
 
+    def capture_policy_preview(
+        self, libraries: tuple[str, ...], limit: int
+    ) -> PolicyPreviewCapture:
+        return self._metadata_policy.capture_policy_preview(libraries, limit)
+
     def metadata_policy_preview_baseline(
         self, libraries: tuple[str, ...]
     ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]:
@@ -2369,6 +2377,14 @@ class SQLiteShadowPreviewRepository:
     ) -> ResolvedMetadataPolicy | None:
         self._require_current()
         value = self._reader.metadata_policy_resolution_for_preview(library)
+        self._require_current()
+        return value
+
+    def capture_policy_preview(
+        self, libraries: tuple[str, ...], limit: int
+    ) -> PolicyPreviewCapture:
+        self._require_current()
+        value = self._reader.capture_policy_preview(libraries, limit)
         self._require_current()
         return value
 

@@ -4608,6 +4608,7 @@ def run_policy_preview(
                 {
                     "affected_categories": list(item.affected_categories),
                     "cases": [case.to_data() for case in item.cases],
+                    "comparisons": [case.to_data() for case in item.comparisons],
                     "cases_total": item.cases_total,
                     "cases_truncated": item.cases_truncated,
                     "current_unapplied_count": item.current_unapplied_count,

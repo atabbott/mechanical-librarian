@@ -31,6 +31,8 @@ from mechanical_librarian.application.continuous_field_effects import (
 )
 from mechanical_librarian.application.metadata_policy import (
     PolicyContentionError,
+    PolicyPreviewCapture,
+    PolicyPreviewLibraryCapture,
     PolicyTransition,
 )
 from mechanical_librarian.application.review_pipeline import (
@@ -184,6 +186,20 @@ class FakeReviewRepository:
         if review_case_id != self.case.review_case_id:
             return None
         return self.case_ready_at
+
+    def capture_policy_preview(
+        self, libraries: tuple[str, ...], limit: int
+    ) -> PolicyPreviewCapture:
+        return PolicyPreviewCapture(
+            MetadataPolicyProfile.from_data(json.loads(self.active_metadata_policy())),
+            1,
+            tuple(
+                PolicyPreviewLibraryCapture(
+                    library, None, self.current_unapplied_count(library), ()
+                )
+                for library in libraries
+            ),
+        )
 
     def current_unapplied_count(self, library: str) -> int:
         self.policy_count_calls.append(library)

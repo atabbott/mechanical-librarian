@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from mechanical_librarian.application.metadata_policy import (
+    PolicyPreviewCapture,
+    PolicyPreviewLibraryCapture,
     bind_proposal_policy,
     preview_policy,
 )
@@ -14,6 +16,35 @@ from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     resolve_policy,
 )
+
+
+class _PreviewRepository:
+    def capture_policy_preview(self, libraries, limit):
+        import json
+
+        if hasattr(self, "metadata_policy_preview_baseline"):
+            document, resolutions = self.metadata_policy_preview_baseline(libraries)
+        else:
+            document = (
+                self.active_metadata_policy()
+                if hasattr(self, "active_metadata_policy")
+                else MetadataPolicyProfile.builtin().canonical_json
+            )
+            resolutions = tuple((library, None) for library in libraries)
+        captured = []
+        for library, resolution in resolutions:
+            total, pairs = (
+                self.current_policy_impact_pairs(library, limit)
+                if hasattr(self, "current_policy_impact_pairs") and limit
+                else (self.current_unapplied_count(library), ())
+            )
+            captured.append(
+                PolicyPreviewLibraryCapture(library, resolution, total, pairs)
+            )
+            limit -= len(pairs)
+        return PolicyPreviewCapture(
+            MetadataPolicyProfile.from_data(json.loads(document)), 1, tuple(captured)
+        )
 
 
 def test_builtin_is_canonical_and_replayable() -> None:
@@ -109,7 +140,7 @@ def test_unknown_removed_and_automatic_options_fail_or_remain_unqualified() -> N
 def test_preview_names_each_library_categories_and_unapplied_count_without_mutation() -> (
     None
 ):
-    class Repository:
+    class Repository(_PreviewRepository):
         def __init__(self) -> None:
             self.calls: list[str] = []
 
@@ -141,7 +172,7 @@ def test_preview_names_each_library_categories_and_unapplied_count_without_mutat
 
 
 def test_preview_categories_are_the_exact_resolved_delta_from_active_policy() -> None:
-    class Repository:
+    class Repository(_PreviewRepository):
         def current_unapplied_count(self, library: str) -> int:
             return 0
 
@@ -208,7 +239,7 @@ def test_preview_compares_with_generation_bound_resolution_after_override_change
         dict(active.destinations),
     )
 
-    class Repository:
+    class Repository(_PreviewRepository):
         def metadata_policy_preview_baseline(self, libraries):
             return active.canonical_json, (("library", persisted),)
 
@@ -239,7 +270,7 @@ def test_preview_uses_bounded_exact_current_pairs_without_effects() -> None:
         dict(MetadataPolicyProfile.builtin().destinations),
     )
 
-    class Repository:
+    class Repository(_PreviewRepository):
         def active_metadata_policy(self) -> str:
             self.active_reads = getattr(self, "active_reads", 0) + 1
             return MetadataPolicyProfile.builtin().canonical_json
@@ -295,7 +326,7 @@ def test_preview_caps_cases_across_libraries_and_uses_pair_snapshot_counts() -> 
     first = pair_for("first")
     second = pair_for("second")
 
-    class Repository:
+    class Repository(_PreviewRepository):
         def active_metadata_policy(self) -> str:
             self.active_reads = getattr(self, "active_reads", 0) + 1
             return MetadataPolicyProfile.builtin().canonical_json

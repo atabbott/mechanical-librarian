@@ -51,6 +51,8 @@ from mechanical_librarian.adapters.persistence.transactions import (
 )
 from mechanical_librarian.application.metadata_policy import (
     PolicyContentionError,
+    PolicyPreviewCapture,
+    PolicyPreviewLibraryCapture,
     PolicyTransition,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -367,6 +369,47 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         self, library: str
     ) -> ResolvedMetadataPolicy | None:
         return self._metadata_policy_resolution(library, allow_missing=True)
+
+    @local_operation
+    def capture_policy_preview(
+        self, libraries: tuple[str, ...], limit: int
+    ) -> PolicyPreviewCapture:
+        """Capture policy, resolutions and ordered inputs in one deferred snapshot."""
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise MetadataReportError("policy preview is unavailable")
+        transaction = self._transaction("capture_policy_preview", deferred=True)
+        try:
+            transaction.begin()
+            document, resolutions = self.metadata_policy_preview_baseline(libraries)
+            profile = MetadataPolicyProfile.from_data(json.loads(document))
+            row = self._connection.execute(
+                "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
+            if row is None or type(row[0]) is not int or row[0] < 1:
+                raise MetadataReportError("policy preview is unavailable")
+            captured = []
+            remaining = limit
+            for library, resolution in resolutions:
+                total, pairs = (
+                    self.current_policy_impact_pairs(library, remaining)
+                    if remaining
+                    else (self.current_unapplied_count(library), ())
+                )
+                if resolution is not None and any(
+                    proposal.resolved_policy_id != resolution.resolved_id
+                    for _, proposal in pairs
+                ):
+                    raise MetadataReportError("policy preview is unavailable")
+                captured.append(
+                    PolicyPreviewLibraryCapture(library, resolution, total, pairs)
+                )
+                remaining -= len(pairs)
+            result = PolicyPreviewCapture(profile, row[0], tuple(captured))
+            transaction.commit()
+            return result
+        except Exception:
+            transaction.rollback()
+            raise
 
     @local_operation
     def metadata_policy_preview_baseline(

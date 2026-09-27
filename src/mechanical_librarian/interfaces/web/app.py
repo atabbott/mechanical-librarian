@@ -1477,9 +1477,23 @@ class _RichCasePreviewResponse(_ClosedModel):
     work_label: str = Field(max_length=512)
 
 
+class _PolicyFieldComparisonResponse(_ClosedModel):
+    active: _RichFieldPreviewResponse
+    draft: _RichFieldPreviewResponse
+    active_destination: Literal["ask", "automatic", "ignore", "unsupported"]
+    draft_destination: Literal["ask", "automatic", "ignore", "unsupported"]
+    changed: bool
+
+
+class _PolicyCaseComparisonResponse(_ClosedModel):
+    media_kind: Literal["ebook", "audiobook"]
+    fields: list[_PolicyFieldComparisonResponse]
+
+
 class _PolicyImpactResponse(_ClosedModel):
     affected_categories: list[str]
     cases: list[_RichCasePreviewResponse]
+    comparisons: list[_PolicyCaseComparisonResponse]
     cases_total: int
     cases_truncated: bool
     current_unapplied_count: int
@@ -2905,6 +2919,10 @@ def _register_policy_routes(
                             {**case.to_data(), "work_label": item.work_labels[index]}
                         )
                         for index, case in enumerate(item.cases)
+                    ],
+                    comparisons=[
+                        _PolicyCaseComparisonResponse.model_validate(case.to_data())
+                        for case in item.comparisons
                     ],
                     cases_total=item.cases_total,
                     cases_truncated=item.cases_truncated,

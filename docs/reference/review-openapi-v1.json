@@ -5992,6 +5992,32 @@
         "title": "_PolicyActivationResponse",
         "type": "object"
       },
+      "_PolicyCaseComparisonResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/_PolicyFieldComparisonResponse"
+            },
+            "title": "Fields",
+            "type": "array"
+          },
+          "media_kind": {
+            "enum": [
+              "ebook",
+              "audiobook"
+            ],
+            "title": "Media Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_kind",
+          "fields"
+        ],
+        "title": "_PolicyCaseComparisonResponse",
+        "type": "object"
+      },
       "_PolicyDraftRequest": {
         "additionalProperties": false,
         "properties": {
@@ -6046,6 +6072,50 @@
         "title": "_PolicyDraftResponse",
         "type": "object"
       },
+      "_PolicyFieldComparisonResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "active": {
+            "$ref": "#/components/schemas/_RichFieldPreviewResponse"
+          },
+          "active_destination": {
+            "enum": [
+              "ask",
+              "automatic",
+              "ignore",
+              "unsupported"
+            ],
+            "title": "Active Destination",
+            "type": "string"
+          },
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "draft": {
+            "$ref": "#/components/schemas/_RichFieldPreviewResponse"
+          },
+          "draft_destination": {
+            "enum": [
+              "ask",
+              "automatic",
+              "ignore",
+              "unsupported"
+            ],
+            "title": "Draft Destination",
+            "type": "string"
+          }
+        },
+        "required": [
+          "active",
+          "draft",
+          "active_destination",
+          "draft_destination",
+          "changed"
+        ],
+        "title": "_PolicyFieldComparisonResponse",
+        "type": "object"
+      },
       "_PolicyImpactResponse": {
         "additionalProperties": false,
         "properties": {
@@ -6071,6 +6141,13 @@
             "title": "Cases Truncated",
             "type": "boolean"
           },
+          "comparisons": {
+            "items": {
+              "$ref": "#/components/schemas/_PolicyCaseComparisonResponse"
+            },
+            "title": "Comparisons",
+            "type": "array"
+          },
           "current_unapplied_count": {
             "title": "Current Unapplied Count",
             "type": "integer"
@@ -6087,6 +6164,7 @@
         "required": [
           "affected_categories",
           "cases",
+          "comparisons",
           "cases_total",
           "cases_truncated",
           "current_unapplied_count",
