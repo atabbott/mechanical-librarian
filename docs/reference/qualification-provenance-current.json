@@ -696,7 +696,7 @@
     "tests/unit/test_review_web_transport.py": "b53e0de81663de31a706ff09a4e7f280b04f585758563a66dbc64d69866e7049",
     "tests/unit/test_reviewer_access_application.py": "d357ab7c1828d9a536526265f789db9643a9c18bf36afed02340488cf91fdbd8",
     "tests/unit/test_rich_metadata_preview.py": "3509aa4c095a205900503f1f9f723b18f35b273468457d2406e219ccef6c28dc",
-    "tests/unit/test_rich_metadata_qualification_manifest.py": "9a52780d286cfedba9fc1d917bbad7e9075dc5116f2f22785c4470ff7e77ad07",
+    "tests/unit/test_rich_metadata_qualification_manifest.py": "e7b7932c721e55b4a47f3fdb057b6c735c370076cfecdd9a137d007a08f47548",
     "tests/unit/test_runtime_dispatch.py": "f210bf070c9d4a2aa73cf4a3d67925171afdadbc58b632bd5e6311f2c846a5cb",
     "tests/unit/test_same_name_series_authority.py": "b518f13201de55e9e3cddfdef1d9e0422728a3c3e7ceb83894aa76dc939ffeab",
     "tests/unit/test_security_scanning_contract.py": "15cdc7cbc61ca9975c04f610cdd9ade28febdb57f715765adc5f5bfa589e1c1e",
