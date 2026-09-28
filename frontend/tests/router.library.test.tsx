@@ -5001,6 +5001,7 @@ describe('Library route', () => {
     ['an explicit replacement recovery on the same case', null, false],
     ['an explicit recovery with the same consideration', null, false],
     ['an explicit successor-case recovery', 'case-2', false],
+    ['an explicit retired-case recovery', 'case-2', false],
   ])('retains a stale cover choice and recovers through %s', async (label, successorId, other) => {
     const user = userEvent.setup()
     const directChoice = label.startsWith('a direct')
@@ -5097,6 +5098,11 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       recordDecision,
+      getLibrary: vi.fn(async () =>
+        label.includes('retired-case') && stale
+          ? { ...library, works: library.works.filter((work) => work.reviewCaseId !== initial.id) }
+          : library,
+      ),
       getCaseDetail: vi.fn(async (id) => {
         if (!stale || retainSameConsideration) return initial
         if (failRecordedRefresh && successfulDecisions === 1 && !recordedRefreshAvailable) {
@@ -5130,6 +5136,13 @@ describe('Library route', () => {
       ),
     ).toBeVisible()
     expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    if (label.includes('retired-case')) {
+      await queryClient.invalidateQueries({ queryKey: ['library'] })
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Review current comparison' })).toHaveFocus(),
+      )
+      expect(screen.getAllByRole('heading', { level: 2, name: 'A Book' })).toHaveLength(1)
+    }
     expect(document.body.textContent).not.toContain('Recording…')
     expect(recordDecision).toHaveBeenCalledOnce()
 

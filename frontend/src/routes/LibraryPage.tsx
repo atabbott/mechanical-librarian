@@ -2298,8 +2298,10 @@ export default function LibraryPage({
   const [automaticResults, setAutomaticResults] = useState<
     Readonly<Record<string, 'success' | 'error'>>
   >({})
+  const staleCoverRecoveryButton = useRef<HTMLButtonElement>(null)
   const [staleCoverReview, setStaleCoverReview] = useState<{
     caseId: string
+    title: string
     failed: boolean
     loading: boolean
   } | null>(null)
@@ -2775,7 +2777,12 @@ export default function LibraryPage({
     },
     onStale: async () => {
       if (selected?.destination === 'cover') {
-        setStaleCoverReview({ caseId: selectedReviewCaseId, failed: false, loading: false })
+        setStaleCoverReview({
+          caseId: selectedReviewCaseId,
+          title: selectedIdentityRef.current?.title ?? 'Cover comparison',
+          failed: false,
+          loading: false,
+        })
         return
       }
       await navigate({ search: { lens: 'needs_attention' } })
@@ -2807,15 +2814,27 @@ export default function LibraryPage({
       setStaleCoverReview({ ...stale, failed: true, loading: false })
     }
   }
+  const staleCoverCaseId = staleCoverReview?.caseId
+  const staleCoverIdentityAvailable = Boolean(displayedIdentity)
+  useEffect(() => {
+    if (!staleCoverCaseId) return
+    const frame = requestAnimationFrame(() => {
+      if (document.activeElement === document.body && !document.querySelector('dialog[open]'))
+        staleCoverRecoveryButton.current?.focus()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [staleCoverCaseId, staleCoverIdentityAvailable])
   const staleCoverNotice =
     staleCoverReview?.caseId === selectedReviewCaseId ? (
       <aside className="comparison-notice" role="alert">
+        {!displayedIdentity ? <h2>{staleCoverReview.title}</h2> : null}
         <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
         {staleCoverReview.failed ? (
           <p>The current comparison could not be loaded. Your prior choice remains unrecorded.</p>
         ) : null}
         <button
           type="button"
+          ref={staleCoverRecoveryButton}
           disabled={staleCoverReview.loading}
           onClick={() => void reviewCurrentCoverComparison()}
         >
@@ -3606,6 +3625,8 @@ export default function LibraryPage({
                 Its current values and field position stay here while you move through attention.
               </p>
             </div>
+          ) : !displayedIdentity && staleCoverNotice ? (
+            staleCoverNotice
           ) : !displayedIdentity ? (
             identityPending ? (
               <p role="status">Loading selected work…</p>
