@@ -680,3 +680,51 @@ def test_image_profile_is_deterministic_and_binds_verified_artifacts(tmp_path):
         "memory_bytes": 1073741824,
         "processes": 32,
     }
+
+
+@pytest.mark.parametrize(
+    "credential,resumable", [(False, False), (True, False), (True, True)]
+)
+def test_container_entrypoint_preserves_retained_reviewer_authority(
+    tmp_path: Path, credential: bool, resumable: bool
+) -> None:
+    repository = container.open_repository(tmp_path / "application.sqlite3")
+    if resumable:
+        repository.setup_state_store().initialize()
+    repository.close()
+    auth = tmp_path / "reviewer" / "auth"
+    auth.parent.mkdir(mode=0o700)
+    auth.mkdir(mode=0o700)
+    retained = auth / "auth.json"
+    if credential:
+        retained.write_bytes(b'{"synthetic":true}')
+        retained.chmod(0o600)
+    with (
+        patch.object(container, "DATA", tmp_path),
+        patch.object(container, "CONFIG", tmp_path / "config.json"),
+        patch.object(container, "DATABASE", tmp_path / "application.sqlite3"),
+        patch.object(container, "CATALOGUE", tmp_path / "catalogue.sqlite3"),
+        patch.object(container, "ARTIFACTS", tmp_path / "artifacts"),
+        patch.object(container.signal, "signal"),
+        patch.object(container, "run_review_server") as serve,
+    ):
+        for _ in range(2):
+            if credential and not resumable:
+                from mechanical_librarian.infrastructure.first_boot import (
+                    FirstBootError,
+                )
+
+                with pytest.raises(FirstBootError):
+                    container.main()
+                serve.assert_not_called()
+                assert not (auth.parent / "jobs").exists()
+            else:
+                container.main()
+                assert serve.call_args.kwargs["first_boot_mode"] is (
+                    FirstBootMode.RESUME_SETUP
+                    if resumable
+                    else FirstBootMode.INITIALIZE_SETUP
+                )
+            if credential:
+                assert retained.read_bytes() == b'{"synthetic":true}'
+                assert retained.stat().st_mode & 0o777 == 0o600

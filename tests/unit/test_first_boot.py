@@ -223,3 +223,94 @@ def test_reviewer_child_must_be_a_private_directory(tmp_path: Path, name: str) -
     (reviewer / name).touch(mode=0o600)
     with pytest.raises(FirstBootError):
         _select(tmp_path, resume=True)
+
+
+@pytest.mark.parametrize("credential", [False, True])
+def test_schema_only_database_ignores_only_empty_reviewer_directories(
+    tmp_path: Path, credential: bool
+) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    auth = tmp_path / "reviewer" / "auth"
+    auth.parent.mkdir(mode=0o700)
+    auth.mkdir(mode=0o700)
+    retained = auth / "auth.json"
+    if credential:
+        retained.write_bytes(b'{"synthetic":true}')
+    for _ in range(2):
+        if credential:
+            with pytest.raises(FirstBootError):
+                select_first_boot_mode(
+                    tmp_path,
+                    complete_store=lambda: False,
+                    resumable_setup=lambda: False,
+                    uninitialized_setup=lambda: True,
+                )
+            assert retained.read_bytes() == b'{"synthetic":true}'
+        else:
+            assert (
+                select_first_boot_mode(
+                    tmp_path,
+                    complete_store=lambda: False,
+                    resumable_setup=lambda: False,
+                    uninitialized_setup=lambda: True,
+                )
+                is FirstBootMode.INITIALIZE_SETUP
+            )
+    assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
+
+
+@pytest.mark.parametrize("overflow", [False, True])
+def test_reviewer_inventory_scans_are_bounded_and_closed(
+    tmp_path, monkeypatch, overflow
+):
+    import os
+
+    from mechanical_librarian.infrastructure import first_boot
+
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    for index in range(67 if overflow else 1):
+        child = reviewer / (f"reviewer-auth-{index:08d}" if overflow else "auth")
+        child.mkdir(mode=0o700)
+        if not overflow:
+            for number in range(3):
+                (child / str(number)).touch()
+    original = os.scandir
+    scans = []
+
+    class Scan:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.iterator = original(descriptor)
+            self.count = 0
+            self.closed = False
+            scans.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.iterator.close()
+            self.closed = True
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            entry = next(self.iterator)
+            self.count += 1
+            assert self.count <= (67 if len(scans) == 1 else 1)
+            return entry
+
+    monkeypatch.setattr(first_boot.os, "scandir", Scan)
+    if overflow:
+        with pytest.raises(FirstBootError):
+            first_boot._reviewer_setup_entries(tmp_path)
+        assert [scan.count for scan in scans] == [67]
+    else:
+        assert not first_boot._reviewer_setup_entries(tmp_path)
+        assert [scan.count for scan in scans] == [1, 1]
+    assert all(scan.closed for scan in scans)
+    for scan in scans:
+        with pytest.raises(OSError):
+            os.fstat(scan.descriptor)

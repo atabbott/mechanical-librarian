@@ -32,13 +32,15 @@ def _reviewer_setup_entries(data_path: Path) -> bool:
             or stat.S_IMODE(information.st_mode) != 0o700
         ):
             raise FirstBootError("first boot state is unavailable")
-        names = os.listdir(descriptor)
-        if len(names) > 66 or any(
-            name not in {"auth", "jobs"}
-            and re.fullmatch(r"reviewer-auth-[a-z0-9_]{8}", name) is None
-            for name in names
-        ):
-            raise FirstBootError("first boot state is unavailable")
+        names: list[str] = []
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                if len(names) == 66 or (
+                    entry.name not in {"auth", "jobs"}
+                    and re.fullmatch(r"reviewer-auth-[a-z0-9_]{8}", entry.name) is None
+                ):
+                    raise FirstBootError("first boot state is unavailable")
+                names.append(entry.name)
         empty = True
         for name in names:
             child = os.open(
@@ -51,8 +53,9 @@ def _reviewer_setup_entries(data_path: Path) -> bool:
                     or stat.S_IMODE(information.st_mode) != 0o700
                 ):
                     raise FirstBootError("first boot state is unavailable")
-                if os.listdir(child):
-                    empty = False
+                with os.scandir(child) as entries:
+                    if next(entries, None) is not None:
+                        empty = False
             finally:
                 os.close(child)
         return empty and set(names) <= {"auth", "jobs"}
@@ -124,7 +127,11 @@ def select_first_boot_mode(
         ):
             setup_entries.discard("private")
     try:
-        if setup_entries == {database_name} and uninitialized_setup():
+        if (
+            setup_entries == {database_name}
+            and ("reviewer" not in entries or reviewer_empty)
+            and uninitialized_setup()
+        ):
             return FirstBootMode.INITIALIZE_SETUP
         if setup_entries == {database_name} and resumable_setup():
             return FirstBootMode.RESUME_SETUP
