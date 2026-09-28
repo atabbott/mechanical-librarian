@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   ApiError,
+  AmbiguousMutationError,
   MEDIA_HEALTH_KINDS,
   PageCsrfTokenStore,
   ReviewApiClient,
@@ -2753,3 +2754,36 @@ it('requires an exact recovery flag in every preparation response', () => {
   }
   expect(mapPreparation({ ...preparation, recovery_required: true }).recovery_required).toBe(true)
 })
+
+it.each(['invalid JSON', 'interrupted body'])(
+  'keeps a successful mutation with %s uncertain without resending',
+  async (failure) => {
+    const response = new Response('{', { status: 200 })
+    if (failure === 'interrupted body')
+      vi.spyOn(response, 'json').mockRejectedValue(new TypeError('body interrupted'))
+    const fetchMock = vi.fn<typeof fetch>(async () => response)
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    await expect(
+      client.recordDecision('case-1', {
+        destination: 'cover',
+        outcome: 'accept',
+        proposalId: 'proposal-1',
+        targetFingerprint: 'fingerprint-1',
+        idempotencyKey: 'owner-choice-idempotency',
+        selectedValue: { kind: 'cover', value: `cover_${'a'.repeat(64)}` },
+        considerationId: `cover_consideration_${'b'.repeat(64)}`,
+        coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+      }),
+    ).rejects.toBeInstanceOf(AmbiguousMutationError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const readResponse = new Response('{', { status: 200 })
+    if (failure === 'interrupted body')
+      vi.spyOn(readResponse, 'json').mockRejectedValue(new TypeError('body interrupted'))
+    fetchMock.mockResolvedValue(readResponse)
+    await expect(client.getCaseDetail('case-1')).rejects.toMatchObject({
+      code: 'invalid_json_response',
+      status: 502,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  },
+)

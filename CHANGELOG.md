@@ -11,6 +11,7 @@
 - Owners can explicitly confirm current retained covers with an unconfirmed match
   or lower visual quality, and revise their choice before application begins.
   Contradictions remain refused; history retains the observed match status.
+  Interrupted acknowledgments stay uncertain until the current choice is reloaded.
   Owner selection authority v2 requires a clean rebuild (#1078).
 
 - Supported containers supply the contained reviewer profile for optional cover

@@ -1467,6 +1467,7 @@ export class ReviewApiClient implements ReviewHttp {
     try {
       return (await response.json()) as unknown
     } catch {
+      if (unsafe) throw new AmbiguousMutationError()
       throw new ApiError(502, 'invalid_json_response')
     }
   }
