@@ -38,7 +38,10 @@ evidence. Explicit reviewer actions and passive evidence-currentness consumers
 re-admit current bytes; invocation binds the admitted bytes rather than reopening
 a different profile. Readiness precedence is provisioning, host, credential,
 without overriding ordinary session, origin or revision gates. Cancellation and
-credential clearing remain recovery actions during profile drift.
+credential clearing remain recovery actions during profile drift. A generation retains
+its safely admitted cleanup target so clearing does not require executable or profile
+readmission; the existing private-directory, activity and lease guards still apply.
+A generation that never admitted a profile cannot infer a cleanup target.
 
 Provisioning has distinct missing, unreadable and contract-mismatch reasons.
 Neither authentication nor raising host memory repairs those deployment facts.

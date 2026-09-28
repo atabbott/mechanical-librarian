@@ -954,3 +954,87 @@ def test_composed_provisioning_precedes_host_and_refuses_current_drift(
     finally:
         operations.close()
         repository.close()
+
+
+@pytest.mark.parametrize(
+    "drift", ("missing", "invalid", "unsafe_store", "stale", "never_admitted")
+)
+def test_composed_clear_uses_only_previously_admitted_cleanup_authority(
+    tmp_path, monkeypatch, drift
+):
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessApplicationError,
+    )
+    from mechanical_librarian.domain.reviewer_access import CodexTaskSelection
+    from tests.support.description_advice import _contained_profile
+
+    profile = _contained_profile(tmp_path)
+    auth = tmp_path / "auth"
+    auth.mkdir(mode=0o700)
+    credential = auth / "auth.json"
+    credential.write_text('{"synthetic":"credential"}')
+    credential.chmod(0o600)
+    if drift == "never_admitted":
+        profile.unlink()
+    repository = open_repository(tmp_path / "reports.sqlite")
+    store = repository.reviewer_access_store()
+    document, _ = store.read()
+    store.replace(
+        document.model_copy(
+            update={
+                "revision": document.revision + 1,
+                "cover_observation": CodexTaskSelection(engine="codex"),
+                "description_rewrite": CodexTaskSelection(engine="codex"),
+            }
+        ),
+        expected_revision=document.revision,
+    )
+    coordinator = composition._CodexAuthLeaseCoordinator()
+    review = ReviewWebConfiguration(
+        canonical_origin="http://127.0.0.1:8443",
+        owner_password_hash_file="/unused/owner",
+        cover_reviewer_profile_file=str(profile),
+    )
+    operations = composition._compose_reviewer_access(repository, review, coordinator)
+    successor = None
+    try:
+        lazy = operations._codex_auth
+        assert isinstance(lazy, composition._LazyCodexAuth)
+        assert lazy._manager is None
+        monkeypatch.setattr(
+            composition,
+            "prepare_contained_device_auth_command",
+            lambda *_: pytest.fail("cleanup executed a command"),
+        )
+        if drift == "missing":
+            profile.unlink()
+        elif drift == "invalid":
+            profile.write_text("{}")
+        elif drift == "unsafe_store":
+            profile.unlink()
+            auth.chmod(0o755)
+        elif drift == "stale":
+            lazy.activate_lease()
+            successor = composition._compose_reviewer_access(
+                repository, review, coordinator
+            )
+            successor.activate_codex_lease()
+            profile.unlink()
+        if drift in ("missing", "invalid"):
+            cleared = operations.clear_codex(expected_revision=2)
+            assert not credential.exists()
+            assert cleared.mapping is None and cleared.description_mapping is None
+            assert cleared.revision == 3
+        else:
+            with pytest.raises(ReviewerAccessApplicationError) as caught:
+                operations.clear_codex(expected_revision=2)
+            assert caught.value.code == "credential_clear_failed"
+            assert credential.read_text() == '{"synthetic":"credential"}'
+    finally:
+        if successor is not None:
+            successor.close()
+        operations.close()
+        repository.close()

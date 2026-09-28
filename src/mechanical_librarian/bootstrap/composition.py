@@ -3996,8 +3996,14 @@ class _LazyCodexAuth:
             CodexDeviceAuthManager,
         ],
         coordinator: _CodexAuthLeaseCoordinator,
+        cleanup_factory: Callable[
+            [Callable[[], bool], Callable[[], AbstractContextManager[None]]],
+            CodexDeviceAuthManager,
+        ]
+        | None = None,
     ) -> None:
         self._factory = factory
+        self._cleanup_factory = cleanup_factory or factory
         self._coordinator = coordinator
         self._lock = Lock()
         self._manager: CodexDeviceAuthManager | None = None
@@ -4029,12 +4035,13 @@ class _LazyCodexAuth:
         with self._coordinator.guard(self, lease):
             yield
 
-    def _get(self) -> CodexDeviceAuthManager:
+    def _get(self, *, cleanup: bool = False) -> CodexDeviceAuthManager:
         if not self._lease_current():
             self.activate_lease()
         with self._lock:
             if self._manager is None:
-                self._manager = self._factory(
+                factory = self._cleanup_factory if cleanup else self._factory
+                self._manager = factory(
                     self._lease_current,
                     lambda: self._coordinator.guard(self, cast("int", self._lease)),
                 )
@@ -4076,7 +4083,7 @@ class _LazyCodexAuth:
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def clear(self) -> CodexDeviceAuthState:
-        return self._get().clear()
+        return self._get(cleanup=True).clear()
 
     def current_credential_status(self) -> CodexDeviceAuthState:
         return self._state("current_credential_status")
@@ -4236,9 +4243,10 @@ def _compose_reviewer_access(
     codex_reviewer = run_cover_packet_reviewer
     profile_file = review.cover_reviewer_profile_file
     provisioning = ReviewerProvisioningStatus(False, "profile_not_provisioned")
+    cleanup_profile: tuple[bytes, ContainedReviewerProfile] | None = None
 
     def load_profile() -> tuple[bytes, ContainedReviewerProfile]:
-        nonlocal provisioning
+        nonlocal provisioning, cleanup_profile
         if profile_file is None:
             provisioning = ReviewerProvisioningStatus(False, "profile_not_provisioned")
             raise ReviewerAccessApplicationError("not_provisioned")
@@ -4258,6 +4266,7 @@ def _compose_reviewer_access(
         provisioning = ReviewerProvisioningStatus(
             True, None, hashlib.sha256(payload).hexdigest(), profile.identity.model
         )
+        cleanup_profile = payload, profile
         return payload, profile
 
     def codex_provisioning(refresh: bool) -> ReviewerProvisioningStatus:
@@ -4284,8 +4293,9 @@ def _compose_reviewer_access(
         def manager(
             lease_current: Callable[[], bool],
             lease_guard: Callable[[], AbstractContextManager[None]],
+            admitted: tuple[bytes, ContainedReviewerProfile] | None = None,
         ) -> CodexDeviceAuthManager:
-            payload, profile = load_profile()
+            payload, profile = load_profile() if admitted is None else admitted
 
             def command(staging: Path, action: str) -> CodexAuthCommand:
                 current, admitted = load_profile()
@@ -4302,7 +4312,19 @@ def _compose_reviewer_access(
                 quarantine_activity=active_coordinator.quarantine,
             )
 
-        lazy_codex_auth = _LazyCodexAuth(manager, active_coordinator)
+        def cleanup_manager(
+            lease_current: Callable[[], bool],
+            lease_guard: Callable[[], AbstractContextManager[None]],
+        ) -> CodexDeviceAuthManager:
+            # Only this generation's safely admitted target can be cleared.
+            # The command closure still requires exact current profile bytes.
+            if cleanup_profile is None:
+                raise ReviewerAccessApplicationError("not_provisioned")
+            return manager(lease_current, lease_guard, cleanup_profile)
+
+        lazy_codex_auth = _LazyCodexAuth(
+            manager, active_coordinator, cleanup_factory=cleanup_manager
+        )
         codex_auth = lazy_codex_auth
         codex_host = reviewer_host_status
 

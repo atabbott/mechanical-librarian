@@ -1440,3 +1440,32 @@ it.each([
     expect(screen.getByText('Advisory availability: not provisioned')).toBeVisible()
   },
 )
+
+it('keeps shared sign-in clear available for a description-only selection after profile drift', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  const unavailable = {
+    ...reviewerView,
+    description_mapping: { engine: 'codex' as const },
+    codex: {
+      ...reviewerView.codex,
+      state: 'not_provisioned' as const,
+      reason: 'profile_not_provisioned' as const,
+      model: null,
+    },
+  }
+  http.getReviewerAccess = vi.fn(async () => unavailable)
+  http.clearCodex = vi.fn(async () => ({
+    ...unavailable,
+    revision: unavailable.revision + 1,
+    description_mapping: null,
+  }))
+  renderRoute('/settings?group=reviewer', http)
+  await user.click(await screen.findByRole('button', { name: 'Clear Codex sign-in' }))
+  await user.click(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' }))
+  await waitFor(() => expect(http.clearCodex).toHaveBeenCalledWith(unavailable.revision))
+  expect(await screen.findByText('No description adviser selected.')).toBeVisible()
+  expect(http.recheckCodex).not.toHaveBeenCalled()
+  expect(http.startCodexDevice).not.toHaveBeenCalled()
+})

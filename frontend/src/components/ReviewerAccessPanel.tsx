@@ -210,7 +210,10 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
   const codexUsable =
     !hostUnsupported && (view.codex.state === 'usable' || device?.state === 'usable')
   const codexManaged =
-    view.mapping?.engine === 'codex' || codexUsable || view.codex.state === 'configured'
+    view.mapping?.engine === 'codex' ||
+    view.description_mapping?.engine === 'codex' ||
+    codexUsable ||
+    view.codex.state === 'configured'
   const codexReason =
     !hostUnsupported && device?.failure
       ? deviceFailureCopy[device.failure]
