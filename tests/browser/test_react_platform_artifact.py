@@ -1297,7 +1297,19 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "couldn't confirm that this cover belongs"
                     in unconfirmed.inner_text()
                 )
-                expect(unconfirmed.get_by_role("button")).to_be_disabled()
+                unconfirmed_choice = unconfirmed.get_by_role(
+                    "button", name="Choose Alternative 2 cover", exact=True
+                )
+                expect(unconfirmed_choice).to_be_enabled()
+                unconfirmed_choice.click()
+                dialog = page.get_by_role("dialog")
+                expect(dialog).to_be_visible()
+                expect(
+                    dialog.get_by_text("Match not confirmed.", exact=False)
+                ).to_be_visible()
+                dialog.get_by_role("button", name="Cancel", exact=True).click()
+                expect(dialog).not_to_be_visible()
+                expect(unconfirmed_choice).to_be_focused()
                 current_evidence = comparison.get_by_role(
                     "button", name="Evidence for Current cover"
                 )

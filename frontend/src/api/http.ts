@@ -401,6 +401,8 @@ export interface ReviewFieldView {
   preservationOnly: boolean
   corroborationSources: readonly string[]
   descriptionAdvice?: DescriptionAdviceView | null
+  currentCoverSelectionId?: string | null
+  currentCoverSelectionArtifactId?: string | null
   coverConsideration?: CoverConsiderationView | null
 }
 export interface CoverObservationView {
@@ -435,6 +437,7 @@ export interface CoverCandidateView {
   previewSha256: string
   reference: string
   selectable: boolean
+  manualEligible: boolean
   sourceKinds: readonly string[]
   state: string
   width: number
@@ -543,6 +546,7 @@ export type HistoryItemView = (
       candidateCount: number
       outcome: string
       ownerOutcome?: string
+      ownerMatchUnconfirmed?: boolean
       policyReasons: readonly string[]
       policyStatus?: string
       reviewerStatus: string
@@ -801,6 +805,7 @@ export interface DecisionCommand {
   targetFingerprint: string
   idempotencyKey: string
   considerationId?: string
+  coverConfirmation?: { expected_selection_id: string | null; confirm_unverified_match: boolean }
   authoredDescription?: { candidateId: string; binding: Schema<'DescriptionAdviceBinding'> }
 }
 
@@ -1249,6 +1254,7 @@ export class ReviewApiClient implements ReviewHttp {
       destination,
       outcome,
       considerationId,
+      coverConfirmation,
     } = command
     return mapDecisionAcknowledgement(
       await this.mutate(
@@ -1260,6 +1266,7 @@ export class ReviewApiClient implements ReviewHttp {
           selected_value: selectedValue ?? null,
           target_fingerprint: targetFingerprint,
           consideration_id: considerationId ?? null,
+          cover_confirmation: coverConfirmation ?? null,
         },
         signal,
         { 'idempotency-key': idempotencyKey },
@@ -3036,6 +3043,13 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
         // mapCoverConsideration then validates the value in full.
         descriptionAdvice: mapDescriptionAdvice(field.description_advice),
         coverConsideration: mapCoverConsideration(field.cover_consideration),
+        currentCoverSelectionArtifactId:
+          optionalString(
+            field.current_cover_selection_artifact_id,
+            'current_cover_selection_artifact_id',
+          ) ?? null,
+        currentCoverSelectionId:
+          optionalString(field.current_cover_selection_id, 'current_cover_selection_id') ?? null,
       }
     }),
   }
@@ -3286,7 +3300,20 @@ export const mapHistory = (value: unknown): HistoryView => {
           ...(automaticOutcome ? { automaticOutcome } : {}),
           candidateCount: item.consideration.candidates.length,
           outcome: kind,
-          ...(ownerOutcome ? { ownerOutcome } : {}),
+          ...(ownerOutcome
+            ? {
+                ownerOutcome,
+                ...(item.consideration.candidates.some(
+                  (candidate) =>
+                    record(candidate) &&
+                    record(decision?.selected_value) &&
+                    candidate.artifact_id === decision.selected_value.value &&
+                    candidate.match_state === 'match_not_confirmed',
+                )
+                  ? { ownerMatchUnconfirmed: true }
+                  : {}),
+              }
+            : {}),
           policyReasons,
           ...(policy
             ? {
@@ -3575,6 +3602,15 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
     const confirmed = expectedMatchState !== 'match_not_confirmed'
     const incumbent = candidate.incumbent === true
     const selectable = candidate.selectable === true
+    const manualEligible = booleanValue(candidate.manual_eligible, 'cover_manual_eligible')
+    const identityReasons = stringArray(candidate.identity.reasons, 'cover_identity_reasons')
+    if (
+      manualEligible !==
+      (!incumbent &&
+        identityOutcome !== 'conflict' &&
+        !identityReasons.includes('retained_creator_or_contributor_disagreement'))
+    )
+      throw new ApiError(502, 'contradictory_cover_manual_eligibility')
     const reference = stringValue(candidate.reference, 'cover_reference')
     const previewSha256 = stringValue(candidate.preview_sha256, 'cover_preview_digest')
     const observation = mapCoverObservation(candidate.observation, reference, previewSha256)
@@ -3584,7 +3620,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       (confirmed &&
         incumbent &&
         (selectable || deterministicRank !== null || deterministicRankKey === null)) ||
-      (confirmed && !incumbent && (selectable !== ready || deterministicRankKey === null))
+      (confirmed && !incumbent && deterministicRankKey === null)
     )
       throw new ApiError(502, 'contradictory_cover_identity')
     return {
@@ -3605,6 +3641,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
       previewSha256,
       reference,
       selectable,
+      manualEligible,
       sourceKinds: stringArray(candidate.source_kinds, 'cover_source_kinds'),
       state,
       width: integerValue(candidate.width, 'cover_width'),
@@ -3627,7 +3664,7 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   )
     throw new ApiError(502, 'misaligned_cover_incumbent')
   const proposedReferences = candidates
-    .filter((candidate) => candidate.selectable && !candidate.incumbent)
+    .filter((candidate) => candidate.manualEligible && !candidate.incumbent)
     .map((candidate) => candidate.reference)
   const choiceContexts = mapChoiceContexts(value.choice_contexts, proposedReferences.length)
   if (
@@ -3747,7 +3784,13 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   )
     throw new ApiError(502, 'contradictory_cover_recommendation')
   if (
-    ready !== policyOwnerReady ||
+    ready !== (!providerFetching && candidates.some((candidate) => candidate.manualEligible)) ||
+    candidates.some(
+      (candidate) =>
+        candidate.matchState !== 'match_not_confirmed' &&
+        !candidate.incumbent &&
+        candidate.selectable !== policyOwnerReady,
+    ) ||
     (providerFetching === ready && acceptable.length > 0) ||
     candidates.some(
       (candidate) =>

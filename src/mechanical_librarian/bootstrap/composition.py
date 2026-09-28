@@ -4442,6 +4442,7 @@ def _compose_cover_considerations(
             repository.preview_digest_for_artifact(artifact_id, variant)
         ),
         read_preview_digest=lambda digest: artifact_store().read_preview_digest(digest),
+        require_artifact=lambda artifact: artifact_store().require_artifact(artifact),
         clock=lambda: int(time.time()),
         policy=policy,
         reviewer_dispatch=reviewer_access.dispatch_cover_observation,
@@ -4450,6 +4451,7 @@ def _compose_cover_considerations(
         bind_policy=bind_policy,
         provider_fetching=provider_fetching,
     )
+    repository.bind_owner_cover_validation(service.require_owner_cover)
     repository.bind_cover_consideration_currentness(
         lambda document, replay_reference: cover_currentness_from_facts(
             document,

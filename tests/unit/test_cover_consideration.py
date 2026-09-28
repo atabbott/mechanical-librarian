@@ -517,6 +517,7 @@ def test_currentness_facts_derive_from_complete_producer(case: _Case) -> None:
         "item": case.report.target.item,
         "report_id": case.report.report_id,
         "provider_fetching": False,
+        "manual_ready": True,
         "replay_reference": case.service.replay_reference,
     }
     facts = cover_consideration_currentness_document(document)
@@ -1260,3 +1261,97 @@ def test_recording_bound_cover_reaches_deterministic_consumer_without_observer(
         assert elected["identity"]["reasons"] == ["retained_recording_admission"]
         assert elected["selectable"] is True
         assert elected["deterministic_rank"] == 1
+
+
+@pytest.mark.parametrize(
+    "provider_creators, eligible",
+    [(("Ada Author",), True), (("Different Author",), False)],
+)
+def test_manual_choice_preserves_typed_identity_and_refuses_creator_disagreement(
+    provider_creators, eligible
+):
+    from tests.unit.test_cover_packets import _typed_discovery_identity_case
+
+    report, _, _, payload = _typed_discovery_identity_case(
+        local_creators=("Ada Author",), provider_creators=provider_creators
+    )
+    store = _Store()
+    service = CoverConsiderationService(
+        store,
+        read_preview=lambda *_: payload,
+        read_preview_digest=lambda _: payload,
+        clock=lambda: 10,
+    )
+    case_id = "review_case_" + "c" * 64
+    projection = service.ensure(
+        case_id, report, {"proposal_id": "review_proposal_" + "d" * 64}
+    )
+    before = store.current[case_id]
+    candidate = projection["candidates"][0]
+    assert candidate["manual_eligible"] is eligible
+    assert candidate["selectable"] is False
+    assert projection["ready"] is eligible
+    if eligible:
+        assert candidate["identity"]["outcome"] == "plausible_match"
+        service.validate_decision(
+            case_id,
+            projection["consideration_id"],
+            "accept",
+            {"kind": "cover", "value": candidate["artifact_id"]},
+        )
+    else:
+        assert candidate["identity"]["outcome"] == "unknown"
+        assert (
+            "retained_creator_or_contributor_disagreement"
+            in candidate["identity"]["reasons"]
+        )
+        with pytest.raises(CoverConsiderationError, match="invalid_choice"):
+            service.validate_decision(
+                case_id,
+                projection["consideration_id"],
+                "accept",
+                {"kind": "cover", "value": candidate["artifact_id"]},
+            )
+    assert store.current[case_id] == before
+
+
+def test_owner_can_choose_smaller_confirmed_cover_without_changing_policy(tmp_path):
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from tests.support.cover_producers import _qualified_cover_report
+
+    report, _ = _qualified_cover_report(
+        tmp_path, incumbent_size=(1200, 1800), candidate_size=(300, 450)
+    )
+    artifacts = CoverArtifactStore(tmp_path / "artifacts")
+    store = _Store()
+    service = CoverConsiderationService(
+        store,
+        read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
+            next(
+                source.artifact.preview_digest
+                for source in report.cover_sources
+                if source.artifact is not None
+                and source.artifact.artifact_id == artifact_id
+            )
+        ),
+        read_preview_digest=artifacts.read_preview_digest,
+        clock=lambda: 10,
+    )
+    case_id = "review_case_" + "e" * 64
+    projection = service.ensure(
+        case_id, report.to_json(), {"proposal_id": "review_proposal_" + "f" * 64}
+    )
+    candidate = next(item for item in projection["candidates"] if not item["incumbent"])
+    incumbent = next(item for item in projection["candidates"] if item["incumbent"])
+    assert candidate["width"] < incumbent["width"]
+    assert candidate["manual_eligible"] is True
+    before = store.current[case_id]
+    service.validate_decision(
+        case_id,
+        projection["consideration_id"],
+        "accept",
+        {"kind": "cover", "value": candidate["artifact_id"]},
+    )
+    assert store.current[case_id] == before

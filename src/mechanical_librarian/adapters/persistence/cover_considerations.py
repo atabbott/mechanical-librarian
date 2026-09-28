@@ -15,6 +15,7 @@ import hashlib
 import json
 import sqlite3
 from collections.abc import Callable
+from typing import cast
 
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.transactions import (
@@ -22,6 +23,8 @@ from mechanical_librarian.adapters.persistence.transactions import (
     local_operation,
 )
 from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationError,
+    _validated_cover_consideration,
     cover_consideration_currentness_document,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -41,6 +44,8 @@ from mechanical_librarian.domain.field_effect import FieldEffectOperation
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
+    manual_cover_eligible,
+    validate_cover_confirmation,
 )
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
@@ -59,9 +64,18 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         connection: sqlite3.Connection,
         *,
         revoke_automatic: Callable[[str, int], object] | None = None,
+        current_cover_authority: Callable[[], tuple[str | None, str | None]],
     ) -> None:
         super().__init__(connection)
+        self._current_cover_authority = current_cover_authority
+        self.require_owner_cover: Callable[[str, str | None], None] = (
+            self._unavailable_owner_cover
+        )
         self._revoke_automatic = revoke_automatic or (lambda _decision, _at: None)
+
+    @staticmethod
+    def _unavailable_owner_cover(_document: str, _artifact_id: str | None) -> None:
+        raise HumanDecisionError("unavailable")
 
     def _admit_automatic_cover(self, document: str, occurred_at: int) -> None:
         value = json.loads(document)
@@ -646,9 +660,12 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         self,
         decision: HumanDecision,
         consideration_id: str | None,
+        confirmation: dict[str, object] | None,
+        *,
+        validate_only: bool = False,
     ) -> None:
         if decision.destination != "cover":
-            if consideration_id is not None:
+            if consideration_id is not None or confirmation is not None:
                 raise HumanDecisionError("invalid_choice")
             return
         if consideration_id is None:
@@ -669,31 +686,49 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if existing is not None:
             if existing != (consideration_id, kind):
                 raise HumanDecisionError("idempotency_conflict")
-            return
+        recorded = self._connection.execute(
+            "SELECT document FROM cover_selection_authorities WHERE decision_id=?",
+            (decision.decision_id,),
+        ).fetchone()
+        if (
+            recorded is not None
+            and json.loads(recorded[0]).get("confirmation") != confirmation
+        ):
+            raise HumanDecisionError("idempotency_conflict")
         row = self._connection.execute(
             "SELECT consideration.document,review.document FROM current_cover_considerations current "
             "JOIN cover_considerations consideration "
             "ON consideration.consideration_id=current.consideration_id "
             "JOIN review_cases review ON review.review_case_id=current.review_case_id "
+            "JOIN current_review_case_lineages lineage ON lineage.review_case_id=review.review_case_id "
+            "JOIN current_review_packages package ON package.review_case_id=lineage.review_case_id AND package.report_id=lineage.report_id AND package.proposal_set_id=lineage.proposal_set_id "
             "WHERE current.review_case_id=? AND current.consideration_id=?",
             (decision.review_case_id, consideration_id),
         ).fetchone()
         if row is None:
             raise HumanDecisionError("stale")
         try:
-            consideration = json.loads(row[0])
+            consideration, report = _validated_cover_consideration(row[0])
             case = ReviewCase.from_json(row[1])
+            if (
+                consideration["policy_reference"],
+                consideration["replay_reference"],
+            ) != self._current_cover_authority():
+                raise HumanDecisionError("stale")
             if (
                 consideration["proposal_id"] != decision.proposal_id
                 or consideration["target_fingerprint"] != decision.target_fingerprint
             ):
                 raise HumanDecisionError("stale")
             selected = None
+            valid_choice = True
             if decision.outcome == "accept":
                 selected = next(
                     (
                         candidate
-                        for candidate in consideration["candidates"]
+                        for candidate in cast(
+                            "list[dict[str, object]]", consideration["candidates"]
+                        )
                         if decision.selected_value
                         == {"kind": "cover", "value": candidate["artifact_id"]}
                     ),
@@ -702,22 +737,24 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 if (
                     selected is None
                     or selected["incumbent"] is True
-                    or selected["selectable"] is not True
+                    or not manual_cover_eligible(selected)
                 ):
-                    raise HumanDecisionError("invalid_choice")
+                    valid_choice = False
             elif decision.outcome == "keep_current":
                 selected = next(
                     (
                         candidate
-                        for candidate in consideration["candidates"]
+                        for candidate in cast(
+                            "list[dict[str, object]]", consideration["candidates"]
+                        )
                         if candidate["incumbent"] is True
                     ),
                     None,
                 )
                 if selected is None or decision.selected_value is not None:
-                    raise HumanDecisionError("invalid_choice")
+                    valid_choice = False
             elif decision.selected_value is not None:
-                raise HumanDecisionError("invalid_choice")
+                valid_choice = False
         except (KeyError, TypeError, json.JSONDecodeError) as error:
             raise MetadataReportError("cover consideration is unavailable") from error
         target = case.target
@@ -738,6 +775,37 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             (connection_name, library_name, item_id),
         ).fetchone()
         prior = None if current is None else json.loads(current[0])
+        confirmation = validate_cover_confirmation(confirmation)
+        if existing is not None:
+            if prior is None or prior["decision_id"] != decision.decision_id:
+                raise HumanDecisionError("stale")
+            return
+        if confirmation["expected_selection_id"] != (
+            None if prior is None else prior["selection_id"]
+        ):
+            raise HumanDecisionError("stale")
+        # The decision repository calls this before checking the prior effect,
+        # then again just before publication. Files and acquisition are external
+        # to SQLite: their bounded recheck does not promise cross-store atomicity.
+        if validate_only:
+            return
+        if not valid_choice:
+            raise HumanDecisionError("invalid_choice")
+        if (
+            selected is not None
+            and decision.outcome == "accept"
+            and (
+                selected["match_state"] == "match_not_confirmed"
+                and confirmation["confirm_unverified_match"] is not True
+            )
+        ):
+            raise HumanDecisionError("invalid_choice")
+        try:
+            self.require_owner_cover(
+                row[0], None if selected is None else cast(str, selected["artifact_id"])
+            )
+        except CoverConsiderationError as error:
+            raise HumanDecisionError(error.code) from error
         selection_id = (
             "cover_selection_"
             + hashlib.sha256(decision.to_json().encode("utf-8")).hexdigest()
@@ -754,7 +822,20 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 "rank_key": (
                     None if selected is None else selected["deterministic_rank_key"]
                 ),
-                "schema_version": "cover-selection-authority-v1",
+                "schema_version": "cover-selection-authority-v2",
+                "confirmation": confirmation,
+                "observed_identity": None if selected is None else selected["identity"],
+                "candidate_reference": None
+                if selected is None
+                else selected["reference"],
+                "original_sha256": None
+                if selected is None
+                else selected["original_sha256"],
+                "preview_sha256": None
+                if selected is None
+                else selected["preview_sha256"],
+                "consideration_digest": hashlib.sha256(row[0].encode()).hexdigest(),
+                "target": dict(case.target),
                 "selection_id": selection_id,
                 "supersedes_selection_id": (
                     None if prior is None else prior["selection_id"]

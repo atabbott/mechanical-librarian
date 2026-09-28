@@ -358,6 +358,7 @@ class _CoverCandidate(_ClosedModel):
     preview_sha256: str
     reference: str
     selectable: bool
+    manual_eligible: bool
     source_kinds: list[str]
     state: str
     transport_sha256: str
@@ -510,6 +511,8 @@ class _ReviewField(_ClosedModel):
     proposal_id: str
     target_fingerprint: str
     uncertainty: list[str]
+    current_cover_selection_id: str | None = None
+    current_cover_selection_artifact_id: str | None = None
     cover_consideration: _CoverConsiderationResponse | None = None
     description_advice: _DescriptionAdviceResponse | None = None
 
@@ -1212,7 +1215,15 @@ class _PreparationResponse(_ClosedModel):
     schema_version: Literal["review-preparation-v2"] = "review-preparation-v2"
 
 
+class _CoverConfirmation(_ClosedModel):
+    expected_selection_id: StrictStr | None = Field(
+        pattern=r"^cover_selection_[0-9a-f]{64}$"
+    )
+    confirm_unverified_match: StrictBool
+
+
 class _DecisionRequest(_ClosedModel):
+    cover_confirmation: _CoverConfirmation | None = None
     destination: StrictStr = Field(min_length=1, max_length=64)
     outcome: Literal["accept", "keep_current", "reject"]
     proposal_id: StrictStr = Field(pattern=r"^review_proposal_[0-9a-f]{64}$")
@@ -3290,6 +3301,9 @@ def _register_case_and_effect_routes(
                     ),
                     idempotency_key=idempotency_key,
                     consideration_id=payload.consideration_id,
+                    cover_confirmation=None
+                    if payload.cover_confirmation is None
+                    else payload.cover_confirmation.model_dump(mode="json"),
                 )
             )
         )

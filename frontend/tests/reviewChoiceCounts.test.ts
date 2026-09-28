@@ -50,6 +50,7 @@ const candidate = (
   previewSha256: 'b'.repeat(64),
   reference: `reference-${String(ordinal)}`,
   selectable: true,
+  manualEligible: true,
   sourceKinds: ['provider'],
   state: 'acceptable' as const,
   width: 800,
@@ -89,7 +90,7 @@ const consideration = (
   omissions: [],
   policy: null,
   providerFetching: false,
-  ready: false,
+  ready: true,
   policyPreferences: {
     avoidPromotionalText: false,
     avoidTieInBranding: false,
@@ -111,8 +112,28 @@ describe('ownerChoiceCount', () => {
     ).toBe(2)
     expect(ownerChoiceCount(field(consideration([candidate(1)], 'unavailable')))).toBe(2)
     expect(
-      ownerChoiceCount(field(consideration([candidate(1), candidate(2, { selectable: false })]))),
+      ownerChoiceCount(
+        field(
+          consideration([candidate(1), candidate(2, { selectable: false, manualEligible: false })]),
+        ),
+      ),
     ).toBe(2)
+    expect(
+      ownerChoiceCount(
+        field(
+          consideration([
+            candidate(1, {
+              selectable: false,
+              manualEligible: true,
+              matchState: 'match_not_confirmed',
+              identity: { outcome: 'unknown' },
+            }),
+          ]),
+        ),
+      ),
+    ).toBe(2)
+    expect(ownerChoiceCount(field({ ...consideration([candidate(1)]), current: false }))).toBe(0)
+    expect(ownerChoiceCount(field({ ...consideration([candidate(1)]), ready: false }))).toBe(0)
     expect(ownerChoiceCount(field(null))).toBe(1)
   })
 })

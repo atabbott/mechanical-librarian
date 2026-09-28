@@ -50,7 +50,12 @@ from mechanical_librarian.domain.automatic_decision import AutomaticDecisionErro
 from mechanical_librarian.domain.cover_automatic_decision import (
     CoverAutomaticDecision,
 )
-from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.domain.human_decision import (
+    HumanDecision,
+    HumanDecisionError,
+    manual_cover_eligible,
+    validate_cover_confirmation,
+)
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
     MetadataPolicyProfile,
@@ -447,6 +452,7 @@ _COVER_SELECTION_AUTHORITIES_SQL = (
     "supersedes_selection_id TEXT REFERENCES cover_selection_authorities(selection_id), "
     "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
+    "CHECK(kind<>'owner' OR (CASE WHEN json_valid(document) THEN json_extract(document,'$.schema_version')='cover-selection-authority-v2' ELSE 0 END) IS 1), "
     "CHECK(kind<>'automatic' OR (CASE WHEN json_valid(document) "
     "AND json_type(document,'$.decision_document')='text' "
     "THEN CASE WHEN json_valid(json_extract(document,'$.decision_document')) "
@@ -1289,7 +1295,12 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
             if (
                 type(document) is not dict
                 or _canonical_json(document) != row[9]
-                or document.get("schema_version") != "cover-selection-authority-v1"
+                or document.get("schema_version")
+                != (
+                    "cover-selection-authority-v2"
+                    if row[4] == "owner"
+                    else "cover-selection-authority-v1"
+                )
                 or document.get("selection_id") != row[0]
                 or document.get("kind") != row[4]
                 or document.get("decision_id") != row[5]
@@ -1388,15 +1399,51 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 "cover_selection_"
                 + hashlib.sha256(decision_document.encode("utf-8")).hexdigest()
             )
+            owner_facts = {}
+            if row[4] == "owner":
+                confirmation = validate_cover_confirmation(document.get("confirmation"))
+                if confirmation["expected_selection_id"] != row[7]:
+                    raise ValueError
+                if human_decision.outcome == "accept" and (
+                    candidate is None
+                    or not manual_cover_eligible(candidate)
+                    or (
+                        candidate["match_state"] == "match_not_confirmed"
+                        and confirmation["confirm_unverified_match"] is not True
+                    )
+                ):
+                    raise ValueError
+                owner_facts = {
+                    "confirmation": confirmation,
+                    "observed_identity": None
+                    if candidate is None
+                    else candidate["identity"],
+                    "candidate_reference": None
+                    if candidate is None
+                    else candidate["reference"],
+                    "original_sha256": None
+                    if candidate is None
+                    else candidate["original_sha256"],
+                    "preview_sha256": None
+                    if candidate is None
+                    else candidate["preview_sha256"],
+                    "consideration_digest": hashlib.sha256(
+                        consideration_row[0].encode()
+                    ).hexdigest(),
+                    "target": dict(case.target),
+                }
             expected_document = _canonical_json(
                 {
+                    **owner_facts,
                     "candidate_artifact_id": expected_artifact,
                     "consideration_id": row[6],
                     "decision_document": decision_document,
                     "decision_id": row[5],
                     "kind": row[4],
                     "rank_key": expected_rank,
-                    "schema_version": "cover-selection-authority-v1",
+                    "schema_version": "cover-selection-authority-v2"
+                    if row[4] == "owner"
+                    else "cover-selection-authority-v1",
                     "selection_id": expected_selection_id,
                     "supersedes_selection_id": row[7],
                 }

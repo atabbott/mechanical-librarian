@@ -300,15 +300,19 @@ precedence and an opaque stable reference form one total order. Observations can
 explain visual traits but cannot admit, exclude, rank, delay or authorize a
 cover.
 
-An owner choice and qualified Automatic use the same readiness rule: at least
-one confirmed candidate exists and no exact provider/report lane is actively
-fetching. Retry/backoff waiting is quiescent. Automatic is default-off and
+Automatic readiness requires at least one confirmed candidate and no exact
+provider/report lane actively fetching. An owner may explicitly confirm an intact,
+current retained alternative with an unconfirmed match or lower visual quality.
+Positive identity contradictions remain excluded, including retained creator
+disagreement classified as unknown. Owner confirmation does not upgrade evidence. Retry/backoff waiting is quiescent. Automatic is default-off and
 available only as an explicit opt-in after every frozen cover-election cohort
 passed its public aggregate-safe manifest with zero false admission or
 ordering/readiness disagreement. Standard consent, backup, currentness,
 recovery and read-back safeguards remain mandatory. A strictly better later
-candidate may supersede an automatic choice; a manual owner choice is final and
-ends that authority.
+candidate may supersede an automatic choice; an owner choice ends that automatic
+authority. A fresh explicit owner confirmation may revise the current choice
+before a cover effect is claimed; claimed, applying, reconciling and verified
+cover effects cannot be revised.
 
 Ingestion and consumption do not wait for metadata curation.
 

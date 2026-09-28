@@ -2176,3 +2176,23 @@ def test_cover_authority_v2_schema_rejects_empty_and_populated_store_before_muta
     with pytest.raises(MetadataReportError):
         open_repository(path, create=False)
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("name", ("empty.sql", "populated.sql"))
+def test_owner_cover_predecessor_refuses_without_mutation(tmp_path, name):
+    import hashlib
+    import sqlite3
+
+    fixture = Path(__file__).parents[1] / "fixtures/owner-cover-predecessor"
+    provenance = json.loads((fixture / "provenance.json").read_text())
+    assert provenance["source_sha"] == "0b9dc854e730b329e68410f09a53f2f9103f617f"
+    raw = (fixture / name).read_bytes()
+    assert hashlib.sha256(raw).hexdigest() == provenance["files"][name]
+    database = tmp_path / "previous.sqlite"
+    with sqlite3.connect(database) as connection:
+        connection.executescript(raw.decode())
+    database.chmod(0o600)
+    before = database.read_bytes()
+    with pytest.raises(MetadataReportError, match="incompatible"):
+        open_repository(database)
+    assert database.read_bytes() == before

@@ -838,6 +838,12 @@ def test_durable_acknowledgement_confirms_in_the_same_foreground_lifetime(
                 selected_value=None,
                 idempotency_key="confirmed-durable-owner-choice",
                 consideration_id=consideration_id,
+                cover_confirmation={
+                    "expected_selection_id": None,
+                    "confirm_unverified_match": False,
+                }
+                if destination == "cover"
+                else None,
             )
 
         first = submit()

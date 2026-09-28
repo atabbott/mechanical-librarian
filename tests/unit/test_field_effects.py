@@ -5801,6 +5801,12 @@ def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negat
                 state.repo.record_human_decision(
                     decision,
                     cover_consideration_id=state.consideration["consideration_id"],
+                    cover_confirmation={
+                        "expected_selection_id": state.repo._connection.execute(
+                            "SELECT selection_id FROM current_cover_selection_authorities"
+                        ).fetchone()[0],
+                        "confirm_unverified_match": False,
+                    },
                 )
             elif negative == "consent":
                 state.repo.revoke_field_effect_consent(

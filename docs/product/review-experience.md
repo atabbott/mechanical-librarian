@@ -846,3 +846,16 @@ are distinct from host, authentication and provider failures; generated profile
 digests live in an advanced identity disclosure. Usable advice does not imply
 application permission: Policy owns the separate automatic preference, and
 Activity owns current consent and renewal. Reviewer selection never enables it.
+
+## Explicit retained-cover confirmation (#1078)
+
+A current intact retained alternative can be owner-confirmed even with lower visual
+quality or an unconfirmed match. The confirmation shows the whole retained image,
+explains “Match not confirmed” where applicable and distinguishes recording from
+application. Contradictory identity stays excluded. Cancel/Escape records nothing
+and returns focus to the initiating card. Pending confirmation prevents duplicate
+submission; only authoritative exact-case confirmation advances the workflow.
+Failure or uncertainty stays visible with deliberate reload/retry. A fresh explicit
+confirmation may revise the exact target choice before application begins; verified
+cover writes cannot be revised. History retains the unconfirmed match label and
+distinguishes owner-confirmed authority from automatic evidence.

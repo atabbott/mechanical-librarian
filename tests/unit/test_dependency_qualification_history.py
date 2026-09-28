@@ -162,3 +162,27 @@ def test_policy_impact_predecessors_decode_without_current_authority(
                 **cast("dict[str, Any]", decision._core()),
                 occurred_at=decision.occurred_at,
             )
+
+
+@pytest.mark.parametrize("family", ("F19A", "F20", "F46"))
+def test_owner_cover_base_documents_remain_history(family):
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures/owner-cover-predecessor/automatic.json"
+        ).read_text()
+    )
+    assert fixture["source_sha"] == "0b9dc854e730b329e68410f09a53f2f9103f617f"
+    for raw in fixture["decisions"][family]:
+        decision = AutomaticDecision.from_json(raw)
+        assert decision.to_json() == raw
+        assert not qualification_manifest_is_current(
+            decision.policy_category,
+            decision.policy_option,
+            decision.qualification_manifest_sha256,
+        )
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **cast("dict[str, Any]", decision._core()),
+                occurred_at=decision.occurred_at,
+            )

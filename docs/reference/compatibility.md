@@ -6,6 +6,15 @@ version and digest. Compatibility is field-local and demonstrated for metadata/
 tags and multipart cover endpoints; a service version alone is not capability
 proof.
 
+Owner cover selection authority v2 (#1078) requires a **clean rebuild** under
+ADR-0013. Exact DDL and document admission refuse both empty and populated
+predecessor stores without mutation, migration or adoption. Consideration v4,
+identity and policy evidence remain unchanged. The decision request now requires
+a closed `cover_confirmation` for cover choices, with explicitly nullable
+`expected_selection_id` and exact boolean `confirm_unverified_match`; other
+fields reject this object. Historical automatic records retain their original
+decode permissions and cannot mint current authority.
+
 Report v46 preserves exact incumbent LF/CRLF description paragraphs and ordinary
 boundary spaces/tabs for ebooks and audiobooks (#1080). **Clean rebuild required**
 under ADR-0013: v44 reports and the prior SQL contract are refused without migration

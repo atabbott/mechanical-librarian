@@ -281,7 +281,7 @@ For a current cover field, Detail presents the incumbent first and up to 12
 safe report-bound alternatives. Advisory observation and deterministic policy
 never select on the owner's behalf. The owner must explicitly keep the current
 cover, choose one available original, or take no action. If observation is
-unconfigured or fails, the same identity-admitted manual choices remain usable;
+unconfigured or fails, retained manual choices remain usable;
 an explicit advisory retry creates a successor record and leaves the cover
 unchanged.
 
@@ -350,3 +350,16 @@ outside the global 20-case sample; truncation is explicit. The ebook
 operations. Missing entries are unavailable, not a fallback qualification.
 These read models confer no consent or effect authority. The reproducible
 [OpenAPI document](../reference/review-openapi-v1.json) is the exact wire contract.
+
+### Owner-confirmed retained cover choice (#1078)
+
+Choosing a retained alternative opens a confirmation with its whole image.
+“Match not confirmed” remains visible for unconfirmed evidence after recording.
+Cancel or Escape before submission records nothing and restores card focus.
+A lower-quality or unconfirmed alternative may be chosen explicitly; positive
+identity contradictions, unavailable artifacts and active searches remain refused.
+A recorded choice leaves Attention but remains revisable from Library while no
+cover effect has been claimed, applied, reconciled or verified. Each revision
+compares the exact target selection token and appends history. A stale or uncertain
+response requires a current reload; it never submits another choice automatically.
+Recording is separate from consent, guarded application and verified read-back.

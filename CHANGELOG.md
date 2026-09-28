@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Owners can explicitly confirm current retained covers with an unconfirmed match
+  or lower visual quality, and revise their choice before application begins.
+  Contradictions remain refused; history retains the observed match status.
+  Owner selection authority v2 requires a clean rebuild (#1078).
+
 - Supported containers supply the contained reviewer profile for optional cover
   setup and description advice. Wizard and Settings distinguish provisioning,
   host and sign-in readiness, support recovery, and show the admitted model.

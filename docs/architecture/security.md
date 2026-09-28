@@ -1690,3 +1690,22 @@ refused, never chmod/chown repaired or followed. Known bounded staging remains
 owned by the existing device manager, not a new recovery mechanism. Task
 selection is advisory availability, separate from Policy preferences and
 Activity write consent. No prompt, tool, model or provider authority changes.
+
+## Owner-confirmed retained covers (#1078)
+
+An authenticated CSRF-protected explicit confirmation can choose an intact,
+current non-incumbent retained cover despite unconfirmed identity or lower visual
+quality. Positive contradiction, including unknown identity with retained creator
+disagreement, remains refused. The owner authority preserves the observed identity
+and exact artifact, preview, consideration and target bindings; it does not alter
+automatic election, ranking, qualification permissions or reviewer authority.
+
+The existing application `BEGIN IMMEDIATE` transaction compares the target-scoped
+selection token, appends the decision/selection/events, revokes prior unclaimed
+authority and advances the pointer. Claimed, applying, reconciling and verified
+cover effects block revision across cases. Superseded idempotent replays are stale.
+Bounded currentness and artifact reads run immediately before publication and at
+guarded planning/claim. Recovery storage and artifacts remain outside SQLite's
+atomic boundary. Drift removes effect eligibility without rewriting history;
+consent, backup, final target comparison, supported API upload and read-back remain
+mandatory. No provider, reviewer or Settings calls occur inside this transaction.

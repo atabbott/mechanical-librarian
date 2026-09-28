@@ -3458,6 +3458,10 @@
             "title": "Incumbent",
             "type": "boolean"
           },
+          "manual_eligible": {
+            "title": "Manual Eligible",
+            "type": "boolean"
+          },
           "match_state": {
             "enum": [
               "same_edition",
@@ -3532,12 +3536,40 @@
           "preview_sha256",
           "reference",
           "selectable",
+          "manual_eligible",
           "source_kinds",
           "state",
           "transport_sha256",
           "width"
         ],
         "title": "_CoverCandidate",
+        "type": "object"
+      },
+      "_CoverConfirmation": {
+        "additionalProperties": false,
+        "properties": {
+          "confirm_unverified_match": {
+            "title": "Confirm Unverified Match",
+            "type": "boolean"
+          },
+          "expected_selection_id": {
+            "anyOf": [
+              {
+                "pattern": "^cover_selection_[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected Selection Id"
+          }
+        },
+        "required": [
+          "expected_selection_id",
+          "confirm_unverified_match"
+        ],
+        "title": "_CoverConfirmation",
         "type": "object"
       },
       "_CoverConsiderationResponse": {
@@ -4425,6 +4457,16 @@
               }
             ],
             "title": "Consideration Id"
+          },
+          "cover_confirmation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_CoverConfirmation"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "destination": {
             "maxLength": 64,
@@ -8105,6 +8147,28 @@
           },
           "current": {
             "$ref": "#/components/schemas/_TargetField"
+          },
+          "current_cover_selection_artifact_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Cover Selection Artifact Id"
+          },
+          "current_cover_selection_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Cover Selection Id"
           },
           "decision_actions": {
             "items": {

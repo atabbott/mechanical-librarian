@@ -27,6 +27,49 @@ RECORDED_ONLY_REASON = (
 HumanDecisionAction = Literal["accept", "keep_current"]
 
 
+def manual_cover_eligible(candidate: Mapping[str, object]) -> bool:
+    """Owner choice may accept uncertainty, never positive identity contradiction.
+
+    Callers first validate the complete retained consideration and currentness;
+    this predicate neither validates a document nor grants automatic authority.
+    """
+    identity = candidate.get("identity")
+    return (
+        candidate.get("incumbent") is False
+        and type(identity) is dict
+        and identity.get("outcome")
+        in {
+            "verified_manifestation_match",
+            "verified_work_match",
+            "plausible_match",
+            "unknown",
+        }
+        and "retained_creator_or_contributor_disagreement"
+        not in identity.get("reasons", ())
+    )
+
+
+def validate_cover_confirmation(value: object) -> dict[str, object]:
+    """Read the closed explicit owner confirmation without coercion."""
+    if (
+        type(value) is not dict
+        or set(value) != {"expected_selection_id", "confirm_unverified_match"}
+        or type(value["confirm_unverified_match"]) is not bool
+        or (
+            value["expected_selection_id"] is not None
+            and (
+                type(value["expected_selection_id"]) is not str
+                or re.fullmatch(
+                    r"cover_selection_[0-9a-f]{64}", value["expected_selection_id"]
+                )
+                is None
+            )
+        )
+    ):
+        raise HumanDecisionError("invalid_choice")
+    return value
+
+
 def admitted_applications(media_kind: str) -> frozenset[str]:
     """Say which applications a retained decision on this case may carry.
 

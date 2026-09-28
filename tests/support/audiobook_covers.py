@@ -131,6 +131,7 @@ def audiobook_cover_environment(
                 )
             ),
             read_preview_digest=artifacts.read_preview_digest,
+            require_artifact=artifacts.require_artifact,
             clock=lambda: 10,
             reviewer_dispatch=no_observer,
         )
@@ -145,6 +146,9 @@ def audiobook_cover_environment(
         consideration = json.loads(consideration_document)
         repository.close()
         repository = open_repository(out / "state.sqlite")
+        repository.bind_current_cover_policy(consideration["policy_reference"])
+        repository.bind_current_cover_replay(consideration["replay_reference"])
+        repository.bind_owner_cover_validation(service.require_owner_cover)
         assert repository.get_review_case_decisions(case_id) == documents
         decisions = [CoverAutomaticDecision.from_json(raw) for raw in documents]
         snapshots = [

@@ -30,8 +30,9 @@ that contain no incumbent. The packet producer revision participates in replay
 identity so earlier same-schema considerations remain readable history and are
 superseded once.
 
-Owner readiness requires at least one confirmed non-incumbent candidate and no
-exact persisted provider/report lane actively fetching. Automatic choice is a
+Owner readiness requires at least one manually eligible non-incumbent retained
+candidate and no exact persisted provider/report lane actively fetching (#1078).
+The original confirmed-only readiness remains the automatic policy fact. Automatic choice is a
 separate result. A known-empty target may use the first ranked candidate; a
 confirmed target may use one only when its complete seven-part rank is strictly
 better than the confirmed incumbent. Missing or inconsistent incumbent facts
@@ -58,15 +59,23 @@ read-back verification. A later strictly better candidate may supersede an
 automatic cover decision while automatic authority remains active. The first
 automatic decision and every later one use the same media-appropriate replacement
 test. Any manual
-owner cover decision is final for this slice and prevents reopening or
-supersession.
+owner cover decision is final against automation. Under #1078, an explicit
+owner confirmation may supersede the exact target selection before effect claim,
+including after a newer current case. Claimed, applying, reconciling and verified
+cover effects prevent revision.
 
 ## Consequences
 
 Reviewer-less deployments retain functional owner choices while reviewer
 availability varies independently as advisory evidence. A sole confirmed
-choice remains actionable after a typed sibling timeout. Unconfirmed matches
-remain inspectable but never selectable. The clean pre-release proposal,
+choice remains actionable after a typed sibling timeout. An owner may confirm an intact current retained non-incumbent with an
+unconfirmed match or lower visual quality. Positive contradictions, including
+unknown identity with retained creator disagreement, remain refused. This manual
+authority never changes identity, automatic admission or deterministic ranks.
+The closed confirmation binds the observed target selection and acknowledges
+unconfirmed identity. Selection authority v2 preserves that evidence and its
+superseded selection. **Clean rebuild required** under ADR-0013; empty and
+populated prior schemas are refused without adoption. The clean pre-release proposal,
 consideration, policy-report, and policy contracts advance together; existing
 state requires a clean rebuild under ADR-0013.
 

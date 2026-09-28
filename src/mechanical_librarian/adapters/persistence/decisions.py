@@ -125,7 +125,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         requeue_title_projections: Callable[[int], None],
         review_case_accepts_authority: Callable[[str], bool],
         current_resolved_policy_id: Callable[[str], str],
-        record_cover_decision_outcome: Callable[[HumanDecision, str | None], None],
+        record_cover_decision_outcome: Callable[..., None],
         revoke_field_effect_authority_in_transaction: Callable[..., int],
         set_field_effect_manual_hold: Callable[[str, str, int, str], None],
         validate_shadow_outcome_row: Callable[
@@ -444,6 +444,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
         decision: HumanDecision,
         *,
         cover_consideration_id: str | None = None,
+        cover_confirmation: dict[str, object] | None = None,
     ) -> str:
         transaction = self._transaction("record_human_decision")
         try:
@@ -467,7 +468,12 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     or stored.request_digest != replay[0]
                 ):
                     raise MetadataReportError("human decision persistence failed")
-                self._record_cover_decision_outcome(stored, cover_consideration_id)
+                self._record_cover_decision_outcome(
+                    stored,
+                    cover_consideration_id,
+                    cover_confirmation,
+                    validate_only=True,
+                )
                 transaction.commit()
                 return stored.to_json()
             case_envelope = json.loads(self.get_review_case(decision.review_case_id))
@@ -480,16 +486,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 raise HumanDecisionError("stale")
             case = ReviewCase.create_from_data(case_envelope["case"])
             decision.validate_new_for(case)
+            self._record_cover_decision_outcome(
+                decision, cover_consideration_id, cover_confirmation, validate_only=True
+            )
             cover_automatic = None
             if decision.destination == "cover":
                 target = case.target
                 cover_automatic = self._connection.execute(
-                    "SELECT selection.decision_id,'automatic' "
+                    "SELECT selection.decision_id,selection.kind "
                     "FROM current_cover_selection_authorities current "
                     "JOIN cover_selection_authorities selection "
                     "ON selection.selection_id=current.selection_id "
                     "WHERE current.connection_name=? AND current.library_name=? "
-                    "AND current.item_id=? AND selection.kind='automatic'",
+                    "AND current.item_id=?",
                     (target["connection"], target["library"], target["item"]),
                 ).fetchone()
             previous = self._connection.execute(
@@ -505,7 +514,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 ).fetchone()
                 if authored is not None:
                     previous = authored
-            if previous is None and cover_automatic is not None:
+            if cover_automatic is not None:
                 previous = cover_automatic
             if previous is None:
                 previous = self._connection.execute(
@@ -518,7 +527,7 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 "WHERE review_case_id=? AND destination=?",
                 (decision.review_case_id, decision.destination),
             ).fetchone()
-            if cover_automatic is not None:
+            if cover_automatic is not None and cover_automatic[1] == "automatic":
                 automatic = cover_automatic
             if previous is not None:
                 effect = self._connection.execute(
@@ -552,7 +561,9 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     decision.to_json(),
                 ),
             )
-            self._record_cover_decision_outcome(decision, cover_consideration_id)
+            self._record_cover_decision_outcome(
+                decision, cover_consideration_id, cover_confirmation
+            )
             event_id = (
                 "human_decision_event_"
                 + hashlib.sha256(

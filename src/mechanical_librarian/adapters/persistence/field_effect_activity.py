@@ -100,6 +100,7 @@ from mechanical_librarian.domain.field_effect import (
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
     HumanDecisionError,
+    manual_cover_eligible,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
@@ -284,6 +285,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         field_effect_event_documents: Callable[[str], tuple[str, ...]],
         current_cover_policy_reference: Callable[[], str | None],
         current_cover_replay_reference: Callable[[], str | None],
+        require_owner_cover: Callable[[str, str | None], None],
         description_authority_value: Callable[[AuthoredDescriptionDecision], object],
     ) -> None:
         super().__init__(connection, binding)
@@ -299,6 +301,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._field_effect_event_documents = field_effect_event_documents
         self._cover_policy_reference = current_cover_policy_reference
         self._cover_replay_reference = current_cover_replay_reference
+        self._require_owner_cover = require_owner_cover
         self._description_authority_value = description_authority_value
         # Activity's page is immutable at one SQLite data revision.  The
         # bounded reader-local cache prevents repeated foreground refreshes
@@ -624,13 +627,23 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("authority_binding")
             consideration = json.loads(consideration_row[0])
             selected_artifact = value.get("value") if type(value) is dict else None
+            selected_authority = self._connection.execute(
+                "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id WHERE selection.decision_id=? AND selection.kind='owner'",
+                (decision.decision_id,),
+            ).fetchone()
+            if selected_authority != (1,):
+                raise FieldEffectError("authority_binding")
+            try:
+                self._require_owner_cover(consideration_row[0], selected_artifact)
+            except (ValueError, RuntimeError) as error:
+                raise FieldEffectError("authority_binding") from error
             selected_candidate = next(
                 (
                     candidate
                     for candidate in consideration.get("candidates", ())
                     if type(candidate) is dict
                     and candidate.get("artifact_id") == selected_artifact
-                    and candidate.get("selectable") is True
+                    and manual_cover_eligible(candidate)
                     and candidate.get("incumbent") is False
                 ),
                 None,
@@ -727,6 +740,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     and replace(projected, source="persisted_review_case") == authority
                 )
             except (ValueError, FieldEffectError):
+                return False
+        owner_cover = self._connection.execute(
+            "SELECT consideration.document,json_extract(selection.document,'$.candidate_artifact_id') FROM cover_selection_authorities selection JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id WHERE selection.decision_id=? AND selection.kind='owner'",
+            (authority.decision_id,),
+        ).fetchone()
+        if owner_cover is not None:
+            if not current or self._connection.execute(
+                "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id JOIN current_cover_considerations consideration ON consideration.consideration_id=selection.consideration_id AND consideration.review_case_id=? WHERE selection.decision_id=? AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event WHERE event.consideration_id=selection.consideration_id AND event.kind='stale')",
+                (authority.review_case_id, authority.decision_id),
+            ).fetchone() != (1,):
+                return False
+            try:
+                self._require_owner_cover(owner_cover[0], owner_cover[1])
+            except (ValueError, RuntimeError):
                 return False
         if not current or authority.origin != "automatic_policy":
             return current
@@ -1131,10 +1158,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
                     "WHERE consideration.document_digest=? "
                     "AND json_extract(consideration.document,'$.policy_reference')=? "
-                    "AND json_extract(consideration.document,'$.replay_reference')=? LIMIT 1",
+                    "AND json_extract(consideration.document,'$.replay_reference')=? "
+                    "AND ml_cover_consideration_current(consideration.currentness_document,?)=1 LIMIT 1",
                     (
                         digest,
                         self._current_cover_policy_reference,
+                        self._current_cover_replay_reference,
                         self._current_cover_replay_reference,
                     ),
                 ).fetchone()
@@ -3114,6 +3143,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                                 )
                             ):
                                 raise FieldEffectError("authority")
+                if (
+                    member.destination == "cover"
+                    and authority.source == "persisted_review_case"
+                    and not self._authority_is_current(authority)
+                ):
+                    raise FieldEffectError("authority")
                 if persisted.plan.subtitle_companion is not None:
                     decision_row = self._connection.execute(
                         "SELECT document FROM automatic_decisions WHERE decision_id=?",

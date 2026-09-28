@@ -18,6 +18,7 @@ import type {
   CaseDetailView,
   ChoiceContextView,
   CoverObservationView,
+  CoverCandidateView,
   DecisionCommand,
   EvidenceView,
   LibrarySearch,
@@ -1470,7 +1471,12 @@ function LibraryCoverChoices(props: {
     selectedValue?: DecisionCommand['selectedValue'],
   ) => void
 }) {
-  return <LibraryCoverChoicesContent key={props.reviewCaseId} {...props} />
+  return (
+    <LibraryCoverChoicesContent
+      key={`${props.reviewCaseId}:${props.field.coverConsideration?.id ?? 'absent'}`}
+      {...props}
+    />
+  )
 }
 
 const coverObservationLabel = (value: string) =>
@@ -1655,6 +1661,23 @@ function LibraryCoverChoicesContent({
     ].includes(currentReviewer.state)
   const cover = useCoverChoiceData(reviewCaseId)
   const consideration = field.coverConsideration
+  const [confirmation, setConfirmation] = useState<CoverCandidateView | null>(null)
+  const confirmationDialog = useRef<HTMLDialogElement>(null)
+  const confirmationTrigger = useRef<HTMLButtonElement | null>(null)
+  const [submittedConfirmation, setSubmittedConfirmation] = useState(false)
+  const closeConfirmation = () => {
+    confirmationDialog.current?.close()
+    setConfirmation(null)
+    setSubmittedConfirmation(false)
+    confirmationTrigger.current?.focus()
+  }
+  useEffect(() => {
+    if (confirmation) confirmationDialog.current?.showModal()
+  }, [confirmation])
+  useEffect(() => {
+    if (submittedConfirmation && progress?.phase === 'confirmed')
+      confirmationDialog.current?.close()
+  }, [progress?.phase, submittedConfirmation])
   const keeps = field.decisionActions.includes('keep_current')
   const accepts = field.decisionActions.includes('accept')
   if (consideration?.current !== true)
@@ -1719,9 +1742,11 @@ function LibraryCoverChoicesContent({
     const value: DecisionCommand['selectedValue'] = candidate.incumbent
       ? null
       : { kind: 'cover', value: candidate.artifactId }
-    const selected = choiceSelected(field, progress, outcome, value)
-    const eligibleCandidate = candidate.incumbent || candidate.selectable
-    const actionableCandidate = candidate.incumbent ? keeps : accepts && candidate.selectable
+    const selected =
+      choiceSelected(field, progress, outcome, value) ||
+      field.currentCoverSelectionArtifactId === candidate.artifactId
+    const eligibleCandidate = candidate.incumbent || candidate.manualEligible
+    const actionableCandidate = candidate.incumbent ? keeps : accepts && candidate.manualEligible
     const recommended = candidate.reference === recommendedReference
     const context = candidate.incumbent
       ? currentContext
@@ -1733,7 +1758,7 @@ function LibraryCoverChoicesContent({
     const open = expandedEvidence.has(evidenceKey)
     return (
       <article
-        className={`cover-choice${open ? ' is-evidence-open' : ''}${eligibleCandidate ? '' : ' is-unconfirmed'}`}
+        className={`cover-choice${open ? ' is-evidence-open' : ''}${candidate.matchState === 'match_not_confirmed' ? ' is-unconfirmed' : ''}`}
         key={candidate.reference}
         onFocusCapture={revealFocusedCoverChoice}
       >
@@ -1742,9 +1767,20 @@ function LibraryCoverChoicesContent({
           aria-label={`Choose ${label}`}
           aria-pressed={actionableCandidate ? selected : false}
           className={`library-cover-card${candidate.incumbent ? ' is-current' : ''}${recommended ? ' is-recommended' : ''}${selected ? ' is-selected' : ''}`}
-          disabled={disabled || !actionableCandidate}
-          onClick={() => {
-            if (actionableCandidate) choose(outcome, value)
+          disabled={
+            disabled ||
+            consideration.providerFetching ||
+            !actionableCandidate ||
+            cover.imageFailed(candidate.reference)
+          }
+          onClick={(event) => {
+            if (!actionableCandidate || selected) return
+            if (candidate.incumbent) choose(outcome, value)
+            else {
+              confirmationTrigger.current = event.currentTarget
+              setSubmittedConfirmation(false)
+              setConfirmation(candidate)
+            }
           }}
         >
           <span className="library-cover-image">
@@ -1777,7 +1813,7 @@ function LibraryCoverChoicesContent({
                 `${String(candidate.width)} × ${String(candidate.height)} · ${candidate.sourceKinds.map(fieldLabel).join(', ')}`}
             </em>
             <span className="choice-recommendation">
-              {!eligibleCandidate
+              {!eligibleCandidate || candidate.matchState === 'match_not_confirmed'
                 ? excludedReason(candidate)
                 : recommended
                   ? (context?.recommendationReason ?? 'Deterministic recommendation retained')
@@ -1823,6 +1859,61 @@ function LibraryCoverChoicesContent({
       className={`library-cover-comparison${expanded ? ' is-expanded' : ''}`}
       aria-label="Choose a cover"
     >
+      <dialog
+        ref={confirmationDialog}
+        className="cover-confirmation"
+        aria-labelledby="cover-confirmation-title"
+        onCancel={(event) => {
+          event.preventDefault()
+          if (progress?.phase !== 'recording') closeConfirmation()
+        }}
+      >
+        {confirmation ? (
+          <>
+            <h2 id="cover-confirmation-title">
+              {field.currentCoverSelectionId ? 'Confirm replacement cover' : 'Confirm this cover'}
+            </h2>
+            <img
+              src={cover.imageSource(consideration.id, confirmation.reference)}
+              alt="Cover selected for confirmation"
+            />
+            <p>
+              {confirmation.matchState === 'match_not_confirmed'
+                ? 'Match not confirmed. Automated evidence has not confirmed that this cover belongs to this book. Confirm only if you recognise it as the cover you want.'
+                : 'Record this retained cover as your choice.'}
+            </p>
+            <p>
+              Your choice takes precedence over automation. Recording it does not mean it has been
+              applied; consent and application safeguards still apply.
+            </p>
+            {progress?.phase === 'failed' && submittedConfirmation ? (
+              <p role="alert">
+                Confirmation was not completed. Close this dialog and reload the current comparison
+                before trying again.
+              </p>
+            ) : null}
+            <div className="cover-confirmation-actions">
+              <button
+                type="button"
+                disabled={progress?.phase === 'recording'}
+                onClick={closeConfirmation}
+              >
+                {submittedConfirmation ? 'Close' : 'Cancel'}
+              </button>
+              <button
+                type="button"
+                disabled={disabled || submittedConfirmation}
+                onClick={() => {
+                  setSubmittedConfirmation(true)
+                  choose('accept', { kind: 'cover', value: confirmation.artifactId })
+                }}
+              >
+                {progress?.phase === 'recording' ? 'Recording…' : 'Confirm cover choice'}
+              </button>
+            </div>
+          </>
+        ) : null}
+      </dialog>
       <header>
         <strong>
           {recommendedReference !== null
@@ -1841,13 +1932,16 @@ function LibraryCoverChoicesContent({
               : consideration.ready && policyReasons.includes('confirmed_incumbent_not_improved')
                 ? 'No confirmed alternative improves the current cover, so automatic replacement is withheld.'
                 : consideration.providerFetching
-                  ? 'Confirmed matches remain visible; the shared decision gate opens when fetching pauses.'
+                  ? 'Retained covers remain visible. Choices become available when fetching pauses.'
                   : 'Only confirmed matches can be recommended.'}
         </small>
       </header>
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
       {field.humanDecision ? (
-        <p className="reviewer-unavailable-detail">Owner choice is final for this work.</p>
+        <p className="reviewer-unavailable-detail">
+          Owner choice takes precedence over automation. You can confirm a replacement before
+          application begins.
+        </p>
       ) : field.automaticDecision ? (
         <p className="reviewer-unavailable-detail">
           Automatically selected. Only a strictly better confirmed cover can update this choice.
@@ -3041,7 +3135,21 @@ export default function LibraryPage({
       selectedValue,
       targetFingerprint: field.targetFingerprint,
       idempotencyKey: requestKey(),
-      ...(field.coverConsideration ? { considerationId: field.coverConsideration.id } : {}),
+      ...(field.coverConsideration
+        ? {
+            considerationId: field.coverConsideration.id,
+            coverConfirmation: {
+              expected_selection_id: field.currentCoverSelectionId ?? null,
+              confirm_unverified_match:
+                outcome === 'accept' &&
+                field.coverConsideration.candidates.some(
+                  (candidate) =>
+                    candidate.artifactId === selectedValue?.value &&
+                    candidate.matchState === 'match_not_confirmed',
+                ),
+            },
+          }
+        : {}),
       ...(authoredDescription ? { authoredDescription } : {}),
     })
   }
@@ -3115,6 +3223,7 @@ export default function LibraryPage({
     selected !== undefined &&
     (selected.humanDecision !== null ||
       selected.automaticDecision !== null ||
+      (selected.destination === 'cover' && Boolean(selected.currentCoverSelectionId)) ||
       Boolean(
         selected.descriptionAdvice &&
         (selected.descriptionAdvice.selected_advice?.current === true ||

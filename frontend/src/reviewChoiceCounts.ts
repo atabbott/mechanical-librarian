@@ -15,8 +15,9 @@ export const ownerChoiceCount = (field: ReviewField) => {
     )
   const consideration = field.coverConsideration
   if (!consideration) return keeps ? 1 : 0
+  if (!consideration.current || !consideration.ready) return 0
   const candidates = consideration.candidates.filter(
-    (candidate) => candidate.selectable || candidate.incumbent,
+    (candidate) => candidate.manualEligible || candidate.incumbent,
   )
   const incumbent = candidates.some((candidate) => candidate.incumbent)
   return (keeps ? 1 : 0) + (accepts ? candidates.length - (incumbent ? 1 : 0) : 0)

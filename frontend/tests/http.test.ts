@@ -288,7 +288,7 @@ describe('ReviewApiClient', () => {
       deterministic_rank: 1,
       deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-1'],
       height: 100,
-      identity: { outcome: 'verified_work_match' },
+      identity: { outcome: 'verified_work_match', reasons: [] },
       incumbent: false,
       match_state: 'same_book',
       observation: null,
@@ -297,6 +297,7 @@ describe('ReviewApiClient', () => {
       preview_sha256: 'b'.repeat(64),
       reference: 'candidate-1',
       selectable: true,
+      manual_eligible: true,
       source_kinds: [],
       state: 'acceptable',
       width: 100,
@@ -1143,6 +1144,26 @@ describe('ReviewApiClient', () => {
         },
       ],
     })
+    expect(
+      mapHistory({
+        ...payload,
+        items: [
+          {
+            ...cover,
+            decision: {
+              outcome: 'accept',
+              selected_value: { kind: 'cover', value: 'retained-artifact' },
+            },
+            consideration: {
+              ...cover.consideration,
+              candidates: [
+                { artifact_id: 'retained-artifact', match_state: 'match_not_confirmed' },
+              ],
+            },
+          },
+        ],
+      }).items[0],
+    ).toMatchObject({ category: 'cover', ownerOutcome: 'accept', ownerMatchUnconfirmed: true })
     expect(mapHistory({ ...payload, items: [{ ...cover, kind: 'superseded' }] })).toEqual({
       items: [
         {
