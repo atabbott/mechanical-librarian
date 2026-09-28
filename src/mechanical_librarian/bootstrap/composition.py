@@ -120,6 +120,7 @@ from mechanical_librarian.adapters.providers.remote_cover import (
     fetch_remote_cover,
 )
 from mechanical_librarian.adapters.reviewers.codex_device_auth import (
+    CodexAuthCommand,
     CodexDeviceAuthError,
     CodexDeviceAuthManager,
 )
@@ -128,7 +129,7 @@ from mechanical_librarian.adapters.reviewers.contained_reviewer import (
     ContainedReviewerProfile,
     load_contained_reviewer_profile_bytes,
     prepare_contained_device_auth_command,
-    read_contained_reviewer_profile,
+    read_required_contained_reviewer_profile,
 )
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
 from mechanical_librarian.application.batch import (
@@ -244,10 +245,12 @@ from mechanical_librarian.application.review_pipeline_stages import (
 from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.application.reviewer_access import (
     CodexAuth,
+    ReviewerAccessApplicationError,
     ReviewerAccessOperations,
 )
 from mechanical_librarian.application.reviewer_contracts import (
     CodexDeviceAuthState,
+    ReviewerProvisioningStatus,
     openrouter_profile,
 )
 from mechanical_librarian.application.reviewer_host import (
@@ -363,6 +366,7 @@ from mechanical_librarian.infrastructure.security.review_tls import (
     open_review_tls_identity,
 )
 from mechanical_librarian.infrastructure.settings_authority import (
+    DEFAULT_REVIEWER_PROFILE,
     ReviewBootstrap,
     load_review_bootstrap,
     store_runtime_configuration,
@@ -3512,7 +3516,9 @@ def _compose_setup_runtime_generation(
             tls_certificate_file=bootstrap.tls_certificate_file,
             tls_private_key_file=bootstrap.tls_private_key_file,
             trusted_proxy_ips=tuple(sorted(bootstrap.trusted_proxy_ips)),
-            cover_reviewer_profile_file=bootstrap.cover_reviewer_profile_file,
+            cover_reviewer_profile_file=(
+                bootstrap.cover_reviewer_profile_file or DEFAULT_REVIEWER_PROFILE
+            ),
         ),
         activation._codex_auth,
     )
@@ -3967,8 +3973,11 @@ class _UnavailableCodexAuth:
     def _state(self) -> CodexDeviceAuthState:
         return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
-    start = status = cancel = clear = current_credential_status = _state
+    start = status = clear = current_credential_status = _state
     recheck_credential_status = _state
+
+    def cancel(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("ready")
 
     def passive_status(self) -> CodexDeviceAuthState:
         return CodexDeviceAuthState("ready")
@@ -3987,8 +3996,14 @@ class _LazyCodexAuth:
             CodexDeviceAuthManager,
         ],
         coordinator: _CodexAuthLeaseCoordinator,
+        cleanup_factory: Callable[
+            [Callable[[], bool], Callable[[], AbstractContextManager[None]]],
+            CodexDeviceAuthManager,
+        ]
+        | None = None,
     ) -> None:
         self._factory = factory
+        self._cleanup_factory = cleanup_factory or factory
         self._coordinator = coordinator
         self._lock = Lock()
         self._manager: CodexDeviceAuthManager | None = None
@@ -4020,12 +4035,13 @@ class _LazyCodexAuth:
         with self._coordinator.guard(self, lease):
             yield
 
-    def _get(self) -> CodexDeviceAuthManager:
+    def _get(self, *, cleanup: bool = False) -> CodexDeviceAuthManager:
         if not self._lease_current():
             self.activate_lease()
         with self._lock:
             if self._manager is None:
-                self._manager = self._factory(
+                factory = self._cleanup_factory if cleanup else self._factory
+                self._manager = factory(
                     self._lease_current,
                     lambda: self._coordinator.guard(self, cast("int", self._lease)),
                 )
@@ -4038,6 +4054,7 @@ class _LazyCodexAuth:
             OSError,
             ValueError,
             CodexDeviceAuthError,
+            ReviewerAccessApplicationError,
             ContainedReviewerProcessError,
         ):
             return CodexDeviceAuthState("failed", failure="permission_or_profile")
@@ -4055,10 +4072,18 @@ class _LazyCodexAuth:
         return CodexDeviceAuthState("ready") if manager is None else manager.status()
 
     def cancel(self) -> CodexDeviceAuthState:
-        return self._state("cancel")
+        # Cleanup never constructs authority or activates another generation.
+        with self._lock:
+            manager = self._manager
+        if manager is None:
+            return CodexDeviceAuthState("ready")
+        try:
+            return manager.cancel()
+        except (OSError, ValueError, CodexDeviceAuthError):
+            return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def clear(self) -> CodexDeviceAuthState:
-        return self._get().clear()
+        return self._get(cleanup=True).clear()
 
     def current_credential_status(self) -> CodexDeviceAuthState:
         return self._state("current_credential_status")
@@ -4189,7 +4214,7 @@ def _bind_description_authority(
             or review.cover_reviewer_profile_file is None
         ):
             return None
-        payload = read_contained_reviewer_profile(
+        payload = read_required_contained_reviewer_profile(
             Path(review.cover_reviewer_profile_file)
         )
         profile = load_contained_reviewer_profile_bytes(payload)
@@ -4217,6 +4242,42 @@ def _compose_reviewer_access(
     codex_auth: CodexAuth
     codex_reviewer = run_cover_packet_reviewer
     profile_file = review.cover_reviewer_profile_file
+    provisioning = ReviewerProvisioningStatus(False, "profile_not_provisioned")
+    cleanup_profile: tuple[bytes, ContainedReviewerProfile] | None = None
+
+    def load_profile() -> tuple[bytes, ContainedReviewerProfile]:
+        nonlocal provisioning, cleanup_profile
+        if profile_file is None:
+            provisioning = ReviewerProvisioningStatus(False, "profile_not_provisioned")
+            raise ReviewerAccessApplicationError("not_provisioned")
+        try:
+            payload = read_required_contained_reviewer_profile(Path(profile_file))
+            profile = load_contained_reviewer_profile_bytes(payload)
+        except ContainedReviewerProcessError as error:
+            provisioning = ReviewerProvisioningStatus(
+                False,
+                "profile_contract_mismatch"
+                if error.code == "profile_contract_mismatch"
+                else "profile_not_provisioned"
+                if isinstance(error.__cause__, FileNotFoundError)
+                else "profile_unreadable",
+            )
+            raise ReviewerAccessApplicationError("not_provisioned") from None
+        provisioning = ReviewerProvisioningStatus(
+            True, None, hashlib.sha256(payload).hexdigest(), profile.identity.model
+        )
+        cleanup_profile = payload, profile
+        return payload, profile
+
+    def codex_provisioning(refresh: bool) -> ReviewerProvisioningStatus:
+        if refresh:
+            try:
+                load_profile()
+            except ReviewerAccessApplicationError:
+                pass
+        return provisioning
+
+    codex_provisioning(True)
     if profile_file is None:
         codex_auth = _UnavailableCodexAuth()
 
@@ -4224,32 +4285,46 @@ def _compose_reviewer_access(
             return ReviewerHostStatus(False, "host_evidence_unavailable", None)
 
         def codex_identity() -> tuple[str, bytes]:
-            raise RuntimeError("codex profile unavailable")
+            raise ReviewerAccessApplicationError("not_provisioned")
 
     else:
         active_coordinator = coordinator or _CodexAuthLeaseCoordinator()
 
-        def load_profile() -> tuple[bytes, ContainedReviewerProfile]:
-            payload = read_contained_reviewer_profile(Path(profile_file))
-            return payload, load_contained_reviewer_profile_bytes(payload)
-
         def manager(
             lease_current: Callable[[], bool],
             lease_guard: Callable[[], AbstractContextManager[None]],
+            admitted: tuple[bytes, ContainedReviewerProfile] | None = None,
         ) -> CodexDeviceAuthManager:
-            _payload, profile = load_profile()
+            payload, profile = load_profile() if admitted is None else admitted
+
+            def command(staging: Path, action: str) -> CodexAuthCommand:
+                current, admitted = load_profile()
+                if current != payload:
+                    raise ContainedReviewerProcessError("profile")
+                return prepare_contained_device_auth_command(admitted, staging, action)
+
             return CodexDeviceAuthManager(
                 profile.auth_store_path,
-                lambda staging, action: prepare_contained_device_auth_command(
-                    profile, staging, action
-                ),
+                command,
                 lease_current=lease_current,
                 lease_guard=lease_guard,
                 activity_guard=active_coordinator.activity,
                 quarantine_activity=active_coordinator.quarantine,
             )
 
-        lazy_codex_auth = _LazyCodexAuth(manager, active_coordinator)
+        def cleanup_manager(
+            lease_current: Callable[[], bool],
+            lease_guard: Callable[[], AbstractContextManager[None]],
+        ) -> CodexDeviceAuthManager:
+            # Only this generation's safely admitted target can be cleared.
+            # The command closure still requires exact current profile bytes.
+            if cleanup_profile is None:
+                raise ReviewerAccessApplicationError("not_provisioned")
+            return manager(lease_current, lease_guard, cleanup_profile)
+
+        lazy_codex_auth = _LazyCodexAuth(
+            manager, active_coordinator, cleanup_factory=cleanup_manager
+        )
         codex_auth = lazy_codex_auth
         codex_host = reviewer_host_status
 
@@ -4292,7 +4367,7 @@ def _compose_reviewer_access(
         Callable[[bytes, bytes, bytes, bytes, tuple[tuple[str, str, bytes], ...]], str],
     ]:
         if profile_file is None:
-            raise RuntimeError("description profile unavailable")
+            raise ReviewerAccessApplicationError("not_provisioned")
         model, payload = lazy_codex_auth.bind(codex_identity)
 
         def run(
@@ -4315,6 +4390,7 @@ def _compose_reviewer_access(
         repository.reviewer_access_store(),
         codex_auth=codex_auth,
         codex_host=codex_host,
+        codex_provisioning=codex_provisioning,
         codex_identity=codex_identity,
         codex_binding=(
             codex_binding

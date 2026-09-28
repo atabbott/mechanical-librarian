@@ -33,7 +33,21 @@ DeviceAuthFailure = Literal[
     "protocol_or_process",
     "restart_interrupted",
 ]
+ReviewerProvisioningReason = Literal[
+    "profile_not_provisioned", "profile_unreadable", "profile_contract_mismatch"
+]
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewerProvisioningStatus:
+    available: bool
+    reason: ReviewerProvisioningReason | None
+    profile_sha256: str | None = None
+    model: str | None = None
+
+
 ReviewerStatus = Literal[
+    "not_provisioned",
     "ready",
     "starting",
     "issued",
@@ -56,6 +70,9 @@ ReviewerStatus = Literal[
     "unreachable",
 ]
 ReviewerStatusReason = Literal[
+    "profile_not_provisioned",
+    "profile_unreadable",
+    "profile_contract_mismatch",
     "host_evidence_unavailable",
     "cgroup_limit_below_1_gib",
     "headroom_below_1_gib",

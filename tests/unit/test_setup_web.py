@@ -20,6 +20,9 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessOperations,
     ReviewerAccessRepositoryError,
 )
+from mechanical_librarian.application.reviewer_contracts import (
+    ReviewerProvisioningStatus,
+)
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.application.setup_connection import SetupConnectionError
 from mechanical_librarian.application.setup_journey import SetupJourneyOperation
@@ -91,6 +94,9 @@ def test_setup_generation_serializes_reviewer_local_operations(
         store,
         codex_auth=Mock(
             passive_status=Mock(return_value=CodexDeviceAuthState("ready"))
+        ),
+        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+            True, None, model="gpt-5.6-sol"
         ),
         codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
         codex_binding=Mock(),
@@ -174,6 +180,9 @@ def test_setup_external_reviewer_observation_allows_commit_and_refuses_stale_vie
         store,
         codex_auth=Mock(
             passive_status=Mock(return_value=CodexDeviceAuthState("ready"))
+        ),
+        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+            True, None, model="gpt-5.6-sol"
         ),
         codex_host=host,
         codex_binding=Mock(),
@@ -1042,12 +1051,12 @@ def test_setup_library_step_uses_audiobookshelf_book_kind_without_owner_choice()
     assert "label.className='mount-state'" in SETUP_JS
     assert "mountCopy" not in SETUP_JS
     assert (
-        "const codexState=access.codex.state==='host_unsupported'?access.codex:"
+        "const codexState=blocked?access.codex:"
         "(codexTerminal||access.codex)" in SETUP_JS
     )
     assert "codexTerminal=device;await render()" in SETUP_JS
     assert "Check existing sign-in" in SETUP_JS
-    assert "check.disabled=codexState.state==='host_unsupported'" in SETUP_JS
+    assert "check.disabled=blocked" in SETUP_JS
     assert "/api/setup/reviewer/codex/recheck" in SETUP_JS
     assert "reviewer_access_stale:'Reviewer access changed" in SETUP_JS
     assert "invalid_key:'OpenRouter rejected this key." in SETUP_JS
@@ -1154,7 +1163,11 @@ def test_first_run_states_its_rules_transport_and_recoveries_without_raw_codes()
     )
     assert "canonical forwarded host and protocol pair" in SETUP_JS
     assert "Mechanical Librarian never skips verification." in SETUP_JS
-    assert "reviewer_unconfigured" not in SETUP_JS
+    assert (
+        "reviewer_unconfigured:'The selected reviewer is no longer ready. "
+        "Check its access and select it again, or continue without a reviewer.'"
+        in SETUP_JS
+    )
 
     # UX-006: per-provider relevance and disambiguated credential labels.
     assert "settingsVocabulary.provider_contributions[adapter]" in SETUP_JS

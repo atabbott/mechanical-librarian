@@ -22,6 +22,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     DeviceAuthStatus,
     OpenRouterFailure,
     OpenRouterReviewerError,
+    ReviewerProvisioningStatus,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.reviewer_access import OpenRouterTaskSelection
@@ -139,6 +140,9 @@ def _operations(
     operations = ReviewerAccessOperations(
         ReviewerAccessStore(connection),
         codex_auth=auth,
+        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+            True, None, model="gpt-5.6-sol"
+        ),
         codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
         codex_identity=lambda: ("gpt-5.4", b"codex-profile"),
         codex_binding=codex_binding,
@@ -840,3 +844,45 @@ def test_credential_clear_serializes_same_generation_but_preserves_lost_cas(
         if successor_repository is not None:
             successor_repository.close()
         repository.close()
+
+
+@pytest.mark.parametrize("task", ["cover_observation", "description_rewrite"])
+def test_provisioning_drift_refuses_both_tasks_but_retains_recovery(task):
+    operations, auth, _router_calls, codex_calls = _operations(auth_state="usable")
+    selected = operations.select_codex(expected_revision=1, task=task)
+    operations._codex_provisioning = lambda _refresh: ReviewerProvisioningStatus(
+        False, "profile_contract_mismatch"
+    )
+    operations._codex_host = lambda: pytest.fail("provisioning must precede host")
+    assert operations.read().codex.state == "not_provisioned"
+    for action in (
+        operations.describe_contained_description,
+        operations.recheck_codex,
+        operations.dispatch_cover_observation
+        if task == "cover_observation"
+        else operations.dispatch_description_rewrite,
+        lambda: operations.select_codex(expected_revision=selected.revision, task=task),
+        lambda: operations.start_codex(expected_revision=selected.revision),
+    ):
+        with pytest.raises(ReviewerAccessApplicationError) as error:
+            action()
+        assert error.value.code == "not_provisioned"
+    assert not codex_calls and auth.start_calls == 0
+    assert operations.cancel_codex().state == "cancelled"
+    cleared = operations.clear_codex(expected_revision=selected.revision)
+    assert cleared.mapping is None and cleared.description_mapping is None
+    assert cleared.codex.state == "not_provisioned"
+
+
+def test_profile_replacement_between_identity_and_binding_cannot_dispatch():
+    operations, _auth, _router_calls, calls = _operations(auth_state="usable")
+    operations.select_codex(expected_revision=1)
+    operations._codex_binding = lambda: (
+        "gpt-5.4",
+        b"different-profile",
+        lambda *_: "{}",
+    )
+    with pytest.raises(ReviewerAccessApplicationError) as caught:
+        operations.dispatch_cover_observation()
+    assert caught.value.code == "access_changed"
+    assert not calls

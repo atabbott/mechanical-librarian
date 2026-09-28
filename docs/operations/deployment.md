@@ -118,12 +118,22 @@ that outer view.
 
 The image contains the checksummed Codex CLI 0.147.0 and its paired Bubblewrap
 artifact at `/opt/mechanical-librarian/reviewer/bin/`. They are read-only image
-content, not runtime downloads or owner mounts. A deploy-owned contained-reviewer
-profile in the supported composition binds these exact paths and the digests
-published beside them in
-`/opt/mechanical-librarian/reviewer/metadata/SHA256SUMS`; an absent profile keeps
-Codex unavailable without touching either artifact, while OpenRouter and the
-no-reviewer path remain independent.
+content, not runtime downloads or owner mounts. The build generates
+`/opt/mechanical-librarian/reviewer/profile.json` from those verified artifacts
+and current supported parameters. It is UID 65532-owned, mode 0400. Store-mode
+setup and normal runtime use it by default; an explicit bootstrap profile path
+overrides it without fallback. File-mode keeps explicit deployment authority.
+The image entrypoint initializes only private `/data/reviewer`, `auth` and
+`jobs` directories, refusing unsafe existing entries without repair. These
+known directories and bounded device staging participate in setup resumption;
+unknown volume content never becomes a fresh setup.
+
+Missing, unsafe or contract-drifted profiles appear as not provisioned, with a
+deployment remedy. Host headroom and sign-in are separate subsequent checks.
+Restore the supported image profile, or correct the explicit override and
+restart. No shell editing is part of ordinary reviewer setup. The browser
+cannot supply executable paths or limits. See
+[ADR-0081](../architecture/decisions/0081-image-owned-reviewer-provisioning.md).
 The same image retains Codex's Apache-2.0 licence, Bubblewrap's
 LGPL-2.0-or-later notice, and the exact full upstream source archive containing
 the paired Bubblewrap source and build recipe under

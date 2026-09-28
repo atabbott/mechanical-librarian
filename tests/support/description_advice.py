@@ -16,6 +16,9 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 )
 from mechanical_librarian.application.description_advice import DescriptionAdviceService
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_contracts import (
+    ReviewerProvisioningStatus,
+)
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceBinding,
@@ -84,7 +87,7 @@ def _prepared(
     )
     calls = []
     identity = contained_identity or (
-        lambda: ("synthetic-model", b"synthetic-contained-profile")
+        lambda: ("gpt-5.6-sol", b"synthetic-contained-profile")
     )
 
     def runner(profile, instruction, inputs, schema, images):
@@ -117,6 +120,9 @@ def _prepared(
     access = ReviewerAccessOperations(
         repository.reviewer_access_store(),
         codex_auth=_Auth("usable"),
+        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+            True, None, model="gpt-5.6-sol"
+        ),
         codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
         codex_identity=identity,
         codex_binding=lambda: (
@@ -238,7 +244,7 @@ def _contained_profile(root: Path) -> Path:
                     "processes": 32,
                     "timeout_seconds": 30,
                 },
-                "model": "synthetic-model",
+                "model": "gpt-5.6-sol",
                 "reasoning": "medium",
                 "sandbox": {
                     "path": str(root / "missing-bwrap"),

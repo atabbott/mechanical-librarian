@@ -70,6 +70,18 @@ def main() -> None:
         resumable_setup=resumable_setup,
         uninitialized_setup=uninitialized_setup,
     )
+    # Only fixed image-owned locations are initialized. Existing unsafe entries
+    # are refused, never followed, repaired, or redirected by configuration.
+    for path in (DATA / "reviewer", DATA / "reviewer/auth", DATA / "reviewer/jobs"):
+        path.mkdir(mode=0o700, exist_ok=True)
+        entry = path.lstat()
+        if (
+            not stat.S_ISDIR(entry.st_mode)
+            or entry.st_uid != os.geteuid()
+            or stat.S_IMODE(entry.st_mode) != 0o700
+        ):
+            raise RuntimeError("container reviewer directory is unavailable")
+
     run_review_server(
         CONFIG,
         DATABASE,

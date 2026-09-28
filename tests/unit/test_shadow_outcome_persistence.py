@@ -81,7 +81,10 @@ from mechanical_librarian.application.review_web import (
     RecordHumanDecision,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
-from mechanical_librarian.application.reviewer_contracts import CodexDeviceAuthState
+from mechanical_librarian.application.reviewer_contracts import (
+    CodexDeviceAuthState,
+    ReviewerProvisioningStatus,
+)
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.bootstrap import composition
 from mechanical_librarian.domain import audiobook_decision_qualification
@@ -271,7 +274,7 @@ def _test_reviewer_access(
         )
 
     def identity() -> tuple[str, bytes]:
-        payload = composition.read_contained_reviewer_profile(
+        payload = composition.read_required_contained_reviewer_profile(
             Path(selected_review.cover_reviewer_profile_file)
         )
         mismatch = cover_reviewer_profile_contract_mismatch(payload)
@@ -286,6 +289,9 @@ def _test_reviewer_access(
     return ReviewerAccessOperations(
         store,
         codex_auth=_UsableCodexAuth(),
+        codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+            True, None, model="gpt-5.6-sol"
+        ),
         codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
         codex_identity=identity,
         codex_binding=binding,
@@ -3594,7 +3600,7 @@ def test_composed_projection_prepares_one_qualified_cover_advice_before_f22() ->
         with (
             patch.object(
                 composition,
-                "read_contained_reviewer_profile",
+                "read_required_contained_reviewer_profile",
                 return_value=b"synthetic-profile",
             ),
             patch(
@@ -4361,7 +4367,7 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
             elif authority_change == "replay":
                 profile_reader = patch.object(
                     composition,
-                    "read_contained_reviewer_profile",
+                    "read_required_contained_reviewer_profile",
                     return_value=b"profile-1",
                 )
                 profile_contract = patch(
@@ -5218,7 +5224,9 @@ def test_composed_projection_contains_reviewer_failures_before_f22(reviewer) -> 
 
         with (
             patch.object(
-                composition, "read_contained_reviewer_profile", return_value=b"profile"
+                composition,
+                "read_required_contained_reviewer_profile",
+                return_value=b"profile",
             ),
             patch(
                 "tests.unit.test_shadow_outcome_persistence.cover_reviewer_profile_contract_mismatch",
@@ -5258,7 +5266,7 @@ def test_composed_projection_contains_reviewer_failures_before_f22(reviewer) -> 
         with (
             patch.object(
                 composition,
-                "read_contained_reviewer_profile",
+                "read_required_contained_reviewer_profile",
                 return_value=b"profile",
             ),
             patch(
@@ -5307,7 +5315,9 @@ def test_composed_projection_stale_after_observation_does_not_publish() -> None:
 
         with (
             patch.object(
-                composition, "read_contained_reviewer_profile", return_value=b"profile"
+                composition,
+                "read_required_contained_reviewer_profile",
+                return_value=b"profile",
             ),
             patch(
                 "tests.unit.test_shadow_outcome_persistence.cover_reviewer_profile_contract_mismatch",
@@ -5481,7 +5491,7 @@ def test_composed_cover_replay_reuses_exact_binding_and_profile_change_supersede
         with (
             patch.object(
                 composition,
-                "read_contained_reviewer_profile",
+                "read_required_contained_reviewer_profile",
                 side_effect=lambda _path: profile_payload[0],
             ),
             patch(

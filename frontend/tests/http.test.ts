@@ -31,7 +31,7 @@ const csrf = {
 }
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
-  schema_version: 'reviewer-access-view-v1',
+  schema_version: 'reviewer-access-view-v2',
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -42,7 +42,7 @@ const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
     engine: 'codex',
     state: 'ready',
     reason: null,
-    model: null,
+    model: 'gpt-5.6-sol',
     tier: null,
     host_headroom_bytes: 2_147_483_648,
   },
@@ -62,6 +62,39 @@ const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
 })
 
 describe('reviewer access transport vocabulary', () => {
+  it.each(['profile_not_provisioned', 'profile_unreadable', 'profile_contract_mismatch'])(
+    'admits provisioning reason %s only in its exact state',
+    (reason) => {
+      const codex = {
+        ...reviewerAccessPayload().codex,
+        state: 'not_provisioned',
+        reason,
+        model: null,
+        host_headroom_bytes: null,
+      }
+      expect(mapReviewerAccess(reviewerAccessPayload({ codex })).codex.reason).toBe(reason)
+      for (const invalid of [
+        { ...codex, state: 'ready' },
+        { ...codex, model: 'gpt-5.6-sol' },
+        { ...codex, reason: 'host_evidence_unavailable' },
+      ]) {
+        expect(() => mapReviewerAccess(reviewerAccessPayload({ codex: invalid }))).toThrow()
+      }
+    },
+  )
+  it('rejects the prior view and malformed contained model grammar', () => {
+    expect(() =>
+      mapReviewerAccess(reviewerAccessPayload({ schema_version: 'reviewer-access-view-v1' })),
+    ).toThrow()
+    for (const model of [null, '', 'model\nsecret', 'provider/model', 'x'.repeat(129)]) {
+      expect(() =>
+        mapReviewerAccess(
+          reviewerAccessPayload({ codex: { ...reviewerAccessPayload().codex, model } }),
+        ),
+      ).toThrow()
+    }
+  })
+
   it('preserves a closed provider-local recommendation', () => {
     expect(
       mapReviewerAccess(reviewerAccessPayload({ recommendations: ['openai/gpt-4o-mini'] }))
@@ -101,7 +134,7 @@ describe('reviewer access transport vocabulary', () => {
           engine: 'codex',
           state: 'failed',
           reason: 'invalid_key',
-          model: null,
+          model: 'gpt-5.6-sol',
           tier: null,
           host_headroom_bytes: 1,
         },
@@ -120,7 +153,7 @@ describe('reviewer access transport vocabulary', () => {
           engine: 'codex',
           state: 'ready',
           reason: null,
-          model: null,
+          model: 'gpt-5.6-sol',
           tier: null,
           host_headroom_bytes: '1',
         },

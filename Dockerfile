@@ -119,6 +119,7 @@ WORKDIR /build
 COPY pyproject.toml setup.py uv.lock README.md LICENSE ./
 COPY scripts/build_frontend.py ./scripts/build_frontend.py
 COPY scripts/verify_contained_reviewer_tool_inventory.py ./scripts/verify_contained_reviewer_tool_inventory.py
+COPY scripts/generate_contained_reviewer_profile.py ./scripts/generate_contained_reviewer_profile.py
 COPY src ./src
 COPY --from=frontend-build /build/frontend/dist /frontend-dist
 RUN ML_FRONTEND_PREBUILT_DIR=/frontend-dist \
@@ -128,6 +129,9 @@ COPY --from=reviewer-build /reviewer /reviewer-proof
 RUN /opt/mechanical-librarian/bin/python \
     scripts/verify_contained_reviewer_tool_inventory.py \
     /reviewer-proof/bin/codex
+RUN /opt/mechanical-librarian/bin/python scripts/generate_contained_reviewer_profile.py /reviewer-proof \
+    && chown 65532:65532 /reviewer-proof/profile.json \
+    && chmod 0400 /reviewer-proof/profile.json
 
 FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
 COPY --from=probe-build /usr/local/bin/ffprobe /usr/local/bin/ffprobe
@@ -136,7 +140,7 @@ RUN /usr/local/bin/ffprobe -version \
     && useradd --system --uid 65532 --gid librarian --home-dir /nonexistent --shell /usr/sbin/nologin librarian \
     && install -d -o librarian -g librarian -m 0700 /data
 COPY --from=build /opt/mechanical-librarian /opt/mechanical-librarian
-COPY --from=reviewer-build /reviewer /opt/mechanical-librarian/reviewer
+COPY --from=build /reviewer-proof /opt/mechanical-librarian/reviewer
 USER 65532:65532
 EXPOSE 8443
 VOLUME ["/data"]

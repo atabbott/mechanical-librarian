@@ -162,3 +162,13 @@ The extension requires `owner-settings-v4`, `reviewer-access-v2`, and a clean
 application database under ADR-0013. Setup-state, config-v9 and bootstrap-v2
 retain their current versions. It adds no generic task registry, engine,
 endpoint, scheduler, or automatic model retry policy.
+
+## Image provisioning extension (#1009)
+
+[ADR-0081](0081-image-owned-reviewer-provisioning.md) extends the historical
+profile-authorship and lazy-read statements above. The supported image now
+supplies the canonical default; deployment overrides remain authoritative and
+browser-excluded. Composition performs passive bounded contract admission, while
+authentication, staging and process construction remain lazy. The new profile
+has operational/synthetic proof, without inheriting historical full-profile
+corpus qualification. No task selection grants application permission.

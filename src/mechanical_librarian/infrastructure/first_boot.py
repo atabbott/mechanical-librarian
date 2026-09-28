@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import re
+import stat
 from collections.abc import Callable
 from enum import Enum
 from pathlib import Path
@@ -16,6 +19,48 @@ class FirstBootMode(str, Enum):
     NORMAL = "normal"
     INITIALIZE_SETUP = "initialize_setup"
     RESUME_SETUP = "resume_setup"
+
+
+def _reviewer_setup_entries(data_path: Path) -> bool:
+    """Validate the fixed reviewer directories; report whether all are empty."""
+    root = data_path / "reviewer"
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        information = os.fstat(descriptor)
+        if (
+            information.st_uid != os.geteuid()
+            or stat.S_IMODE(information.st_mode) != 0o700
+        ):
+            raise FirstBootError("first boot state is unavailable")
+        names: list[str] = []
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                if len(names) == 66 or (
+                    entry.name not in {"auth", "jobs"}
+                    and re.fullmatch(r"reviewer-auth-[a-z0-9_]{8}", entry.name) is None
+                ):
+                    raise FirstBootError("first boot state is unavailable")
+                names.append(entry.name)
+        empty = True
+        for name in names:
+            child = os.open(
+                name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor
+            )
+            try:
+                information = os.fstat(child)
+                if (
+                    information.st_uid != os.geteuid()
+                    or stat.S_IMODE(information.st_mode) != 0o700
+                ):
+                    raise FirstBootError("first boot state is unavailable")
+                with os.scandir(child) as entries:
+                    if next(entries, None) is not None:
+                        empty = False
+            finally:
+                os.close(child)
+        return empty and set(names) <= {"auth", "jobs"}
+    finally:
+        os.close(descriptor)
 
 
 def select_first_boot_mode(
@@ -36,7 +81,13 @@ def select_first_boot_mode(
         entries = {entry.name for entry in data_path.iterdir()}
     except OSError as error:
         raise FirstBootError("first boot state is unavailable") from error
-    if not entries:
+    reviewer_empty = False
+    if "reviewer" in entries:
+        try:
+            reviewer_empty = _reviewer_setup_entries(data_path)
+        except OSError as error:
+            raise FirstBootError("first boot state is unavailable") from error
+    if not entries or (entries == {"reviewer"} and reviewer_empty):
         return FirstBootMode.INITIALIZE_SETUP
     if database_name not in entries:
         raise FirstBootError("first boot state is unavailable")
@@ -53,6 +104,7 @@ def select_first_boot_mode(
     # not evidence of a completed runtime. Any other private content is
     # runtime state and keeps the volume failing closed as before.
     setup_entries = set(entries)
+    setup_entries.discard("reviewer")
     if "private" in entries:
         try:
             private_entries = {
@@ -75,7 +127,11 @@ def select_first_boot_mode(
         ):
             setup_entries.discard("private")
     try:
-        if setup_entries == {database_name} and uninitialized_setup():
+        if (
+            setup_entries == {database_name}
+            and ("reviewer" not in entries or reviewer_empty)
+            and uninitialized_setup()
+        ):
             return FirstBootMode.INITIALIZE_SETUP
         if setup_entries == {database_name} and resumable_setup():
             return FirstBootMode.RESUME_SETUP

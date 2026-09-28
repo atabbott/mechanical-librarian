@@ -202,6 +202,14 @@ def read_contained_reviewer_profile(path: Path) -> bytes:
             os.close(descriptor)
 
 
+def read_required_contained_reviewer_profile(path: Path) -> bytes:
+    """Admit current bytes and the required task contract without touching artifacts."""
+    payload = read_contained_reviewer_profile(path)
+    if cover_reviewer_profile_contract_mismatch(payload) is not None:
+        raise ContainedReviewerProcessError("profile_contract_mismatch")
+    return payload
+
+
 def cover_reviewer_profile_contract_mismatch(payload: bytes) -> str | None:
     """Check the exact cover-resource contract after profile integrity admission."""
     return cover_profile_contract_mismatch(

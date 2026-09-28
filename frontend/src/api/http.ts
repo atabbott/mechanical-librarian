@@ -23,6 +23,7 @@ export type ReviewerState =
   | 'failed'
   | 'interrupted'
   | 'host_unsupported'
+  | 'not_provisioned'
   | 'unconfigured'
   | 'invalid_key'
   | 'quota_exhausted'
@@ -32,6 +33,9 @@ export type ReviewerState =
   | 'malformed_response'
   | 'unreachable'
 export type ReviewerReason =
+  | 'profile_not_provisioned'
+  | 'profile_unreadable'
+  | 'profile_contract_mismatch'
   | 'host_evidence_unavailable'
   | 'cgroup_limit_below_1_gib'
   | 'headroom_below_1_gib'
@@ -58,7 +62,7 @@ export interface ReviewerEngineStatus {
 export type DescriptionModelMetadata = Schema<'DescriptionModelMetadata'>
 export type ReviewerTask = 'cover_observation' | 'description_rewrite'
 export interface ReviewerAccessView {
-  schema_version: 'reviewer-access-view-v1'
+  schema_version: 'reviewer-access-view-v2'
   revision: number
   mapping: { engine: 'codex' } | { engine: 'openrouter'; model: string } | null
   description_mapping: ReviewerAccessView['mapping']
@@ -1490,6 +1494,7 @@ const reviewerStates = new Set<ReviewerState>([
   'failed',
   'interrupted',
   'host_unsupported',
+  'not_provisioned',
   'unconfigured',
   'invalid_key',
   'quota_exhausted',
@@ -1512,6 +1517,7 @@ const codexStates = new Set<ReviewerState>([
   'failed',
   'interrupted',
   'host_unsupported',
+  'not_provisioned',
 ])
 const openRouterStates = new Set<ReviewerState>([
   'unconfigured',
@@ -1526,6 +1532,9 @@ const openRouterStates = new Set<ReviewerState>([
   'unreachable',
 ])
 const reviewerReasons = new Set<ReviewerReason>([
+  'profile_not_provisioned',
+  'profile_unreadable',
+  'profile_contract_mismatch',
   'host_evidence_unavailable',
   'cgroup_limit_below_1_gib',
   'headroom_below_1_gib',
@@ -1578,15 +1587,23 @@ const reviewerStatus = (value: unknown, engine: 'codex' | 'openrouter') => {
   if (engine === 'codex')
     return (
       codexStates.has(state) &&
-      value.model === null &&
+      (state === 'not_provisioned'
+        ? value.model === null
+        : typeof value.model === 'string' &&
+          /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u.test(value.model)) &&
       value.tier === null &&
       (value.host_headroom_bytes === null ||
         (Number.isInteger(value.host_headroom_bytes) && Number(value.host_headroom_bytes) >= 0)) &&
-      (state === 'host_unsupported'
-        ? reason !== null && codexHostReasons.has(reason)
-        : state === 'failed' || state === 'interrupted'
-          ? reason !== null && codexFailureReasons.has(reason)
-          : reason === null)
+      (state === 'not_provisioned'
+        ? reason !== null &&
+          ['profile_not_provisioned', 'profile_unreadable', 'profile_contract_mismatch'].includes(
+            reason,
+          )
+        : state === 'host_unsupported'
+          ? reason !== null && codexHostReasons.has(reason)
+          : state === 'failed' || state === 'interrupted'
+            ? reason !== null && codexFailureReasons.has(reason)
+            : reason === null)
     )
   const model = typeof value.model === 'string' && openRouterModel.test(value.model)
   return (
@@ -1655,7 +1672,7 @@ export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
       'free_tier_caveat',
       'data_use_caveat',
     ]) ||
-    value.schema_version !== 'reviewer-access-view-v1' ||
+    value.schema_version !== 'reviewer-access-view-v2' ||
     !Number.isInteger(value.revision) ||
     typeof value.openrouter_key_configured !== 'boolean' ||
     !reviewerStatus(value.codex, 'codex') ||

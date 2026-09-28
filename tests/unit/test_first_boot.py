@@ -144,3 +144,173 @@ def test_setup_inventory_is_refreshed_after_root_admission(
         assert (tmp_path / "foreign").exists()
     else:
         assert select() is FirstBootMode.RESUME_SETUP
+
+
+@pytest.mark.parametrize("unsafe", ["unknown", "symlink", "mode"])
+def test_reviewer_directory_refuses_unsafe_setup_entries(tmp_path, unsafe):
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    auth = reviewer / "auth"
+    if unsafe == "unknown":
+        (reviewer / "unexpected").mkdir(mode=0o700)
+    elif unsafe == "symlink":
+        auth.symlink_to(tmp_path, target_is_directory=True)
+    else:
+        auth.mkdir(mode=0o755)
+    with pytest.raises(FirstBootError):
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+        )
+
+
+def test_empty_fixed_reviewer_directories_preserve_fresh_and_resume(tmp_path):
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    for name in ("auth", "jobs"):
+        (reviewer / name).mkdir(mode=0o700)
+    assert (
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: False, resumable_setup=lambda: False
+        )
+        == FirstBootMode.INITIALIZE_SETUP
+    )
+    (tmp_path / "application.sqlite3").touch()
+    assert (
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+        )
+        == FirstBootMode.RESUME_SETUP
+    )
+    assert (
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: True, resumable_setup=lambda: False
+        )
+        == FirstBootMode.NORMAL
+    )
+    (tmp_path / "unrelated").touch()
+    with pytest.raises(FirstBootError):
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "reviewer-auth-",
+        "reviewer-auth-1234567",
+        "reviewer-auth-123456789",
+        "reviewer-auth-ABCDEFGH",
+        "reviewer-auth-1234.678",
+    ],
+)
+def test_malformed_reviewer_staging_name_refuses_resume(
+    tmp_path: Path, name: str
+) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    (reviewer / name).mkdir(mode=0o700)
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)
+
+
+@pytest.mark.parametrize("name", ["auth", "jobs", "reviewer-auth-abcd1234"])
+def test_reviewer_child_must_be_a_private_directory(tmp_path: Path, name: str) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    (reviewer / name).touch(mode=0o600)
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)
+
+
+@pytest.mark.parametrize("credential", [False, True])
+def test_schema_only_database_ignores_only_empty_reviewer_directories(
+    tmp_path: Path, credential: bool
+) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    auth = tmp_path / "reviewer" / "auth"
+    auth.parent.mkdir(mode=0o700)
+    auth.mkdir(mode=0o700)
+    retained = auth / "auth.json"
+    if credential:
+        retained.write_bytes(b'{"synthetic":true}')
+    for _ in range(2):
+        if credential:
+            with pytest.raises(FirstBootError):
+                select_first_boot_mode(
+                    tmp_path,
+                    complete_store=lambda: False,
+                    resumable_setup=lambda: False,
+                    uninitialized_setup=lambda: True,
+                )
+            assert retained.read_bytes() == b'{"synthetic":true}'
+        else:
+            assert (
+                select_first_boot_mode(
+                    tmp_path,
+                    complete_store=lambda: False,
+                    resumable_setup=lambda: False,
+                    uninitialized_setup=lambda: True,
+                )
+                is FirstBootMode.INITIALIZE_SETUP
+            )
+    assert _select(tmp_path, resume=True) is FirstBootMode.RESUME_SETUP
+
+
+@pytest.mark.parametrize("overflow", [False, True])
+def test_reviewer_inventory_scans_are_bounded_and_closed(
+    tmp_path, monkeypatch, overflow
+):
+    import os
+
+    from mechanical_librarian.infrastructure import first_boot
+
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    for index in range(67 if overflow else 1):
+        child = reviewer / (f"reviewer-auth-{index:08d}" if overflow else "auth")
+        child.mkdir(mode=0o700)
+        if not overflow:
+            for number in range(3):
+                (child / str(number)).touch()
+    original = os.scandir
+    scans = []
+
+    class Scan:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.iterator = original(descriptor)
+            self.count = 0
+            self.closed = False
+            scans.append(self)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.iterator.close()
+            self.closed = True
+
+        def __iter__(self):
+            return self
+
+        def __next__(self):
+            entry = next(self.iterator)
+            self.count += 1
+            assert self.count <= (67 if len(scans) == 1 else 1)
+            return entry
+
+    monkeypatch.setattr(first_boot.os, "scandir", Scan)
+    if overflow:
+        with pytest.raises(FirstBootError):
+            first_boot._reviewer_setup_entries(tmp_path)
+        assert [scan.count for scan in scans] == [67]
+    else:
+        assert not first_boot._reviewer_setup_entries(tmp_path)
+        assert [scan.count for scan in scans] == [1, 1]
+    assert all(scan.closed for scan in scans)
+    for scan in scans:
+        with pytest.raises(OSError):
+            os.fstat(scan.descriptor)

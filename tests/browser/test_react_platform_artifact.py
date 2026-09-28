@@ -145,7 +145,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     content_type="application/json",
                     body=json.dumps(
                         {
-                            "schema_version": "reviewer-access-view-v1",
+                            "schema_version": "reviewer-access-view-v2",
                             "revision": 1,
                             "mapping": {"engine": "codex"},
                             "description_mapping": None,
@@ -156,7 +156,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                                 "engine": "codex",
                                 "state": "ready",
                                 "reason": None,
-                                "model": None,
+                                "model": "gpt-5.6-sol",
                                 "tier": None,
                                 "host_headroom_bytes": 2147483648,
                             },

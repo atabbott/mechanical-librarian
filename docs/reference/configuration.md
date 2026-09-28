@@ -359,19 +359,33 @@ container retains at most 256 local stage-duration and wait-class records in
 its private data area. They contain no work values and are advisory diagnostics,
 not durable audit truth.
 
-`cover_reviewer_profile_file` is optional deployment authority. When absent,
-Codex is unavailable but the model-free path and owner-managed OpenRouter
-choice remain available. When present, it must be an absolute owner-only
-regular no-follow file containing the already-qualified contained-reviewer
-profile; its exact bytes bind every Codex observation. The browser never owns
-this path. The supported container profile binds the image-supplied executable
-paths:
-`/opt/mechanical-librarian/reviewer/bin/codex` and
-`/opt/mechanical-librarian/reviewer/bin/bwrap`. Their architecture-specific
-digests are recorded inside the image at
-`/opt/mechanical-librarian/reviewer/metadata/SHA256SUMS`. Browser and
-application-owned settings cannot substitute another executable; deployment
-authority remains responsible for the profile itself. Application state
+`cover_reviewer_profile_file` is deployment authority. Store-mode bootstrap
+uses the image-generated `/opt/mechanical-librarian/reviewer/profile.json` when
+this optional path is omitted; setup and normal runtime use the same default.
+An explicit path overrides it and never falls back when missing or invalid.
+File-mode configuration retains its explicit path behavior: absence leaves
+Codex unprovisioned, with model-free review and OpenRouter still available.
+
+The profile must be an absolute owner-only regular no-follow canonical file.
+The supported image supplies it as UID 65532, mode 0400. Its model is
+`gpt-5.6-sol`, reasoning `medium`, timeout 180 seconds, output 65,536 bytes,
+file 1,048,576 bytes, memory 1 GiB and processes 32. It binds installed
+`/opt/mechanical-librarian/reviewer/bin/codex` and `bin/bwrap` artifacts whose
+architecture-specific digests are in `reviewer/metadata/SHA256SUMS` beneath
+that installation. Auth and jobs use `/data/reviewer/auth` and
+`/data/reviewer/jobs`. Browser settings cannot edit these values.
+
+Boot passively admits the bounded profile and required model/resource contract,
+without executable, credential or network access. Explicit actions and passive
+advice-currentness reads re-admit current bytes. Missing, unreadable and
+contract-mismatched provisioning have distinct remedies, before host and
+credential readiness. Generic status reads reuse cached passive evidence.
+A deployment owner restores a missing image profile, corrects an unsafe
+explicit override, or replaces an outdated profile and restarts. The runtime
+never repairs or regenerates a profile. This image profile carries operational
+and synthetic evidence, not inherited historical full-profile qualification.
+
+Application state
 independently owns the exact task-to-engine/model
 mapping and credential presence. During ordinary review preparation, the one
 selected usable reviewer performs one bounded advisory comparison before the

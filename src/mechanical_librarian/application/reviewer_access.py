@@ -15,6 +15,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterAccountStatus,
     OpenRouterReviewerError,
     ReviewerDispatch,
+    ReviewerProvisioningStatus,
     ReviewerStatus,
     ReviewerStatusReason,
     openrouter_profile,
@@ -32,6 +33,7 @@ from mechanical_librarian.domain.reviewer_access import (
 from mechanical_librarian.domain.validation import credential
 
 ReviewerAccessFailure = Literal[
+    "not_provisioned",
     "not_configured",
     "host_unsupported",
     "credential_unavailable",
@@ -151,7 +153,7 @@ class OpenRouterRecommendation(_Closed):
 
 
 class ReviewerAccessView(_Closed):
-    schema_version: Literal["reviewer-access-view-v1"] = "reviewer-access-view-v1"
+    schema_version: Literal["reviewer-access-view-v2"] = "reviewer-access-view-v2"
     revision: StrictInt
     mapping: ReviewerTaskSelection | None
     description_mapping: ReviewerTaskSelection | None = None
@@ -194,6 +196,7 @@ class ReviewerAccessOperations:
         *,
         codex_auth: CodexAuth,
         codex_host: Callable[[], ReviewerHostStatus],
+        codex_provisioning: Callable[[bool], ReviewerProvisioningStatus],
         codex_identity: CodexIdentity | None = None,
         codex_binding: CodexBinding,
         openrouter_factory: OpenRouterFactory,
@@ -204,11 +207,20 @@ class ReviewerAccessOperations:
         self._repository = repository
         self._codex_auth = codex_auth
         self._codex_host = codex_host
+        self._codex_provisioning = codex_provisioning
         self._codex_binding = codex_binding
         self._codex_description_binding = codex_description_binding
         self._codex_identity = codex_identity or (lambda: self._codex_binding()[:2])
         self._openrouter_factory = openrouter_factory
         self._serialized: Callable[[Callable[[], object]], object] = lambda call: call()
+
+    def _admit_codex(self) -> ReviewerHostStatus:
+        if not self._codex_provisioning(True).available:
+            raise ReviewerAccessApplicationError("not_provisioned")
+        host = self._codex_host()
+        if not host.available:
+            raise ReviewerAccessApplicationError("host_unsupported")
+        return host
 
     def attach_changes(self, changed: Callable[[], None]) -> None:
         self._changed = changed
@@ -337,7 +349,12 @@ class ReviewerAccessOperations:
             document, key = self._snapshot()
             configured = key is not None
         selection = document.cover_observation
-        if codex is not None:
+        provisioning = self._codex_provisioning(False)
+        if not provisioning.available:
+            codex_status = ReviewerEngineStatus(
+                engine="codex", state="not_provisioned", reason=provisioning.reason
+            )
+        elif codex is not None:
             codex_status = codex
         elif isinstance(selection, CodexTaskSelection) or isinstance(
             document.description_rewrite, CodexTaskSelection
@@ -383,6 +400,8 @@ class ReviewerAccessOperations:
                 reason=None if host.available else host.reason,
                 host_headroom_bytes=host.headroom_bytes,
             )
+        if provisioning.available:
+            codex_status = codex_status.model_copy(update={"model": provisioning.model})
         openrouter_status = openrouter or ReviewerEngineStatus(
             engine="openrouter", state="unconfigured"
         )
@@ -450,10 +469,11 @@ class ReviewerAccessOperations:
         """Explicitly inspect the contained task identity without dispatch or selection."""
 
         def describe() -> CodexDescriptionDisclosure:
-            if not self._codex_host().available:
-                raise ReviewerAccessApplicationError("host_unsupported")
+            self._admit_codex()
             try:
                 model, profile = self._codex_identity()
+            except ReviewerAccessApplicationError:
+                raise
             except Exception:
                 raise ReviewerAccessApplicationError("model_unavailable") from None
             return CodexDescriptionDisclosure(
@@ -559,13 +579,12 @@ class ReviewerAccessOperations:
     def _select_codex(
         self, *, expected_revision: int, task: ReviewerTask = "cover_observation"
     ) -> ReviewerAccessView:
-        host = self._codex_host()
-        if not host.available:
-            raise ReviewerAccessApplicationError("host_unsupported")
+        host = self._admit_codex()
         with self._command_lock:
             credential = self._codex_auth.recheck_credential_status()
             if credential.state != "usable":
                 raise ReviewerAccessApplicationError("credential_unavailable")
+            self._admit_codex()
             document, configured = self._replace_selection(
                 expected_revision,
                 CodexTaskSelection(engine="codex"),
@@ -617,14 +636,12 @@ class ReviewerAccessOperations:
     def start_codex(
         self, *, expected_revision: int
     ) -> tuple[ReviewerAccessView, CodexDeviceAuthState]:
-        host = self._codex_host()
         with self._command_lock:
             document, key = self._snapshot()
             configured = key is not None
             if document.revision != expected_revision:
                 raise ReviewerAccessApplicationError("access_changed")
-            if not host.available:
-                raise ReviewerAccessApplicationError("host_unsupported")
+            self._admit_codex()
             if isinstance(document.cover_observation, CodexTaskSelection) or isinstance(
                 document.description_rewrite, CodexTaskSelection
             ):
@@ -657,8 +674,7 @@ class ReviewerAccessOperations:
         """Explicitly validate the installed credential unless a flow owns it."""
 
         def recheck() -> CodexDeviceAuthState:
-            if not self._codex_host().available:
-                raise ReviewerAccessApplicationError("host_unsupported")
+            self._admit_codex()
             return self._codex_auth.recheck_credential_status()
 
         return recheck()
@@ -713,8 +729,11 @@ class ReviewerAccessOperations:
         if selection is None:
             raise ReviewerAccessApplicationError("not_configured")
         if isinstance(selection, CodexTaskSelection):
+            self._admit_codex()
             try:
                 model, profile = self._codex_identity()
+            except ReviewerAccessApplicationError:
+                raise
             except Exception:
                 raise ReviewerAccessApplicationError("credential_unavailable") from None
             identity = (document.revision, "codex", model, profile)
@@ -731,10 +750,14 @@ class ReviewerAccessOperations:
                 if binding is None:
                     raise RuntimeError("description binding unavailable")
                 bound_model, bound_profile, runner = binding()
+            except ReviewerAccessApplicationError:
+                raise
             except Exception:
                 raise ReviewerAccessApplicationError(
                     "credential_unavailable", identity
                 ) from None
+            if (bound_model, bound_profile) != (model, profile):
+                raise ReviewerAccessApplicationError("access_changed", identity)
             if not self._repository.revision_is_current(document.revision):
                 raise ReviewerAccessApplicationError("access_changed", identity)
             return ReviewerDispatch(

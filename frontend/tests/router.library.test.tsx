@@ -3714,7 +3714,7 @@ describe('Library route', () => {
         ] as const) {
           cleanup()
           const access: ReviewerAccessView = {
-            schema_version: 'reviewer-access-view-v1',
+            schema_version: 'reviewer-access-view-v2',
             revision: 9,
             mapping:
               capability === 'null'

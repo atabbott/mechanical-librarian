@@ -119,7 +119,16 @@ def test_container_entrypoint_initializes_only_absent_exact_current_stores() -> 
                 8443,
                 first_boot_mode=FirstBootMode.INITIALIZE_SETUP,
             )
-            assert {value.name for value in root.iterdir()} == {"application.sqlite3"}
+            assert {value.name for value in root.iterdir()} == {
+                "application.sqlite3",
+                "reviewer",
+            }
+            reviewer = root / "reviewer"
+            assert {value.name for value in reviewer.iterdir()} == {"auth", "jobs"}
+            for value in (reviewer, reviewer / "auth", reviewer / "jobs"):
+                assert value.stat().st_uid == os.geteuid()
+                assert value.stat().st_mode & 0o777 == 0o700
+                assert not value.is_symlink()
             serve.reset_mock(side_effect=True)
             container.main()
             serve.assert_called_once_with(
@@ -241,7 +250,7 @@ def test_container_bundles_the_exact_verified_reviewer_artifacts() -> None:
         "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc" in dockerfile
     )
     assert (
-        "COPY --from=reviewer-build /reviewer /opt/mechanical-librarian/reviewer"
+        "COPY --from=build /reviewer-proof /opt/mechanical-librarian/reviewer"
         in dockerfile
     )
 
@@ -632,3 +641,90 @@ def test_runtime_preparation_stop_is_closed_and_shared_with_support() -> None:
     )
     assert (invalid.stage, invalid.code, invalid.attempt) == ("discovery", "unknown", 1)
     assert "private" not in json.dumps(invalid.to_data())
+
+
+def test_image_profile_is_deterministic_and_binds_verified_artifacts(tmp_path):
+    from scripts.generate_contained_reviewer_profile import generate_profile
+
+    from mechanical_librarian.adapters.reviewers.contained_reviewer import (
+        load_contained_reviewer_profile_bytes,
+    )
+    from mechanical_librarian.application.contained_reviewer_contract import (
+        cover_profile_contract_mismatch,
+    )
+
+    (tmp_path / "bin").mkdir()
+    (tmp_path / "metadata").mkdir()
+    (tmp_path / "bin/codex").write_bytes(b"synthetic pinned codex")
+    (tmp_path / "bin/bwrap").write_bytes(b"synthetic pinned sandbox")
+    (tmp_path / "metadata/codex-package.json").write_text('{"version":"0.147.0"}')
+    (tmp_path / "metadata/bubblewrap-version.txt").write_text("bubblewrap 0.11.0\n")
+    payload = generate_profile(tmp_path)
+    assert payload == generate_profile(tmp_path)
+    profile = load_contained_reviewer_profile_bytes(payload)
+    assert cover_profile_contract_mismatch(profile.identity) is None
+    assert (
+        profile.identity.executable_sha256
+        == hashlib.sha256(b"synthetic pinned codex").hexdigest()
+    )
+    assert (
+        profile.identity.sandbox_sha256
+        == hashlib.sha256(b"synthetic pinned sandbox").hexdigest()
+    )
+    assert str(profile.auth_store_path) == "/data/reviewer/auth"
+    assert str(profile.job_root_path) == "/data/reviewer/jobs"
+    assert json.loads(payload)["limits"] == {
+        "timeout_seconds": 180,
+        "output_bytes": 65536,
+        "file_bytes": 1048576,
+        "memory_bytes": 1073741824,
+        "processes": 32,
+    }
+
+
+@pytest.mark.parametrize(
+    "credential,resumable", [(False, False), (True, False), (True, True)]
+)
+def test_container_entrypoint_preserves_retained_reviewer_authority(
+    tmp_path: Path, credential: bool, resumable: bool
+) -> None:
+    repository = container.open_repository(tmp_path / "application.sqlite3")
+    if resumable:
+        repository.setup_state_store().initialize()
+    repository.close()
+    auth = tmp_path / "reviewer" / "auth"
+    auth.parent.mkdir(mode=0o700)
+    auth.mkdir(mode=0o700)
+    retained = auth / "auth.json"
+    if credential:
+        retained.write_bytes(b'{"synthetic":true}')
+        retained.chmod(0o600)
+    with (
+        patch.object(container, "DATA", tmp_path),
+        patch.object(container, "CONFIG", tmp_path / "config.json"),
+        patch.object(container, "DATABASE", tmp_path / "application.sqlite3"),
+        patch.object(container, "CATALOGUE", tmp_path / "catalogue.sqlite3"),
+        patch.object(container, "ARTIFACTS", tmp_path / "artifacts"),
+        patch.object(container.signal, "signal"),
+        patch.object(container, "run_review_server") as serve,
+    ):
+        for _ in range(2):
+            if credential and not resumable:
+                from mechanical_librarian.infrastructure.first_boot import (
+                    FirstBootError,
+                )
+
+                with pytest.raises(FirstBootError):
+                    container.main()
+                serve.assert_not_called()
+                assert not (auth.parent / "jobs").exists()
+            else:
+                container.main()
+                assert serve.call_args.kwargs["first_boot_mode"] is (
+                    FirstBootMode.RESUME_SETUP
+                    if resumable
+                    else FirstBootMode.INITIALIZE_SETUP
+                )
+            if credential:
+                assert retained.read_bytes() == b'{"synthetic":true}'
+                assert retained.stat().st_mode & 0o777 == 0o600

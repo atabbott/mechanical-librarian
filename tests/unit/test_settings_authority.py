@@ -126,6 +126,17 @@ def test_store_projection_combines_only_deploy_bootstrap_and_store_authority() -
     )
 
     configuration = store_runtime_configuration(settings, bootstrap)
+    assert configuration.review is not None
+    assert (
+        configuration.review.cover_reviewer_profile_file
+        == "/opt/mechanical-librarian/reviewer/profile.json"
+    )
+    override = bootstrap.model_copy(
+        update={"cover_reviewer_profile_file": "/deployment/override.json"}
+    )
+    explicit = store_runtime_configuration(settings, override)
+    assert explicit.review is not None
+    assert explicit.review.cover_reviewer_profile_file == "/deployment/override.json"
 
     assert configuration.connections[0].endpoint == "https://library.example.invalid"
     assert configuration.connections[0].secret_file is None

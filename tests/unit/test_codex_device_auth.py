@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -1184,6 +1185,7 @@ def test_lazy_passive_status_does_not_construct_codex_authority() -> None:
     lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
 
     assert lazy.passive_status() == CodexDeviceAuthState("ready")
+    assert lazy.cancel() == CodexDeviceAuthState("ready")
     factory.assert_not_called()
 
 
@@ -1358,3 +1360,90 @@ def test_atomic_install_loops_short_writes_and_cleans_failed_replace(
     with pytest.raises(OSError, match="replace"):
         _install_auth(source, target)
     assert not list(target.glob(".auth-*"))
+
+
+def test_actual_device_directories_resume_setup_after_install_and_cancel(tmp_path):
+    from mechanical_librarian.infrastructure.first_boot import (
+        FirstBootMode,
+        select_first_boot_mode,
+    )
+
+    (tmp_path / "application.sqlite3").touch()
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    (reviewer / "jobs").mkdir(mode=0o700)
+    manager = _manager(reviewer)
+    manager._auth_store = reviewer / "auth"
+    command = manager._command_factory
+    names = []
+
+    def observe(staging, action):
+        if action == "start":
+            names.append(staging.name)
+            assert staging.parent == reviewer
+            assert (
+                select_first_boot_mode(
+                    tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+                )
+                == FirstBootMode.RESUME_SETUP
+            )
+        return command(staging, action)
+
+    manager._command_factory = observe
+    try:
+        _finish(manager)
+        assert manager.status().state == "usable"
+        assert names and all(
+            re.fullmatch(r"reviewer-auth-[a-z0-9_]{8}", name) for name in names
+        )
+        assert (reviewer / "auth/auth.json").is_file()
+        assert (
+            select_first_boot_mode(
+                tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+            )
+            == FirstBootMode.RESUME_SETUP
+        )
+        manager.cancel()
+        assert (
+            select_first_boot_mode(
+                tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+            )
+            == FirstBootMode.RESUME_SETUP
+        )
+        (tmp_path / "application.sqlite3").unlink()
+        with pytest.raises(ValueError, match="first boot"):
+            select_first_boot_mode(
+                tmp_path, complete_store=lambda: False, resumable_setup=lambda: False
+            )
+    finally:
+        manager.close()
+
+
+def test_lazy_cancel_uses_existing_manager_after_profile_disappears(
+    tmp_path, monkeypatch
+):
+    profile = tmp_path / "deployment-profile"
+    profile.write_bytes(b"synthetic-profile")
+    manager = _manager(tmp_path)
+    calls = []
+
+    def factory(_lease, _guard):
+        calls.append(profile.read_bytes())
+        return manager
+
+    lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
+    assert lazy.status().state == "ready"
+    profile.unlink()
+    process = cast("subprocess.Popen[bytes]", _Process(b"", 0))
+    process.returncode = None
+    manager._process = process
+    manager._process_group = process_groups.ReviewerProcessGroup(
+        process.pid, process.pid, "1"
+    )
+    manager._state = CodexDeviceAuthState("waiting")
+    killed = []
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+    assert lazy.cancel().state == "cancelled"
+    assert killed == [(123456789, 15)]
+    assert calls == [b"synthetic-profile"]
+    assert manager._process is None and manager._process_group is None
