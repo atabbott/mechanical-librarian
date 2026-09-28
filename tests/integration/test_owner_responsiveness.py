@@ -1721,3 +1721,167 @@ def test_cover_confirmation_refreshes_reviewer_authority_before_transaction(
     finally:
         release.set()
         fixture.close()
+
+
+@pytest.mark.parametrize("outcome", ["keep_current", "reject"])
+def test_cover_nonaccept_refuses_unverified_confirmation(tmp_path, outcome):
+    from mechanical_librarian.application.review_web import ReviewWebError
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 1)
+    try:
+        case = fixture.cases[0]
+        proposal_id = next(
+            p["proposal_id"] for p in case.proposals if p["destination"] == "cover"
+        )
+        assert isinstance(proposal_id, str)
+        consideration = fixture.covers.current(case.review_case_id)
+        assert consideration is not None
+        consideration_id = consideration["consideration_id"]
+        assert isinstance(consideration_id, str)
+
+        def choose(confirm_unverified_match):
+            return fixture.application.record_decision(
+                case.review_case_id,
+                proposal_id=proposal_id,
+                target_fingerprint=case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome=outcome,
+                selected_value=None,
+                idempotency_key="nonaccept-confirmation-0001",
+                consideration_id=consideration_id,
+                cover_confirmation={
+                    "expected_selection_id": None,
+                    "confirm_unverified_match": confirm_unverified_match,
+                },
+            )
+
+        with pytest.raises(ReviewWebError, match="invalid_choice"):
+            choose(True)
+        assert fixture.repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (0,)
+        result = choose(False)
+        replay = choose(False)
+        assert replay["decision_id"] == result["decision_id"]
+        with pytest.raises(ReviewWebError, match="idempotency_conflict"):
+            choose(True)
+        assert fixture.repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (1,)
+    finally:
+        fixture.close()
+
+
+@pytest.mark.parametrize("ineligible_alternative", [False, True])
+def test_retained_incumbent_readiness_preserves_admitted_actions(
+    tmp_path, monkeypatch, ineligible_alternative
+):
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from mechanical_librarian.application.review_web import ReviewWebError
+    from mechanical_librarian.domain.cover_evidence import CoverSourceKind
+    from tests.support import owner_responsiveness
+    from tests.unit.test_cover_packets import _typed_discovery_identity_case
+
+    original = owner_responsiveness._qualified_cover_report
+
+    def produce(root):
+        base, extra = original(root)
+        sources = tuple(
+            source
+            for source in base.cover_sources
+            if source.kind in {CoverSourceKind.ABS, CoverSourceKind.EPUB}
+        )
+        if not ineligible_alternative:
+            report = MetadataReport.create(
+                target=base.target,
+                file=base.file,
+                local_claims=base.local_claims,
+                local_reasons=base.local_reasons,
+                providers=base.providers,
+                cover_sources=sources,
+            )
+        else:
+            typed_document, _, _, preview = _typed_discovery_identity_case(
+                local_creators=("Ada Author",), provider_creators=("Different Author",)
+            )
+            typed = MetadataReport.from_json(typed_document)
+            artifacts = CoverArtifactStore(root / "artifacts")
+            for source in typed.cover_sources:
+                assert source.artifact is not None
+                artifacts.stage(source.artifact, b"original-3", preview)
+            report = MetadataReport.create(
+                target=base.target,
+                file=typed.file,
+                local_claims=typed.local_claims,
+                local_reasons=base.local_reasons,
+                providers=typed.providers,
+                cover_sources=tuple(
+                    sorted(
+                        (*sources, *typed.cover_sources),
+                        key=lambda source: source.source_id,
+                    )
+                ),
+            )
+        return report, extra
+
+    monkeypatch.setattr(owner_responsiveness, "_qualified_cover_report", produce)
+    fixture = OwnerResponsivenessFixture(tmp_path, 1)
+    try:
+        case = fixture.cases[0]
+        detail = fixture.application.case_detail(case.review_case_id).to_data()
+        cover = next(
+            field for field in detail["fields"] if field["destination"] == "cover"
+        )
+        consideration = cover["cover_consideration"]
+        assert consideration["ready"] is True
+        assert consideration["provider_fetching"] is False
+        assert any(candidate["incumbent"] for candidate in consideration["candidates"])
+        assert not any(
+            candidate["manual_eligible"] for candidate in consideration["candidates"]
+        )
+        assert cover["editable"] is ineligible_alternative
+        assert cover["needs_attention"] is ineligible_alternative
+        page = fixture.application.library(
+            lens="all", search=None, limit=5, cursor=None
+        )
+        assert page.items[0]["attention_count"] == sum(
+            field["needs_attention"] for field in detail["fields"]
+        )
+        attention = fixture.application.attention(search=None, limit=10, cursor=None)
+        assert (
+            any(item["destination"] == "cover" for item in attention.items)
+            is ineligible_alternative
+        )
+        proposal_id = cover["proposal_id"]
+        consideration_id = consideration["consideration_id"]
+        assert isinstance(proposal_id, str) and isinstance(consideration_id, str)
+
+        def keep():
+            return fixture.application.record_decision(
+                case.review_case_id,
+                proposal_id=proposal_id,
+                target_fingerprint=case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome="keep_current",
+                selected_value=None,
+                idempotency_key="retained-incumbent-0001",
+                consideration_id=consideration_id,
+                cover_confirmation={
+                    "expected_selection_id": None,
+                    "confirm_unverified_match": False,
+                },
+            )
+
+        if ineligible_alternative:
+            assert "keep_current" in cover["decision_actions"]
+            assert keep()["outcome"] == "keep_current"
+        else:
+            assert not cover["decision_actions"]
+            with pytest.raises(ReviewWebError, match="unsupported"):
+                keep()
+    finally:
+        fixture.close()

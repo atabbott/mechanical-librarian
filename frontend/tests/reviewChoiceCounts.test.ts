@@ -134,6 +134,14 @@ describe('ownerChoiceCount', () => {
     ).toBe(2)
     expect(ownerChoiceCount(field({ ...consideration([candidate(1)]), current: false }))).toBe(0)
     expect(ownerChoiceCount(field({ ...consideration([candidate(1)]), ready: false }))).toBe(0)
+    const keepOnly = field(
+      consideration([
+        candidate(1, { incumbent: true, manualEligible: false }),
+        candidate(2, { selectable: false, manualEligible: false }),
+      ]),
+    )
+    expect(ownerChoiceCount(keepOnly)).toBe(1)
+    expect(ownerChoiceCount({ ...keepOnly, decisionActions: [] })).toBe(0)
     expect(ownerChoiceCount(field(null))).toBe(1)
   })
 })

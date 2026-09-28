@@ -462,7 +462,7 @@ def cover_consideration_currentness_document(document: str) -> str:
                 "provider_fetching": fetching,
                 "manual_ready": not fetching
                 and any(
-                    manual_cover_eligible(candidate)
+                    candidate["incumbent"] is True or manual_cover_eligible(candidate)
                     for candidate in cast(
                         "list[dict[str, object]]", value["candidates"]
                     )
@@ -1477,7 +1477,10 @@ class CoverConsiderationService:
             "policy_reference": value["policy_reference"],
             "provider_fetching": value["provider_fetching"],
             "ready": value["provider_fetching"] is False
-            and any(candidate["manual_eligible"] for candidate in candidates),
+            and any(
+                candidate["incumbent"] or candidate["manual_eligible"]
+                for candidate in candidates
+            ),
             "reviewer_access_revision": value["reviewer_access_revision"],
             "reviewer_status": value["reviewer_status"],
             "reviewer_engine": value["reviewer_engine"],

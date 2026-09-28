@@ -3307,8 +3307,11 @@ export const mapHistory = (value: unknown): HistoryView => {
                 ...(item.consideration.candidates.some(
                   (candidate) =>
                     record(candidate) &&
-                    record(decision?.selected_value) &&
-                    candidate.artifact_id === decision.selected_value.value &&
+                    (ownerOutcome === 'keep_current'
+                      ? candidate.incumbent === true
+                      : ownerOutcome === 'accept' &&
+                        record(decision?.selected_value) &&
+                        candidate.artifact_id === decision.selected_value.value) &&
                     candidate.match_state === 'match_not_confirmed',
                 )
                   ? { ownerMatchUnconfirmed: true }
@@ -3785,7 +3788,9 @@ export const mapCoverConsideration = (value: unknown): CoverConsiderationView | 
   )
     throw new ApiError(502, 'contradictory_cover_recommendation')
   if (
-    ready !== (!providerFetching && candidates.some((candidate) => candidate.manualEligible)) ||
+    ready !==
+      (!providerFetching &&
+        candidates.some((candidate) => candidate.incumbent || candidate.manualEligible)) ||
     candidates.some(
       (candidate) =>
         candidate.matchState !== 'match_not_confirmed' &&

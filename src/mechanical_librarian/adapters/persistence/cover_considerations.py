@@ -789,7 +789,10 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         # to SQLite: their bounded recheck does not promise cross-store atomicity.
         if validate_only:
             return
-        if not valid_choice:
+        if not valid_choice or (
+            decision.outcome != "accept"
+            and confirmation["confirm_unverified_match"] is True
+        ):
             raise HumanDecisionError("invalid_choice")
         if (
             selected is not None

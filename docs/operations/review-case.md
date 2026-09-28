@@ -372,6 +372,9 @@ Choosing a retained alternative opens a confirmation with its whole image.
 Cancel or Escape before submission records nothing and restores card focus.
 A lower-quality or unconfirmed alternative may be chosen explicitly; positive
 identity contradictions, unavailable artifacts and active searches remain refused.
+An admitted keep-current action stays available when all alternatives are ineligible;
+keeping a cover retains its observed match status in history. The uncertainty
+confirmation flag is accepted only for selecting an alternative.
 A recorded choice leaves Attention but remains revisable from Library while no
 cover effect has been claimed, applied, reconciled or verified. Each revision
 compares the exact target selection token and appends history. A stale or uncertain

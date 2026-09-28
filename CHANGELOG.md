@@ -13,7 +13,7 @@
   Contradictions remain refused; history retains the observed match status.
   Interrupted acknowledgments stay uncertain until the current choice is reloaded.
   CLI choices require explicit confirmation and revision baselines; reviewer changes
-  preserve fresh choices and active searches stay non-actionable. Owner selection authority v2 requires a clean rebuild (#1078).
+  preserve fresh choices and retained-cover keeps; active searches stay non-actionable. Clean rebuild required (#1078).
 
 - Supported containers supply the contained reviewer profile for optional cover
   setup and description advice. Wizard and Settings distinguish provisioning,

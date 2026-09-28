@@ -130,6 +130,10 @@ def test_revision_three_documents_decode_without_current_authority(family):
             "7d9d6f7c1719b101d1cf9dfe0172b1e0a55589df",
         ),
         (
+            "before-cover-retained-keep.json",
+            "840171891c1cf29f0f9632da62bfc362941eadaf",
+        ),
+        (
             "before-cover-reviewer-refresh.json",
             "a0524f913de8282fff74ffd967c3bd1521e1b32a",
         ),
