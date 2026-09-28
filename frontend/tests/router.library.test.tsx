@@ -32,6 +32,22 @@ import {
   renderRoute,
 } from './fixtures'
 
+// jsdom has no native dialog methods; real focus trapping/Escape are browser proof.
+Object.defineProperties(HTMLDialogElement.prototype, {
+  showModal: {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.setAttribute('open', '')
+    },
+  },
+  close: {
+    configurable: true,
+    value(this: HTMLDialogElement) {
+      this.removeAttribute('open')
+    },
+  },
+})
+
 it('keeps the active search caret through debounced Library URL changes', async () => {
   const user = userEvent.setup()
   const { router } = renderRoute('/library?lens=all', createHttp())
@@ -3174,6 +3190,7 @@ describe('Library route', () => {
       previewSha256: String(index).repeat(64),
       reference: reference(index),
       selectable: !incumbent,
+      manualEligible: !incumbent,
       sourceKinds: [incumbent ? 'audiobookshelf_current' : 'provider'],
       state: incumbent ? 'incumbent' : 'acceptable',
       width: 800,
@@ -3234,7 +3251,7 @@ describe('Library route', () => {
             },
           ],
           limitations: ['insufficient_identity_evidence'],
-          rationale: 'This retained candidate is not selectable.',
+          rationale: 'This retained candidate requires explicit owner confirmation.',
           recommendation: 'no_recommendation',
           recommendationReason: 'No recommendation retained.',
         },
@@ -3251,6 +3268,7 @@ describe('Library route', () => {
           deterministicRankKey: null,
           matchState: 'match_not_confirmed' as const,
           selectable: false,
+          manualEligible: true,
           identity: { outcome: 'unknown', reasons: ['insufficient_identity_evidence'] },
           observation: {
             ...observation(5),
@@ -3265,6 +3283,7 @@ describe('Library route', () => {
           deterministicRankKey: null,
           matchState: 'match_not_confirmed' as const,
           selectable: false,
+          manualEligible: false,
           identity: { outcome: 'conflict', reasons: ['identity_conflict'] },
           observation: {
             ...observation(6),
@@ -3326,11 +3345,13 @@ describe('Library route', () => {
     const comparison = await screen.findByLabelText('Choose a cover')
     expect(
       within(comparison).getByText(
-        'Confirmed matches remain visible; the shared decision gate opens when fetching pauses.',
+        'Retained covers remain visible. Choices become available when fetching pauses.',
       ),
     ).toBeVisible()
     expect(within(comparison).queryByText(/Recommended/u)).not.toBeInTheDocument()
     expect(comparison.querySelectorAll('.library-cover-card:disabled')).toHaveLength(6)
+    expect(screen.queryByText(/1 remaining/u)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cover Needs review' })).not.toBeInTheDocument()
     expect(http.recordDecision).not.toHaveBeenCalled()
     const cleanChecks = within(comparison).getByLabelText('Current cover visual checks')
     expect(within(cleanChecks).getByText('No visual defects flagged')).toBeVisible()
@@ -3400,6 +3421,18 @@ describe('Library route', () => {
       })),
     })
     const mixedComparison = await screen.findByLabelText('Choose a cover')
+    const unknownChoice = within(mixedComparison).getByRole('button', {
+      name: /^Choose Alternative 4 cover/u,
+    })
+    await user.click(unknownChoice)
+    expect(screen.getByRole('dialog')).toHaveTextContent('Match not confirmed.')
+    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(unknownChoice).toHaveFocus()
+    expect(recordDecision).not.toHaveBeenCalled()
+    await user.click(unknownChoice)
+    fireEvent(screen.getByRole('dialog'), new Event('cancel', { cancelable: true }))
+    expect(unknownChoice).toHaveFocus()
+    expect(recordDecision).not.toHaveBeenCalled()
     const pinnedTrack = mixedComparison.querySelector<HTMLElement>('.library-cover-pinned')
     const currentCard = within(mixedComparison).getByRole('button', {
       name: 'Choose Current cover',
@@ -3456,7 +3489,73 @@ describe('Library route', () => {
     await user.click(
       within(mixedComparison).getByRole('button', { name: /^Choose Alternative 1 cover/u }),
     )
+    expect(recordDecision).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
     expect(recordDecision).toHaveBeenCalledOnce()
+    expect(screen.getByRole('button', { name: 'Recording…' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeDisabled()
+
+    cleanup()
+    const revision = vi.fn<ReviewHttp['recordDecision']>(() => new Promise(() => undefined))
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      recordDecision: revision,
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...coverField,
+            editable: true,
+            needsAttention: false,
+            decisionActions: ['keep_current', 'accept'] as const,
+            currentCoverSelectionId: `cover_selection_${'a'.repeat(64)}`,
+            currentCoverSelectionArtifactId: `cover_${'2'.repeat(64)}`,
+            coverConsideration: { ...consideration, providerFetching: false, ready: true },
+          },
+        ],
+      })),
+    })
+    await user.click(await screen.findByRole('button', { name: 'Choose Alternative 4 cover' }))
+    expect(screen.getByRole('heading', { name: 'Confirm replacement cover' })).toBeVisible()
+    expect(revision).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
+    expect(revision).toHaveBeenCalledOnce()
+    expect(revision.mock.calls[0]?.[1].coverConfirmation).toEqual({
+      expected_selection_id: `cover_selection_${'a'.repeat(64)}`,
+      confirm_unverified_match: true,
+    })
+
+    cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...coverField,
+            humanDecision: {
+              actor: 'owner' as const,
+              application: 'apply' as const,
+              decision_id: 'recorded-cover',
+              destination: 'cover',
+              occurred_at: 1,
+              outcome: 'accept' as const,
+              proposal_id: coverField.proposalId,
+              review_case_id: 'case-1',
+              target_fingerprint: coverField.targetFingerprint,
+              selected_value: { kind: 'cover', value: `cover_${'2'.repeat(64)}` },
+            },
+            coverConsideration: { ...consideration, providerFetching: false, ready: true },
+          },
+        ],
+      })),
+    })
+    expect(
+      await screen.findByText(/This cover choice is not currently available for revision/u),
+    ).toBeVisible()
+    expect(
+      screen.getByLabelText('Choose a cover').querySelectorAll('.library-cover-card:disabled'),
+    ).toHaveLength(6)
 
     cleanup()
     const recommended = {
@@ -3582,6 +3681,7 @@ describe('Library route', () => {
             previewSha256: 'a'.repeat(64),
             reference: `cover_transport_ref_${'a'.repeat(64)}`,
             selectable: true,
+            manualEligible: true,
             sourceKinds: ['provider'],
             state: 'acceptable',
             width: 800,
@@ -3600,7 +3700,7 @@ describe('Library route', () => {
         },
         policyReference: `cover_policy_${'u'.repeat(64)}`,
         providerFetching: false,
-        ready: false,
+        ready: true,
         reviewerAccessRevision: null,
         reviewerEngine: null,
         reviewerModel: null,
@@ -3804,6 +3904,7 @@ describe('Library route', () => {
                 previewSha256: 'b'.repeat(64),
                 reference: 'current',
                 selectable: false,
+                manualEligible: false,
                 sourceKinds: [],
                 state: 'available',
                 width: 100,
@@ -3823,6 +3924,7 @@ describe('Library route', () => {
                 previewSha256: 'd'.repeat(64),
                 reference: 'alternative',
                 selectable: true,
+                manualEligible: true,
                 sourceKinds: [],
                 state: 'available',
                 width: 100,
@@ -3868,7 +3970,7 @@ describe('Library route', () => {
             },
             policyReference: 'policy',
             providerFetching: false,
-            ready: false,
+            ready: true,
             reviewerAccessRevision: null,
             reviewerEngine: null,
             reviewerModel: null,
@@ -3955,6 +4057,7 @@ describe('Library route', () => {
           previewSha256: 'a'.repeat(64),
           reference: `cover_transport_ref_${'a'.repeat(64)}`,
           selectable: true,
+          manualEligible: true,
           sourceKinds: ['provider'],
           state: 'acceptable',
           width: 800,
@@ -3973,7 +4076,7 @@ describe('Library route', () => {
       },
       policyReference: `cover_policy_${'p'.repeat(64)}`,
       providerFetching: false,
-      ready: false,
+      ready: true,
       reviewerAccessRevision: null,
       reviewerEngine: null,
       reviewerModel: null,
@@ -4898,7 +5001,10 @@ describe('Library route', () => {
     ['a direct replacement choice beside another unresolved field', null, true],
     ['a direct replacement whose recorded case refresh fails', null, false],
     ['an explicit replacement recovery on the same case', null, false],
+    ['an explicit recovery with the same consideration', null, false],
     ['an explicit successor-case recovery', 'case-2', false],
+    ['an explicit retired-case recovery', 'case-2', false],
+    ['an explicit retired-case recovery with unavailable detail', 'case-2', false],
   ])('retains a stale cover choice and recovers through %s', async (label, successorId, other) => {
     const user = userEvent.setup()
     const directChoice = label.startsWith('a direct')
@@ -4920,6 +5026,7 @@ describe('Library route', () => {
       previewSha256: suffix.repeat(64),
       reference: `cover_transport_ref_${suffix.repeat(64)}`,
       selectable: !incumbent,
+      manualEligible: !incumbent,
       sourceKinds: [incumbent ? 'epub' : 'provider'],
       state: incumbent ? ('incumbent' as const) : ('acceptable' as const),
       width: 800,
@@ -4973,6 +5080,7 @@ describe('Library route', () => {
     })
     const initial = coverDetail('case-1', '2')
     const current = coverDetail(successorId ?? 'case-1', '3')
+    let retainSameConsideration = label.includes('same consideration')
     let stale = false
     let failCurrentLookup = true
     let successfulDecisions = 0
@@ -4993,8 +5101,15 @@ describe('Library route', () => {
     const http: ReviewHttp = {
       ...createHttp(),
       recordDecision,
+      getLibrary: vi.fn(async () =>
+        label.includes('retired-case') && stale
+          ? { ...library, works: library.works.filter((work) => work.reviewCaseId !== initial.id) }
+          : library,
+      ),
       getCaseDetail: vi.fn(async (id) => {
-        if (!stale) return initial
+        if (!stale || retainSameConsideration) return initial
+        if (label.includes('unavailable detail') && id === initial.id)
+          throw new Error('retired case unavailable')
         if (failRecordedRefresh && successfulDecisions === 1 && !recordedRefreshAvailable) {
           throw new Error('recorded current case refresh unavailable')
         }
@@ -5012,12 +5127,27 @@ describe('Library route', () => {
     const { queryClient } = renderRoute('/library?lens=all&preview=case-1&field=cover', http)
 
     await user.click(await screen.findByRole('button', { name: /Alternative 1 cover/u }))
+    await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
+    if (retainSameConsideration) {
+      expect(await screen.findByText(/Confirmation was not completed/u)).toBeVisible()
+      expect(recordDecision).toHaveBeenCalledOnce()
+      await user.click(screen.getByRole('button', { name: 'Close' }))
+      expect(screen.getByRole('button', { name: /Alternative 1 cover/u })).toHaveFocus()
+      retainSameConsideration = false
+    }
     expect(
       await screen.findByText(
         'This cover comparison changed before your choice was recorded. No cover was changed.',
       ),
     ).toBeVisible()
     expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
+    if (label.includes('retired-case')) {
+      await queryClient.invalidateQueries({ queryKey: ['library'] })
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: 'Review current comparison' })).toHaveFocus(),
+      )
+      expect(screen.getAllByRole('heading', { level: 2, name: 'A Book' })).toHaveLength(1)
+    }
     expect(document.body.textContent).not.toContain('Recording…')
     expect(recordDecision).toHaveBeenCalledOnce()
 
@@ -5038,6 +5168,7 @@ describe('Library route', () => {
         expect.stringContaining(`cover_transport_ref_${'3'.repeat(64)}`),
       )
       await user.click(currentAlternative)
+      await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
       await waitFor(() => expect(recordDecision).toHaveBeenCalledTimes(2))
       expect(
         screen.queryByText(

@@ -125,6 +125,18 @@ def test_revision_three_documents_decode_without_current_authority(family):
 @pytest.mark.parametrize(
     "filename,source_sha",
     (
+        (
+            "before-cover-cli-confirmation.json",
+            "7d9d6f7c1719b101d1cf9dfe0172b1e0a55589df",
+        ),
+        (
+            "before-cover-retained-keep.json",
+            "840171891c1cf29f0f9632da62bfc362941eadaf",
+        ),
+        (
+            "before-cover-reviewer-refresh.json",
+            "a0524f913de8282fff74ffd967c3bd1521e1b32a",
+        ),
         ("before-reviewer-setup.json", "d706d4b3d761f4711e8c14df2b78fe25e5bef2ef"),
         ("before-reviewer-clear.json", "d5751c7723cc3bcb17bc2d560c9b74ae7e0f56e8"),
         ("before-reviewer-inventory.json", "6ba4beb4ea27794517693b8b034295031c9b29cd"),
@@ -149,6 +161,30 @@ def test_policy_impact_predecessors_decode_without_current_authority(
         ).read_bytes()
     )
     assert fixture["source_sha"] == source_sha
+    for raw in fixture["decisions"][family]:
+        decision = AutomaticDecision.from_json(raw)
+        assert decision.to_json() == raw
+        assert not qualification_manifest_is_current(
+            decision.policy_category,
+            decision.policy_option,
+            decision.qualification_manifest_sha256,
+        )
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **cast("dict[str, Any]", decision._core()),
+                occurred_at=decision.occurred_at,
+            )
+
+
+@pytest.mark.parametrize("family", ("F19A", "F20", "F46"))
+def test_owner_cover_base_documents_remain_history(family):
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures/owner-cover-predecessor/automatic.json"
+        ).read_text()
+    )
+    assert fixture["source_sha"] == "0b9dc854e730b329e68410f09a53f2f9103f617f"
     for raw in fixture["decisions"][family]:
         decision = AutomaticDecision.from_json(raw)
         assert decision.to_json() == raw

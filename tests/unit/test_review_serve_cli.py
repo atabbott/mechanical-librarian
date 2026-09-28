@@ -90,6 +90,8 @@ _DELEGATED: dict[str, tuple[object, ...]] = {
         "show",
         None,
         None,
+        None,
+        False,
     ),
     "review-activity": (Path("/config.json"), Path("/state.sqlite3")),
     "provider-recovery": (

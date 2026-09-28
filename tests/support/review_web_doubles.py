@@ -407,6 +407,7 @@ class FakeReviewRepository:
         decision: HumanDecision,
         *,
         cover_consideration_id: str | None = None,
+        cover_confirmation: dict[str, object] | None = None,
     ) -> str:
         del cover_consideration_id
         existing = self.decisions.get(decision.destination)

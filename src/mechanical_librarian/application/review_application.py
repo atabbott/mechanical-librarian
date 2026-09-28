@@ -966,6 +966,7 @@ class ReviewApplication:
         selected_value: dict[str, object] | None,
         idempotency_key: str,
         consideration_id: str | None = None,
+        cover_confirmation: dict[str, object] | None = None,
     ) -> dict[str, object]:
         if destination == "cover" and (
             self._cover_considerations is None or consideration_id is None
@@ -973,15 +974,8 @@ class ReviewApplication:
             raise ReviewApplicationError("cover_consideration_required")
 
         def record() -> dict[str, object]:
-            if destination == "cover":
-                assert self._cover_considerations is not None
-                assert consideration_id is not None
-                self._cover_considerations.validate_decision(
-                    review_case_id,
-                    consideration_id,
-                    outcome,
-                    selected_value,
-                )
+            if destination == "cover" and self._cover_considerations is not None:
+                self._cover_considerations.refresh_authority()
             result = self._decisions.run(
                 review_case_id,
                 proposal_id=proposal_id,
@@ -992,6 +986,7 @@ class ReviewApplication:
                 selected_value=selected_value,
                 idempotency_key=idempotency_key,
                 consideration_id=consideration_id,
+                cover_confirmation=cover_confirmation,
             )
             return {
                 **result,

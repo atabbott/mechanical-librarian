@@ -721,6 +721,7 @@ def _case(case_id: str) -> dict[str, object]:
                                     "preview_sha256": "b" * 64,
                                     "reference": "cover-ref-current",
                                     "selectable": False,
+                                    "manual_eligible": False,
                                     "source_kinds": ["synthetic"],
                                     "state": "excluded",
                                     "width": 800,
@@ -761,6 +762,7 @@ def _case(case_id: str) -> dict[str, object]:
                             "preview_sha256": "d" * 64,
                             "reference": "cover-ref-choice",
                             "selectable": True,
+                            "manual_eligible": True,
                             "source_kinds": ["synthetic"],
                             "state": "recommended",
                             "width": 800,
@@ -788,6 +790,7 @@ def _case(case_id: str) -> dict[str, object]:
                                     "preview_sha256": "2" * 64,
                                     "reference": "cover-ref-unconfirmed",
                                     "selectable": False,
+                                    "manual_eligible": True,
                                     "source_kinds": ["synthetic"],
                                     "state": "excluded",
                                     "width": 700,
@@ -831,6 +834,21 @@ def _case(case_id: str) -> dict[str, object]:
                             "recommendation": "recommended",
                             "recommendation_reason": "Deterministic confirmed-cover policy recommends this retained cover.",
                         },
+                        *(
+                            [
+                                {
+                                    "alternative_id": "cover-ref-unconfirmed",
+                                    "selection": "proposed",
+                                    "evidence": [],
+                                    "limitations": ["match_not_confirmed"],
+                                    "rationale": "Retained cover requires owner confirmation.",
+                                    "recommendation": "no_recommendation",
+                                    "recommendation_reason": "Match not confirmed.",
+                                }
+                            ]
+                            if case_id == "case-1"
+                            else []
+                        ),
                     ],
                     "current": True,
                     "incumbent": {

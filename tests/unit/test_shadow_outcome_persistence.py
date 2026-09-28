@@ -1212,6 +1212,10 @@ def test_ask_retains_and_records_the_sole_cover_choice_after_timeout(
             selected_value={"kind": "cover", "value": selectable[0]["artifact_id"]},
             idempotency_key="sole-cover-choice-after-timeout-0001",
             consideration_id=consideration["consideration_id"],
+            cover_confirmation={
+                "expected_selection_id": None,
+                "confirm_unverified_match": False,
+            },
         )
         recorded = InspectCurrentReviewCase(repository, considerations).run(case_id)
         recorded_cover = next(
@@ -4034,16 +4038,32 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
             idempotency_key="synthetic-owner-cover-final-0001",
             occurred_at=11,
         )
+        composition._compose_cover_considerations(
+            repository,
+            root / "artifacts",
+            _pipeline_configuration().review,
+            _test_reviewer_access(repository),
+        )
+        confirmation = {
+            "expected_selection_id": repository._connection.execute(
+                "SELECT selection_id FROM current_cover_selection_authorities"
+            ).fetchone()[0],
+            "confirm_unverified_match": False,
+        }
         if effect_state != "planned":
             with pytest.raises(HumanDecisionError, match="already_decided"):
                 repository.record_human_decision(
-                    owner, cover_consideration_id=consideration["consideration_id"]
+                    owner,
+                    cover_consideration_id=consideration["consideration_id"],
+                    cover_confirmation=confirmation,
                 )
             supervisor.stop()
             repository.close()
             return
         repository.record_human_decision(
-            owner, cover_consideration_id=consideration["consideration_id"]
+            owner,
+            cover_consideration_id=consideration["consideration_id"],
+            cover_confirmation=confirmation,
         )
         assert not authority_adapter.current(operation.plan.authority)
         assert repository.field_effect_manual_hold_context(
@@ -4161,6 +4181,12 @@ def test_qualified_cover_automatic_is_reviewerless_replay_safe_and_owner_final(
                     occurred_at=11 + index,
                 ),
                 cover_consideration_id=consideration["consideration_id"],
+                cover_confirmation={
+                    "expected_selection_id": repository._connection.execute(
+                        "SELECT selection_id FROM current_cover_selection_authorities"
+                    ).fetchone()[0],
+                    "confirm_unverified_match": False,
+                },
             )
         supervisor.stop()
         repository.close()
@@ -4884,6 +4910,12 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
                 pipeline.run_next(1) for _ in range(6)
             ]
         dispatch.assert_not_called()
+        composition._compose_cover_considerations(
+            repository,
+            root / "artifacts",
+            _pipeline_configuration().review,
+            _test_reviewer_access(repository),
+        )
         prior_document = repository._connection.execute(
             "SELECT selection.document FROM current_cover_selection_authorities current "
             "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id"
@@ -4920,6 +4952,10 @@ def test_later_cover_case_only_supersedes_automatic_with_a_strictly_better_rank(
                 cover_consideration_id=json.loads(first_consideration)[
                     "consideration_id"
                 ],
+                cover_confirmation={
+                    "expected_selection_id": prior_selection["selection_id"],
+                    "confirm_unverified_match": False,
+                },
             )
             owner_decision_id = owner.decision_id
 

@@ -70,6 +70,7 @@ from mechanical_librarian.domain.cover_evidence import (
 from mechanical_librarian.domain.deterministic_cover_election import (
     CoverElectionCandidate,
 )
+from mechanical_librarian.domain.human_decision import manual_cover_eligible
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
     MetadataReport,
@@ -459,6 +460,13 @@ def cover_consideration_currentness_document(document: str) -> str:
                 "item": report.target.item,
                 "report_id": report.report_id,
                 "provider_fetching": fetching,
+                "manual_ready": not fetching
+                and any(
+                    candidate["incumbent"] is True or manual_cover_eligible(candidate)
+                    for candidate in cast(
+                        "list[dict[str, object]]", value["candidates"]
+                    )
+                ),
                 "replay_reference": replay,
             }
         )
@@ -489,6 +497,7 @@ def cover_currentness_from_facts(
                 "item",
                 "report_id",
                 "provider_fetching",
+                "manual_ready",
                 "replay_reference",
             }
             or any(
@@ -501,6 +510,7 @@ def cover_currentness_from_facts(
                     "replay_reference",
                 )
             )
+            or type(value["manual_ready"]) is not bool
             or type(value["provider_fetching"]) is not bool
             or re.fullmatch(r"cover_replay_[0-9a-f]{64}", value["replay_reference"])
             is None
@@ -682,6 +692,7 @@ class CoverConsiderationService:
         *,
         read_preview: Callable[[str, str], bytes],
         read_preview_digest: Callable[[str], bytes],
+        require_artifact: Callable[[CoverArtifact], None] | None = None,
         clock: Callable[[], int],
         policy: CoverPolicy = CoverPolicy(),
         reviewer_profile: bytes | None = None,
@@ -696,6 +707,7 @@ class CoverConsiderationService:
         provider_fetching: Callable[[MetadataReport], bool] | None = None,
     ) -> None:
         self._store = store
+        self._require_artifact = require_artifact
         self._read_preview = read_preview
         self._read_preview_digest = read_preview_digest
         self._clock = clock
@@ -752,6 +764,10 @@ class CoverConsiderationService:
                 self._policy = policy
 
         return publish()
+
+    def refresh_authority(self) -> None:
+        """Bind a fresh reviewer snapshot before entering a decision transaction."""
+        self._bind_policy(*self.current_authority())
 
     def current_authority(self) -> tuple[str, str]:
         """Capture one published policy with its externally observed reviewer identity."""
@@ -1440,7 +1456,10 @@ class CoverConsiderationService:
         policy_document = cast("str | None", value["policy_report_document"])
         policy = None if policy_document is None else json.loads(policy_document)
         candidates = [
-            dict(cast("dict[str, object]", item))
+            dict(
+                cast("dict[str, object]", item),
+                manual_eligible=manual_cover_eligible(cast("dict[str, object]", item)),
+            )
             for item in cast("list[object]", value["candidates"])
         ]
         incumbent = cast("dict[str, object]", value["incumbent"])
@@ -1457,7 +1476,11 @@ class CoverConsiderationService:
             "policy_preferences": json.loads(saved_policy_document),
             "policy_reference": value["policy_reference"],
             "provider_fetching": value["provider_fetching"],
-            "ready": policy is not None and policy["owner_ready"] is True,
+            "ready": value["provider_fetching"] is False
+            and any(
+                candidate["incumbent"] or candidate["manual_eligible"]
+                for candidate in candidates
+            ),
             "reviewer_access_revision": value["reviewer_access_revision"],
             "reviewer_status": value["reviewer_status"],
             "reviewer_engine": value["reviewer_engine"],
@@ -1557,6 +1580,31 @@ class CoverConsiderationService:
         """Project immutable consideration evidence without granting current authority."""
         return self._project(document, current=False)
 
+    def require_owner_cover(self, document: str, artifact_id: str | None) -> None:
+        """Recheck retained evidence and both blobs without reviewer dispatch."""
+        value, report = _validated_cover_consideration(document)
+        try:
+            fetching = self._provider_fetching(report)
+        except Exception as error:
+            raise CoverConsiderationError("unavailable") from error
+        if (
+            value["provider_fetching"] is not False
+            or value["policy_reference"] != self._policy.reference
+            or fetching is not False
+        ):
+            raise CoverConsiderationError("stale")
+        if self._require_artifact is None:
+            raise CoverConsiderationError("unavailable")
+        try:
+            for source in report.cover_sources:
+                if (
+                    source.artifact is not None
+                    and source.artifact.artifact_id == artifact_id
+                ):
+                    self._require_artifact(source.artifact)
+        except Exception as error:
+            raise CoverConsiderationError("unavailable") from error
+
     def validate_decision(
         self,
         review_case_id: str,
@@ -1576,13 +1624,15 @@ class CoverConsiderationService:
             selected = next(
                 (
                     candidate
-                    for candidate in value["candidates"]
+                    for candidate in cast(
+                        "list[dict[str, object]]", value["candidates"]
+                    )
                     if selected_value
                     == {"kind": "cover", "value": candidate["artifact_id"]}
                 ),
                 None,
             )
-            if selected is None or selected["incumbent"] or not selected["selectable"]:
+            if selected is None or not manual_cover_eligible(selected):
                 raise CoverConsiderationError("invalid_choice")
         elif outcome not in {"keep_current", "reject"} or selected_value is not None:
             raise CoverConsiderationError("invalid_choice")
@@ -1702,7 +1752,7 @@ def _cover_choice_contexts(
         reference = candidate.get("reference")
         if (
             candidate.get("incumbent") is True
-            or candidate.get("selectable") is not True
+            or candidate.get("manual_eligible") is not True
             or type(reference) is not str
         ):
             continue

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   ApiError,
+  AmbiguousMutationError,
   MEDIA_HEALTH_KINDS,
   PageCsrfTokenStore,
   ReviewApiClient,
@@ -288,7 +289,7 @@ describe('ReviewApiClient', () => {
       deterministic_rank: 1,
       deterministic_rank_key: [1, 0, -10000, -100, -100, 0, 'candidate-1'],
       height: 100,
-      identity: { outcome: 'verified_work_match' },
+      identity: { outcome: 'verified_work_match', reasons: [] },
       incumbent: false,
       match_state: 'same_book',
       observation: null,
@@ -297,6 +298,7 @@ describe('ReviewApiClient', () => {
       preview_sha256: 'b'.repeat(64),
       reference: 'candidate-1',
       selectable: true,
+      manual_eligible: true,
       source_kinds: [],
       state: 'acceptable',
       width: 100,
@@ -339,6 +341,30 @@ describe('ReviewApiClient', () => {
     })
 
     expect(mapCoverConsideration(payload())?.choiceContexts).toHaveLength(2)
+    const retainedOnly = payload({
+      candidates: [
+        candidate({
+          incumbent: true,
+          manual_eligible: false,
+          selectable: false,
+          deterministic_rank: null,
+          state: 'excluded',
+        }),
+      ],
+      policy: policy({
+        owner_ready: false,
+        actual_target_state: 'confirmed',
+        acceptable_candidate_references: [],
+      }),
+      choice_contexts: [context(null, 'current')],
+      incumbent: { state: 'available', reference: 'candidate-1' },
+    })
+    expect(mapCoverConsideration(retainedOnly)?.ready).toBe(true)
+    expect(() => mapCoverConsideration({ ...retainedOnly, ready: false })).toThrow(ApiError)
+    expect(
+      mapCoverConsideration({ ...retainedOnly, provider_fetching: true, ready: false })?.ready,
+    ).toBe(false)
+
     expect(
       mapCoverConsideration(
         payload({
@@ -1143,6 +1169,45 @@ describe('ReviewApiClient', () => {
         },
       ],
     })
+    expect(
+      mapHistory({
+        ...payload,
+        items: [
+          {
+            ...cover,
+            decision: {
+              outcome: 'accept',
+              selected_value: { kind: 'cover', value: 'retained-artifact' },
+            },
+            consideration: {
+              ...cover.consideration,
+              candidates: [
+                { artifact_id: 'retained-artifact', match_state: 'match_not_confirmed' },
+              ],
+            },
+          },
+        ],
+      }).items[0],
+    ).toMatchObject({ category: 'cover', ownerOutcome: 'accept', ownerMatchUnconfirmed: true })
+    for (const outcome of ['keep_current', 'reject']) {
+      const mapped = mapHistory({
+        ...payload,
+        items: [
+          {
+            ...cover,
+            kind: outcome === 'keep_current' ? 'kept_incumbent' : 'no_action',
+            decision: { outcome, selected_value: null },
+            consideration: {
+              ...cover.consideration,
+              candidates: [{ incumbent: true, match_state: 'match_not_confirmed' }],
+            },
+          },
+        ],
+      }).items[0]
+      expect(mapped).toMatchObject({ category: 'cover', ownerOutcome: outcome })
+      if (!mapped) throw new Error('Expected retained cover history item')
+      expect('ownerMatchUnconfirmed' in mapped).toBe(outcome === 'keep_current')
+    }
     expect(mapHistory({ ...payload, items: [{ ...cover, kind: 'superseded' }] })).toEqual({
       items: [
         {
@@ -2732,3 +2797,36 @@ it('requires an exact recovery flag in every preparation response', () => {
   }
   expect(mapPreparation({ ...preparation, recovery_required: true }).recovery_required).toBe(true)
 })
+
+it.each(['invalid JSON', 'interrupted body'])(
+  'keeps a successful mutation with %s uncertain without resending',
+  async (failure) => {
+    const response = new Response('{', { status: 200 })
+    if (failure === 'interrupted body')
+      vi.spyOn(response, 'json').mockRejectedValue(new TypeError('body interrupted'))
+    const fetchMock = vi.fn<typeof fetch>(async () => response)
+    const client = new ReviewApiClient({ csrf, fetch: fetchMock, buildIdentity: 'c'.repeat(64) })
+    await expect(
+      client.recordDecision('case-1', {
+        destination: 'cover',
+        outcome: 'accept',
+        proposalId: 'proposal-1',
+        targetFingerprint: 'fingerprint-1',
+        idempotencyKey: 'owner-choice-idempotency',
+        selectedValue: { kind: 'cover', value: `cover_${'a'.repeat(64)}` },
+        considerationId: `cover_consideration_${'b'.repeat(64)}`,
+        coverConfirmation: { expected_selection_id: null, confirm_unverified_match: true },
+      }),
+    ).rejects.toBeInstanceOf(AmbiguousMutationError)
+    expect(fetchMock).toHaveBeenCalledOnce()
+    const readResponse = new Response('{', { status: 200 })
+    if (failure === 'interrupted body')
+      vi.spyOn(readResponse, 'json').mockRejectedValue(new TypeError('body interrupted'))
+    fetchMock.mockResolvedValue(readResponse)
+    await expect(client.getCaseDetail('case-1')).rejects.toMatchObject({
+      code: 'invalid_json_response',
+      status: 502,
+    })
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  },
+)

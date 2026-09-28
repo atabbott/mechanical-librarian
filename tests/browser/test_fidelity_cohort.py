@@ -105,7 +105,7 @@ def test_cover_consideration_reports_its_reviewer_status(
     assert recommended["state"] == "recommended"
 
 
-def test_cover_consideration_keeps_unconfirmed_alternative_visible_but_inert() -> None:
+def test_cover_consideration_keeps_unconfirmed_alternative_manual_only() -> None:
     payload = rich_payload("/api/v1/review-cases/case-1")
     assert isinstance(payload, dict)
     cover = next(
@@ -120,6 +120,7 @@ def test_cover_consideration_keeps_unconfirmed_alternative_visible_but_inert() -
     assert unconfirmed["identity"]["outcome"] == "unknown"
     assert unconfirmed["match_state"] == "match_not_confirmed"
     assert unconfirmed["selectable"] is False
+    assert unconfirmed["manual_eligible"] is True
     assert unconfirmed["deterministic_rank"] is None
     assert unconfirmed["deterministic_rank_key"] is None
     assert unconfirmed["state"] == "excluded"

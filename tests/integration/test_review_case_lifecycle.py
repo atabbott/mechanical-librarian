@@ -848,3 +848,589 @@ def test_completed_title_recovery_restarts_as_one_durable_no_change(
         "SELECT count(*) FROM field_effect_no_changes"
     ).fetchone() == (1,)
     repository.close()
+
+
+@pytest.mark.parametrize(
+    "effect_state,successor_case",
+    [
+        (state, successor)
+        for state in ("planned", "claimed", "applying", "reconciling", "verified")
+        for successor in (False, True)
+    ]
+    + [("revision_race", False), ("claim_race", False)],
+)
+def test_owner_confirmed_unknown_cover_lifecycle(
+    tmp_path, effect_state, successor_case
+):
+    """Real retained producer, authenticated confirmation, restart and guarded effect."""
+    import os
+    from dataclasses import replace
+
+    from argon2 import PasswordHasher
+    from fastapi.testclient import TestClient
+
+    from mechanical_librarian.adapters.field_effect_authority import (
+        PersistedFieldEffectAuthority,
+    )
+    from mechanical_librarian.adapters.field_effect_fakes import FakePreclaimHook
+    from mechanical_librarian.adapters.field_effect_runtime import (
+        PersistedEffectConsent,
+        PersistedEffectDependencies,
+    )
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from mechanical_librarian.application.cover_consideration import (
+        CoverConsiderationService,
+        cover_currentness_from_facts,
+    )
+    from mechanical_librarian.application.cover_policy import CoverPolicy
+    from mechanical_librarian.domain.cover_evidence import CoverArtifact
+    from tests.support.cover_producers import _preview, _source
+    from tests.support.field_effects import CAPABILITY, Clock
+    from tests.unit.review_app_fixture import (
+        TEST_REACT_BUILD_IDENTITY,
+        create_transport_test_app,
+    )
+
+    race_order = effect_state if effect_state.endswith("_race") else None
+    if race_order:
+        effect_state = "planned" if race_order == "revision_race" else "claimed"
+    os.chmod(tmp_path, 0o700)
+    sources = tuple(
+        replace(
+            _source(i, _preview(i)),
+            artifact=CoverArtifact.create(
+                _preview(i + 10), _preview(i), "image/png", 1, 1
+            ),
+        )
+        for i in (1, 2)
+    )
+    report = MetadataReport.create(
+        target=TargetFacts(
+            "synthetic", "books", "item", default_target_fields("Synthetic title")
+        ),
+        file=FileFacts(0, "a" * 64, "b" * 64),
+        local_claims=(),
+        local_reasons=("no_opening_claims",),
+        providers=(),
+        cover_sources=tuple(sorted(sources, key=lambda source: source.source_id)),
+    )
+    database = tmp_path / "application.sqlite"
+    repository = open_repository(database, cross_thread=True)
+    artifacts = CoverArtifactStore(tmp_path / "artifacts")
+    for i, source in enumerate(sources, 1):
+        assert source.artifact is not None
+        artifacts.stage(source.artifact, _preview(i + 10), _preview(i))
+    repository.publish(report, lambda: True)
+    proposals = evaluate_report(report)
+    repository.publish_proposal(proposals)
+    case_id = json.loads(repository.admit_review_case(proposals))["review_case_id"]
+    case = ReviewCase.from_json(
+        json.dumps(
+            json.loads(repository.get_review_case(case_id))["case"],
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+    proposal = next(p for p in case.proposals if p["destination"] == "cover")
+    policy = CoverPolicy()
+    fetching = [False]
+
+    def bind(repo):
+        service = CoverConsiderationService(
+            repo,
+            read_preview=lambda artifact_id, _variant: artifacts.read_preview_digest(
+                next(
+                    source.artifact.preview_digest
+                    for source in sources
+                    if source.artifact is not None
+                    and source.artifact.artifact_id == artifact_id
+                )
+            ),
+            read_preview_digest=artifacts.read_preview_digest,
+            require_artifact=artifacts.require_artifact,
+            clock=lambda: 100,
+            policy=policy,
+            provider_fetching=lambda _: fetching[0],
+        )
+        repo.bind_current_cover_policy(policy.reference)
+        repo.bind_current_cover_replay(service.replay_reference)
+        repo.bind_owner_cover_validation(service.require_owner_cover)
+        repo.bind_cover_consideration_currentness(
+            lambda document, replay: cover_currentness_from_facts(
+                document, replay, lambda *_args: fetching[0]
+            )
+        )
+        return service
+
+    covers = bind(repository)
+    consideration = covers.ensure(case_id, report.to_json(), proposal)
+    candidates = consideration["candidates"]
+    assert all(
+        c["match_state"] == "match_not_confirmed"
+        and c["manual_eligible"]
+        and not c["selectable"]
+        for c in candidates
+    )
+    original = repository.current_cover_consideration_document(case_id)
+    from mechanical_librarian.application.review_web import (
+        BrowseReviewLibrary,
+        InspectCurrentReviewCase,
+    )
+
+    inspected = InspectCurrentReviewCase(repository, covers).run(case_id)
+    assert (
+        next(field for field in inspected["fields"] if field["destination"] == "cover")[
+            "needs_attention"
+        ]
+        is True
+    )
+    attention = BrowseReviewLibrary(repository).attention(
+        search=None, limit=10, cursor=None
+    )
+    assert (case_id, "cover") in [
+        (item["review_case_id"], item["destination"]) for item in attention["items"]
+    ]
+    password = tmp_path / "owner.hash"
+    password.write_text(PasswordHasher().hash("correct horse"))
+    password.chmod(0o600)
+    config = ReviewWebConfiguration(
+        tls_certificate_file="/synthetic/review.crt",
+        tls_private_key_file="/synthetic/review.key",
+        canonical_origin="https://review.test",
+        owner_password_hash_file=str(password),
+        session_lifetime_seconds=600,
+    )
+    app = create_transport_test_app(
+        repository, config, clock=lambda: 101, cover_considerations=covers
+    )
+    client = TestClient(app, base_url="https://review.test")
+    path = f"/api/v1/review-cases/{case_id}/decisions"
+    payload = dict(
+        proposal_id=proposal["proposal_id"],
+        target_fingerprint=case.target_fingerprint,
+        destination="cover",
+        outcome="accept",
+        selected_value={"kind": "cover", "value": candidates[0]["artifact_id"]},
+        consideration_id=consideration["consideration_id"],
+        cover_confirmation={
+            "expected_selection_id": None,
+            "confirm_unverified_match": True,
+        },
+    )
+    headers = {
+        "Origin": "https://review.test",
+        "Idempotency-Key": "owner-cover-first-0001",
+        "x-ml-build-identity": TEST_REACT_BUILD_IDENTITY,
+    }
+    assert client.post(path, json=payload, headers=headers).status_code == 401
+    login = client.post(
+        "/api/v1/session/login",
+        json={"password": "correct horse"},
+        headers={"Origin": "https://review.test"},
+    )
+    assert login.status_code == 200
+    headers["X-CSRF-Token"] = login.json()["csrf_token"]
+    denied = client.post(
+        path, json=payload, headers=headers | {"X-CSRF-Token": "invalid"}
+    )
+    assert denied.status_code == 403
+    for invalid in (
+        None,
+        {"expected_selection_id": None, "confirm_unverified_match": False},
+    ):
+        refused = client.post(
+            path, json=payload | {"cover_confirmation": invalid}, headers=headers
+        )
+        assert refused.status_code == 422, refused.text
+    assert repository._connection.execute(
+        "SELECT count(*) FROM human_decisions"
+    ).fetchone() == (0,)
+    if effect_state == "planned" and not successor_case:
+        for malformed in (
+            {"expected_selection_id": None},
+            {"expected_selection_id": None, "confirm_unverified_match": 1},
+            {
+                "expected_selection_id": None,
+                "confirm_unverified_match": True,
+                "extra": True,
+            },
+        ):
+            assert (
+                client.post(
+                    path,
+                    json=payload | {"cover_confirmation": malformed},
+                    headers=headers,
+                ).status_code
+                == 422
+            )
+        fetching[0] = True
+        assert client.post(path, json=payload, headers=headers).status_code == 409
+        fetching[0] = False
+        selected_artifact = next(
+            source.artifact
+            for source in sources
+            if source.artifact is not None
+            and source.artifact.artifact_id == candidates[0]["artifact_id"]
+        )
+        assert selected_artifact is not None
+        for digest in (
+            selected_artifact.original_digest,
+            selected_artifact.preview_digest,
+        ):
+            blob = tmp_path / "artifacts" / digest
+            content = blob.read_bytes()
+            for damage in ("missing", "corrupt", "directory", "symlink"):
+                blob.unlink()
+                if damage == "corrupt":
+                    blob.write_bytes(b"corrupt")
+                elif damage == "directory":
+                    blob.mkdir()
+                elif damage == "symlink":
+                    blob.symlink_to(password)
+                refused = client.post(path, json=payload, headers=headers)
+                assert refused.status_code == 503, refused.text
+                assert repository._connection.execute(
+                    "SELECT count(*) FROM human_decisions"
+                ).fetchone() == (0,)
+                assert repository._connection.execute(
+                    "SELECT count(*) FROM cover_selection_authorities"
+                ).fetchone() == (0,)
+                if damage == "directory":
+                    blob.rmdir()
+                elif blob.is_symlink() or blob.exists():
+                    blob.unlink()
+                blob.write_bytes(content)
+                blob.chmod(0o600)
+    from concurrent.futures import ThreadPoolExecutor
+
+    barrier = threading.Barrier(2)
+
+    def submit(_index):
+        barrier.wait()
+        return client.post(path, json=payload, headers=headers)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        responses = list(pool.map(submit, range(2)))
+    assert all(response.status_code == 200 for response in responses), [
+        response.text for response in responses
+    ]
+    response = responses[0]
+    decision_id = response.json()["decision_id"]
+    if effect_state == "planned" and not successor_case and race_order is None:
+        repository.bind_current_cover_replay("cover_replay_" + "0" * 64)
+        drifted = client.post(path, json=payload, headers=headers)
+        assert drifted.status_code == 409 and drifted.json()["error"]["code"] == "stale"
+        conflict = client.post(
+            path,
+            json=payload
+            | {
+                "cover_confirmation": {
+                    "expected_selection_id": None,
+                    "confirm_unverified_match": False,
+                }
+            },
+            headers=headers,
+        )
+        assert (
+            conflict.status_code == 409
+            and conflict.json()["error"]["code"] == "idempotency_conflict"
+        )
+        repository.bind_current_cover_replay(covers.replay_reference)
+    assert (
+        client.post(path, json=payload, headers=headers).json()["decision_id"]
+        == decision_id
+    )
+    assert repository.current_cover_consideration_document(case_id) == original
+    assert repository._connection.execute(
+        "SELECT count(*) FROM human_decisions"
+    ).fetchone() == (1,)
+    first_selection = repository._connection.execute(
+        "SELECT selection_id FROM current_cover_selection_authorities"
+    ).fetchone()[0]
+    inspected = InspectCurrentReviewCase(repository, covers).run(case_id)
+    chosen_field = next(
+        field for field in inspected["fields"] if field["destination"] == "cover"
+    )
+    assert chosen_field["needs_attention"] is False
+    assert chosen_field["current_cover_selection_id"] == first_selection
+    attention = BrowseReviewLibrary(repository).attention(
+        search=None, limit=10, cursor=None
+    )
+    assert (case_id, "cover") not in [
+        (item["review_case_id"], item["destination"]) for item in attention["items"]
+    ]
+    client.close()
+    repository.close()
+    repository = open_repository(database, cross_thread=True)
+    covers = bind(repository)
+    retained = json.loads(
+        repository._connection.execute(
+            "SELECT document FROM cover_selection_authorities"
+        ).fetchone()[0]
+    )
+    assert retained["schema_version"] == "cover-selection-authority-v2"
+    assert retained["observed_identity"]["outcome"] == "unknown"
+    if effect_state == "planned" and not successor_case and race_order is None:
+        import sqlite3
+
+        from mechanical_librarian.application.metadata_report import MetadataReportError
+
+        for mutation in ("confirmation", "observed_identity", "preview_sha256"):
+            incompatible = tmp_path / (mutation + ".sqlite")
+            clone = sqlite3.connect(incompatible)
+            repository._connection.backup(clone)
+            altered = json.loads(json.dumps(retained))
+            if mutation == "confirmation":
+                altered["confirmation"]["confirm_unverified_match"] = False
+            elif mutation == "observed_identity":
+                altered["observed_identity"]["outcome"] = "verified_work_match"
+            else:
+                del altered[mutation]
+            trigger = clone.execute(
+                "SELECT sql FROM sqlite_master WHERE name='cover_selection_authorities_no_update'"
+            ).fetchone()[0]
+            clone.execute("DROP TRIGGER cover_selection_authorities_no_update")
+            clone.execute(
+                "UPDATE cover_selection_authorities SET document=?",
+                (json.dumps(altered, sort_keys=True, separators=(",", ":")),),
+            )
+            clone.execute(trigger)
+            clone.commit()
+            clone.close()
+            incompatible.chmod(0o600)
+            before = incompatible.read_bytes()
+            with pytest.raises(MetadataReportError):
+                open_repository(incompatible)
+            assert incompatible.read_bytes() == before
+    decision = HumanDecision.from_json(retained["decision_document"])
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(decision)
+    repository.grant_field_effect_consents(
+        snapshot.connection, (snapshot.library,), (snapshot.destination,), 102
+    )
+    target = FakeTargetService()
+    application = GuardedFieldApplication(
+        repository,
+        target,
+        FakeBackupReadiness(),
+        FakeCapabilityObserver(CAPABILITY),
+        authority,
+        PersistedEffectDependencies(repository),
+        PersistedEffectConsent(repository),
+        PrivateCoverRecoveryStore(tmp_path / "recovery", lambda _plan: b"incumbent"),
+        FakeForwardReevaluation(),
+        Clock(),
+        FakePreclaimHook(),
+        FakePreclaimHook(),
+        FakePreclaimHook(),
+    )
+    operation = application.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    if effect_state == "planned" and not successor_case and race_order is None:
+        from mechanical_librarian.domain.field_effect import FieldEffectError
+
+        fetching[0] = True
+        with pytest.raises(FieldEffectError, match="authority"):
+            repository.claim_field_effect(
+                operation.plan.plan_id, "planned", "e" * 64, 103
+            )
+        fetching[0] = False
+        blob = tmp_path / "artifacts" / selected_artifact.original_digest
+        content = blob.read_bytes()
+        blob.unlink()
+        with pytest.raises(FieldEffectError, match="authority"):
+            repository.claim_field_effect(
+                operation.plan.plan_id, "planned", "e" * 64, 103
+            )
+        blob.write_bytes(content)
+        blob.chmod(0o600)
+        repository._connection.execute(
+            "DELETE FROM current_cover_considerations WHERE review_case_id=?",
+            (case_id,),
+        )
+        repository._connection.commit()
+        with pytest.raises(FieldEffectError, match="authority"):
+            repository.claim_field_effect(
+                operation.plan.plan_id, "planned", "e" * 64, 103
+            )
+        repository._connection.execute(
+            "INSERT INTO current_cover_considerations(review_case_id,consideration_id) VALUES(?,?)",
+            (case_id, consideration["consideration_id"]),
+        )
+        repository._connection.commit()
+        assert repository.get_field_effect(operation.plan.plan_id).state == "planned"
+        assert repository._connection.execute(
+            "SELECT selection_id FROM current_cover_selection_authorities"
+        ).fetchone() == (first_selection,)
+    target.seed(operation.plan)
+    if effect_state == "verified":
+        assert application.apply(operation.plan.plan_id).state == "verified"
+        assert target.read(operation.plan).value == candidates[0]["artifact_id"]
+    elif effect_state != "planned" and race_order is None:
+        assert (
+            repository.claim_field_effect(
+                operation.plan.plan_id, "planned", "a" * 64, 103
+            ).state
+            == "claimed"
+        )
+        if effect_state in {"applying", "reconciling"}:
+            repository.transition_field_effect(
+                operation.plan.plan_id, "claimed", "applying", 104
+            )
+        if effect_state == "reconciling":
+            repository.transition_field_effect(
+                operation.plan.plan_id, "applying", "reconciling", 105
+            )
+    if successor_case:
+        predecessor_report_id = report.report_id
+        report = MetadataReport.create(
+            target=report.target,
+            file=replace(report.file, content_digest="c" * 64),
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+            cover_sources=report.cover_sources,
+        )
+        repository.publish(report, lambda: True, expected_current=predecessor_report_id)
+        proposals = evaluate_report(report)
+        repository.publish_proposal(proposals)
+        case_id = json.loads(repository.admit_review_case(proposals))["review_case_id"]
+        case = ReviewCase.create_from_data(
+            json.loads(repository.get_review_case(case_id))["case"]
+        )
+        proposal = next(p for p in case.proposals if p["destination"] == "cover")
+        consideration = covers.ensure(case_id, report.to_json(), proposal)
+    replacement = HumanDecision.create(
+        case,
+        proposal_id=str(proposal["proposal_id"]),
+        target_fingerprint=case.target_fingerprint,
+        destination="cover",
+        actor="owner",
+        outcome="accept",
+        selected_value={"kind": "cover", "value": candidates[1]["artifact_id"]},
+        idempotency_key="owner-cover-second-0002",
+        occurred_at=103,
+    )
+    from mechanical_librarian.domain.human_decision import HumanDecisionError
+
+    with pytest.raises(HumanDecisionError, match="stale"):
+        repository.record_human_decision(
+            replacement,
+            cover_consideration_id=consideration["consideration_id"],
+            cover_confirmation={
+                "expected_selection_id": None,
+                "confirm_unverified_match": True,
+            },
+        )
+    if race_order:
+        other = open_repository(
+            database, create=False, authority=repository.authority, cross_thread=True
+        )
+        bind(other)
+        entered = threading.Event()
+        release = threading.Event()
+        original_validator = repository._cover_considerations.require_owner_cover
+
+        def hold_transaction(document, artifact_id):
+            assert repository._connection.in_transaction
+            original_validator(document, artifact_id)
+            entered.set()
+            assert release.wait(5)
+
+        repository._cover_considerations.require_owner_cover = hold_transaction
+
+        def revise(repo):
+            return repo.record_human_decision(
+                replacement,
+                cover_consideration_id=consideration["consideration_id"],
+                cover_confirmation={
+                    "expected_selection_id": first_selection,
+                    "confirm_unverified_match": True,
+                },
+            )
+
+        def claim(repo):
+            return repo.claim_field_effect(
+                operation.plan.plan_id, "planned", "f" * 64, 103
+            )
+
+        first, second = (
+            (revise, claim) if race_order == "revision_race" else (claim, revise)
+        )
+        second_started = threading.Event()
+
+        def competing():
+            second_started.set()
+            return second(other)
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                winner = pool.submit(first, repository)
+                assert entered.wait(5)
+                loser = pool.submit(competing)
+                assert second_started.wait(5)
+                release.set()
+                winner.result(timeout=5)
+                from mechanical_librarian.domain.field_effect import FieldEffectError
+
+                with pytest.raises(
+                    FieldEffectError
+                    if race_order == "revision_race"
+                    else HumanDecisionError,
+                    match="claim_conflict"
+                    if race_order == "revision_race"
+                    else "already_decided",
+                ):
+                    loser.result(timeout=5)
+        finally:
+            release.set()
+            repository._cover_considerations.require_owner_cover = original_validator
+            other.close()
+    if effect_state != "planned":
+        with pytest.raises(HumanDecisionError, match="already_decided"):
+            repository.record_human_decision(
+                replacement,
+                cover_consideration_id=consideration["consideration_id"],
+                cover_confirmation={
+                    "expected_selection_id": first_selection,
+                    "confirm_unverified_match": True,
+                },
+            )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (1,)
+    else:
+        repository.record_human_decision(
+            replacement,
+            cover_consideration_id=consideration["consideration_id"],
+            cover_confirmation={
+                "expected_selection_id": first_selection,
+                "confirm_unverified_match": True,
+            },
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (2,)
+        assert repository.get_field_effect(operation.plan.plan_id).state == "superseded"
+        with pytest.raises(HumanDecisionError, match="stale"):
+            repository.record_human_decision(
+                decision,
+                cover_consideration_id=payload["consideration_id"],
+                cover_confirmation=payload["cover_confirmation"],
+            )
+    repository.close()

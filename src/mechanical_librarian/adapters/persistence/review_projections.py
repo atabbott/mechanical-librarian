@@ -289,6 +289,16 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     if history_limit is None
                     else self.cover_consideration_history(review_case_id, history_limit)
                 ),
+                current_cover_selection=next(
+                    (
+                        row
+                        for row in self._connection.execute(
+                            "SELECT current.selection_id,selection.kind,json_extract(selection.document,'$.candidate_artifact_id') FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id JOIN current_review_case_lineages lineage ON lineage.connection_name=current.connection_name AND lineage.library_name=current.library_name AND lineage.item_id=current.item_id WHERE lineage.review_case_id=?",
+                            (review_case_id,),
+                        )
+                    ),
+                    None,
+                ),
                 current_cover_automatic_decision_id=(
                     self._current_cover_automatic_decision_id(review_case_id)
                 ),
@@ -642,7 +652,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "current.connection_name=lineage.connection_name AND "
             "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
             "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
-            "WHERE lineage.review_case_id=? AND selection.kind='automatic' "
+            "WHERE lineage.review_case_id=? "
             "UNION ALL "
             "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
             ") recorded JOIN field_effects effect ON (effect.decision_id=recorded.decision_id "

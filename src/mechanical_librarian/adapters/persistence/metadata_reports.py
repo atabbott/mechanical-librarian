@@ -139,6 +139,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.human_decision import (
     HumanDecision,
+    HumanDecisionError,
 )
 from mechanical_librarian.domain.metadata_policy import (
     MetadataPolicyError,
@@ -207,6 +208,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         )
         self._cover_considerations = SQLiteCoverConsiderationRepository(
             connection,
+            current_cover_authority=lambda: self._current_cover_authority,
             revoke_automatic=lambda decision_id, changed_at: (
                 self._revoke_field_effect_authority_in_transaction(
                     decision_id, changed_at, required=False
@@ -383,6 +385,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             ),
             current_cover_policy_reference=(lambda: self._current_cover_authority[0]),
             current_cover_replay_reference=(lambda: self._current_cover_authority[1]),
+            require_owner_cover=lambda document, artifact: (
+                self._cover_considerations.require_owner_cover(document, artifact)
+            ),
             description_authority_value=self._description_advice.authority_value,
         )
         self._decisions = SQLiteDecisionRepository(
@@ -405,9 +410,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 lambda library: self.current_resolved_policy_id(library)
             ),
             record_cover_decision_outcome=(
-                lambda decision, consideration_id: (
+                lambda decision, consideration_id, confirmation, **kwargs: (
                     self._cover_considerations._record_cover_decision_outcome(
-                        decision, consideration_id
+                        decision, consideration_id, confirmation, **kwargs
                     )
                 )
             ),
@@ -628,6 +633,22 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         finally:
             lease.release()
         self.recheck_browse_observation(observation)
+
+    def bind_owner_cover_validation(
+        self, require_current: Callable[[str, str | None], None]
+    ) -> None:
+        """Install bounded artifact/currentness reads; never acquire another app connection."""
+
+        def require_bound(document: str, artifact_id: str | None) -> None:
+            value = json.loads(document)
+            if (
+                value.get("policy_reference"),
+                value.get("replay_reference"),
+            ) != self._current_cover_authority:
+                raise HumanDecisionError("stale")
+            require_current(document, artifact_id)
+
+        self._cover_considerations.require_owner_cover = require_bound
 
     def bind_cover_consideration_currentness(
         self, predicate: Callable[[str, str], str]
@@ -2066,9 +2087,12 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         decision: HumanDecision,
         *,
         cover_consideration_id: str | None = None,
+        cover_confirmation: dict[str, object] | None = None,
     ) -> str:
         return self._decisions.record_human_decision(
-            decision, cover_consideration_id=cover_consideration_id
+            decision,
+            cover_consideration_id=cover_consideration_id,
+            cover_confirmation=cover_confirmation,
         )
 
     def _record_automatic_decision(self, decision: AutomaticDecision) -> str:

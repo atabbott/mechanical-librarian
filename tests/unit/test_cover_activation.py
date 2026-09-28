@@ -399,10 +399,23 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
                 )
             ),
             read_preview_digest=artifacts.read_preview_digest,
+            require_artifact=artifacts.require_artifact,
             clock=lambda: consideration_now[0],
             policy=policy,
         )
         repository.bind_current_cover_replay(consideration_service.replay_reference)
+        repository.bind_owner_cover_validation(
+            consideration_service.require_owner_cover
+        )
+        from mechanical_librarian.application.cover_consideration import (
+            cover_currentness_from_facts,
+        )
+
+        repository.bind_cover_consideration_currentness(
+            lambda document, replay: cover_currentness_from_facts(
+                document, replay, lambda *_: False
+            )
+        )
         consideration = consideration_service.ensure(
             review_case_id, report.to_json(), proposal
         )
@@ -436,6 +449,10 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
             repository.record_human_decision(
                 decision,
                 cover_consideration_id=str(consideration["consideration_id"]),
+                cover_confirmation={
+                    "expected_selection_id": None,
+                    "confirm_unverified_match": False,
+                },
             )
         assert repository._connection.execute(
             "SELECT count(*) FROM human_decisions"
@@ -444,6 +461,10 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         repository.record_human_decision(
             decision,
             cover_consideration_id=str(consideration["consideration_id"]),
+            cover_confirmation={
+                "expected_selection_id": None,
+                "confirm_unverified_match": False,
+            },
         )
 
         authority = PersistedFieldEffectAuthority(repository)
@@ -458,6 +479,7 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
                 )
             ),
             read_preview_digest=artifacts.read_preview_digest,
+            require_artifact=artifacts.require_artifact,
             clock=lambda: consideration_now[0],
             policy=policy,
             reviewer_profile=b"changed-profile",
@@ -466,6 +488,14 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         with pytest.raises(FieldEffectError, match="authority_binding"):
             authority.resolve(decision)
         repository.bind_current_cover_replay(consideration_service.replay_reference)
+        repository.bind_owner_cover_validation(
+            consideration_service.require_owner_cover
+        )
+        repository.bind_cover_consideration_currentness(
+            lambda document, replay: cover_currentness_from_facts(
+                document, replay, lambda *_: False
+            )
+        )
         snapshot = authority.resolve(decision)
         dependencies = PersistedEffectDependencies(repository)
         consent = FakeConsentCurrentness(
@@ -546,6 +576,12 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         repository.record_human_decision(
             replacement,
             cover_consideration_id=str(successor["consideration_id"]),
+            cover_confirmation={
+                "expected_selection_id": repository._connection.execute(
+                    "SELECT selection_id FROM current_cover_selection_authorities"
+                ).fetchone()[0],
+                "confirm_unverified_match": False,
+            },
         )
         snapshot = authority.resolve(replacement)
         operation = application.plan(

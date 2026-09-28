@@ -1,0 +1,8 @@
+{
+  "source_sha": "0b9dc854e730b329e68410f09a53f2f9103f617f",
+  "files": {
+    "automatic.json": "4317df634a0e5d9f350693d43ea7534b52f7727489c4acb99d3b345210814069",
+    "empty.sql": "9a57be1c083dea0cc296d1b32a94bb91fc3674995791ef77745852c0b2544498",
+    "populated.sql": "481b4fd26ec0f0f31a6df38f8eb10440256cdb9f49d6e59be1196cc8093dba47"
+  }
+}

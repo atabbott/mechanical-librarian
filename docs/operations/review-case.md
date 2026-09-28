@@ -281,7 +281,7 @@ For a current cover field, Detail presents the incumbent first and up to 12
 safe report-bound alternatives. Advisory observation and deterministic policy
 never select on the owner's behalf. The owner must explicitly keep the current
 cover, choose one available original, or take no action. If observation is
-unconfigured or fails, the same identity-admitted manual choices remain usable;
+unconfigured or fails, retained manual choices remain usable;
 an explicit advisory retry creates a successor record and leaves the cover
 unchanged.
 
@@ -303,7 +303,21 @@ still pass. There is no bulk or model-selected cover application.
 The installed `cover-review` CLI exposes the same server-authoritative current
 consideration and bounded historical evidence used by the API and React view;
 its explicit keep, select, and no-action commands record through the same
-application service. `review-activity` projects the same bounded guarded plan,
+application service. `show` includes `current_cover_selection_id` from the same
+current detail snapshot as its consideration. Deciding commands accept
+`--expected-selection-id ID`; omitting it explicitly expects no current selection.
+For a fresh revision, supply the shown selection ID and a new idempotency key.
+An unconfirmed match requires `select --confirm-unverified-match`; the CLI never
+infers that confirmation. Retry an uncertain command with its original key,
+selection baseline, artifact and confirmation flag, rather than silently using a
+new baseline. Existing provider recovery state is read-only and active cover
+acquisition refuses a choice; absent recovery state is not created.
+Changing reviewer configuration makes older comparisons stale. Prepare the current
+comparison before confirming; continuing without a reviewer still permits eligible
+owner choices. The decision captures current reviewer authority before its write
+transaction, under the same command gate as Settings changes.
+
+`review-activity` projects the same bounded guarded plan,
 verification, stale, failure, and recovery ledger as authenticated Activity and
 is read-only. It requires only the configured application database and the
 configuration whose review limits shape that projection. It does not compose a
@@ -350,3 +364,19 @@ outside the global 20-case sample; truncation is explicit. The ebook
 operations. Missing entries are unavailable, not a fallback qualification.
 These read models confer no consent or effect authority. The reproducible
 [OpenAPI document](../reference/review-openapi-v1.json) is the exact wire contract.
+
+### Owner-confirmed retained cover choice (#1078)
+
+Choosing a retained alternative opens a confirmation with its whole image.
+“Match not confirmed” remains visible for unconfirmed evidence after recording.
+Cancel or Escape before submission records nothing and restores card focus.
+A lower-quality or unconfirmed alternative may be chosen explicitly; positive
+identity contradictions, unavailable artifacts and active searches remain refused.
+An admitted keep-current action stays available when all alternatives are ineligible;
+keeping a cover retains its observed match status in history. The uncertainty
+confirmation flag is accepted only for selecting an alternative.
+A recorded choice leaves Attention but remains revisable from Library while no
+cover effect has been claimed, applied, reconciled or verified. Each revision
+compares the exact target selection token and appends history. A stale or uncertain
+response requires a current reload; it never submits another choice automatically.
+Recording is separate from consent, guarded application and verified read-back.

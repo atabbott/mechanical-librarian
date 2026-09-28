@@ -178,6 +178,7 @@ class CurrentReviewCaseSnapshot:
     suspension_causes: tuple[tuple[str, ReviewFieldCause], ...] = ()
     cover_consideration_document: str | None = None
     cover_history: tuple[dict[str, object], ...] = ()
+    current_cover_selection: tuple[str, str, str | None] | None = None
     current_cover_automatic_decision_id: str | None = None
     resolved_policy_document: str | None = None
     description_advice: dict[str, object] | None = None
@@ -286,6 +287,7 @@ class HumanDecisionStore(CurrentReviewCaseStore, Protocol):
         decision: HumanDecision,
         *,
         cover_consideration_id: str | None = None,
+        cover_confirmation: dict[str, object] | None = None,
     ) -> str: ...
 
 
@@ -618,7 +620,11 @@ class InspectCurrentReviewCase:
                         (
                             destination != "cover"
                             or snapshot.cover_consideration_document is None
-                            or cover_is_current
+                            or (
+                                cover_is_current
+                                and current_cover_consideration is not None
+                                and current_cover_consideration["ready"] is True
+                            )
                             or (
                                 cover_refresh_required
                                 and result["outcome"] == "unresolved_choice"
@@ -651,8 +657,22 @@ class InspectCurrentReviewCase:
                 ),
                 override_available=(
                     destination not in snapshot.override_blocked_destinations
+                    and (
+                        destination != "cover"
+                        or (
+                            current_cover_consideration is not None
+                            and current_cover_consideration["current"] is True
+                            and current_cover_consideration["ready"] is True
+                        )
+                    )
                 ),
                 has_human_decision=decision is not None
+                or (
+                    destination == "cover"
+                    and cover_is_current
+                    and snapshot.current_cover_selection is not None
+                    and snapshot.current_cover_selection[1] == "owner"
+                )
                 or (
                     type(authored_selection) is dict
                     and authored_selection.get("origin") == "human"
@@ -738,6 +758,16 @@ class InspectCurrentReviewCase:
             }
             if destination == "cover" and self._cover_considerations is not None:
                 field["cover_consideration"] = current_cover_consideration
+                field["current_cover_selection_id"] = (
+                    None
+                    if snapshot.current_cover_selection is None
+                    else snapshot.current_cover_selection[0]
+                )
+                field["current_cover_selection_artifact_id"] = (
+                    None
+                    if snapshot.current_cover_selection is None
+                    else snapshot.current_cover_selection[2]
+                )
             if destination == "description":
                 field["description_advice"] = snapshot.description_advice
             fields.append(field)
@@ -1153,6 +1183,7 @@ class RecordHumanDecision:
         selected_value: dict[str, object] | None,
         idempotency_key: str,
         consideration_id: str | None = None,
+        cover_confirmation: dict[str, object] | None = None,
     ) -> dict[str, object]:
         try:
             idempotency_digest = HumanDecision.idempotency_digest_for(idempotency_key)
@@ -1184,6 +1215,7 @@ class RecordHumanDecision:
                         self._repository.record_human_decision(
                             replay,
                             cover_consideration_id=consideration_id,
+                            cover_confirmation=cover_confirmation,
                         )
                     )
                 except HumanDecisionError:
@@ -1240,6 +1272,7 @@ class RecordHumanDecision:
                     self._repository.record_human_decision(
                         decision,
                         cover_consideration_id=consideration_id,
+                        cover_confirmation=cover_confirmation,
                     )
                 )
             except HumanDecisionError:

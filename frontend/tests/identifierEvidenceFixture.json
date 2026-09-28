@@ -100,7 +100,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": ["competing_evidence"],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -183,7 +185,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -227,7 +231,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -310,7 +316,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -354,7 +362,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -398,7 +408,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -442,7 +454,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -486,7 +500,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -530,7 +546,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "manual_fallback",
@@ -574,7 +592,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -618,7 +638,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -662,7 +684,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -706,7 +730,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -750,7 +776,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       },
       {
         "classification": "needs_attention",
@@ -794,7 +822,9 @@
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
         "cover_consideration": null,
-        "description_advice": null
+        "description_advice": null,
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null
       }
     ],
     "media_health": [],

@@ -119,7 +119,13 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
         Visual review {labelWords(item.reviewerStatus)} across {String(item.candidateCount)}{' '}
         {item.candidateCount === 1 ? 'candidate' : 'candidates'}.
       </p>
-      {item.ownerOutcome ? <p>Owner outcome: {labelWords(item.ownerOutcome)}.</p> : null}
+      {item.ownerOutcome ? (
+        <p>
+          Owner-confirmed choice: {labelWords(item.ownerOutcome)}.
+          {item.ownerMatchUnconfirmed ? ' Match not confirmed by automated evidence.' : ''}{' '}
+          Recording a choice is separate from verified application.
+        </p>
+      ) : null}
       {item.automaticOutcome ? <p>Automatic policy selected this cover.</p> : null}
       {item.supersedesAutomatic ? (
         <p>This strictly better confirmed cover replaced the earlier automatic choice.</p>

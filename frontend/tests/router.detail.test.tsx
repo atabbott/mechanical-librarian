@@ -2,7 +2,7 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ApiError, mapCaseDetail, mapEvidence } from '../src/api/http'
+import { ApiError, mapCaseDetail, mapEvidence, mapHistory } from '../src/api/http'
 import descriptionAdviceFixture from './descriptionAdviceFixture.json'
 import identifierEvidenceFixture from './identifierEvidenceFixture.json'
 import { normalizeDetailSearch } from '../src/router'
@@ -1135,3 +1135,36 @@ it.each(['evidence', 'history'])(
     }
   },
 )
+
+it('retains unconfirmed incumbent evidence in actual mapped owner history', async () => {
+  const http = createHttp()
+  http.getHistory = vi.fn(async () =>
+    mapHistory({
+      schema_version: 'review-case-history-v2',
+      review_case_id: 'case-1',
+      next_cursor: null,
+      items: [
+        {
+          kind: 'kept_incumbent',
+          occurred_at: 3,
+          consideration: {
+            candidates: [
+              {
+                incumbent: true,
+                artifact_id: 'retained-incumbent',
+                match_state: 'match_not_confirmed',
+              },
+            ],
+            policy: null,
+            reviewer_status: 'unavailable',
+          },
+          decision: { outcome: 'keep_current', selected_value: null },
+        },
+      ],
+    }),
+  )
+  renderRoute('/review/case-1?lens=all&field=cover&subview=history', http)
+  expect(await screen.findByText(/Owner-confirmed choice: keep current/u)).toHaveTextContent(
+    'Match not confirmed by automated evidence. Recording a choice is separate from verified application.',
+  )
+})

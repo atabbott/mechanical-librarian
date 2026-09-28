@@ -94,13 +94,18 @@ class SQLiteProviderRecoveryStore:
         ] = {}
 
     @classmethod
-    def open(cls, path: Path) -> "SQLiteProviderRecoveryStore":
+    def open(
+        cls, path: Path, *, read_only: bool = False
+    ) -> "SQLiteProviderRecoveryStore":
         connection = sqlite3.connect(
-            path, isolation_level=None, check_same_thread=False
+            f"{path.resolve().as_uri()}?mode=ro" if read_only else path,
+            uri=read_only,
+            isolation_level=None,
+            check_same_thread=False,
         )
         try:
             connection.execute("PRAGMA foreign_keys=ON")
-            if not _recovery_objects(connection):
+            if not read_only and not _recovery_objects(connection):
                 connection.execute("BEGIN IMMEDIATE")
                 try:
                     for statement in _CREATE:

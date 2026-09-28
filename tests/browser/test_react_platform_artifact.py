@@ -30,6 +30,7 @@ from tests.browser.fidelity_cohort import (
     UNBROKEN_TITLE_SEGMENT,
     rich_payload,
 )
+from tests.support.cover_images import synthetic_image
 
 # The outcome the review controller renders when a decision request is lost
 # before any response, which is the only outcome an aborted request can reach.
@@ -138,6 +139,17 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         nonlocal connection_state, genres_reappeared, return_automatic_requests
         parsed = urlsplit(route.request.url)
         path = parsed.path
+        if (
+            path.startswith("/api/v1/review-cases/")
+            and "/cover-considerations/" in path
+            and "/images/" in path
+        ):
+            route.fulfill(
+                status=200,
+                content_type="image/png",
+                body=synthetic_image("PNG", (120, 180)),
+            )
+            return
         if path.startswith("/api/v1/"):
             if path == "/api/v1/reviewer-access" and route.request.method == "GET":
                 route.fulfill(
@@ -1251,12 +1263,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             comparison.get_by_text("Recommended cover ready", exact=True).wait_for()
             assert "best confirmed match is ready" in comparison.inner_text()
             for choice in comparison.locator("button[aria-pressed]").all():
-                if "is-unconfirmed" in (
-                    choice.locator("xpath=..").get_attribute("class") or ""
-                ):
-                    expect(choice).to_be_disabled()
-                else:
-                    expect(choice).to_be_enabled()
+                expect(choice).to_be_enabled()
                 expect(choice).to_have_attribute("aria-pressed", "false")
             for evidence in comparison.get_by_role(
                 "button", name=re.compile(r"^Evidence for .+ cover$")
@@ -1297,7 +1304,19 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "couldn't confirm that this cover belongs"
                     in unconfirmed.inner_text()
                 )
-                expect(unconfirmed.get_by_role("button")).to_be_disabled()
+                unconfirmed_choice = unconfirmed.get_by_role(
+                    "button", name="Choose Alternative 2 cover", exact=True
+                )
+                expect(unconfirmed_choice).to_be_enabled()
+                unconfirmed_choice.click()
+                dialog = page.get_by_role("dialog")
+                expect(dialog).to_be_visible()
+                expect(
+                    dialog.get_by_text("Match not confirmed.", exact=False)
+                ).to_be_visible()
+                dialog.get_by_role("button", name="Cancel", exact=True).click()
+                expect(dialog).not_to_be_visible()
+                expect(unconfirmed_choice).to_be_focused()
                 current_evidence = comparison.get_by_role(
                     "button", name="Evidence for Current cover"
                 )

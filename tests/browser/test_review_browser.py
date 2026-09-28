@@ -607,6 +607,7 @@ def _server(
                     )
                 ),
                 read_preview_digest=artifacts.read_preview_digest,
+                require_artifact=artifacts.require_artifact,
                 clock=lambda: 1_000,
                 bind_policy=repository.bind_current_cover_authority,
                 reviewer_dispatch=(
@@ -622,6 +623,9 @@ def _server(
                 reviewer_revision_current=(
                     reviewer_access.revision_is_current if reviewer_access else None
                 ),
+            )
+            repository.bind_owner_cover_validation(
+                cover_considerations.require_owner_cover
             )
             cover_considerations.update_policy(CoverPolicy())
     elif retained_decoration is not None:
@@ -2742,6 +2746,20 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                     .filter(has_text="Alternative 1 cover")
                     .evaluate("node => node.classList.contains('is-selected')")
                 )
+                # A recorded automatic choice is already selected: choosing it
+                # again is a no-op. Explicitly retain the incumbent first, then
+                # confirm a different cover as a fresh owner revision.
+                automatic_cover.click()
+                expect(
+                    page.get_by_role("dialog", name="Confirm this cover")
+                ).to_have_count(0)
+                with page.expect_response(
+                    lambda response: response.url.endswith("/decisions")
+                ) as kept:
+                    current_cover.click()
+                assert kept.value.status == 200, kept.value.text()
+                page.goto(f"{origin}/library?lens=all&preview={case_id}&field=cover")
+                expect(current_cover).to_have_attribute("aria-pressed", "true")
                 with (
                     page.expect_response(
                         lambda response: response.url.endswith("/decisions")
@@ -2749,6 +2767,9 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 ):
                     page.locator(".library-cover-card").filter(
                         has_text="Alternative 1 cover"
+                    ).click()
+                    page.get_by_role(
+                        "button", name="Confirm cover choice", exact=True
                     ).click()
                 response = decision_response.value
                 assert 200 == response.status, f"decision response: {response.text()}"
@@ -2760,7 +2781,7 @@ def test_protected_cover_round_trip_preserves_explicit_owner_authority() -> None
                 ).locator("..")
                 selected_history.get_by_text("Visual review", exact=False).wait_for()
                 selected_history.get_by_text(
-                    "Owner outcome: accept", exact=False
+                    "Owner-confirmed choice: accept.", exact=False
                 ).wait_for()
                 assert "candidate" in selected_history.inner_text().lower()
                 for identifier in (
@@ -2845,6 +2866,9 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                 ) as decision_response:
                     candidate.focus()
                     page.keyboard.press("Enter")
+                    page.get_by_role(
+                        "button", name="Confirm cover choice", exact=True
+                    ).click()
                 assert decision_response.value.status == 200
                 page.get_by_role("heading", name="Review complete").wait_for()
 
@@ -2852,7 +2876,9 @@ def test_ask_surfaces_and_records_the_sole_cover_choice_after_timeout() -> None:
                 selected = page.get_by_role("heading", name="Cover selected").locator(
                     ".."
                 )
-                selected.get_by_text("Owner outcome: accept", exact=False).wait_for()
+                selected.get_by_text(
+                    "Owner-confirmed choice: accept.", exact=False
+                ).wait_for()
                 assert page.evaluate(
                     "() => document.documentElement.scrollWidth <= window.innerWidth"
                 )
@@ -2916,6 +2942,9 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                 comparison.locator(".library-cover-card").filter(
                     has_text="Alternative 1 cover"
                 ).click()
+                page.get_by_role(
+                    "button", name="Confirm cover choice", exact=True
+                ).click()
 
                 stale = page.get_by_text(
                     "This cover comparison changed before your choice was recorded. "
@@ -2952,6 +2981,9 @@ def test_stale_cover_choice_stays_visible_until_owner_opens_current_comparison()
                 ).to_have_count(0)
                 current_comparison.get_by_role(
                     "button", name="Choose Alternative 1 cover", exact=True
+                ).click()
+                page.get_by_role(
+                    "button", name="Confirm cover choice", exact=True
                 ).click()
                 page.get_by_role("heading", name="Review complete").wait_for()
                 assert decision_statuses == [409, 200]
@@ -3013,6 +3045,9 @@ def test_current_same_case_cover_choice_clears_stale_feedback_after_recording() 
                 comparison.locator(".library-cover-card").filter(
                     has_text="Alternative 1 cover"
                 ).click()
+                page.get_by_role(
+                    "button", name="Confirm cover choice", exact=True
+                ).click()
 
                 stale = page.get_by_text(
                     "This cover comparison changed before your choice was recorded. "
@@ -3027,6 +3062,9 @@ def test_current_same_case_cover_choice_clears_stale_feedback_after_recording() 
                 )
                 current_choice.focus()
                 page.keyboard.press("Enter")
+                page.get_by_role(
+                    "button", name="Confirm cover choice", exact=True
+                ).click()
                 page.get_by_role("heading", name="Review complete").wait_for()
                 expect(stale).to_have_count(0)
                 expect(
@@ -3283,6 +3321,9 @@ def test_configured_cover_reviewer_keeps_failed_advice_retryable() -> None:
                 assert attention["total"] == 1, attention
                 page.get_by_role(
                     "button", name="Choose Alternative 1 cover", exact=True
+                ).click()
+                page.get_by_role(
+                    "button", name="Confirm cover choice", exact=True
                 ).click()
                 expect(
                     page.get_by_role("heading", name="Review complete")
