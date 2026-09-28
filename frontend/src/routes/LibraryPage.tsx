@@ -1886,7 +1886,9 @@ function LibraryCoverChoicesContent({
               Your choice takes precedence over automation. Recording it does not mean it has been
               applied; consent and application safeguards still apply.
             </p>
-            {progress?.phase === 'failed' && submittedConfirmation ? (
+            {submittedConfirmation &&
+            progress?.phase !== 'recording' &&
+            progress?.phase !== 'confirmed' ? (
               <p role="alert">
                 Confirmation was not completed. Close this dialog and reload the current comparison
                 before trying again.

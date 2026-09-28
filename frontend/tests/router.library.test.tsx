@@ -4967,6 +4967,7 @@ describe('Library route', () => {
     ['a direct replacement choice beside another unresolved field', null, true],
     ['a direct replacement whose recorded case refresh fails', null, false],
     ['an explicit replacement recovery on the same case', null, false],
+    ['an explicit recovery with the same consideration', null, false],
     ['an explicit successor-case recovery', 'case-2', false],
   ])('retains a stale cover choice and recovers through %s', async (label, successorId, other) => {
     const user = userEvent.setup()
@@ -5043,6 +5044,7 @@ describe('Library route', () => {
     })
     const initial = coverDetail('case-1', '2')
     const current = coverDetail(successorId ?? 'case-1', '3')
+    let retainSameConsideration = label.includes('same consideration')
     let stale = false
     let failCurrentLookup = true
     let successfulDecisions = 0
@@ -5064,7 +5066,7 @@ describe('Library route', () => {
       ...createHttp(),
       recordDecision,
       getCaseDetail: vi.fn(async (id) => {
-        if (!stale) return initial
+        if (!stale || retainSameConsideration) return initial
         if (failRecordedRefresh && successfulDecisions === 1 && !recordedRefreshAvailable) {
           throw new Error('recorded current case refresh unavailable')
         }
@@ -5083,6 +5085,13 @@ describe('Library route', () => {
 
     await user.click(await screen.findByRole('button', { name: /Alternative 1 cover/u }))
     await user.click(screen.getByRole('button', { name: 'Confirm cover choice' }))
+    if (retainSameConsideration) {
+      expect(await screen.findByText(/Confirmation was not completed/u)).toBeVisible()
+      expect(recordDecision).toHaveBeenCalledOnce()
+      await user.click(screen.getByRole('button', { name: 'Close' }))
+      expect(screen.getByRole('button', { name: /Alternative 1 cover/u })).toHaveFocus()
+      retainSameConsideration = false
+    }
     expect(
       await screen.findByText(
         'This cover comparison changed before your choice was recorded. No cover was changed.',
