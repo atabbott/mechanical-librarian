@@ -660,8 +660,16 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         (Path(__file__).parents[1] / "fixtures/shadow-outcome-v9.json").read_text()
     )
     assert fixture["source_sha"] == "08ae544e20ea79037f7e4a1d5f66b482554ed1dc"
+    cover_fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/cover-authority-v2.json").read_text()
+    )
     path = tmp_path / "prior-shadow.sqlite"
     with monkeypatch.context() as old:
+        old.setattr(
+            schema,
+            "_COVER_SELECTION_AUTHORITIES_SQL",
+            cover_fixture["cover_selection_authorities_sql"],
+        )
         old.setattr(
             schema,
             "_SHADOW_DECISION_OUTCOMES_SQL",
@@ -2136,6 +2144,34 @@ def test_genuine_qualification_predecessor_refused_without_mutation(
             "SELECT count(*) FROM shadow_decision_outcomes"
         ).fetchone()[0]
     assert (count > 0) is (fixture_name == "store-v8.sql")
+    before = path.read_bytes()
+    with pytest.raises(MetadataReportError):
+        open_repository(path, create=False)
+    assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("populated", (False, True))
+def test_cover_authority_v2_schema_rejects_empty_and_populated_store_before_mutation(
+    tmp_path, monkeypatch, populated
+):
+    from mechanical_librarian.adapters.persistence import schema
+    from tests.unit.test_policy_impact_persistence import _case_report
+
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/cover-authority-v2.json").read_text()
+    )
+    assert fixture["source_sha"] == "9867cdafd5f42f7282980e20b607189826498c11"
+    path = tmp_path / "prior-cover.sqlite"
+    with monkeypatch.context() as prior:
+        prior.setattr(
+            schema,
+            "_COVER_SELECTION_AUTHORITIES_SQL",
+            fixture["cover_selection_authorities_sql"],
+        )
+        repository = open_repository(path)
+        if populated:
+            repository.publish(_case_report(1), lambda: True)
+        repository.close()
     before = path.read_bytes()
     with pytest.raises(MetadataReportError):
         open_repository(path, create=False)

@@ -24,7 +24,7 @@ The current installed contract is intentionally narrow:
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v18`,
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v9`,
-  `metadata-policy-profile-v3` and `cover-automatic-decision-v2`;
+  `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;
 - `review-session-v1`, `review-library-v2`, `review-case-detail-v4`,
   `review-case-evidence-v4`,
@@ -295,3 +295,9 @@ hashes without changing current grants. Historical decoding remains available bu
 cannot authorize current decisions or effects. The historical qualification-state
 bridge target stays fixed and does not adopt this transition. See the
 [qualification contract](../product/rich-metadata-qualification.md#current-compact-authority).
+
+Automatic cover authority v3 binds the actual policy option into its immutable
+decision and idempotency digests. **Clean rebuild required** under ADR-0013: old
+v2 documents and predecessor application databases, even empty ones, are refused
+before mutation. No migration or adoption is supplied; the selection wrapper
+remains `cover-selection-authority-v1`.

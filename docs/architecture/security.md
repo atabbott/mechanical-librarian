@@ -1656,3 +1656,10 @@ sixteen-destination consent surface now opens one exact-scope review from every
 entry point; only explicit confirmation submits it. Fresh capability validation,
 backup, owner-final checks, optimistic concurrency and durable verified read-back
 remain unchanged. An ambiguous confirmation is read back without resending.
+
+Automatic cover authority v3 binds the selected policy option into the decision,
+idempotency and rule identity. An ebook known-empty fallback retains deterministic
+cover qualification, never an F46 identity; admission and effect validation both
+require the recorded option to match the retained resolved policy and generation.
+V2 documents and prior selection-table schemas are rejected before startup
+mutation: clean rebuild required under ADR-0013, with no adoption path.

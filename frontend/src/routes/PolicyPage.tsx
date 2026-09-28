@@ -1063,6 +1063,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     [preview],
   )
   const changedRows = previewRows.filter((row) => row.impact.changed)
+  const unchangedRows = previewRows.filter((row) => !row.impact.changed)
   const mediaQualification = (
     field: FieldDefinition,
     option: string,
@@ -1564,7 +1565,13 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 {(['ebook', 'audiobook'] as const)
                   .map((media) => {
                     const rows = changedRows.filter((row) => row.media === media)
-                    const works = new Set(rows.map((row) => row.caseId)).size
+                    const works = preview.libraries.reduce(
+                      (count, library) =>
+                        count +
+                        library.comparisons.filter((comparison) => comparison.media_kind === media)
+                          .length,
+                      0,
+                    )
                     return `${media === 'ebook' ? 'Ebooks' : 'Audiobooks'}: ${String(works)} sampled ${works === 1 ? 'work' : 'works'} · ${String(rows.length)} changed ${rows.length === 1 ? 'field' : 'fields'}`
                   })
                   .join(' · ')}
@@ -1643,16 +1650,16 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                 </footer>
               ) : null}
             </div>
-            {previewRows.length ? (
+            {unchangedRows.length ? (
               <details className="cm-policy-projected-context">
                 <summary>
-                  Unchanged outcomes and projected library context ({previewRows.length})
+                  Unchanged outcomes and projected library context ({unchangedRows.length})
                 </summary>
                 <p>
                   These compare the draft with retained library values. They do not count as effects
                   of editing the policy.
                 </p>
-                {previewRows.map((row) => (
+                {unchangedRows.map((row) => (
                   <p key={row.id}>
                     <strong>
                       {row.work} · {row.media} · {row.field}:

@@ -276,6 +276,11 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             return
         supersedes = None if prior is None else prior["decision_id"]
         decision = CoverAutomaticDecision.create(
+            policy_option=(
+                dict(resolved.options)["cover_order"]
+                if qualification_identity is None
+                else qualification_identity.split(":", 1)[1]
+            ),
             qualification_identity=qualification_identity,
             review_case_id=case.review_case_id,
             report_id=case.report_id,

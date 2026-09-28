@@ -7965,7 +7965,7 @@ def test_audio_cover_fill_is_persisted_reopened_and_never_lends_replacement_auth
         )
         assert source.artifact is not None
         assert _cover_automatic_decision_value(
-            decision, case, report, proposal_set, consideration
+            repository._connection, decision, case, report, proposal_set, consideration
         ) == {"kind": "cover", "value": source.artifact.artifact_id}
     repository.close()
 

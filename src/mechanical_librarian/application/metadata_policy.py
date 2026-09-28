@@ -35,6 +35,7 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     RichFieldPreview,
     RichMetadataPreview,
     compile_rich_metadata_preview,
+    select_automatic_taxonomy_candidate,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
@@ -478,15 +479,42 @@ def preview_policy(
                                 and (
                                     before.source_candidate_id is not None
                                     or after.source_candidate_id is not None
-                                    or any(
-                                        result.alternatives
-                                        for compiled in compiled_pair
-                                        for result in compiled.results
-                                        if result.destination.value
-                                        == {
-                                            "description_fill": "description",
-                                            "isbn_form": "isbn",
-                                        }.get(before.field, before.field)
+                                    or (
+                                        {
+                                            active_destinations[before.field],
+                                            resolved_destinations[after.field],
+                                        }
+                                        == {"ask", "automatic"}
+                                        and before.field in {"genres", "tags"}
+                                        and any(
+                                            projected.outcome == "no_op"
+                                            and projected.reason == "target_preserved"
+                                            and projected.option == "fill_empty"
+                                            and projected.target_state == "value"
+                                            and select_automatic_taxonomy_candidate(
+                                                report,
+                                                result,
+                                                projected.field,
+                                                projected.option,
+                                            )[0]
+                                            is not None
+                                            for route, projected, compiled in (
+                                                (
+                                                    active_destinations[before.field],
+                                                    before,
+                                                    compiled_pair[0],
+                                                ),
+                                                (
+                                                    resolved_destinations[after.field],
+                                                    after,
+                                                    compiled_pair[1],
+                                                ),
+                                            )
+                                            if route == "automatic"
+                                            for result in compiled.results
+                                            if result.destination.value
+                                            == projected.field
+                                        )
                                     )
                                 )
                             ),
@@ -494,7 +522,7 @@ def preview_policy(
                         for before, after in zip(old.fields, new.fields, strict=True)
                     ),
                 )
-                for old, new, (_, proposal), compiled_pair in zip(
+                for old, new, (report, proposal), compiled_pair in zip(
                     active_cases, cases, pairs, compiled_pairs, strict=True
                 )
             )

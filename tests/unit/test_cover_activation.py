@@ -199,6 +199,52 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         automatic = CoverAutomaticDecision.from_json(
             json.loads(selection_rows[0][0])["decision_document"]
         )
+        assert automatic.policy_option == option
+        assert automatic.qualification_identity is None
+        assert (
+            json.loads(automatic.to_json())["schema_version"]
+            == "cover-automatic-decision-v3"
+        )
+        assert CoverAutomaticDecision.from_json(automatic.to_json()) == automatic
+        other = CoverAutomaticDecision.create(
+            **(
+                automatic._core()
+                | {
+                    "rank_key": automatic.rank_key,
+                    "citation_ids": automatic.citation_ids,
+                    "policy_option": "replace_if_strictly_better"
+                    if option == "fixed_source_order"
+                    else "fixed_source_order",
+                }
+            ),
+            occurred_at=automatic.occurred_at,
+        )
+        assert (other.decision_id, other.idempotency_digest, other.rule_id) != (
+            automatic.decision_id,
+            automatic.idempotency_digest,
+            automatic.rule_id,
+        )
+        from mechanical_librarian.adapters.persistence.field_effect_validation import (
+            _cover_automatic_decision_value,
+        )
+
+        consideration = repository._connection.execute(
+            "SELECT document FROM cover_considerations WHERE consideration_id=?",
+            (automatic.consideration_id,),
+        ).fetchone()[0]
+        case_document = repository._connection.execute(
+            "SELECT document FROM review_cases WHERE review_case_id=?",
+            (automatic.review_case_id,),
+        ).fetchone()[0]
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            _cover_automatic_decision_value(
+                repository._connection,
+                other,
+                ReviewCase.from_json(case_document),
+                report,
+                proposal,
+                consideration,
+            )
         authority = PersistedFieldEffectAuthority(repository)
         snapshot = authority.resolve(automatic)
         repository.grant_field_effect_consents(
@@ -252,6 +298,28 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
         )["events"]
         supervisor.stop()
         repository.close()
+        reopened = open_repository(database)
+        try:
+            retained = reopened._connection.execute(
+                "SELECT document FROM cover_selection_authorities WHERE decision_id=?",
+                (automatic.decision_id,),
+            ).fetchone()[0]
+            assert (
+                CoverAutomaticDecision.from_json(
+                    json.loads(retained)["decision_document"]
+                ).policy_option
+                == option
+            )
+            assert reopened.get_field_effect(operation.plan.plan_id).state == "verified"
+            events = reopened.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=25
+            )["events"]
+            assert any(
+                event.get("record", {}).get("policy_option") == option
+                for event in events
+            )
+        finally:
+            reopened.close()
 
 
 def test_selected_original_reaches_verified_guarded_fake_service_application() -> None:
@@ -625,3 +693,95 @@ def test_artifact_recovery_borrower_shares_admission_without_holding_it_for_file
         supervisor.stop()
         repository.close()
     assert failures == []
+
+
+def test_cover_decision_v3_binds_option_and_rejects_v2_and_tampering():
+    from mechanical_librarian.domain.automatic_decision import AutomaticDecisionError
+    from mechanical_librarian.domain.cover_automatic_decision import (
+        parse_automatic_authority,
+    )
+
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/cover-authority-v2.json").read_text()
+    )
+    prior = fixture["decisions"][0]
+    with pytest.raises(AutomaticDecisionError):
+        parse_automatic_authority(prior)
+    raw = json.loads(prior)
+    arguments = {
+        name: raw[name]
+        for name in CoverAutomaticDecision.__dataclass_fields__
+        if name not in {"decision_id", "idempotency_digest"}
+    }
+    arguments.update(
+        rank_key=tuple(raw["rank_key"]),
+        citation_ids=tuple(raw["citation_ids"]),
+        policy_option="replace_if_strictly_better",
+    )
+    current = CoverAutomaticDecision.create(**arguments)
+    assert parse_automatic_authority(current.to_json()) == current
+    for bad in (None, "unknown", "replace_if_strictly_better:audiobook_cover_fill"):
+        with pytest.raises(AutomaticDecisionError):
+            CoverAutomaticDecision.create(**(arguments | {"policy_option": bad}))
+    for bad in (None, "unknown", "fixed_source_order"):
+        altered = json.loads(current.to_json())
+        altered["policy_option"] = bad
+        with pytest.raises(AutomaticDecisionError):
+            parse_automatic_authority(
+                json.dumps(altered, sort_keys=True, separators=(",", ":"))
+            )
+    altered.pop("policy_option")
+    with pytest.raises(AutomaticDecisionError):
+        parse_automatic_authority(
+            json.dumps(altered, sort_keys=True, separators=(",", ":"))
+        )
+    from mechanical_librarian.domain.audiobook_decision_qualification import (
+        F46_IDENTITIES_BY_DESTINATION,
+    )
+
+    identity = next(iter(F46_IDENTITIES_BY_DESTINATION["cover"]))
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.create(
+            **(arguments | {"qualification_identity": identity})
+        )
+
+
+@pytest.mark.parametrize(
+    "nested",
+    (
+        None,
+        "{}",
+        '{"schema_version":null}',
+        '{"schema_version":"cover-automatic-decision-v2"}',
+        "broken",
+    ),
+)
+def test_cover_selection_sql_requires_explicit_current_automatic_document(nested):
+    import sqlite3
+
+    from mechanical_librarian.adapters.persistence.schema import (
+        _COVER_SELECTION_AUTHORITIES_SQL,
+    )
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        connection.execute(_COVER_SELECTION_AUTHORITIES_SQL)
+        document = {} if nested is None else {"decision_document": nested}
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO cover_selection_authorities VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "cover_selection_" + "a" * 64,
+                    "primary",
+                    "ebooks",
+                    "item",
+                    "automatic",
+                    "automatic_decision_" + "b" * 64,
+                    "consideration",
+                    None,
+                    1,
+                    json.dumps(document),
+                ),
+            )
+    finally:
+        connection.close()

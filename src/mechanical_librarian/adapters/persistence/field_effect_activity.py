@@ -445,6 +445,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     if consideration_row is None:
                         raise FieldEffectError("authority_binding")
                     value = _cover_automatic_decision_value(
+                        self._connection,
                         automatic,
                         case,
                         MetadataReport.from_json(report_row[0]),
@@ -2121,6 +2122,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         if cover_rows is None:
                             raise FieldEffectError("authority_binding")
                         selected_value = _cover_automatic_decision_value(
+                            self._connection,
                             projected_automatic,
                             ReviewCase.from_json(cover_rows[0]),
                             MetadataReport.from_json(automatic_report_document),

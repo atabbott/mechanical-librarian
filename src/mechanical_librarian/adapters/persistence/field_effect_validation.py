@@ -616,6 +616,7 @@ def _automatic_decision_value(
 
 
 def _cover_automatic_decision_value(
+    connection: sqlite3.Connection,
     decision: CoverAutomaticDecision,
     case: ReviewCase,
     report: MetadataReport,
@@ -623,6 +624,23 @@ def _cover_automatic_decision_value(
     consideration_document: str,
 ) -> object:
     """Bind qualified cover authority to its exact current consideration."""
+    resolution = connection.execute(
+        "SELECT document FROM metadata_policy_resolutions WHERE resolved_policy_id=? "
+        "AND generation=? AND library_name=?",
+        (
+            decision.resolved_policy_id,
+            decision.policy_generation,
+            report.target.library,
+        ),
+    ).fetchone()
+    if resolution is None:
+        raise FieldEffectError("authority_binding")
+    resolved = json.loads(resolution[0])
+    if (
+        resolved["options"]["cover_order"] != decision.policy_option.split(":", 1)[0]
+        or resolved["destinations"]["cover_order"] != "automatic"
+    ):
+        raise FieldEffectError("authority_binding")
     material_replacement = (
         report.audio is not None
         and decision.policy_option.split(":", 1)[0] == "replace_if_strictly_better"
@@ -669,6 +687,18 @@ def _cover_automatic_decision_value(
     except (KeyError, StopIteration, TypeError, json.JSONDecodeError) as error:
         raise FieldEffectError("authority_binding") from error
     policy_report = json.loads(consideration["policy_report_document"])
+    if report.audio is None and decision.policy_option == "replace_if_strictly_better":
+        target = canonical_target_fields(report.target.fields)[TargetDestination.COVER]
+        if (
+            target.state
+            not in {
+                TargetFieldState.MISSING,
+                TargetFieldState.NULL,
+                TargetFieldState.EMPTY,
+            }
+            or policy_report.get("actual_target_state") != "known_empty"
+        ):
+            raise FieldEffectError("authority_binding")
     if material_replacement and (
         policy_report.get("actual_target_state") != "confirmed"
         or policy_report.get("owner_ready") is not True
@@ -853,7 +883,12 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                 if consideration_row is None:
                     raise FieldEffectError("persistence")
                 value = _cover_automatic_decision_value(
-                    decision, case, report, proposal_set, consideration_row[0]
+                    connection,
+                    decision,
+                    case,
+                    report,
+                    proposal_set,
+                    consideration_row[0],
                 )
             else:
                 if source_outcome is None:

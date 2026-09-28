@@ -560,3 +560,124 @@ def test_capture_rejects_malformed_or_incompatible_inputs(tmp_path, corruption) 
         assert not repository._connection.in_transaction
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize("contradictory", (False, True))
+@pytest.mark.parametrize(
+    "active_route,draft_route", (("ask", "automatic"), ("automatic", "ask"))
+)
+def test_preserved_genre_routing_requires_qualified_work_evidence(
+    tmp_path, contradictory, active_route, draft_route
+):
+    from dataclasses import replace
+
+    from mechanical_librarian.application.metadata_policy import preview_policy
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        ClaimKind,
+        ClaimScope,
+        TargetDestination,
+        TargetField,
+        TargetFieldState,
+    )
+    from tests.support.proposal_evidence import (
+        _claim,
+        _target_work_candidate,
+        _target_work_report,
+    )
+
+    candidate = _target_work_candidate("catalogue", "edition-1", "work-1")
+    candidate = replace(
+        candidate,
+        claims=(
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.TITLE,
+                "Different Book" if contradictory else "Real Tigers",
+                scope=ClaimScope.WORK,
+            ),
+            _claim(
+                "catalogue",
+                "edition-1",
+                ClaimKind.CREATOR,
+                "Other Author" if contradictory else "Mick Herron",
+                scope=ClaimScope.WORK,
+                role="author",
+            ),
+            *(
+                claim
+                for claim in candidate.claims
+                if claim.kind not in {ClaimKind.TITLE, ClaimKind.CREATOR}
+            ),
+        ),
+    )
+    source = _target_work_report(
+        (("catalogue", "hardcover", (candidate,), True),),
+        target_authors=("Mick Herron",),
+    )
+    report = MetadataReport.create(
+        target=TargetFacts(
+            source.target.connection,
+            source.target.library,
+            source.target.item,
+            tuple(
+                TargetField(
+                    TargetDestination.GENRES, TargetFieldState.VALUE, ("Existing",)
+                )
+                if field.destination is TargetDestination.GENRES
+                else field
+                for field in source.target.fields
+            ),
+        ),
+        file=source.file,
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=source.providers,
+        cover_sources=source.cover_sources,
+    )
+    builtin = MetadataPolicyProfile.builtin()
+
+    def profile(route):
+        return MetadataPolicyProfile.create(
+            route,
+            dict(builtin.options) | {"genres": "fill_empty"},
+            dict(builtin.destinations) | {"genres": route},
+        )
+
+    active, draft = profile(active_route), profile(draft_route)
+    resolved = resolve_policy(active, report.target.library)
+    repository = open_repository(tmp_path / "state.sqlite")
+    try:
+        repository.create_metadata_policy_draft(active.canonical_json)
+        repository.activate_metadata_policy(
+            active.policy_id,
+            builtin.policy_id,
+            ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
+            1,
+        )
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(
+            report, resolved.resolved_id, dict(resolved.destinations)
+        )
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+        preview = preview_policy(draft, (report.target.library,), {}, repository)
+        field = next(
+            field
+            for field in preview.libraries[0].comparisons[0].fields
+            if field.draft.field == "genres"
+        )
+        assert field.changed is not contradictory
+        for projected in (field.active, field.draft):
+            assert (
+                projected.outcome,
+                projected.reason,
+                projected.desired_value,
+                projected.source_candidate_id,
+            ) == ("no_op", "target_preserved", ("Existing",), None)
+    finally:
+        repository.close()

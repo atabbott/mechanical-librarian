@@ -2427,26 +2427,20 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         projected_context = page.locator(".cm-policy-projected-context")
         assert projected_context.evaluate("node => node.open") is False
         projected_context.get_by_text(
-            "Unchanged outcomes and projected library context (8)", exact=True
+            "Unchanged outcomes and projected library context (2)", exact=True
         ).click()
         assert projected_context.evaluate("node => node.open") is True
-        projected_context.get_by_text(
-            "fills the empty field with A bounded subtitle", exact=False
-        ).wait_for()
-        projected_context.get_by_text(
-            "Safe visible description <3", exact=False
-        ).wait_for()
-        projected_context.get_by_text(
-            '[{"name":"Old order","sequence":"1"}]', exact=False
-        ).wait_for()
-        projected_context.get_by_text(
-            '["Fantasy"] → ["Fantasy","Epic"]', exact=False
-        ).wait_for()
+        expect(
+            projected_context.get_by_text(re.compile(r"^Policy change\."))
+        ).to_have_count(0)
+        expect(
+            projected_context.get_by_text("Safe visible description <3", exact=False)
+        ).to_have_count(0)
         projected_context.get_by_text(
             "No policy change. Tag handling is off.", exact=False
         ).wait_for()
         projected_context.get_by_text(
-            "Unchanged outcomes and projected library context (8)", exact=True
+            "Unchanged outcomes and projected library context (2)", exact=True
         ).click()
         assert projected_context.evaluate("node => node.open") is False
         page.get_by_role("button", name="Sign out").click()

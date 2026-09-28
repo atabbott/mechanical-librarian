@@ -255,6 +255,26 @@ def compile_rich_metadata_preview(policy: ResolvedMetadataPolicy, report: Metada
     return RichMetadataPreview(report.report_id, proposal.proposal_set_id, policy.resolved_id, previews)
 
 
+def select_automatic_taxonomy_candidate(
+    report: MetadataReport, result: ProposalResult, field: str, option: str,
+) -> tuple[ProposalAlternative | None, _AutomaticWorkEvidence]:
+    """Select qualified taxonomy evidence without changing a preserved target."""
+    retained = _retained_claims(report)
+    evidence = (
+        _automatic_genre_evidence(report, result, retained)
+        if field == "genres"
+        else _automatic_work_evidence(report, result, retained)
+    )
+    candidate = (
+        audiobook_tag_union_candidate(report, result, option)
+        if field == "tags" and report.audio is not None and option in {"fill_empty", "add"}
+        else _nested_audiobook_tags(evidence, retained)
+        if field == "tags" and report.audio is not None
+        else _one_list_candidate(result, evidence.alternatives)
+    )
+    return candidate, evidence
+
+
 def _project(
     field: str,
     option: str,
@@ -352,10 +372,11 @@ def _project(
     ):
         return _preserved(field, option, target, current)
     automatic_work = None
+    taxonomy_candidate = None
     if destination == "automatic":
-        if field == "genres":
-            automatic_work = _automatic_genre_evidence(report, result, retained_claims)
-        elif field in {"description_fill", "tags"}:
+        if field in {"genres", "tags"}:
+            taxonomy_candidate, automatic_work = select_automatic_taxonomy_candidate(report, result, field, option)
+        elif field == "description_fill":
             automatic_work = _automatic_work_evidence(report, result, retained_claims)
     if (
         automatic_work is not None
@@ -436,19 +457,9 @@ def _project(
             destination=destination,
         )
         if field == "series"
-        else audiobook_tag_union_candidate(report, result, option)
-        if field == "tags"
-        and proposal.media_kind == "audiobook"
-        and automatic_work is not None
-        and option in {"fill_empty", "add"}
-        else _nested_audiobook_tags(automatic_work, retained_claims)
-        if field == "tags"
-        and proposal.media_kind == "audiobook"
-        and automatic_work is not None
-        else _one_list_candidate(
-            result,
-            None if automatic_work is None else automatic_work.alternatives,
-        )
+        else taxonomy_candidate
+        if field in {"genres", "tags"} and destination == "automatic"
+        else _one_list_candidate(result)
         if field in {"genres", "tags"}
         else _descriptive_audiobook_subtitle(result, report)
         if field == "subtitle" and proposal.media_kind == "audiobook"

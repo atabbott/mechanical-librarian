@@ -16,13 +16,13 @@
       "title_layout:preserve",
       "title_layout:title_and_subtitle"
     ],
-    "semantic_input_sha256": "f3079f8f2f4f1c980e757f8518f69adc1f98e47c4b6f2ffeefa58606829194dd",
+    "semantic_input_sha256": "a2b92a7b93e70cab984014d182b6d2a65e43cfbfe1ad6f1213e1774e8ea25c7d",
     "semantic_revision": 6
   },
   "predecessor": {
     "path": "docs/reference/f19a-qualification-current.json",
-    "sha256": "f18dcb169df2e4980a15cbe703063c374f308fd2fc02afa774d4baf4a77c60d0",
-    "source_sha": "252f1577047c4d64ac2c18cbf4f725b36814edc5"
+    "sha256": "ca84434a49c278f99c32e7ad941ed6e097e269142c2fec206673b1b24d2df2f8",
+    "source_sha": "9867cdafd5f42f7282980e20b607189826498c11"
   },
   "provenance": "qualification-provenance-current.json",
   "schema": "qualification-current-v1"

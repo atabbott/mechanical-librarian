@@ -819,3 +819,8 @@ History and Evidence use the same available outer width and retain selected
 work/field and return context. Each timestamp belongs to its actual event;
 checkpoint-only lifecycle entries explicitly say that time is unavailable.
 Policy and decision records never imply a verified metadata effect.
+
+Per-media sampled-work counts include every captured case, including unchanged
+works. Changed-field counts include only policy-caused changes. The secondary
+unchanged context excludes changed primary rows. A route change for a preserved
+taxonomy field counts only when the Automatic side has qualified evidence.

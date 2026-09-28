@@ -655,10 +655,14 @@ describe('Policy route', () => {
             {
               library: 'Fiction',
               affected_categories: ['contributor_names'],
-              comparisons: [{ media_kind: 'audiobook', fields: comparisons(caseFields0) }],
-              cases_total: 1,
+              comparisons: [
+                { media_kind: 'audiobook', fields: comparisons(caseFields0) },
+                { media_kind: 'audiobook', fields: comparisons(unchanged.slice(0, 1)) },
+                { media_kind: 'ebook', fields: comparisons(unchanged.slice(0, 1)) },
+              ],
+              cases_total: 3,
               cases_truncated: false,
-              current_unapplied_count: 1,
+              current_unapplied_count: 3,
               resolved_policy_id: 'resolved-policy',
               cases: [
                 {
@@ -668,6 +672,13 @@ describe('Policy route', () => {
                   resolved_policy_id: 'resolved-policy',
                   work_label: 'Recording book',
                 },
+                ...['Unchanged recording', 'Unchanged ebook'].map((work_label, index) => ({
+                  fields: unchanged.slice(0, 1),
+                  proposal_set_id: `unchanged-proposal-${index}`,
+                  report_id: `unchanged-report-${index}`,
+                  resolved_policy_id: 'resolved-policy',
+                  work_label,
+                })),
               ],
             },
           ],
@@ -687,7 +698,19 @@ describe('Policy route', () => {
       await screen.findByText('Policy change', { selector: '.cm-policy-impact > b' }),
     ).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Show 1 more outcome' })).toBeNull()
-    expect(screen.getByText(/Unchanged outcomes and projected library context/)).toBeVisible()
+    expect(screen.getByText('Unchanged outcomes and projected library context (8)')).toBeVisible()
+    expect(
+      screen.getByText(
+        'Ebooks: 1 sampled work · 0 changed fields · Audiobooks: 2 sampled works · 1 changed field',
+      ),
+    ).toBeVisible()
+    await user.click(screen.getByText('Unchanged outcomes and projected library context (8)'))
+    expect(
+      screen.queryByText(/Complete recording cast/, { selector: '.cm-policy-projected-context p' }),
+    ).toBeNull()
+    expect(
+      screen.getAllByText(/No policy change/, { selector: '.cm-policy-projected-context p' }),
+    ).toHaveLength(8)
     expect(
       screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
     ).toBeVisible()

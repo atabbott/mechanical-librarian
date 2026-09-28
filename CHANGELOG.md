@@ -15,7 +15,8 @@
 
 - Ebook cover correction: “Replace if strictly better” fills a known-empty
   cover using existing deterministic admission; it does not replace a confirmed
-  ebook cover. Fixed-source upgrades and audiobook replacement stay unchanged (#1011).
+  ebook cover. Its v3 audit records the actual option; clean rebuild required.
+  Fixed-source upgrades and audiobook replacement stay unchanged (#1011).
 
 - Find books by configured library names and retained titles or authors even
   when preparation fails. Library shows actual field observations, distinct
