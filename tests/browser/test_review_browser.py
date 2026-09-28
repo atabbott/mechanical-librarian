@@ -6933,7 +6933,9 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                             "button", name="Refresh description model status and prices"
                         ).click()
                     assert refreshed.value.status == 200
-                    expect(adviser).to_contain_text("synthetic/description-b. usable.")
+                    expect(adviser).to_contain_text(
+                        "Selected: synthetic/description-b. Advisory availability: usable."
+                    )
                     prices = adviser.locator("dt").filter(
                         has_text=re.compile(r"^Prices in USD$")
                     )
