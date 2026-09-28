@@ -674,8 +674,8 @@ describe('Policy route', () => {
                 },
                 ...['Unchanged recording', 'Unchanged ebook'].map((work_label, index) => ({
                   fields: unchanged.slice(0, 1),
-                  proposal_set_id: `unchanged-proposal-${index}`,
-                  report_id: `unchanged-report-${index}`,
+                  proposal_set_id: `unchanged-proposal-${String(index)}`,
+                  report_id: `unchanged-report-${String(index)}`,
                   resolved_policy_id: 'resolved-policy',
                   work_label,
                 })),
