@@ -1072,8 +1072,10 @@ def test_owner_confirmed_unknown_cover_lifecycle(
         selected_artifact = next(
             source.artifact
             for source in sources
-            if source.artifact.artifact_id == candidates[0]["artifact_id"]
+            if source.artifact is not None
+            and source.artifact.artifact_id == candidates[0]["artifact_id"]
         )
+        assert selected_artifact is not None
         for digest in (
             selected_artifact.original_digest,
             selected_artifact.preview_digest,

@@ -357,28 +357,29 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
     assert 200 == retried.status_code, retried.text
     detail = web.client.get(f"/api/v1/review-cases/{case.review_case_id}").json()
     cover = next(field for field in detail["fields"] if field["destination"] == "cover")
-    record = Mock(wraps=repository.record_human_decision)
-    repository.record_human_decision = record
-    decision = web.client.post(
-        f"/api/v1/review-cases/{case.review_case_id}/decisions",
-        headers={
-            **web.origin,
-            "X-CSRF-Token": str(login["csrf_token"]),
-            "Idempotency-Key": "protected-cover-outcome-0001",
-        },
-        json={
-            "consideration_id": consideration_id,
-            "cover_confirmation": {
-                "expected_selection_id": None,
-                "confirm_unverified_match": False,
+    with patch.object(
+        repository, "record_human_decision", wraps=repository.record_human_decision
+    ) as record:
+        decision = web.client.post(
+            f"/api/v1/review-cases/{case.review_case_id}/decisions",
+            headers={
+                **web.origin,
+                "X-CSRF-Token": str(login["csrf_token"]),
+                "Idempotency-Key": "protected-cover-outcome-0001",
             },
-            "destination": "cover",
-            "outcome": "keep_current",
-            "proposal_id": cover["proposal_id"],
-            "selected_value": None,
-            "target_fingerprint": cover["target_fingerprint"],
-        },
-    )
+            json={
+                "consideration_id": consideration_id,
+                "cover_confirmation": {
+                    "expected_selection_id": None,
+                    "confirm_unverified_match": False,
+                },
+                "destination": "cover",
+                "outcome": "keep_current",
+                "proposal_id": cover["proposal_id"],
+                "selected_value": None,
+                "target_fingerprint": cover["target_fingerprint"],
+            },
+        )
     assert 200 == decision.status_code, decision.text
     covers.validate_decision.assert_not_called()
     assert record.call_args.kwargs == {
