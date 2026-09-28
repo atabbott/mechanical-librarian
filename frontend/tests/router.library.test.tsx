@@ -3524,6 +3524,38 @@ describe('Library route', () => {
     })
 
     cleanup()
+    renderRoute('/library?lens=all&preview=case-1&field=cover', {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async () => ({
+        ...detail,
+        fields: [
+          {
+            ...coverField,
+            humanDecision: {
+              actor: 'owner' as const,
+              application: 'apply' as const,
+              decision_id: 'recorded-cover',
+              destination: 'cover',
+              occurred_at: 1,
+              outcome: 'accept' as const,
+              proposal_id: coverField.proposalId,
+              review_case_id: 'case-1',
+              target_fingerprint: coverField.targetFingerprint,
+              selected_value: { kind: 'cover', value: `cover_${'2'.repeat(64)}` },
+            },
+            coverConsideration: { ...consideration, providerFetching: false, ready: true },
+          },
+        ],
+      })),
+    })
+    expect(
+      await screen.findByText(/This cover choice is not currently available for revision/u),
+    ).toBeVisible()
+    expect(
+      screen.getByLabelText('Choose a cover').querySelectorAll('.library-cover-card:disabled'),
+    ).toHaveLength(6)
+
+    cleanup()
     const recommended = {
       ...consideration,
       providerFetching: false,

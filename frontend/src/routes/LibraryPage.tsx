@@ -1941,8 +1941,10 @@ function LibraryCoverChoicesContent({
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
       {field.humanDecision ? (
         <p className="reviewer-unavailable-detail">
-          Owner choice takes precedence over automation. You can confirm a replacement before
-          application begins.
+          Owner choice takes precedence over automation.{' '}
+          {field.editable
+            ? 'You can confirm a replacement before application begins.'
+            : 'This cover choice is not currently available for revision.'}
         </p>
       ) : field.automaticDecision ? (
         <p className="reviewer-unavailable-detail">
