@@ -2827,7 +2827,7 @@ export default function LibraryPage({
   const staleCoverNotice =
     staleCoverReview?.caseId === selectedReviewCaseId ? (
       <aside className="comparison-notice" role="alert">
-        {!displayedIdentity ? <h2>{staleCoverReview.title}</h2> : null}
+        {!displayedIdentity || detail.isError ? <h2>{staleCoverReview.title}</h2> : null}
         <p>This cover comparison changed before your choice was recorded. No cover was changed.</p>
         {staleCoverReview.failed ? (
           <p>The current comparison could not be loaded. Your prior choice remains unrecorded.</p>

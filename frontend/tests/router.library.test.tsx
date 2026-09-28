@@ -5002,6 +5002,7 @@ describe('Library route', () => {
     ['an explicit recovery with the same consideration', null, false],
     ['an explicit successor-case recovery', 'case-2', false],
     ['an explicit retired-case recovery', 'case-2', false],
+    ['an explicit retired-case recovery with unavailable detail', 'case-2', false],
   ])('retains a stale cover choice and recovers through %s', async (label, successorId, other) => {
     const user = userEvent.setup()
     const directChoice = label.startsWith('a direct')
@@ -5105,6 +5106,8 @@ describe('Library route', () => {
       ),
       getCaseDetail: vi.fn(async (id) => {
         if (!stale || retainSameConsideration) return initial
+        if (label.includes('unavailable detail') && id === initial.id)
+          throw new Error('retired case unavailable')
         if (failRecordedRefresh && successfulDecisions === 1 && !recordedRefreshAvailable) {
           throw new Error('recorded current case refresh unavailable')
         }
