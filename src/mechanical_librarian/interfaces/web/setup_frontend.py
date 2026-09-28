@@ -148,6 +148,12 @@ _AUTHORED_REVIEWER = r"""const renderReviewer=async()=>{
     const start=button(['expired','failed','cancelled','interrupted'].includes(codexState.state)?'Restart device sign-in':'Start device sign-in');start.type='button';start.disabled=blocked;
     start.addEventListener('click',async()=>{if(start.disabled)return;start.disabled=true;check.disabled=true;try{await api('/api/setup/reviewer/codex/device',{method:'POST',body:JSON.stringify({expected_revision:access.revision}),mutation:true});start.remove();check.remove();await follow()}catch(e){start.disabled=blocked;check.disabled=blocked;failed(e)}});codex.append(check,start);
   }
+  if(blocked){
+    const cancel=button('Cancel any active sign-in');cancel.type='button';
+    const feedback=document.createElement('p');feedback.setAttribute('role','status');
+    cancel.addEventListener('click',async()=>{if(cancel.disabled)return;cancel.disabled=true;try{const result=await api('/api/setup/reviewer/codex/device/cancel',{method:'POST',body:'{}',mutation:true});feedback.textContent=result.state==='cancelled'?'Any active sign-in was cancelled.':['ready','usable'].includes(result.state)?'No active sign-in remains.':'Cancellation could not be confirmed. Retry or ask the deployment owner to inspect the reviewer.'}catch(e){failed(e)}finally{cancel.disabled=false}});
+    codex.append(cancel,feedback);
+  }
   form.append(codex);
   const router=document.createElement('div');router.className='option';
   const routerHeading=document.createElement('h3');routerHeading.textContent='OpenRouter';

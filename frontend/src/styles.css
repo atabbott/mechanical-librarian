@@ -1077,6 +1077,10 @@ html[data-reduced-motion='always-reduced'] .preparation-run-state { animation:no
   height: 1rem;
 }
 
+.settings-reviewer { container-type:inline-size; }
+@container (max-width:44rem) {
+  .settings-reviewer .settings-field-row { grid-template-columns:minmax(0,1fr); }
+}
 .settings-reviewer h3 { margin:0; font-size:1.05rem; line-height:1.35; }
 .settings-reviewer h4 { margin:0; font-size:.9rem; line-height:1.4; }
 .settings-reviewer-actions,.settings-reviewer-suggestions,.settings-reviewer-suggestions li { display:grid; gap:.5rem; min-width:0; }

@@ -1580,3 +1580,24 @@ it.each([
     expect(screen.getByRole('button', { name: 'Continue without a reviewer' })).toBeEnabled()
   },
 )
+
+it.each([
+  ['cancelled', 'Any active sign-in was cancelled.'],
+  ['ready', 'No active sign-in remains.'],
+  ['failed', 'Cancellation could not be confirmed.'],
+])('keeps cancellation reachable after blocked reload: %s', async (state, message) => {
+  const fetch = vi.fn(async (request: RequestInfo | URL) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/device/cancel')) return response({ state })
+    if (url.endsWith('/reviewer-access'))
+      return response(reviewerAccess('not_provisioned', 'profile_not_provisioned'))
+    if (url.endsWith('/device')) throw new Error('blocked recovery must not probe authentication')
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel any active sign-in' }))
+  expect(await screen.findByText(new RegExp(message.replaceAll('.', '\\.')))).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Start device sign-in' })).toBeDisabled()
+  expect(screen.getByText('Status: not provisioned')).toBeVisible()
+})

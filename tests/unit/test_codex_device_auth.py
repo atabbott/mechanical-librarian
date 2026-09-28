@@ -1185,6 +1185,7 @@ def test_lazy_passive_status_does_not_construct_codex_authority() -> None:
     lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
 
     assert lazy.passive_status() == CodexDeviceAuthState("ready")
+    assert lazy.cancel() == CodexDeviceAuthState("ready")
     factory.assert_not_called()
 
 
@@ -1416,3 +1417,33 @@ def test_actual_device_directories_resume_setup_after_install_and_cancel(tmp_pat
             )
     finally:
         manager.close()
+
+
+def test_lazy_cancel_uses_existing_manager_after_profile_disappears(
+    tmp_path, monkeypatch
+):
+    profile = tmp_path / "deployment-profile"
+    profile.write_bytes(b"synthetic-profile")
+    manager = _manager(tmp_path)
+    calls = []
+
+    def factory(_lease, _guard):
+        calls.append(profile.read_bytes())
+        return manager
+
+    lazy = _LazyCodexAuth(factory, _CodexAuthLeaseCoordinator())
+    assert lazy.status().state == "ready"
+    profile.unlink()
+    process = cast("subprocess.Popen[bytes]", _Process(b"", 0))
+    process.returncode = None
+    manager._process = process
+    manager._process_group = process_groups.ReviewerProcessGroup(
+        process.pid, process.pid, "1"
+    )
+    manager._state = CodexDeviceAuthState("waiting")
+    killed = []
+    monkeypatch.setattr(os, "killpg", lambda pid, sig: killed.append((pid, sig)))
+    assert lazy.cancel().state == "cancelled"
+    assert killed == [(123456789, 15)]
+    assert calls == [b"synthetic-profile"]
+    assert manager._process is None and manager._process_group is None

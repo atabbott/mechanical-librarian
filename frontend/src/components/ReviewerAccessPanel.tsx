@@ -280,7 +280,11 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                   )}
                 </p>
               ) : null}
-              <button type="button" onClick={() => mutation.mutate({ kind: 'codex-cancel' })}>
+              <button
+                type="button"
+                disabled={mutation.isPending}
+                onClick={() => mutation.mutate({ kind: 'codex-cancel' })}
+              >
                 Cancel sign-in
               </button>
             </>
@@ -372,6 +376,24 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               </button>
             </>
           )}
+          {hostUnsupported && !waiting ? (
+            <button
+              type="button"
+              disabled={mutation.isPending}
+              onClick={() => mutation.mutate({ kind: 'codex-cancel' })}
+            >
+              Cancel any active sign-in
+            </button>
+          ) : null}
+          {hostUnsupported && mutation.isSuccess && mutation.variables.kind === 'codex-cancel' ? (
+            <p role="status">
+              {device?.state === 'cancelled'
+                ? 'Any active sign-in was cancelled.'
+                : device?.state === 'ready' || device?.state === 'usable'
+                  ? 'No active sign-in remains.'
+                  : 'Cancellation could not be confirmed. Retry or ask the deployment owner to inspect the reviewer.'}
+            </p>
+          ) : null}
           {mutation.isError && mutation.variables.kind.startsWith('codex') ? (
             <p role="alert">{mutationFailure}</p>
           ) : null}

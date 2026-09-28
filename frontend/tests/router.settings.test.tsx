@@ -1405,3 +1405,38 @@ it.each(['clear', 'start'] as const)(
     expect(command === 'clear' ? http.startCodexDevice : http.clearCodex).not.toHaveBeenCalled()
   },
 )
+
+it.each([
+  ['cancelled', 'Any active sign-in was cancelled.'],
+  ['ready', 'No active sign-in remains.'],
+] as const)(
+  'keeps blocked reload cancellation available without probing credentials: %s',
+  async (state, message) => {
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.getReviewerAccess = vi.fn(async () => ({
+      ...reviewerView,
+      codex: {
+        ...reviewerView.codex,
+        state: 'not_provisioned' as const,
+        reason: 'profile_not_provisioned' as const,
+        model: null,
+      },
+    }))
+    http.cancelCodexDevice = vi.fn(async () => ({
+      state,
+      verification_url: null,
+      user_code: null,
+      expires_in_seconds: null,
+      failure: null,
+    }))
+    renderRoute('/settings?group=reviewer', http)
+    await userEvent
+      .setup()
+      .click(await screen.findByRole('button', { name: 'Cancel any active sign-in' }))
+    expect(await screen.findByText(message)).toBeVisible()
+    expect(http.getCodexDevice).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Replace or create Codex sign-in' })).toBeDisabled()
+    expect(screen.getByText('Advisory availability: not provisioned')).toBeVisible()
+  },
+)

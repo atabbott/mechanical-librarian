@@ -3973,8 +3973,11 @@ class _UnavailableCodexAuth:
     def _state(self) -> CodexDeviceAuthState:
         return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
-    start = status = cancel = clear = current_credential_status = _state
+    start = status = clear = current_credential_status = _state
     recheck_credential_status = _state
+
+    def cancel(self) -> CodexDeviceAuthState:
+        return CodexDeviceAuthState("ready")
 
     def passive_status(self) -> CodexDeviceAuthState:
         return CodexDeviceAuthState("ready")
@@ -4062,7 +4065,15 @@ class _LazyCodexAuth:
         return CodexDeviceAuthState("ready") if manager is None else manager.status()
 
     def cancel(self) -> CodexDeviceAuthState:
-        return self._state("cancel")
+        # Cleanup never constructs authority or activates another generation.
+        with self._lock:
+            manager = self._manager
+        if manager is None:
+            return CodexDeviceAuthState("ready")
+        try:
+            return manager.cancel()
+        except (OSError, ValueError, CodexDeviceAuthError):
+            return CodexDeviceAuthState("failed", failure="permission_or_profile")
 
     def clear(self) -> CodexDeviceAuthState:
         return self._get().clear()

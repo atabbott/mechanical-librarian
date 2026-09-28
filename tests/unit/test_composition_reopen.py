@@ -950,6 +950,7 @@ def test_composed_provisioning_precedes_host_and_refuses_current_drift(
         assert view.codex.reason == reason
         assert view.codex.model is None
         assert view.mapping is None and view.description_mapping is None
+        assert operations.cancel_codex().state == "ready"
     finally:
         operations.close()
         repository.close()
