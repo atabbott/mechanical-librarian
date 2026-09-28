@@ -765,6 +765,10 @@ class CoverConsiderationService:
 
         return publish()
 
+    def refresh_authority(self) -> None:
+        """Bind a fresh reviewer snapshot before entering a decision transaction."""
+        self._bind_policy(*self.current_authority())
+
     def current_authority(self) -> tuple[str, str]:
         """Capture one published policy with its externally observed reviewer identity."""
         policy = self._policy

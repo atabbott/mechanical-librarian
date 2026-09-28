@@ -1610,3 +1610,114 @@ def test_active_cover_acquisition_has_collection_detail_attention_parity(tmp_pat
         assert all(item["destination"] != "cover" for item in attention.items)
     finally:
         fixture.close()
+
+
+@pytest.mark.parametrize("settings_first", [False, True])
+def test_cover_confirmation_refreshes_reviewer_authority_before_transaction(
+    tmp_path, monkeypatch, settings_first
+):
+    from concurrent.futures import ThreadPoolExecutor
+
+    from mechanical_librarian.application.review_web import ReviewWebError
+    from tests.unit.test_reviewer_access_application import _OpenRouter
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 1)
+    entered, release, competing = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    try:
+        access = fixture.reviewer_access
+        monkeypatch.setattr(
+            access,
+            "_openrouter_factory",
+            lambda key, model: _OpenRouter(key, model, []),
+        )
+        access.configure_openrouter(
+            expected_revision=1, api_key="synthetic", model="example/cover"
+        )
+        case = fixture.cases[0]
+        before = fixture.application.prepare_cover_consideration(case.review_case_id)
+        proposal = next(p for p in case.proposals if p["destination"] == "cover")
+        proposal_id = proposal["proposal_id"]
+        assert type(proposal_id) is str
+        selected = next(c for c in before["candidates"] if not c["incumbent"])
+        identity = fixture.covers._reviewer_identity
+        assert identity is not None
+        calls = []
+
+        def observed_identity():
+            assert not fixture.repository._connection.in_transaction
+            calls.append("identity")
+            if not settings_first and not entered.is_set():
+                entered.set()
+                assert release.wait(5)
+            return identity()
+
+        monkeypatch.setattr(fixture.covers, "_reviewer_identity", observed_identity)
+
+        def choose(consideration, key):
+            return fixture.application.record_decision(
+                case.review_case_id,
+                proposal_id=proposal_id,
+                target_fingerprint=case.target_fingerprint,
+                destination="cover",
+                actor="owner",
+                outcome="accept",
+                selected_value={"kind": "cover", "value": selected["artifact_id"]},
+                idempotency_key=key,
+                consideration_id=consideration["consideration_id"],
+                cover_confirmation={
+                    "expected_selection_id": None,
+                    "confirm_unverified_match": False,
+                },
+            )
+
+        def disable():
+            if settings_first:
+
+                def held():
+                    result = access.select_none(expected_revision=2)
+                    entered.set()
+                    assert release.wait(5)
+                    return result
+
+                return fixture.application.serialized(held)
+            competing.set()
+            return access.select_none(expected_revision=2)
+
+        def old_choice():
+            if settings_first:
+                competing.set()
+            return choose(before, "reviewer-race-owner-0001")
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(disable if settings_first else old_choice)
+            assert entered.wait(5)
+            second = pool.submit(old_choice if settings_first else disable)
+            assert competing.wait(5)
+            assert not second.done()
+            release.set()
+            first.result(timeout=5)
+            if settings_first:
+                with pytest.raises(ReviewWebError, match="stale"):
+                    second.result(timeout=5)
+                assert fixture.repository._connection.execute(
+                    "SELECT count(*) FROM cover_selection_authorities"
+                ).fetchone() == (0,)
+                fresh = fixture.application.prepare_cover_consideration(
+                    case.review_case_id
+                )
+                assert fresh["consideration_id"] != before["consideration_id"]
+                choose(fresh, "reviewer-fresh-owner-0002")
+            else:
+                second.result(timeout=5)
+        assert calls
+        assert fixture.repository._connection.execute(
+            "SELECT count(*) FROM cover_selection_authorities"
+        ).fetchone() == (1,)
+        assert not fixture.repository._connection.in_transaction
+    finally:
+        release.set()
+        fixture.close()

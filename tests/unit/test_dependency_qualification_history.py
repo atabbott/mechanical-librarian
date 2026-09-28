@@ -129,6 +129,10 @@ def test_revision_three_documents_decode_without_current_authority(family):
             "before-cover-cli-confirmation.json",
             "7d9d6f7c1719b101d1cf9dfe0172b1e0a55589df",
         ),
+        (
+            "before-cover-reviewer-refresh.json",
+            "a0524f913de8282fff74ffd967c3bd1521e1b32a",
+        ),
         ("before-reviewer-setup.json", "d706d4b3d761f4711e8c14df2b78fe25e5bef2ef"),
         ("before-reviewer-clear.json", "d5751c7723cc3bcb17bc2d560c9b74ae7e0f56e8"),
         ("before-reviewer-inventory.json", "6ba4beb4ea27794517693b8b034295031c9b29cd"),

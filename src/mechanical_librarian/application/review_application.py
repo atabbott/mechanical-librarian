@@ -974,6 +974,8 @@ class ReviewApplication:
             raise ReviewApplicationError("cover_consideration_required")
 
         def record() -> dict[str, object]:
+            if destination == "cover" and self._cover_considerations is not None:
+                self._cover_considerations.refresh_authority()
             result = self._decisions.run(
                 review_case_id,
                 proposal_id=proposal_id,

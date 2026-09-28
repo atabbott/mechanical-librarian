@@ -312,6 +312,10 @@ infers that confirmation. Retry an uncertain command with its original key,
 selection baseline, artifact and confirmation flag, rather than silently using a
 new baseline. Existing provider recovery state is read-only and active cover
 acquisition refuses a choice; absent recovery state is not created.
+Changing reviewer configuration makes older comparisons stale. Prepare the current
+comparison before confirming; continuing without a reviewer still permits eligible
+owner choices. The decision captures current reviewer authority before its write
+transaction, under the same command gate as Settings changes.
 
 `review-activity` projects the same bounded guarded plan,
 verification, stale, failure, and recovery ledger as authenticated Activity and
