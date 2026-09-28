@@ -160,6 +160,7 @@ export const activity = (
         event_id: eventId,
         event_type: 'review',
         category: 'owner',
+        occurredAt: 1786000000,
         applicationReason: null,
         change: 'Not set \u2192 9780060512750',
         change_detail: 'Set ISBN from Not set to 9780060512750',

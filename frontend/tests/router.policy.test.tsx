@@ -2,9 +2,15 @@ import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../src/api/http'
+import {
+  AmbiguousMutationError,
+  ApiError,
+  BuildMismatchError,
+  ReviewApiClient,
+} from '../src/api/http'
 import type {
   PolicyStateView,
+  PolicyPreviewView,
   PreparationView,
   ReviewHttp,
   ShadowPostureView,
@@ -12,6 +18,15 @@ import type {
 import { normalizePolicySearch } from '../src/router'
 import { createHttp, inertAudiobookQualification, renderRoute } from './fixtures'
 import { view } from './settingsFixtures'
+
+const comparisons = (fields: PolicyPreviewView['libraries'][number]['cases'][number]['fields']) =>
+  fields.map((draft) => ({
+    active: { ...draft, desired_value: draft.current_value, qualified_value: draft.current_value },
+    draft,
+    active_destination: 'ask',
+    draft_destination: 'automatic',
+    changed: draft.desired_value !== draft.current_value,
+  }))
 
 describe('Policy route', () => {
   it('explains empty-series filling, fill and explicit add/replace representations and provider numbering limits', async () => {
@@ -65,7 +80,7 @@ describe('Policy route', () => {
     expect(await screen.findByRole('heading', { name: 'Library policy' })).toBeVisible()
     // The fresh container's seeded generation-1 row is the active baseline, not
     // an update the owner completed over zero items.
-    expect(await screen.findByText(/^Active baseline ·/u)).toBeVisible()
+    expect(await screen.findByText(/^Active baseline$/u)).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Activation complete' })).toBeNull()
     expect(screen.queryByText(/Policy update complete/u)).toBeNull()
     expect(screen.queryByText(/0 of 0/u)).toBeNull()
@@ -92,7 +107,7 @@ describe('Policy route', () => {
     ).toBeVisible()
     expect(screen.getByRole('button', { name: 'Retry failed reconciliation' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Dismiss update' })).toBeVisible()
-    expect(screen.getByText(/^Active policy ·/u)).toBeVisible()
+    expect(screen.getByText(/^Active policy$/u)).toBeVisible()
   })
 
   it('does not carry a clean completion into an unrelated session', async () => {
@@ -103,7 +118,7 @@ describe('Policy route', () => {
     }
     renderRoute('/policy', http)
 
-    expect(await screen.findByText(/^Active policy ·/u)).toBeVisible()
+    expect(await screen.findByText(/^Active policy$/u)).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'Activation complete' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dismiss update' })).toBeNull()
   })
@@ -131,7 +146,7 @@ describe('Policy route', () => {
     )
     expect(screen.getByText('Draft matches active policy.')).toBeVisible()
     expect(screen.getByText('Draft matches the active policy')).toBeVisible()
-    expect(screen.getByText(/^Active policy · draft matches active$/u)).toBeVisible()
+    expect(screen.getByText(/^Active policy$/u)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Validate and preview' })).toBeDisabled()
   })
 
@@ -188,6 +203,12 @@ describe('Policy route', () => {
     const asin = await screen.findByRole('region', { name: 'ASIN' })
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic mode not supported')).toBeNull()
+    expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+      'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
+    )
+    expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+      'Audiobooks: Ask me — owner choice required. Automatic eligibility if selected: Asin: fill',
+    )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
     expect(within(asin).getByText(/Replace a valid ASIN — Review required/u)).toBeVisible()
@@ -197,6 +218,12 @@ describe('Policy route', () => {
     await user.click(within(asin).getByRole('combobox', { name: 'ASIN representation' }))
     await user.click(screen.getByRole('option', { name: 'Ebook manifestation' }))
     expect(within(asin).getByText('Automatic mode not supported')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Identity How a work/ }))
+    const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+    expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
+    expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+      'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
+    )
   })
 
   it('presents Policy as a semantic notebook and preserves guarded activation currentness', async () => {
@@ -234,7 +261,17 @@ describe('Policy route', () => {
     let validationCalls = 0
     let draftSaves = 0
     let activePolicyId = 'opaque-policy-identity'
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- Vitest retains the body in mock.calls assertions.
+    const staleResponse = vi.fn(async () =>
+      Response.json(
+        { schema_version: 'review-error-v1', error: { code: 'policy_activation_is_stale' } },
+        { status: 409 },
+      ),
+    )
+    const transport = new ReviewApiClient({
+      buildIdentity: 'a'.repeat(64),
+      csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+      fetch: staleResponse,
+    })
     const policyCommand = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
       if (path === 'validate' && ++validationCalls === 1) throw new ApiError(422, 'invalid_policy')
       if (path === 'drafts' && ++draftSaves > 1) throw new AmbiguousMutationError()
@@ -246,11 +283,13 @@ describe('Policy route', () => {
           active_policy_id: activePolicyId,
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [
             {
               library: 'Hostile <script> library',
               affected_categories: ['title_layout', 'tags'],
               cases: [],
+              comparisons: [],
               cases_total: 0,
               cases_truncated: false,
               current_unapplied_count: 3,
@@ -259,7 +298,7 @@ describe('Policy route', () => {
           ],
         }
       }
-      if (path === 'activate') throw new ApiError(409, 'policy_activation_is_stale')
+      if (path === 'activate') return transport.policyCommand(path, body)
       return { policy_id: 'policy-valid', schema_version: 'metadata-policy-profile-v3' }
     })
     const http: ReviewHttp = {
@@ -278,6 +317,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'subtitle',
             option: 'fill_empty',
@@ -285,6 +325,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'not_qualified',
             field: 'subtitle',
             option: 'corroborated_split',
@@ -292,6 +333,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'series',
             option: 'primary_narrative',
@@ -299,6 +341,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'series',
             option: 'source_order',
@@ -306,6 +349,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'series',
             option: 'all_qualified',
@@ -313,6 +357,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'genres',
             option: 'fill_empty',
@@ -320,6 +365,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'policy_only',
             field: 'tags',
             option: 'off',
@@ -327,6 +373,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'isbn_form',
             option: 'preserve_exact',
@@ -334,6 +381,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'isbn_form',
             option: 'prefer_isbn13',
@@ -341,6 +389,7 @@ describe('Policy route', () => {
           {
             automatic_available: true,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'fill',
             disposition: 'passing_automatic',
             field: 'description_fill',
             option: 'safe_plain_text',
@@ -348,6 +397,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'not_qualified',
             field: 'description_fill',
             option: 'google_visible_text',
@@ -355,6 +405,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'insufficient_coverage',
             field: 'asin',
             option: 'preserve_exact',
@@ -362,6 +413,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'insufficient_coverage',
             field: 'asin',
             option: 'ebook_manifestation',
@@ -369,6 +421,7 @@ describe('Policy route', () => {
           {
             automatic_available: false,
             candidate_sha256: 'a'.repeat(64),
+            operation_scope: 'none',
             disposition: 'passing_human_only',
             field: 'explicit',
             option: 'unsupported',
@@ -496,20 +549,30 @@ describe('Policy route', () => {
     ).toBeEnabled()
     expect(within(explicit).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(screen.queryByRole('region', { name: 'Title and subtitle' })).toBeNull()
-    expect(screen.getAllByText(/draft has unreviewed changes/u).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Draft has unreviewed changes/u).length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText('The draft is not valid. Review its field choices and try again.'),
     ).toBeVisible()
+    const failure = screen.getByRole('alert')
+    expect(failure).toHaveFocus()
+    expect(failure.closest('.cm-policy-finish')).not.toBeNull()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
       await screen.findByText('Impact preview is current. The active policy is unchanged.'),
     ).toBeVisible()
     expect(await screen.findByText('Hostile <script> library')).toBeVisible()
     expect(screen.getByText(/Title and subtitle, Tags/)).toBeVisible()
-    expect(screen.getByText('Needs review', { selector: '.cm-policy-impact > b' })).toBeVisible()
     expect(
-      screen.getByText('· No sampled field outcome; 3 current unapplied works remain to inspect'),
+      screen.getByText('No policy-caused changes in this sample', {
+        selector: '.cm-policy-impact > b',
+      }),
+    ).toBeVisible()
+    expect(
+      screen.getByText(
+        '· 3 current unapplied works remain; unchanged outcomes are separate context',
+      ),
     ).toBeVisible()
     const stateCallsBeforeChange = vi.mocked(http.getPolicyState).mock.calls.length
     // Simulate A → B during preview, then B → A before activation. The
@@ -535,7 +598,9 @@ describe('Policy route', () => {
     expect(policyCommand).toHaveBeenCalledWith('activate', {
       policy_id: 'policy-draft',
       expected_active_policy_id: 'policy-preview-authority',
+      expected_active_generation: 1,
     })
+    expect(staleResponse).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()
     expect(screen.queryByRole('button', { name: 'Activate policy' })).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
@@ -555,7 +620,7 @@ describe('Policy route', () => {
     ])
   })
 
-  it('reveals material outcomes beyond six rows without changing preview authority', async () => {
+  it('excludes unchanged outcomes from the primary policy impact list', async () => {
     const user = userEvent.setup()
     const unchanged = Array.from({ length: 6 }, (_, index) => ({
       current_value: `Retained ${String(index)}`,
@@ -568,6 +633,20 @@ describe('Policy route', () => {
       reason: null,
       target_state: 'available',
     }))
+    const caseFields0 = [
+      ...unchanged,
+      {
+        narrowed_for_target: false,
+        outcome: 'projected',
+        reason: null,
+        target_state: 'available',
+        field: 'contributor_names',
+        option: 'canonical',
+        current_value: 'Previous narrator',
+        desired_value: 'Complete recording cast',
+        qualified_value: 'Complete recording cast',
+      },
+    ]
     const policyCommand = vi.fn<(path: string, body: unknown) => Promise<unknown>>(async (path) => {
       if (path === 'drafts')
         return { policy_id: 'policy-reviewed', schema_version: 'metadata-policy-profile-v3' }
@@ -576,32 +655,35 @@ describe('Policy route', () => {
           active_policy_id: 'policy-preview-authority',
           policy_id: 'policy-reviewed',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [
             {
               library: 'Fiction',
               affected_categories: ['contributor_names'],
-              cases_total: 1,
+              comparisons: [
+                { media_kind: 'audiobook', fields: comparisons(caseFields0) },
+                { media_kind: 'audiobook', fields: comparisons(unchanged.slice(0, 1)) },
+                { media_kind: 'ebook', fields: comparisons(unchanged.slice(0, 1)) },
+              ],
+              cases_total: 3,
               cases_truncated: false,
-              current_unapplied_count: 1,
+              current_unapplied_count: 3,
               resolved_policy_id: 'resolved-policy',
               cases: [
                 {
-                  fields: [
-                    ...unchanged,
-                    {
-                      ...unchanged[0],
-                      field: 'contributor_names',
-                      option: 'canonical',
-                      current_value: 'Previous narrator',
-                      desired_value: 'Complete recording cast',
-                      qualified_value: 'Complete recording cast',
-                    },
-                  ],
+                  fields: caseFields0,
                   proposal_set_id: 'proposal-1',
                   report_id: 'report-1',
                   resolved_policy_id: 'resolved-policy',
                   work_label: 'Recording book',
                 },
+                ...['Unchanged recording', 'Unchanged ebook'].map((work_label, index) => ({
+                  fields: unchanged.slice(0, 1),
+                  proposal_set_id: `unchanged-proposal-${String(index)}`,
+                  report_id: `unchanged-report-${String(index)}`,
+                  resolved_policy_id: 'resolved-policy',
+                  work_label,
+                })),
               ],
             },
           ],
@@ -617,38 +699,40 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     await user.click(within(title).getByRole('button', { name: 'Ignore' }))
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
-    const showMore = await screen.findByRole('button', { name: 'Show 1 more outcome' })
-    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
-    expect(showMore).toHaveAttribute('aria-expanded', 'false')
-    showMore.focus()
-    await user.keyboard('{Enter}')
-    expect(screen.getByText('· Previous narrator → Complete recording cast')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Show fewer outcomes' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
-    await user.click(screen.getByRole('button', { name: 'Show fewer outcomes' }))
-    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Show 1 more outcome' }))
-    await user.click(screen.getByRole('button', { name: 'Back to editing' }))
-    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
-    expect(await screen.findByRole('button', { name: 'Show 1 more outcome' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    )
-    expect(screen.queryByText('· Previous narrator → Complete recording cast')).toBeNull()
-    await user.click(screen.getByRole('button', { name: 'Show 1 more outcome' }))
+    expect(
+      await screen.findByText('Policy change', { selector: '.cm-policy-impact > b' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('button', { name: 'Show 1 more outcome' })).toBeNull()
+    expect(screen.getByText('Unchanged outcomes and projected library context (8)')).toBeVisible()
+    expect(
+      screen.getByText(
+        'Ebooks: 1 sampled work · 0 changed fields · Audiobooks: 2 sampled works · 1 changed field',
+      ),
+    ).toBeVisible()
+    await user.click(screen.getByText('Unchanged outcomes and projected library context (8)'))
+    expect(
+      screen.queryByText(/Complete recording cast/, { selector: '.cm-policy-projected-context p' }),
+    ).toBeNull()
+    expect(
+      screen.getAllByText(/No policy change/, { selector: '.cm-policy-projected-context p' }),
+    ).toHaveLength(8)
+    expect(
+      screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Review activation' }))
-    expect(screen.getByText('· Previous narrator → Complete recording cast')).toBeVisible()
+    expect(
+      screen.getByText(/Complete recording cast/, { selector: '.cm-policy-impact small' }),
+    ).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Activate policy' }))
     await waitFor(() =>
       expect(policyCommand).toHaveBeenCalledWith('activate', {
         policy_id: 'policy-reviewed',
         expected_active_policy_id: 'policy-preview-authority',
+        expected_active_generation: 1,
       }),
     )
     expect(policyCommand.mock.calls.filter(([path]) => path === 'activate')).toHaveLength(1)
-    expect(policyCommand.mock.calls.filter(([path]) => path === 'preview')).toHaveLength(2)
+    expect(policyCommand.mock.calls.filter(([path]) => path === 'preview')).toHaveLength(1)
   })
 
   it('identifies each affected work beside its exact policy outcome', async () => {
@@ -664,6 +748,22 @@ describe('Policy route', () => {
       reason: null,
       target_state: 'available',
     })
+    const caseFields0 = [
+      field('Old one', 'New one'),
+      ...Array.from({ length: 7 }, (_, index) =>
+        field(`Old extra ${String(index)}`, `New extra ${String(index)}`, `extra_${String(index)}`),
+      ),
+    ]
+    const caseFields1 = [
+      field('Old two', 'New two'),
+      ...Array.from({ length: 7 }, (_, index) =>
+        field(
+          `Second old extra ${String(index)}`,
+          `Second new extra ${String(index)}`,
+          `second_extra_${String(index)}`,
+        ),
+      ),
+    ]
     const policyCommand = vi.fn(async (path: string): Promise<unknown> => {
       if (path === 'drafts')
         return { policy_id: 'policy-draft', schema_version: 'metadata-policy-profile-v3' }
@@ -672,43 +772,30 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           rich_qualification: [],
           libraries: [
             {
               library: 'Fiction',
               affected_categories: ['title_layout'],
+              comparisons: [
+                { media_kind: 'audiobook', fields: comparisons(caseFields0) },
+                { media_kind: 'audiobook', fields: comparisons(caseFields1) },
+              ],
               cases_total: 2,
               cases_truncated: true,
               current_unapplied_count: 7,
               resolved_policy_id: 'resolved-policy',
               cases: [
                 {
-                  fields: [
-                    field('Old one', 'New one'),
-                    ...Array.from({ length: 7 }, (_, index) =>
-                      field(
-                        `Old extra ${String(index)}`,
-                        `New extra ${String(index)}`,
-                        `extra_${String(index)}`,
-                      ),
-                    ),
-                  ],
+                  fields: caseFields0,
                   proposal_set_id: 'proposal-1',
                   report_id: 'report-1',
                   resolved_policy_id: 'resolved-policy',
                   work_label: 'First book',
                 },
                 {
-                  fields: [
-                    field('Old two', 'New two'),
-                    ...Array.from({ length: 7 }, (_, index) =>
-                      field(
-                        `Second old extra ${String(index)}`,
-                        `Second new extra ${String(index)}`,
-                        `second_extra_${String(index)}`,
-                      ),
-                    ),
-                  ],
+                  fields: caseFields1,
                   proposal_set_id: 'proposal-2',
                   report_id: 'report-2',
                   resolved_policy_id: 'resolved-policy',
@@ -731,11 +818,11 @@ describe('Policy route', () => {
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
 
     expect((await screen.findAllByText('First book'))[0]).toBeVisible()
-    expect(screen.getByText('Second book')).toBeVisible()
-    expect(screen.getAllByText('Fiction · Title and subtitle')).toHaveLength(2)
-    expect(screen.getAllByText('Change')).toHaveLength(6)
-    expect(screen.getByText('· Old one → New one')).toBeVisible()
-    expect(screen.getByText('· Old two → New two')).toBeVisible()
+    expect(screen.getAllByText('Second book')[0]).toBeVisible()
+    expect(screen.getAllByText('Audiobook · Fiction · Title and subtitle')).toHaveLength(2)
+    expect(screen.getAllByText('Policy change')).toHaveLength(6)
+    expect(screen.getByText(/New one/, { selector: '.cm-policy-impact small' })).toBeVisible()
+    expect(screen.getByText(/New two/, { selector: '.cm-policy-impact small' })).toBeVisible()
     expect(screen.getByText('2 sampled works with changes')).toBeVisible()
     expect(screen.getByText(/16 material changes in the bounded sample/)).toBeVisible()
     expect(screen.getByLabelText('2 sampled works with changes')).toHaveTextContent('2')
@@ -751,11 +838,13 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [
             {
               library: 'Empty library',
               affected_categories: [],
               cases: [],
+              comparisons: [],
               cases_total: 0,
               cases_truncated: false,
               current_unapplied_count: 0,
@@ -808,6 +897,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [],
         }
       if (path === 'activate')
@@ -864,6 +954,7 @@ describe('Policy route', () => {
             active_policy_id: 'policy-active',
             policy_id: 'policy-draft',
             schema_version: 'metadata-policy-preview-v1',
+            active_generation: 1,
             libraries: [],
           }
         if (path === 'activate') throw activationError
@@ -904,6 +995,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [],
         }
       if (path === 'activate') return {}
@@ -941,6 +1033,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [],
         }
       if (path === 'activate') throw new ApiError(409, 'policy_transition_is_processing')
@@ -1289,3 +1382,127 @@ it.each([
     expect(http.getPreparation).toHaveBeenCalledTimes(2)
   },
 )
+
+it.each([
+  ['ignore', 'Ignored — no metadata action'],
+  ['ask', 'Ask me — owner choice required'],
+  ['automatic', 'Automatic —'],
+])(
+  'states selected %s behavior before eligibility in cards and activation',
+  async (mode, label) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const baseline = await http.getPolicyState()
+    http.getPolicyState = vi.fn(async (): Promise<PolicyStateView> => ({
+      ...baseline,
+      rich_qualification: (['fill_empty', 'add'] as const).map((option) => ({
+        automatic_available: true,
+        candidate_sha256: 'a'.repeat(64),
+        disposition: 'passing_automatic',
+        field: 'tags',
+        operation_scope: option === 'add' ? 'add' : 'fill',
+        option,
+      })),
+      profile: {
+        ...baseline.profile,
+        options: { tags: 'fill_empty' },
+        destinations: { tags: mode },
+      },
+    }))
+    http.policyCommand = async <T,>(path: string) =>
+      (path === 'preview'
+        ? {
+            schema_version: 'metadata-policy-preview-v1',
+            policy_id: 'draft',
+            active_policy_id: 'policy-1',
+            active_generation: 7,
+            libraries: [],
+          }
+        : { policy_id: 'draft', schema_version: 'metadata-policy-profile-v3' }) as T
+    renderRoute('/policy?section=curation', http)
+    const tags = await screen.findByRole('region', { name: 'Tags' })
+    expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(`Ebooks: ${label}`)
+    expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(`Audiobooks: ${label}`)
+    if (mode !== 'automatic')
+      expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+        'Automatic eligibility if selected:',
+      )
+    await user.click(within(tags).getByRole('combobox', { name: 'Tags representation' }))
+    await user.click(screen.getByRole('option', { name: 'Add missing values' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    await user.click(await screen.findByRole('button', { name: 'Review activation' }))
+    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(`Ebooks — ${label}`)
+    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(
+      `Audiobooks — ${label}`,
+    )
+  },
+)
+
+it('keeps the draft after a real stale envelope and binds explicit repreview to the new generation', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  let generation = 1
+  const transport = new ReviewApiClient({
+    buildIdentity: 'a'.repeat(64),
+    csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+    fetch: vi.fn(async () =>
+      Response.json(
+        { schema_version: 'review-error-v1', error: { code: 'policy_activation_is_stale' } },
+        { status: 409 },
+      ),
+    ),
+  })
+  const commands = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
+    if (path === 'preview')
+      return {
+        schema_version: 'metadata-policy-preview-v1',
+        policy_id: 'draft',
+        active_policy_id: 'policy-1',
+        active_generation: generation,
+        libraries: [],
+      }
+    if (path === 'activate' && generation === 1) {
+      generation = 3
+      return transport.policyCommand(path, body)
+    }
+    if (path === 'activate')
+      return {
+        schema_version: 'metadata-policy-activation-v1',
+        policy_id: 'draft',
+        transition: null,
+      }
+    return { policy_id: 'draft', schema_version: 'metadata-policy-profile-v3' }
+  })
+  http.policyCommand = async <T,>(path: string, body?: unknown) => (await commands(path, body)) as T
+  renderRoute('/policy?section=identity', http)
+  const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+  await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+  await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+  await user.click(await screen.findByRole('button', { name: 'Review activation' }))
+  await user.click(screen.getByRole('button', { name: 'Activate policy' }))
+  expect(
+    await screen.findByText(
+      'The active policy changed before activation. Review the refreshed policy and create a new draft.',
+    ),
+  ).toBeVisible()
+  expect(within(title).getByRole('button', { name: 'Ignore' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(commands).toHaveBeenCalledWith('activate', {
+    policy_id: 'draft',
+    expected_active_policy_id: 'policy-1',
+    expected_active_generation: 1,
+  })
+  await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+  await user.click(await screen.findByRole('button', { name: 'Review activation' }))
+  await user.click(screen.getByRole('button', { name: 'Activate policy' }))
+  expect(
+    await screen.findByText('Policy activated. Current unapplied work is being reconciled.'),
+  ).toBeVisible()
+  expect(commands).toHaveBeenLastCalledWith('activate', {
+    policy_id: 'draft',
+    expected_active_policy_id: 'policy-1',
+    expected_active_generation: 3,
+  })
+})

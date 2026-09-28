@@ -39,6 +39,7 @@ class CoverAutomaticDecision:
     candidate_id: str
     resolved_policy_id: str
     policy_generation: int
+    policy_option: str
     consideration_id: str
     consideration_digest: str
     replay_digest: str
@@ -55,14 +56,6 @@ class CoverAutomaticDecision:
     destination = "cover"
     outcome = "candidate"
     policy_category = "cover_order"
-
-    @property
-    def policy_option(self) -> str:
-        return (
-            "fixed_source_order"
-            if self.qualification_identity is None
-            else self.qualification_identity.split(":", 1)[1]
-        )
 
     @property
     def qualification_manifest_sha256(self) -> str:
@@ -99,6 +92,7 @@ class CoverAutomaticDecision:
         candidate_id: str,
         resolved_policy_id: str,
         policy_generation: int,
+        policy_option: str,
         consideration_id: str,
         consideration_digest: str,
         replay_digest: str,
@@ -112,6 +106,7 @@ class CoverAutomaticDecision:
         qualification_identity: str | None = None,
     ) -> "CoverAutomaticDecision":
         core: dict[str, object] = {
+            "policy_option": policy_option,
             "qualification_identity": qualification_identity,
             "artifact_id": artifact_id,
             "candidate_id": candidate_id,
@@ -142,6 +137,7 @@ class CoverAutomaticDecision:
             candidate_id=candidate_id,
             resolved_policy_id=resolved_policy_id,
             policy_generation=policy_generation,
+            policy_option=policy_option,
             consideration_id=consideration_id,
             consideration_digest=consideration_digest,
             replay_digest=replay_digest,
@@ -198,10 +194,19 @@ class CoverAutomaticDecision:
             or self.citation_ids != tuple(sorted(set(self.citation_ids)))
         ):
             raise AutomaticDecisionError("invalid")
-        if self.qualification_identity is not None:
+        if type(self.policy_option) is not str:
+            raise AutomaticDecisionError("invalid")
+        if self.qualification_identity is None:
+            if self.policy_option not in {
+                "fixed_source_order",
+                "replace_if_strictly_better",
+            }:
+                raise AutomaticDecisionError("invalid")
+        else:
             if (
                 self.qualification_identity
                 not in F46_IDENTITIES_BY_DESTINATION["cover"]
+                or self.policy_option != self.qualification_identity.split(":", 1)[1]
             ):
                 raise AutomaticDecisionError("invalid")
             qualification_manifest_sha256(self.qualification_identity)
@@ -213,6 +218,7 @@ class CoverAutomaticDecision:
 
     def _core(self) -> dict[str, object]:
         return {
+            "policy_option": self.policy_option,
             "qualification_identity": self.qualification_identity,
             "artifact_id": self.artifact_id,
             "candidate_id": self.candidate_id,
@@ -246,7 +252,7 @@ class CoverAutomaticDecision:
                 "policy_category": self.policy_category,
                 "policy_option": self.policy_option,
                 "qualification_manifest_sha256": self.qualification_manifest_sha256,
-                "schema_version": "cover-automatic-decision-v2",
+                "schema_version": "cover-automatic-decision-v3",
             }
         )
 
@@ -254,7 +260,7 @@ class CoverAutomaticDecision:
     def from_json(cls, document: str) -> "CoverAutomaticDecision":
         try:
             raw = json.loads(document)
-            if raw.get("schema_version") != "cover-automatic-decision-v2":
+            if raw.get("schema_version") != "cover-automatic-decision-v3":
                 raise AutomaticDecisionError("invalid")
             values = {
                 key: raw[key]
@@ -279,6 +285,6 @@ def parse_automatic_authority(document: str) -> AutomaticAuthority:
         raw = json.loads(document)
     except (TypeError, json.JSONDecodeError) as error:
         raise AutomaticDecisionError("invalid") from error
-    if type(raw) is dict and raw.get("schema_version") == "cover-automatic-decision-v2":
+    if type(raw) is dict and raw.get("schema_version") == "cover-automatic-decision-v3":
         return CoverAutomaticDecision.from_json(document)
     return AutomaticDecision.from_json(document)

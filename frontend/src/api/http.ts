@@ -501,7 +501,7 @@ export interface HistoryValueView {
   kind: string
   value: string | boolean | readonly string[] | readonly { name: string; sequence: string | null }[]
 }
-export type HistoryItemView =
+export type HistoryItemView = (
   | {
       category: 'description'
       outcome: string
@@ -545,6 +545,7 @@ export type HistoryItemView =
       supersedesAutomatic: boolean
     }
   | { category: 'transition'; outcome: string; reason: string }
+) & { occurredAt: number | null }
 export interface HistoryView {
   items: readonly HistoryItemView[]
   nextCursor?: string
@@ -3126,6 +3127,11 @@ export const mapHistory = (value: unknown): HistoryView => {
     items: value.items.map((item, index): HistoryItemView => {
       if (!record(item)) throw new ApiError(502, `invalid_history_item_${String(index)}`)
       const kind = stringValue(item.kind, `history_item_${String(index)}_kind`)
+      const occurredAt = Object.hasOwn(item, 'checkpoint')
+        ? null
+        : integerValue(item.occurred_at, `history_item_${String(index)}_occurred_at`)
+      if (occurredAt !== null && occurredAt > 8640000000000)
+        throw new ApiError(502, 'invalid_history_time')
       if (
         kind === 'description_advice_recorded' ||
         kind === 'description_selected' ||
@@ -3134,6 +3140,7 @@ export const mapHistory = (value: unknown): HistoryView => {
         integerValue(item.occurred_at, 'description_history_at')
         return {
           category: 'description',
+          occurredAt,
           outcome: kind,
           state: boundedStringValue(item.state, 'description_state', 32),
           model: boundedStringValue(item.model, 'description_model', 256),
@@ -3152,6 +3159,7 @@ export const mapHistory = (value: unknown): HistoryView => {
         if (!allowed.includes(outcome))
           throw new ApiError(502, `invalid_history_item_${String(index)}_outcome`)
         const decision = {
+          occurredAt,
           destination: boundedStringValue(
             item.destination,
             `history_item_${String(index)}_destination`,
@@ -3187,6 +3195,7 @@ export const mapHistory = (value: unknown): HistoryView => {
           throw new ApiError(502, `invalid_history_item_${String(index)}_dispositions`)
         return {
           category: 'preview',
+          occurredAt,
           dispositions: Object.entries(item.dispositions).map(([outcome, count]) => ({
             count: integerValue(count, `history_item_${String(index)}_disposition`),
             outcome: boundedStringValue(
@@ -3256,6 +3265,7 @@ export const mapHistory = (value: unknown): HistoryView => {
           throw new ApiError(502, `invalid_history_item_${String(index)}_reviewer_status`)
         return {
           category: 'cover',
+          occurredAt,
           ...(automaticOutcome ? { automaticOutcome } : {}),
           candidateCount: item.consideration.candidates.length,
           outcome: kind,
@@ -3279,6 +3289,7 @@ export const mapHistory = (value: unknown): HistoryView => {
         throw new ApiError(502, `invalid_history_item_${String(index)}_kind`)
       return {
         category: 'transition',
+        occurredAt,
         outcome: boundedStringValue(kind, `history_item_${String(index)}_kind`, 64),
         reason: boundedStringValue(item.reason, `history_item_${String(index)}_reason`, 512),
       }

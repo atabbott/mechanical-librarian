@@ -8012,7 +8012,13 @@ describe('Library route', () => {
       })),
       getActivity: vi.fn(async () =>
         activity({
-          configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+          configured_libraries: [
+            {
+              connection: 'primary',
+              library: 'fiction',
+              prepared: { automatic: 4, human: 6, total: 10 },
+            },
+          ],
           capabilities: [
             {
               connection: 'primary',
@@ -8048,10 +8054,13 @@ describe('Library route', () => {
     ).toBeVisible()
     // Preparation still running does not withdraw the action.
     expect(screen.getByText(/preparation is still running/u)).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Enable writes' }))
+    await user.click(screen.getByRole('link', { name: 'Enable writes' }))
+    expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('checkbox', { name: /fiction/u }))
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
 
-    // Every eligible destination, and only those: the Cover behind its own gate
-    // is left out rather than taking Title with it.
+    // Every eligible destination, and only those, after explicit review.
     expect(http.activityCommand).toHaveBeenCalledWith('activity/consent', {
       grants: [{ library: 'fiction', destinations: ['title'] }],
     })

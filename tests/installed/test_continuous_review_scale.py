@@ -246,8 +246,16 @@ def test_current_authority_and_predecessor_refusal_without_history(
     from mechanical_librarian.adapters.persistence import schema
     from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 
+    cover_fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/cover-authority-v2.json").read_text()
+    )
     old_path = tmp_path / "prior.sqlite"
     with monkeypatch.context() as old_schema:
+        old_schema.setattr(
+            schema,
+            "_COVER_SELECTION_AUTHORITIES_SQL",
+            cover_fixture["cover_selection_authorities_sql"],
+        )
         old_schema.setattr(
             schema,
             "_SHADOW_DECISION_OUTCOMES_SQL",

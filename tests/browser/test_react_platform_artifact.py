@@ -1219,8 +1219,9 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 page.locator(".activity-consent-library").filter(
                     has_text="Spoken stories"
                 ).get_by_role("checkbox").check()
+                assert consent_payloads == []
                 stage[0] = "activity:consent-refresh"
-                page.get_by_role("button", name="Enable selected libraries").click()
+                page.get_by_role("button", name="Confirm write permissions").click()
                 page.get_by_text(
                     "Activity state refreshed from the authoritative server."
                 ).wait_for()
@@ -2407,45 +2408,41 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
         page.get_by_role("region", name="Title and subtitle").get_by_role(
             "button", name="Ignore"
         ).click()
-        page.get_by_text("1 draft change", exact=True).wait_for()
+        page.get_by_text("Draft has unreviewed changes", exact=False).first.wait_for()
         page.get_by_role("button", name="Validate and preview").click()
         page.get_by_text("Impact preview is current.", exact=False).wait_for()
-        page.get_by_text(
-            "· fills the empty field with A bounded subtitle", exact=True
-        ).wait_for()
-        page.get_by_text("Safe visible description <3", exact=False).wait_for()
-        page.get_by_text(
-            '[{"name":"Old order","sequence":"1"}]', exact=False
-        ).wait_for()
-        page.get_by_text('["Fantasy"] → ["Fantasy","Epic"]', exact=False).wait_for()
-        page.get_by_text("· Tag handling is off.", exact=True).wait_for()
-        more_outcomes = page.get_by_role(
-            "button", name="Show 2 more outcomes", exact=True
+        primary = page.locator(".cm-policy-preview-list")
+        assert primary.locator(":scope > div").count() == 6
+        assert (
+            primary.locator(".cm-policy-impact > b").all_text_contents()
+            == ["Policy change"] * 6
         )
-        expect(more_outcomes).to_have_attribute("aria-expanded", "false")
-        assert page.locator(".cm-policy-preview-list > div").count() == 6
-        impact_labels = page.locator(".cm-policy-impact > b").all_text_contents()
-        assert impact_labels == [
-            "Change",
-            "Change",
-            "Change",
-            "No change",
-            "Change",
-            "Change",
-        ]
-        for detail in page.locator(".cm-policy-impact > small").all_text_contents():
-            if "→" in detail:
-                assert "remains" not in detail
-                assert "empty" not in detail
-        for label in impact_labels:
-            assert label not in {"projected", "abstain", "missing", "policy_off"}
-        more_outcomes.click()
+        expect(primary.get_by_text("Tag handling is off.", exact=False)).to_have_count(
+            0
+        )
+        page.get_by_text(
+            "Ebooks: 1 sampled work · 6 changed fields", exact=False
+        ).wait_for()
+        expect(page.get_by_role("button", name="Show 2 more outcomes")).to_have_count(0)
+        projected_context = page.locator(".cm-policy-projected-context")
+        assert projected_context.evaluate("node => node.open") is False
+        projected_context.get_by_text(
+            "Unchanged outcomes and projected library context (2)", exact=True
+        ).click()
+        assert projected_context.evaluate("node => node.open") is True
         expect(
-            page.get_by_role("button", name="Show fewer outcomes")
-        ).to_have_attribute("aria-expanded", "true")
-        assert page.locator(".cm-policy-preview-list > div").count() == 8
-        page.get_by_role("button", name="Show fewer outcomes").click()
-        assert page.locator(".cm-policy-preview-list > div").count() == 6
+            projected_context.get_by_text(re.compile(r"^Policy change\."))
+        ).to_have_count(0)
+        expect(
+            projected_context.get_by_text("Safe visible description <3", exact=False)
+        ).to_have_count(0)
+        projected_context.get_by_text(
+            "No policy change. Tag handling is off.", exact=False
+        ).wait_for()
+        projected_context.get_by_text(
+            "Unchanged outcomes and projected library context (2)", exact=True
+        ).click()
+        assert projected_context.evaluate("node => node.open") is False
         page.get_by_role("button", name="Sign out").click()
         page.get_by_text("Writes are blocked", exact=False).wait_for()
         fail_policy_persistently = True

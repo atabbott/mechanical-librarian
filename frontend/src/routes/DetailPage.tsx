@@ -335,7 +335,16 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
           ) : history.data.items.length ? (
             <div className="diagnostic-list">
               {history.data.items.map((item, index) => (
-                <HistoryItem item={item} key={index} />
+                <div key={index}>
+                  {item.occurredAt === null ? (
+                    <small>Time unavailable — lifecycle checkpoint only</small>
+                  ) : (
+                    <time dateTime={new Date(item.occurredAt * 1000).toISOString()}>
+                      {new Date(item.occurredAt * 1000).toLocaleString()}
+                    </time>
+                  )}
+                  <HistoryItem item={item} />
+                </div>
               ))}
             </div>
           ) : (

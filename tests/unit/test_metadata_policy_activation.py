@@ -240,6 +240,7 @@ def test_qualified_automatic_intent_is_persistable_and_unqualified_intent_is_rej
         MetadataPolicyProfile.builtin().policy_id,
         (("ebooks", resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     assert transition is not None
     assert "completed" == transition.state
@@ -277,6 +278,7 @@ def test_automatic_posture_accepts_only_exact_qualified_resolutions(
         MetadataPolicyProfile.builtin().policy_id,
         (("ebooks", first_resolved.resolved_id, first_resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     assert first_transition is not None
     assert "automatic" == repository.activate_qualified_automatic(3)
@@ -293,6 +295,7 @@ def test_automatic_posture_accepts_only_exact_qualified_resolutions(
         first.policy_id,
         (("ebooks", second_resolved.resolved_id, second_resolved.canonical_json),),
         4,
+        expected_active_generation=2,
     )
     assert transition is not None
     assert transition == repository.activate_metadata_policy(
@@ -300,6 +303,7 @@ def test_automatic_posture_accepts_only_exact_qualified_resolutions(
         first.policy_id,
         (("ebooks", second_resolved.resolved_id, second_resolved.canonical_json),),
         4,
+        expected_active_generation=2,
     )
     with pytest.raises(MetadataReportError, match="stale"):
         repository.activate_metadata_policy(
@@ -307,6 +311,7 @@ def test_automatic_posture_accepts_only_exact_qualified_resolutions(
             first.policy_id,
             (("ebooks", first_resolved.resolved_id, first_resolved.canonical_json),),
             5,
+            expected_active_generation=2,
         )
 
     unqualified = resolve_policy(
@@ -324,6 +329,7 @@ def test_automatic_posture_accepts_only_exact_qualified_resolutions(
             (("ebooks", unqualified.resolved_id, unqualified.canonical_json),),
             6,
             reconcile_current=True,
+            expected_active_generation=3,
         )
     repository.close()
 
@@ -401,7 +407,9 @@ def test_policy_contention_is_read_from_the_condition_not_the_message(
             ),
             pytest.raises(MetadataPolicyApplicationError) as raised,
         ):
-            notebook.activate(profile.policy_id, builtin, 2)
+            notebook.activate(
+                profile.policy_id, builtin, 2, expected_active_generation=1
+            )
         return str(raised.value)
 
     # Each condition routes on its own, with a message carrying none of the
@@ -490,6 +498,7 @@ def test_asin_automatic_routing_requires_the_current_audiobook_record(
         MetadataPolicyProfile.builtin().policy_id,
         (("audio", resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     assert transition is not None and "completed" == transition.state
     # The record widened routing, not the ebook option catalogue.
@@ -523,7 +532,10 @@ def test_library_override_cannot_turn_an_unqualified_option_automatic(
     )
     with pytest.raises(MetadataPolicyApplicationError, match="automatic unqualified"):
         notebook.activate(
-            profile.policy_id, MetadataPolicyProfile.builtin().policy_id, 2
+            profile.policy_id,
+            MetadataPolicyProfile.builtin().policy_id,
+            2,
+            expected_active_generation=1,
         )
     repository.close()
 
@@ -593,6 +605,7 @@ def test_bootstrap_generation_is_a_baseline_and_owner_activation_is_not(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         30,
+        expected_active_generation=1,
     )
     assert activated is not None
     assert (activated.origin, activated.generation) == ("activation", 2)
@@ -614,6 +627,7 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
         builtin.policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         30,
+        expected_active_generation=1,
     )
     assert transition is not None
     assert (
@@ -627,6 +641,7 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
         builtin.policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         30,
+        expected_active_generation=1,
     )
     follow_up = MetadataPolicyProfile.create(
         "Follow-up policy",
@@ -647,6 +662,7 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
                 ),
             ),
             30,
+            expected_active_generation=2,
         )
     assert repository.current_unapplied_count(report.target.library) == 1
     assert repository._connection.execute(
@@ -697,6 +713,7 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
                 ),
             ),
             30,
+            expected_active_generation=2,
         )
     action = reopened.claim_review_pipeline_action(31)
     assert action is not None
@@ -752,6 +769,7 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
             draft.policy_id,
             ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
             38,
+            expected_active_generation=2,
         )
         is None
     )
@@ -766,6 +784,7 @@ def test_atomic_cutover_rewinds_existing_evidence_and_completes_after_restart(
             ),
         ),
         39,
+        expected_active_generation=2,
     )
     assert next_transition is not None
     assert 3 == next_transition.generation
@@ -787,6 +806,7 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         40,
+        expected_active_generation=1,
     )
     assert transition is not None
     assert (transition.state, transition.failed, transition.total) == (
@@ -816,6 +836,7 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
                 ),
             ),
             41,
+            expected_active_generation=2,
         )
     repository.request_review_scan(
         report.target.connection, report.target.library, "lib-1", _PRODUCER, 41
@@ -883,6 +904,7 @@ def test_missing_pipeline_work_is_typed_durable_and_retryable(state_path: Path) 
                 ),
             ),
             41,
+            expected_active_generation=1,
         )
     repository.close()
 
@@ -908,6 +930,7 @@ def test_failed_provider_work_restarts_and_retries_at_safe_proposal_stage(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         25,
+        expected_active_generation=1,
     )
     assert transition is not None
     provider = repository.claim_review_pipeline_action(26)
@@ -949,6 +972,7 @@ def test_failed_extraction_work_restarts_at_extraction_with_fixed_cohort(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         25,
+        expected_active_generation=1,
     )
     assert transition is not None
     extraction = repository.claim_review_pipeline_action(26)
@@ -1032,6 +1056,7 @@ def test_activation_restarts_preexisting_terminal_early_work(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         25,
+        expected_active_generation=1,
     )
     assert transition is not None
     assert ("processing", 0, 1) == (
@@ -1069,6 +1094,7 @@ def test_atomic_extraction_callback_updates_fixed_transition_failure(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         25,
+        expected_active_generation=1,
     )
     assert transition is not None
     extraction = repository.claim_review_pipeline_action(26)
@@ -1115,6 +1141,7 @@ def test_new_library_preview_can_establish_next_generation_resolution(
         MetadataPolicyProfile.builtin().policy_id,
         (("first", first_resolution.resolved_id, first_resolution.canonical_json),),
         10,
+        expected_active_generation=1,
     )
     assert transition is not None
     assert "completed" == transition.state
@@ -1133,7 +1160,9 @@ def test_new_library_preview_can_establish_next_generation_resolution(
     )
     with pytest.raises(MetadataReportError):
         composition._current_resolved_policy(configuration, repository, "second")
-    activation = notebook.activate(second.policy_id, first.policy_id, 11)
+    activation = notebook.activate(
+        second.policy_id, first.policy_id, 11, expected_active_generation=2
+    )
     assert activation.transition is not None
     assert 3 == activation.transition.generation
     persisted = repository.current_resolved_metadata_policy("second")
@@ -1155,7 +1184,7 @@ def test_cover_automatic_profile_activates_through_the_application_boundary(
     repository.create_metadata_policy_draft(profile.canonical_json)
 
     activation = PolicyNotebook(repository, ("ebooks",), {}).activate(
-        profile.policy_id, builtin.policy_id, 11
+        profile.policy_id, builtin.policy_id, 11, expected_active_generation=1
     )
 
     assert activation.transition is not None
@@ -1246,6 +1275,7 @@ def test_activation_and_human_decision_commit_orderings_are_atomic(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         25,
+        expected_active_generation=1,
     )
     assert transition is not None
     history = activator.get_review_case_history(case_id, 10)
@@ -1285,6 +1315,7 @@ def test_activation_and_human_decision_commit_orderings_are_atomic(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         25,
+        expected_active_generation=1,
     )
     assert transition is not None
     with pytest.raises(HumanDecisionError) as raised:
@@ -1530,6 +1561,7 @@ def test_invisible_stale_case_is_not_in_activation_cohort(state_path: Path) -> N
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         30,
+        expected_active_generation=1,
     )
     assert transition is not None
     assert ("completed", 0, 0, 0) == (
@@ -1576,6 +1608,7 @@ def test_changed_inflight_extraction_is_new_work_not_old_cohort_completion(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         30,
+        expected_active_generation=1,
     )
     assert transition is not None
     extraction = repository.claim_review_pipeline_action(31)
@@ -1771,6 +1804,7 @@ def test_audio_only_series_options_complete_mixed_media_transition_without_ebook
             for value in resolutions
         ),
         21,
+        expected_active_generation=1,
     )
     assert transition is not None and transition.total == 2
     now = 30
@@ -1807,3 +1841,100 @@ def test_audio_only_series_options_complete_mixed_media_transition_without_ebook
             assert decisions[0].policy_option.endswith(":audiobook_series_fill")
     assert repository.automatic_safety_state() == AutomaticSafetyState(False, None, ())
     repository.close()
+
+
+def test_activation_binds_captured_generation_and_exact_retry(tmp_path):
+    repository = open_repository(tmp_path / "generation.sqlite")
+    try:
+        repository.enter_shadow_preview(1)
+        first = MetadataPolicyProfile.builtin()
+        other = MetadataPolicyProfile.create(
+            "Other", dict(first.options), dict(first.destinations)
+        )
+        draft = MetadataPolicyProfile.create(
+            "Reviewed", dict(first.options), dict(first.destinations)
+        )
+        for profile in (other, draft):
+            repository.create_metadata_policy_draft(profile.canonical_json)
+        notebook = PolicyNotebook(repository, (), {})
+        preview = notebook.preview(draft)
+        assert preview.active_generation == 1
+        transition = notebook.activate(
+            other.policy_id, first.policy_id, 2, expected_active_generation=1
+        ).transition
+        assert transition is not None and transition.generation == 2
+        assert (
+            notebook.activate(
+                other.policy_id, first.policy_id, 3, expected_active_generation=1
+            ).transition
+            == transition
+        )
+        notebook.activate(
+            first.policy_id, other.policy_id, 4, expected_active_generation=2
+        )
+        before = tuple(
+            repository._connection.execute("SELECT * FROM metadata_policy_transitions")
+        )
+        with pytest.raises(MetadataPolicyApplicationError, match="stale"):
+            notebook.activate(
+                draft.policy_id,
+                preview.active_policy_id,
+                5,
+                expected_active_generation=preview.active_generation,
+            )
+        with pytest.raises(MetadataPolicyApplicationError, match="stale"):
+            notebook.activate(
+                first.policy_id, first.policy_id, 5, expected_active_generation=1
+            )
+        assert (
+            tuple(
+                repository._connection.execute(
+                    "SELECT * FROM metadata_policy_transitions"
+                )
+            )
+            == before
+        )
+        assert (
+            notebook.activate(
+                first.policy_id, first.policy_id, 5, expected_active_generation=3
+            ).transition
+            is None
+        )
+        later = notebook.activate(
+            other.policy_id, first.policy_id, 6, expected_active_generation=3
+        ).transition
+        assert later is not None and later.generation == 4
+        with pytest.raises(MetadataPolicyApplicationError, match="stale"):
+            notebook.activate(
+                other.policy_id, first.policy_id, 7, expected_active_generation=1
+            )
+        assert (
+            notebook.activate(
+                other.policy_id, first.policy_id, 8, expected_active_generation=3
+            ).transition
+            == later
+        )
+        # Reconciliation may create A→A; it is not a retry of an external no-op.
+        reconciled = repository.activate_metadata_policy(
+            other.policy_id,
+            other.policy_id,
+            (),
+            9,
+            expected_active_generation=4,
+            reconcile_current=True,
+        )
+        assert reconciled is not None and reconciled.generation == 5
+        with pytest.raises(MetadataPolicyApplicationError, match="stale"):
+            notebook.activate(
+                other.policy_id, other.policy_id, 10, expected_active_generation=4
+            )
+        for invalid in (None, True, False, 0, -1, "5", 5.0):
+            with pytest.raises(MetadataPolicyApplicationError, match="invalid"):
+                notebook.activate(
+                    draft.policy_id,
+                    other.policy_id,
+                    11,
+                    expected_active_generation=invalid,
+                )
+    finally:
+        repository.close()

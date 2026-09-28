@@ -337,6 +337,7 @@ def _publish_audiobook_tranche_case(repository: Any) -> str:
         MetadataPolicyProfile.builtin().policy_id,
         (("ebooks", resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     repository.activate_qualified_automatic(3)
     proposal = evaluate_report(
@@ -938,6 +939,7 @@ def _server(
                     ),
                 ),
                 2,
+                expected_active_generation=1,
             )
             if automatic_fixture:
                 repository.activate_qualified_automatic(3)
@@ -2046,7 +2048,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # A fresh container activated nothing. The seeded built-in
                 # policy is named as the active baseline and never reported as
                 # a completed owner activation over zero works.
-                page.get_by_text("Active baseline \u00b7", exact=False).wait_for()
+                page.locator(".cm-policy-sidebar > header").get_by_text(
+                    "Active baseline", exact=True
+                ).wait_for()
                 policy_body = page.locator("body").inner_text()
                 assert "Activation complete" not in policy_body
                 assert "Policy update complete" not in policy_body
@@ -2160,7 +2164,9 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     "Draft matches the active policy", exact=True
                 ).wait_for()
                 page.get_by_text("Draft matches active policy.", exact=True).wait_for()
-                page.get_by_text("draft matches active", exact=False).first.wait_for()
+                page.locator(".cm-policy-route > header").get_by_text(
+                    "Draft matches active policy", exact=True
+                ).wait_for()
                 assert page.get_by_role(
                     "button", name="Validate and preview"
                 ).is_disabled()
@@ -2342,9 +2348,19 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # intervention needed" directly above its own
                 # `3 Awaiting permission`, which is the claim #639 forbids.
                 page.get_by_role(
-                    "heading", name="Prepared work needs your permission"
+                    "heading", name="3 prepared changes are ready. Writes are off."
                 ).wait_for()
-                expect(page.get_by_text("Awaiting permission")).to_be_visible()
+                expect(
+                    page.get_by_text("Ready for permission", exact=True)
+                ).to_have_count(1)
+                expect(
+                    page.get_by_text("Awaiting permission", exact=True)
+                ).to_have_count(0)
+                expect(
+                    page.get_by_role(
+                        "heading", name="Prepared work needs your permission"
+                    )
+                ).to_have_count(0)
                 for calm in (
                     "No intervention needed",
                     "No action required",
@@ -7768,8 +7784,10 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                 )
             ).to_be_visible()
             page.goto(f"{origin}/policy?section=curation")
-            genres = page.get_by_role("region", name="Genres", exact=True)
-            genres.get_by_role("button", name="Ignore", exact=True).click()
+            tags = page.get_by_role("region", name="Tags", exact=True)
+            tags.get_by_role("combobox", name="Tags representation").click()
+            page.get_by_role("option", name="Fill only when empty", exact=True).click()
+            tags.get_by_role("button", name="Automatic", exact=True).click()
             page.get_by_role("button", name="Validate and preview", exact=True).click()
             result = page.locator(".cm-policy-result")
             expect(result).to_be_visible()
@@ -7798,9 +7816,11 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
                     expand.focus()
                     page.keyboard.press("Enter")
                     if width == 1440:
-                        result.locator("aside").scroll_into_view_if_needed()
+                        result.locator(
+                            ".cm-policy-preview"
+                        ).scroll_into_view_if_needed()
                         assert result.evaluate("""node => {
-                            const panel = node.querySelector('aside').getBoundingClientRect();
+                            const panel = node.querySelector('.cm-policy-preview').getBoundingClientRect();
                             const rail = document.querySelector('.cm-policy-sidebar')
                                 .getBoundingClientRect();
                             return panel.right <= rail.left || panel.left >= rail.right

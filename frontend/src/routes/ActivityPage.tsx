@@ -412,12 +412,24 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       : new Set([...selection.names].filter((name) => selectableNames.has(name)))
   const [status, setStatus] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [consentOpen, setConsentOpen] = useState(false)
+  const [consentOpen, setConsentOpen] = useState(
+    () => router.state.location.hash === 'activity-consent',
+  )
+  useEffect(() => {
+    if (consentOpen)
+      document.getElementById('activity-consent')?.scrollIntoView({ block: 'nearest' })
+  }, [consentOpen])
+  const closeConsentReview = () => {
+    setConsentOpen(false)
+    if (router.state.location.hash === 'activity-consent')
+      void navigate({ search: (current) => current, hash: '', replace: true })
+  }
   const mutation = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) =>
       http.activityCommand(path, body),
     retry: false,
     onSuccess: async () => {
+      closeConsentReview()
       setSelection({ source: data, names: new Set() })
       setStatus('Activity state refreshed from the authoritative server.')
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
@@ -441,10 +453,26 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         }
         return
       }
-      setStatus('The requested activity change failed safely. Try again.')
+      setStatus(
+        error instanceof ApiError &&
+          command.path === 'activity/consent' &&
+          error.code === 'capability'
+          ? 'Write permissions changed during confirmation. No permission was granted. Review the refreshed included and excluded destinations, then confirm again.'
+          : error instanceof ApiError &&
+              command.path === 'activity/consent' &&
+              error.code === 'backup'
+            ? 'Backup readiness changed. No permission was granted. Restore backup readiness before confirming again.'
+            : 'The requested activity change failed safely. Try again.',
+      )
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
   })
+  const commandStatusRef = useRef<HTMLParagraphElement>(null)
+  useEffect(() => {
+    if (!mutation.isError || !status) return
+    commandStatusRef.current?.focus({ preventScroll: true })
+    commandStatusRef.current?.scrollIntoView({ block: 'center' })
+  }, [mutation.isError, status])
   const selectedGrants = selectable.flatMap((library) => {
     const name = library.library
     return selected.has(name)
@@ -578,6 +606,19 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // how one of them came to say it directly above the count that refutes it.
   const permissionNeeded = consentState === 'off' && offeredGrants.length > 0
   const hasAuthority = enabled.length > 0 || suspensions.length > 0 || needsConsent
+  const showOperationalSummary =
+    !permissionNeeded || Boolean(connection) || recoveryCount > 0 || data.paused
+  const consentFeedback = consentOpen && mutation.variables?.path === 'activity/consent'
+  const commandStatus = (
+    <p
+      className="activity-command-status"
+      ref={commandStatusRef}
+      tabIndex={-1}
+      role={mutation.isError ? 'alert' : 'status'}
+    >
+      {status}
+    </p>
+  )
   return (
     <div
       className="cm-activity-route"
@@ -710,7 +751,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                         event.state,
                         event.destination === 'description' && event.origin === 'adviser'
                           ? 'description'
-                          : event.destination === 'cover'
+                          : event.event_type !== 'policy' &&
+                              event.destination === 'cover' &&
+                              ['adviser', 'automatic_pipeline', 'owner_retry'].includes(
+                                event.origin,
+                              )
                             ? 'cover'
                             : undefined,
                       )}
@@ -904,46 +949,47 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               </div>
             </dl>
           </div>
-          {offer.map((item) => (
-            <div className="cm-write-consent-scope" key={item.library}>
-              <div>
-                <strong>{item.library}</strong>
-                <span>
-                  {item.eligible
-                    .map(
-                      (entry) =>
-                        `${String(entry.prepared)} ${fieldLabel(entry.destination).toLowerCase()} ${entry.prepared === 1 ? 'change' : 'changes'}`,
-                    )
-                    .join(' · ') || 'No eligible destination'}
-                </span>
-              </div>
-              <dl>
-                {[...item.eligible, ...item.excluded].map((entry) => (
-                  <div key={entry.destination}>
-                    <dt>{fieldLabel(entry.destination)}</dt>
-                    <dd>
-                      {entry.state === 'allowed'
-                        ? consentState === 'off' || consentState === 'enabling'
-                          ? 'Writes off'
-                          : 'Writes enabled'
-                        : `Excluded — ${destinationReason(entry.state)}`}
-                    </dd>
+          {!consentOpen
+            ? offer.map((item) => (
+                <div className="cm-write-consent-scope" key={item.library}>
+                  <div>
+                    <strong>{item.library}</strong>
+                    <span>
+                      {item.eligible
+                        .map(
+                          (entry) =>
+                            `${String(entry.prepared)} ${fieldLabel(entry.destination).toLowerCase()} ${entry.prepared === 1 ? 'change' : 'changes'}`,
+                        )
+                        .join(' · ') || 'No eligible destination'}
+                    </span>
                   </div>
-                ))}
-              </dl>
-            </div>
-          ))}
+                  <dl>
+                    {[...item.eligible, ...item.excluded].map((entry) => (
+                      <div key={entry.destination}>
+                        <dt>{fieldLabel(entry.destination)}</dt>
+                        <dd>
+                          {entry.state === 'allowed'
+                            ? consentState === 'off' || consentState === 'enabling'
+                              ? 'Writes off'
+                              : 'Writes enabled'
+                            : `Excluded — ${destinationReason(entry.state)}`}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ))
+            : null}
           <div className="cm-write-consent-action">
             <button
               className="cm-primary"
               type="button"
               disabled={consentState !== 'off' || consentBlocked !== null}
-              onClick={() =>
-                mutation.mutate({
-                  path: 'activity/consent',
-                  body: { grants: offeredGrants },
-                })
-              }
+              aria-expanded={consentOpen}
+              aria-controls="activity-consent"
+              onClick={() => {
+                setConsentOpen(true)
+              }}
             >
               {consentState === 'off'
                 ? 'Enable writes'
@@ -957,64 +1003,131 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </div>
         </section>
       ) : null}
-      <section className="cm-activity-status" aria-labelledby="activity-status-title">
-        <div className="cm-activity-status-copy">
-          <h2 id="activity-status-title">
-            {connection?.state === 'checking'
-              ? 'Checking library connection'
-              : connection?.state === 'paused'
-                ? 'Library connection is paused'
-                : recoveryCount
-                  ? 'Recovery needs attention'
-                  : permissionNeeded
-                    ? 'Prepared work needs your permission'
+      {consentOpen ? (
+        <section className="activity-consent-ledger" id="activity-consent">
+          <div>
+            <p className="eyebrow">Prepared, read-only work</p>
+            <h2>Enable guarded writes</h2>
+            <p>
+              Each write is checked before it starts, verified afterwards, and recorded durably.
+            </p>
+          </div>
+          {configured.map((library) => {
+            const name = library.library
+            const state = capability(name)?.state ?? 'not_ready'
+            const disabled = !selectableNames.has(name)
+            return (
+              <div className="activity-consent-library" key={name}>
+                <label>
+                  <input
+                    type="checkbox"
+                    disabled={disabled}
+                    checked={selected.has(name)}
+                    onChange={() => toggle(name)}
+                  />
+                  <strong>{name}</strong>
+                  <small>
+                    {preparedCount(library)} prepared · {capabilityLabel(state)}
+                  </small>
+                </label>
+                <ul aria-label={`${name} included and excluded destinations`}>
+                  {capability(name)?.destinations.map((entry) => (
+                    <li key={entry.destination}>
+                      <span>{fieldLabel(entry.destination)}</span>
+                      <small>
+                        {entry.state === 'allowed'
+                          ? `Included · ${String(entry.prepared)} prepared`
+                          : `Excluded — ${destinationReason(entry.state)}`}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )
+          })}
+          <p>
+            Only the included destinations shown above are enabled. Excluded destinations remain
+            off. Backup and service capability are checked again on confirmation.
+          </p>
+          {consentFeedback ? commandStatus : null}
+          <button type="button" onClick={closeConsentReview} disabled={mutation.isPending}>
+            Cancel permission review
+          </button>
+          <button
+            className="primary-action"
+            disabled={mutation.isPending || !data.backup_ready || selectedGrants.length === 0}
+            onClick={() =>
+              mutation.mutate({
+                path: 'activity/consent',
+                body: { grants: selectedGrants },
+              })
+            }
+          >
+            Confirm write permissions
+          </button>
+        </section>
+      ) : null}
+      <section
+        className="cm-activity-status"
+        aria-labelledby={showOperationalSummary ? 'activity-status-title' : undefined}
+      >
+        {showOperationalSummary ? (
+          <div className="cm-activity-status-copy">
+            <h2 id="activity-status-title">
+              {connection?.state === 'checking'
+                ? 'Checking library connection'
+                : connection?.state === 'paused'
+                  ? 'Library connection is paused'
+                  : recoveryCount
+                    ? 'Recovery needs attention'
                     : data.paused
                       ? 'New work is paused'
                       : 'No intervention needed'}
-          </h2>
-          <p>
-            {connection?.state === 'checking'
-              ? 'Preparation remains safely paused while the authoritative connection check settles.'
-              : connection?.state === 'paused'
-                ? `${String(connection.affected)} preparation ${connection.affected === 1 ? 'work remains' : 'works remain'} safely paused for an owner connection check.`
-                : dormantRecovery
-                  ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
-                  : recoveryCount
-                    ? 'Affected work remains held until its current state can be reconciled safely.'
-                    : permissionNeeded
-                      ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready and will stay unwritten until you enable writes.`
+            </h2>
+            <p>
+              {connection?.state === 'checking'
+                ? 'Preparation remains safely paused while the authoritative connection check settles.'
+                : connection?.state === 'paused'
+                  ? `${String(connection.affected)} preparation ${connection.affected === 1 ? 'work remains' : 'works remain'} safely paused for an owner connection check.`
+                  : dormantRecovery
+                    ? `${String(dormantRecovery)} provider ${dormantRecovery === 1 ? 'scope needs' : 'scopes need'} owner correction before a future check can become eligible.`
+                    : recoveryCount
+                      ? 'Affected work remains held until its current state can be reconciled safely.'
                       : data.paused
                         ? 'No new work will be claimed. Work already claimed may finish its safe checkpoint; resume new work when you are ready for planned work to continue.'
                         : 'Guarded work continues automatically. Recovery controls appear only when your decision is required.'}
-          </p>
-        </div>
-        <dl>
-          <div>
-            <dt>Writes in progress</dt>
-            <dd>{writes}</dd>
+            </p>
           </div>
-          <div>
-            <dt>Awaiting permission</dt>
-            <dd>{reasons.awaiting_permission}</dd>
-          </div>
-          <div>
-            <dt>Scheduled</dt>
-            <dd>{reasons.scheduled}</dd>
-          </div>
-          <div>
-            <dt>Retrying</dt>
-            <dd>{reasons.retrying}</dd>
-          </div>
-          <div>
-            <dt>Held for recovery</dt>
-            <dd>{reasons.held_for_recovery}</dd>
-          </div>
-          <div>
-            <dt>Recovery needed</dt>
-            <dd>{recoveryCount}</dd>
-          </div>
-        </dl>
-        {waitingEvent ? (
+        ) : null}
+        {!consentActionable ? (
+          <dl>
+            <div>
+              <dt>Writes in progress</dt>
+              <dd>{writes}</dd>
+            </div>
+            <div>
+              <dt>Awaiting permission</dt>
+              <dd>{reasons.awaiting_permission}</dd>
+            </div>
+            <div>
+              <dt>Scheduled</dt>
+              <dd>{reasons.scheduled}</dd>
+            </div>
+            <div>
+              <dt>Retrying</dt>
+              <dd>{reasons.retrying}</dd>
+            </div>
+            <div>
+              <dt>Held for recovery</dt>
+              <dd>{reasons.held_for_recovery}</dd>
+            </div>
+            <div>
+              <dt>Recovery needed</dt>
+              <dd>{recoveryCount}</dd>
+            </div>
+          </dl>
+        ) : null}
+        {waitingEvent && !permissionNeeded ? (
           <div className="cm-activity-waiting">
             <span className="cm-activity-pulse" aria-hidden="true" />
             <div>
@@ -1022,11 +1135,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 {waitingEvent.work_label} · {fieldLabel(waitingEvent.destination)} update
               </strong>
               <span>
-                {permissionNeeded
-                  ? 'This change stays prepared and unwritten until you enable writes.'
-                  : data.paused
-                    ? 'Resume new work when you are ready. No automatic check will start while new work is paused.'
-                    : 'Next exact-current check runs automatically. No action is required.'}
+                {data.paused
+                  ? 'Resume new work when you are ready. No automatic check will start while new work is paused.'
+                  : 'Next exact-current check runs automatically. No action is required.'}
               </span>
             </div>
           </div>
@@ -1117,7 +1228,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               ))}
               {needsConsent ? (
                 <button
-                  onClick={() => setConsentOpen((value) => !value)}
+                  onClick={() => (consentOpen ? closeConsentReview() : setConsentOpen(true))}
                   aria-expanded={consentOpen}
                   aria-controls="activity-consent"
                 >
@@ -1135,59 +1246,12 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   ))}
                 </div>
               ) : null}
-              {consentOpen ? (
-                <section className="activity-consent-ledger" id="activity-consent">
-                  <div>
-                    <p className="eyebrow">Prepared, read-only work</p>
-                    <h2>Enable guarded writes</h2>
-                    <p>
-                      Each write is checked before it starts, verified afterwards, and recorded
-                      durably.
-                    </p>
-                  </div>
-                  {configured.map((library) => {
-                    const name = library.library
-                    const state = capability(name)?.state ?? 'not_ready'
-                    const disabled = !selectableNames.has(name)
-                    return (
-                      <label className="activity-consent-library" key={name}>
-                        <input
-                          type="checkbox"
-                          disabled={disabled}
-                          checked={selected.has(name)}
-                          onChange={() => toggle(name)}
-                        />
-                        <strong>{name}</strong>
-                        <small>
-                          {preparedCount(library)} prepared · {capabilityLabel(state)}
-                        </small>
-                      </label>
-                    )
-                  })}
-                  <button
-                    className="primary-action"
-                    disabled={
-                      mutation.isPending || !data.backup_ready || selectedGrants.length === 0
-                    }
-                    onClick={() =>
-                      mutation.mutate({
-                        path: 'activity/consent',
-                        body: { grants: selectedGrants },
-                      })
-                    }
-                  >
-                    Enable selected libraries
-                  </button>
-                </section>
-              ) : null}
             </div>
           </details>
         ) : null}
       </section>
       <PreparationNotice routeIdentity={routeIdentity} />
-      <p className="activity-command-status" role={mutation.isError ? 'alert' : 'status'}>
-        {status}
-      </p>
+      {!consentFeedback ? commandStatus : null}
     </div>
   )
 }

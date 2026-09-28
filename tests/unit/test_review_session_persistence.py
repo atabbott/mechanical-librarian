@@ -88,6 +88,7 @@ def test_retained_policy_snapshot_cannot_borrow_concurrent_resolution(tmp_path) 
             ),
         ),
         2,
+        expected_active_generation=1,
     )
     proposal = evaluate_report(
         report,
@@ -132,6 +133,7 @@ def test_retained_policy_snapshot_cannot_borrow_concurrent_resolution(tmp_path) 
                     ),
                 ),
                 3,
+                expected_active_generation=2,
             )
             successor = evaluate_report(
                 report,

@@ -332,6 +332,7 @@ def test_wrong_work_adapter_evidence_stays_inspectable_but_cannot_reopen_authori
                 ),
             ),
             2,
+            expected_active_generation=1,
         )
         repository.activate_qualified_automatic(3)
         repository.publish(report, lambda: True)

@@ -369,6 +369,7 @@ def test_genre_ask_stays_case_bound_then_retires_with_report_replacement(tmp_pat
             original.policy_id,
             ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
             5,
+            expected_active_generation=2,
         )
         # The old case retains its original Ask resolution, not the new profile.
         assert next(

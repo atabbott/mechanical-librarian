@@ -133,7 +133,7 @@ def _automatic_decision_projection(document: str) -> dict[str, object] | None:
         raise ValueError
     if raw.get("schema_version") not in {
         "automatic-decision-v1",
-        "cover-automatic-decision-v2",
+        "cover-automatic-decision-v3",
     }:
         return None
     decision = parse_automatic_authority(document)

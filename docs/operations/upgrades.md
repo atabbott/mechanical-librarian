@@ -10,6 +10,13 @@ for every predecessor application database; startup refuses it before mutation.
 No migration, adoption, conversion, import or downgrade is supplied. Historical
 automatic records remain readable evidence, without current effect authority.
 
+#1011 advances automatic cover authority to `cover-automatic-decision-v3` and
+its exact selection-table constraint. **Clean rebuild required** under ADR-0013,
+including empty predecessor stores. Preserve old evidence offline; do not import
+v2 decisions. No adoption or migration is provided. V3 records the actual ebook
+option without claiming audiobook qualification; fixed-source upgrades and
+F46 audiobook operations retain their existing boundaries.
+
 #967 requires current `metadata-report-v43`, `shadow-outcome-set-v5`,
 `metadata-policy-profile-v3`, `shadow-review-packet-v8`, and
 `cover-automatic-decision-v2`, with `fixed-conservative-v26` under the unchanged

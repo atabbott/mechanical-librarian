@@ -2527,6 +2527,7 @@ def test_retained_component_ask_agrees_across_detail_library_and_attention(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     proposal = evaluate_report(
         report, resolved.resolved_id, human_review_destinations(resolved)
@@ -2629,6 +2630,7 @@ def test_retained_subtitle_attention_uses_original_mixed_policy(
         builtin.policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     proposal = evaluate_report(
         report, resolved.resolved_id, human_review_destinations(resolved)
@@ -2869,6 +2871,7 @@ def test_provider_policy_and_report_replacement_stay_inside_current_snapshot(tmp
                     ),
                 ),
                 4,
+                expected_active_generation=2,
             )
             report = provider_failure_report(contributing=False)
             writer.publish(

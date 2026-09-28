@@ -685,8 +685,10 @@ activity exists, its current guarded state, shared recovery, and recent outcomes
 lead the page; write-permission inventory remains reachable from that state and
 collapses to a concise summary for returning owners. Before any activity or
 consent it opens that disclosure to show prepared human/automatic counts, all
-14 destinations with exact included/excluded readiness, one mutation slot, a
-representative before/after example, backup readiness and one enable action. A
+16 destinations with exact included/excluded readiness, one mutation slot, a
+representative before/after example and backup readiness. Every Enable writes
+action opens the same normal-flow library/destination permission review, with
+explicit confirmation and cancellation; opening it grants nothing. A
 partially consented library returns to the same disclosure when a newly eligible
 destination can be added; the action binds the exact visible subset and fails
 safely if it changes. Its collapsed ready count uses the same backup,
@@ -806,3 +808,25 @@ fallbacks. Expanded outcomes follow the choices in document flow; the compact
 summary and actions retain their existing finish area. Document scrolling reaches
 the last result without a nested results-height limit. Preview remains a retained
 input comparison and does not activate a draft or authorize an effect.
+
+
+Policy impact separates active-to-draft effects from projected library changes.
+Per-media qualification and operation limits appear beside each option and in
+activation review. Only the compact summary/actions stay pinned; expanded
+results and unchanged context remain in document flow. Warnings and errors stay
+visible, with routine progress announced without a duplicate status panel.
+History and Evidence use the same available outer width and retain selected
+work/field and return context. Each timestamp belongs to its actual event;
+checkpoint-only lifecycle entries explicitly say that time is unavailable.
+Policy and decision records never imply a verified metadata effect.
+
+Per-media sampled-work counts include every captured case, including unchanged
+works. Changed-field counts include only policy-caused changes. The secondary
+unchanged context excludes changed primary rows. A route change for a preserved
+taxonomy field counts only when the Automatic side has qualified evidence.
+
+Policy media guidance leads with the selected Automatic, Ask me, Ignore or
+unavailable behavior. Eligibility shown for another mode is explicitly labelled
+as hypothetical Automatic eligibility. Activation review repeats the selected
+behavior. Closing or completing write-permission review consumes its deep-link
+fragment while preserving Activity filters; reload does not reopen a closed review.

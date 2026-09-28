@@ -1647,3 +1647,25 @@ catalogue writes through this read path are not. Identity joins require the
 current configured fingerprint, current catalogue generation and all target
 keys. Page and count observe consistent per-store snapshots, not an atomic
 cross-file publication or cross-request pagination guarantee.
+
+
+Policy-edit comparison (#1011) reads one bounded retained SQLite snapshot and
+compiles outside its read transaction. The transient active/draft comparison
+adds no durable authority, network access or effect scheduling. The existing
+sixteen-destination consent surface now opens one exact-scope review from every
+entry point; only explicit confirmation submits it. Fresh capability validation,
+backup, owner-final checks, optimistic concurrency and durable verified read-back
+remain unchanged. An ambiguous confirmation is read back without resending.
+
+Automatic cover authority v3 binds the selected policy option into the decision,
+idempotency and rule identity. An ebook known-empty fallback retains deterministic
+cover qualification, never an F46 identity; admission and effect validation both
+require the recorded option to match the retained resolved policy and generation.
+V2 documents and prior selection-table schemas are rejected before startup
+mutation: clean rebuild required under ADR-0013, with no adoption path.
+
+Policy activation requires the exact active policy identity and positive generation
+captured by preview. Returning to an earlier policy identity cannot revive a stale
+preview. Idempotent retries match the immediately following generation and its
+recorded from/to identities; internal same-policy reconciliation cannot masquerade
+as an externally requested no-op. These checks use existing transaction records.

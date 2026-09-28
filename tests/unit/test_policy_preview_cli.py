@@ -21,6 +21,7 @@ from mechanical_librarian.application.metadata_policy import (
 )
 from mechanical_librarian.bootstrap.composition import run_policy_preview
 from mechanical_librarian.domain.metadata_policy import (
+    OPTION_CATALOGUE,
     MetadataPolicyProfile,
     resolve_policy,
 )
@@ -79,7 +80,9 @@ def test_composed_preview_reaches_every_operation_it_exposes() -> None:
             assert {"preview_policy", "rich_qualification", "validate_policy"} == {
                 name for name in dir(application) if not name.startswith("_")
             }
-            assert 20 == len(application.rich_qualification(builtin))
+            assert sum(map(len, OPTION_CATALOGUE.values())) == len(
+                application.rich_qualification(builtin)
+            )
             assert builtin == application.validate_policy(
                 builtin.name,
                 dict(builtin.options),
@@ -115,6 +118,7 @@ def test_composed_preview_uses_active_profile_for_new_library() -> None:
             builtin.policy_id,
             (("first", resolved.resolved_id, resolved.canonical_json),),
             1,
+            expected_active_generation=1,
         )
         repository.close()
 
@@ -137,7 +141,9 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
         before_entries = tuple(sorted(value.name for value in root.iterdir()))
         result = run_policy_preview(config, database, profile)
         assert "metadata-policy-preview-v1" == result["schema_version"]
-        assert 20 == len(result["rich_qualification"])
+        assert sum(map(len, OPTION_CATALOGUE.values())) == len(
+            result["rich_qualification"]
+        )
         assert {
             "description_fill:safe_plain_text",
             "genres:fill_empty",
@@ -153,11 +159,64 @@ def test_composed_preview_uses_existing_database_without_mutation() -> None:
             "tags:add",
             "tags:replace",
             "cover_order:fixed_source_order",
+            "cover_order:replace_if_strictly_better",
+            "title_layout:preserve",
+            "title_layout:title_and_subtitle",
+            "date_precision:year",
+            "date_precision:full_date",
+            "language_rendering:preserve",
+            "language_rendering:display_name",
+            "contributor_names:preserve",
+            "contributor_names:canonical",
+            "publisher_preference:publisher",
         } == {
             f"{item['field']}:{item['option']}"
             for item in result["rich_qualification"]
             if item["automatic_available"] is True
         }
+        entries = {
+            f"{item['field']}:{item['option']}": item
+            for item in result["rich_qualification"]
+        }
+        assert {
+            "publisher_preference:imprint",
+            "subtitle:replace_descriptive",
+            "subtitle:corroborated_split",
+            "series:add_qualified",
+            "series:replace_qualified",
+            "description_fill:google_visible_text",
+            "description_fill:replace_safe_plain_text",
+            "asin:preserve_exact",
+            "asin:ebook_manifestation",
+            "explicit:unsupported",
+            "explicit:adult_product",
+            "tags:off",
+        } == {key for key, item in entries.items() if not item["automatic_available"]}
+        assert all(
+            item["operation_scope"] == "none"
+            for item in entries.values()
+            if not item["automatic_available"]
+        )
+        assert {
+            key for key, item in entries.items() if item["operation_scope"] == "fill"
+        } == {
+            "cover_order:replace_if_strictly_better",
+            "subtitle:fill_empty",
+            "description_fill:safe_plain_text",
+            "isbn_form:preserve_exact",
+            "isbn_form:prefer_isbn13",
+            "series:primary_narrative",
+            "series:source_order",
+            "series:all_qualified",
+            "genres:fill_empty",
+            "tags:fill_empty",
+        }
+        assert (
+            entries["cover_order:fixed_source_order"]["operation_scope"]
+            == "fill_or_replace"
+        )
+        assert entries["tags:add"]["operation_scope"] == "add"
+        assert entries["tags:replace"]["operation_scope"] == "replace"
         assert "ebooks" == result["libraries"][0]["library"]
         assert [] == result["libraries"][0]["cases"]
         assert before_database == database.read_bytes()

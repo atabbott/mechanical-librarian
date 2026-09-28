@@ -63,6 +63,7 @@ def publish_title_case(
         base.policy_id,
         ((report.target.library, policy.resolved_id, policy.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     repository.activate_qualified_automatic(3)
     proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))

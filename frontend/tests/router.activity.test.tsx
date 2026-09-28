@@ -190,7 +190,7 @@ describe('Activity route', () => {
     expect(consentTrigger).toHaveAttribute('aria-controls', 'activity-consent')
     await user.click(consentTrigger)
     expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   })
 
   it.each([
@@ -314,12 +314,11 @@ describe('Activity route', () => {
         throw new AmbiguousMutationError()
       }),
     }
-    renderRoute('/activity', http)
+    const { router } = renderRoute('/activity#activity-consent', http)
     await openActivityAuthority(user)
-    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     await user.click(screen.getByRole('checkbox'))
     current = { ...initial, capabilities: [] }
-    await user.click(screen.getByRole('button', { name: 'Enable selected libraries' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
 
     await waitFor(() =>
       expect(screen.getByRole('alert')).toHaveTextContent(
@@ -327,6 +326,8 @@ describe('Activity route', () => {
       ),
     )
     expect(http.activityCommand).toHaveBeenCalledOnce()
+    expect(router.state.location.hash).toBe('activity-consent')
+    expect(screen.getByRole('button', { name: 'Cancel permission review' })).toBeVisible()
   })
 
   it('clears protected consent selection when current eligibility changes', async () => {
@@ -372,14 +373,14 @@ describe('Activity route', () => {
     }
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
     await waitFor(() => expect(screen.getByRole('checkbox')).toBeDisabled())
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
 
     current = partial
     await queryClient.invalidateQueries({ queryKey: ['activity'] })
     const restored = await screen.findByRole('checkbox')
     expect(restored).toBeEnabled()
     expect(restored).not.toBeChecked()
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   })
 
   it('keeps unavailable consent disabled in the protected authority view', async () => {
@@ -427,7 +428,7 @@ describe('Activity route', () => {
     await openActivityAuthority(user)
     await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(screen.getByRole('checkbox')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   })
 
   it('bounds unknown ledger types neutrally', async () => {
@@ -842,7 +843,7 @@ describe('Activity route', () => {
     await openActivityAuthority(user)
     await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     expect(await screen.findByRole('checkbox')).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Enable selected libraries' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   })
 
   it('does not invent a pause control after revocation', async () => {
@@ -1192,6 +1193,7 @@ describe('Activity route', () => {
   })
 
   it('never says no action is required while its own prepared work awaits consent', async () => {
+    const user = userEvent.setup()
     const http: ReviewHttp = {
       ...createHttp(),
       getActivity: vi.fn(async () =>
@@ -1237,9 +1239,10 @@ describe('Activity route', () => {
     // cannot claim calm directly above the count that refutes it (#639).
     expect(await screen.findByText('3 prepared changes are ready. Writes are off.')).toBeVisible()
     expect(
-      screen.getByRole('heading', { name: 'Prepared work needs your permission' }),
-    ).toBeVisible()
-    expect(screen.getByText('Awaiting permission')).toBeVisible()
+      screen.queryByRole('heading', { name: 'Prepared work needs your permission' }),
+    ).toBeNull()
+    expect(screen.getAllByText('Ready for permission')).toHaveLength(1)
+    expect(screen.queryByText('Awaiting permission')).toBeNull()
     for (const calm of [
       'No intervention needed',
       'No action required',
@@ -1248,6 +1251,34 @@ describe('Activity route', () => {
     ])
       expect(screen.queryByText(calm)).toBeNull()
     expect(screen.getByText('Action needed')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Enable writes' }))
+    expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('checkbox', { name: /fiction/ }))
+    await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
+    expect(screen.queryByRole('heading', { name: 'Enable guarded writes' })).toBeNull()
+    expect(screen.getAllByText('Ready for permission')).toHaveLength(1)
+    expect(screen.queryByText('Prepared work needs your permission')).toBeNull()
+    expect(screen.queryByText('Awaiting permission')).toBeNull()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+    await user.click(screen.getByRole('button', { name: 'Enable writes' }))
+    vi.mocked(http.activityCommand).mockRejectedValueOnce(new ApiError(409, 'capability'))
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
+    expect(
+      await screen.findByText(
+        'Write permissions changed during confirmation. No permission was granted. Review the refreshed included and excluded destinations, then confirm again.',
+      ),
+    ).toBeVisible()
+    expect(http.activityCommand).toHaveBeenCalledTimes(1)
+    const failure = screen.getByRole('alert')
+    expect(failure).toHaveFocus()
+    expect(failure.closest('#activity-consent')).not.toBeNull()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
+    expect(http.activityCommand).toHaveBeenLastCalledWith('activity/consent', {
+      grants: [{ library: 'fiction', destinations: ['title'] }],
+    })
+    expect(http.activityCommand).toHaveBeenCalledTimes(2)
   })
 
   it('returns to a calm status once every prepared change has permission', async () => {
@@ -2262,4 +2293,74 @@ it('skips speculative Activity data work and starts its required navigation read
   })
   expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
   expect(http.getActivity).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  ['cancel', 'activity-consent'],
+  ['success', 'activity-consent'],
+  ['toggle', 'activity-consent'],
+  ['cancel', 'other-section'],
+])('closes %s from #%s without reopening on remount', async (close, hash) => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getActivity = vi.fn(async () =>
+    activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          prepared: { automatic: 1, human: 0, total: 1 },
+        },
+      ],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 1 }],
+        },
+      ],
+    }),
+  )
+  const { router } = renderRoute(
+    `/activity?eventType=policy&rangeDays=7&page=1&pageSize=50#${hash}`,
+    http,
+  )
+  if (hash !== 'activity-consent') {
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
+  }
+  await screen.findByRole('button', { name: 'Cancel permission review' })
+  if (close === 'success') {
+    await user.click(screen.getByRole('checkbox'))
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
+    await waitFor(() =>
+      expect(http.activityCommand).toHaveBeenCalledExactlyOnceWith('activity/consent', {
+        grants: [{ library: 'fiction', destinations: ['title'] }],
+      }),
+    )
+  } else if (close === 'toggle') {
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
+  } else await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
+  const closedHash = hash === 'activity-consent' ? '' : hash
+  await waitFor(() => expect(router.state.location.hash).toBe(closedHash))
+  expect(router.state.location.search).toEqual({
+    eventType: 'policy',
+    rangeDays: 7,
+    page: 1,
+    pageSize: 50,
+  })
+  expect(screen.queryByRole('button', { name: 'Cancel permission review' })).toBeNull()
+  const search = { eventType: 'policy', rangeDays: 7, page: 1, pageSize: 50 } as const
+  await act(async () => {
+    await router.navigate({ to: '/library', search: { lens: 'all' } })
+  })
+  await screen.findByRole('heading', { level: 2, name: 'Works' })
+  await act(async () => {
+    await router.navigate({ to: '/activity', search, hash: closedHash })
+  })
+  await screen.findByRole('heading', { name: 'Activity and recovery' })
+  expect(screen.queryByRole('button', { name: 'Cancel permission review' })).toBeNull()
+  if (close !== 'success') expect(http.activityCommand).not.toHaveBeenCalled()
 })

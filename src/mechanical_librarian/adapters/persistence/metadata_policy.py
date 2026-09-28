@@ -51,6 +51,8 @@ from mechanical_librarian.adapters.persistence.transactions import (
 )
 from mechanical_librarian.application.metadata_policy import (
     PolicyContentionError,
+    PolicyPreviewCapture,
+    PolicyPreviewLibraryCapture,
     PolicyTransition,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -172,7 +174,12 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                             for resolved in (resolve_policy(profile, library[0]),)
                         )
                     self._activate_metadata_policy(
-                        row[0], row[0], resolutions, updated_at, reconcile_current=True
+                        row[0],
+                        row[0],
+                        resolutions,
+                        updated_at,
+                        expected_active_generation=row[1],
+                        reconcile_current=True,
                     )
             self._connection.execute(
                 "UPDATE metadata_policy_state SET posture='preview' WHERE singleton=1"
@@ -369,6 +376,47 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         return self._metadata_policy_resolution(library, allow_missing=True)
 
     @local_operation
+    def capture_policy_preview(
+        self, libraries: tuple[str, ...], limit: int
+    ) -> PolicyPreviewCapture:
+        """Capture policy, resolutions and ordered inputs in one deferred snapshot."""
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise MetadataReportError("policy preview is unavailable")
+        transaction = self._transaction("capture_policy_preview", deferred=True)
+        try:
+            transaction.begin()
+            document, resolutions = self.metadata_policy_preview_baseline(libraries)
+            profile = MetadataPolicyProfile.from_data(json.loads(document))
+            row = self._connection.execute(
+                "SELECT generation FROM metadata_policy_state WHERE singleton=1"
+            ).fetchone()
+            if row is None or type(row[0]) is not int or row[0] < 1:
+                raise MetadataReportError("policy preview is unavailable")
+            captured = []
+            remaining = limit
+            for library, resolution in resolutions:
+                total, pairs = (
+                    self.current_policy_impact_pairs(library, remaining)
+                    if remaining
+                    else (self.current_unapplied_count(library), ())
+                )
+                if resolution is not None and any(
+                    proposal.resolved_policy_id != resolution.resolved_id
+                    for _, proposal in pairs
+                ):
+                    raise MetadataReportError("policy preview is unavailable")
+                captured.append(
+                    PolicyPreviewLibraryCapture(library, resolution, total, pairs)
+                )
+                remaining -= len(pairs)
+            result = PolicyPreviewCapture(profile, row[0], tuple(captured))
+            transaction.commit()
+            return result
+        except Exception:
+            transaction.rollback()
+            raise
+
+    @local_operation
     def metadata_policy_preview_baseline(
         self, libraries: tuple[str, ...]
     ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]:
@@ -541,11 +589,14 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         resolutions: tuple[tuple[str, str, str], ...],
         activated_at: int,
         *,
+        expected_active_generation: int,
         reconcile_current: bool = False,
     ) -> PolicyTransition | None:
         if (
             type(policy_id) is not str
             or type(expected_active_policy_id) is not str
+            or type(expected_active_generation) is not int
+            or expected_active_generation < 1
             or type(resolutions) is not tuple
             or resolutions != tuple(sorted(resolutions))
             or len(resolutions) != len({library for library, _, _ in resolutions})
@@ -572,7 +623,10 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise PolicyContentionError(
                     "stale", "metadata policy activation is stale"
                 )
-            if state[0] != expected_active_policy_id:
+            if (
+                state[0] != expected_active_policy_id
+                or state[1] != expected_active_generation
+            ):
                 replay = self._connection.execute(
                     "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged "
                     "FROM metadata_policy_transitions WHERE generation=?",
@@ -580,9 +634,12 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 ).fetchone()
                 if (
                     state[0] == policy_id
+                    and state[1] == expected_active_generation + 1
+                    and (policy_id != expected_active_policy_id or reconcile_current)
                     and replay is not None
                     and replay[1] == expected_active_policy_id
                     and replay[2] == policy_id
+                    and replay[3] == expected_active_generation + 1
                 ):
                     result = self.metadata_policy_transition()
                     if result is None or result.transition_id != replay[0]:

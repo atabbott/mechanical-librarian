@@ -163,6 +163,7 @@ def publish_provider_failure_case(
         builtin.policy_id,
         ((report.target.library, policy.resolved_id, policy.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
     repository.publish(report, lambda: True)

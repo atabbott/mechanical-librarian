@@ -1252,6 +1252,9 @@ class _PolicyProfile(_ClosedModel):
 
 
 class _RichQualificationBase(_ClosedModel):
+    operation_scope: Literal[
+        "none", "fill", "fill_or_replace", "preserve", "add", "replace"
+    ]
     candidate_sha256: StrictStr = Field(pattern=r"^[0-9a-f]{64}$")
 
 
@@ -1336,7 +1339,77 @@ class _CoverQualification(_RichQualificationBase):
     automatic_available: Literal[True]
     disposition: Literal["pass"]
     field: Literal["cover_order"]
-    option: Literal["fixed_source_order"]
+    option: Literal["fixed_source_order", "replace_if_strictly_better"]
+
+
+class _TitleEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["title_layout"]
+    option: Literal["preserve", "title_and_subtitle"]
+
+
+class _DateEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["date_precision"]
+    option: Literal["year", "full_date"]
+
+
+class _LanguageEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["language_rendering"]
+    option: Literal["preserve", "display_name"]
+
+
+class _ContributorEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["contributor_names"]
+    option: Literal["preserve", "canonical"]
+
+
+class _PublisherEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[True]
+    disposition: Literal["pass"]
+    field: Literal["publisher_preference"]
+    option: Literal["publisher"]
+
+
+class _ImprintEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["publisher_preference"]
+    option: Literal["imprint"]
+
+
+class _SubtitleReplaceEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["subtitle"]
+    option: Literal["replace_descriptive"]
+
+
+class _SeriesEditEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["series"]
+    option: Literal["add_qualified", "replace_qualified"]
+
+
+class _DescriptionReplaceEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["description_fill"]
+    option: Literal["replace_safe_plain_text"]
+
+
+class _AdultEbookQualification(_RichQualificationBase):
+    automatic_available: Literal[False]
+    disposition: Literal["not_qualified"]
+    field: Literal["explicit"]
+    option: Literal["adult_product"]
 
 
 _RichQualification: TypeAlias = (
@@ -1352,6 +1425,16 @@ _RichQualification: TypeAlias = (
     | _AsinQualification
     | _ExplicitQualification
     | _CoverQualification
+    | _TitleEbookQualification
+    | _DateEbookQualification
+    | _LanguageEbookQualification
+    | _ContributorEbookQualification
+    | _PublisherEbookQualification
+    | _ImprintEbookQualification
+    | _SubtitleReplaceEbookQualification
+    | _SeriesEditEbookQualification
+    | _DescriptionReplaceEbookQualification
+    | _AdultEbookQualification
 )
 _RICH_QUALIFICATION_ADAPTER: TypeAdapter[_RichQualification] = TypeAdapter(
     _RichQualification
@@ -1477,9 +1560,23 @@ class _RichCasePreviewResponse(_ClosedModel):
     work_label: str = Field(max_length=512)
 
 
+class _PolicyFieldComparisonResponse(_ClosedModel):
+    active: _RichFieldPreviewResponse
+    draft: _RichFieldPreviewResponse
+    active_destination: Literal["ask", "automatic", "ignore", "unsupported"]
+    draft_destination: Literal["ask", "automatic", "ignore", "unsupported"]
+    changed: bool
+
+
+class _PolicyCaseComparisonResponse(_ClosedModel):
+    media_kind: Literal["ebook", "audiobook"]
+    fields: list[_PolicyFieldComparisonResponse]
+
+
 class _PolicyImpactResponse(_ClosedModel):
     affected_categories: list[str]
     cases: list[_RichCasePreviewResponse]
+    comparisons: list[_PolicyCaseComparisonResponse]
     cases_total: int
     cases_truncated: bool
     current_unapplied_count: int
@@ -1488,6 +1585,7 @@ class _PolicyImpactResponse(_ClosedModel):
 
 
 class _PolicyPreviewResponse(_ClosedModel):
+    active_generation: StrictInt = Field(ge=1)
     active_policy_id: str
     libraries: list[_PolicyImpactResponse]
     policy_id: str
@@ -1496,6 +1594,7 @@ class _PolicyPreviewResponse(_ClosedModel):
 
 
 class _PolicyActivationRequest(_ClosedModel):
+    expected_active_generation: StrictInt = Field(ge=1)
     policy_id: StrictStr = Field(pattern=r"^policy_[0-9a-f]{64}$")
     expected_active_policy_id: StrictStr = Field(pattern=r"^policy_[0-9a-f]{64}$")
 
@@ -2892,6 +2991,7 @@ def _register_policy_routes(
             raise _policy_application_http_error(error) from None
         return _PolicyPreviewResponse(
             active_policy_id=preview.active_policy_id,
+            active_generation=preview.active_generation,
             policy_id=profile.policy_id,
             rich_qualification=[
                 _RICH_QUALIFICATION_ADAPTER.validate_python(item)
@@ -2905,6 +3005,10 @@ def _register_policy_routes(
                             {**case.to_data(), "work_label": item.work_labels[index]}
                         )
                         for index, case in enumerate(item.cases)
+                    ],
+                    comparisons=[
+                        _PolicyCaseComparisonResponse.model_validate(case.to_data())
+                        for case in item.comparisons
                     ],
                     cases_total=item.cases_total,
                     cases_truncated=item.cases_truncated,
@@ -2935,6 +3039,7 @@ def _register_policy_routes(
                 payload.policy_id,
                 payload.expected_active_policy_id,
                 application.now(),
+                expected_active_generation=payload.expected_active_generation,
             )
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None

@@ -12,11 +12,10 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp
 
 from mechanical_librarian.adapters.persistence.owner_settings import _settings_view
+from mechanical_librarian.application.metadata_policy import rich_qualification
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import OwnerSettingsDocument
-from mechanical_librarian.domain.rich_metadata_qualification import (
-    F20_QUALIFICATION_CANDIDATE_SHA256,
-)
 
 BUILD_IDENTITY = "a" * 64
 HOSTILE_TEXT = "Hostile <img src=x onerror=window.__metadataExecuted=true>"
@@ -41,50 +40,8 @@ LONG_DESCRIPTION = (
     "And it continues past that too, in ordinary prose with ordinary spaces, "
     "so a wrap that is allowed to happen has somewhere to happen."
 )
-# Bound to the runtime constant so the cohort follows the F20 rotation
-# without a second literal to re-pin.
-_F20_CANDIDATE_SHA256 = F20_QUALIFICATION_CANDIDATE_SHA256
-_COVER_CANDIDATE_SHA256 = (
-    "b91ae72a8c4e55c9bfe1d514c28210e22427b57a03082d2b5d1ae0b40df7c457"
-)
-_RICH_QUALIFICATION: tuple[dict[str, object], ...] = tuple(
-    {
-        "automatic_available": disposition == "passing_automatic",
-        "candidate_sha256": _F20_CANDIDATE_SHA256,
-        "disposition": disposition,
-        "field": field,
-        "option": option,
-    }
-    for field, option, disposition in (
-        ("subtitle", "fill_empty", "passing_automatic"),
-        ("subtitle", "corroborated_split", "not_qualified"),
-        ("series", "primary_narrative", "passing_automatic"),
-        ("series", "source_order", "passing_automatic"),
-        ("series", "all_qualified", "passing_automatic"),
-        ("genres", "fill_empty", "passing_automatic"),
-        ("genres", "add", "passing_automatic"),
-        ("genres", "replace", "passing_automatic"),
-        ("tags", "off", "policy_only"),
-        ("tags", "fill_empty", "passing_automatic"),
-        ("tags", "add", "passing_automatic"),
-        ("tags", "replace", "passing_automatic"),
-        ("description_fill", "safe_plain_text", "passing_automatic"),
-        ("description_fill", "google_visible_text", "not_qualified"),
-        ("isbn_form", "preserve_exact", "passing_automatic"),
-        ("isbn_form", "prefer_isbn13", "passing_automatic"),
-        ("asin", "preserve_exact", "insufficient_coverage"),
-        ("asin", "ebook_manifestation", "insufficient_coverage"),
-        ("explicit", "unsupported", "passing_human_only"),
-    )
-) + (
-    {
-        "automatic_available": True,
-        "candidate_sha256": _COVER_CANDIDATE_SHA256,
-        "disposition": "passing_automatic",
-        "field": "cover_order",
-        "option": "fixed_source_order",
-    },
-)
+# Layout data consumes the same complete read-only summary as the API.
+_RICH_QUALIFICATION = rich_qualification(MetadataPolicyProfile.builtin())
 
 
 def _work(
@@ -1729,49 +1686,71 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             ("asin", "missing", None, "B012345678", "projected", None),
             ("explicit", "missing", None, None, "abstain", "explicit_unsupported"),
         ]
-        return {
+        preview_fields = [
+            {
+                "current_value": current,
+                "desired_value": desired,
+                "field": field,
+                "narrowed_for_target": field == "series",
+                "option": {
+                    "subtitle": "fill_empty",
+                    "series": "all_qualified",
+                    "genres": "add",
+                    "tags": "off",
+                    "description_fill": "google_visible_text",
+                    "isbn_form": "prefer_isbn13",
+                    "asin": "ebook_manifestation",
+                    "explicit": "unsupported",
+                }[field],
+                "outcome": outcome,
+                "qualified_value": (
+                    [
+                        {"name": "Reading order", "sequence": "2"},
+                        {
+                            "name": "Publication order",
+                            "sequence": None,
+                        },
+                    ]
+                    if field == "series"
+                    else None
+                ),
+                "reason": reason,
+                "target_state": state,
+            }
+            for field, state, current, desired, outcome, reason in fields
+        ]
+        comparisons = [
+            {
+                "media_kind": "ebook",
+                "fields": [
+                    {
+                        "active": {
+                            **field,
+                            "desired_value": field["current_value"],
+                            "qualified_value": field["current_value"],
+                        },
+                        "draft": field,
+                        "active_destination": "ask",
+                        "draft_destination": "automatic",
+                        "changed": field["current_value"] != field["desired_value"],
+                    }
+                    for field in preview_fields
+                ],
+            }
+        ]
+        preview = {
             "active_policy_id": "policy-active-1",
             "schema_version": "metadata-policy-preview-v1",
+            "active_generation": 1,
             "policy_id": "policy_" + "d" * 64,
             "rich_qualification": list(_RICH_QUALIFICATION),
             "libraries": [
                 {
                     "affected_categories": ["description_fill"],
+                    "comparisons": comparisons,
                     "cases": [
                         {
-                            "fields": [
-                                {
-                                    "current_value": current,
-                                    "desired_value": desired,
-                                    "field": field,
-                                    "narrowed_for_target": field == "series",
-                                    "option": {
-                                        "subtitle": "fill_empty",
-                                        "series": "all_qualified",
-                                        "genres": "add",
-                                        "tags": "off",
-                                        "description_fill": "google_visible_text",
-                                        "isbn_form": "prefer_isbn13",
-                                        "asin": "ebook_manifestation",
-                                        "explicit": "unsupported",
-                                    }[field],
-                                    "outcome": outcome,
-                                    "qualified_value": (
-                                        [
-                                            {"name": "Reading order", "sequence": "2"},
-                                            {
-                                                "name": "Publication order",
-                                                "sequence": None,
-                                            },
-                                        ]
-                                        if field == "series"
-                                        else None
-                                    ),
-                                    "reason": reason,
-                                    "target_state": state,
-                                }
-                                for field, state, current, desired, outcome, reason in fields
-                            ],
+                            "fields": preview_fields,
                             "proposal_set_id": "proposal_set_" + "b" * 64,
                             "report_id": "report_" + "a" * 64,
                             "resolved_policy_id": "resolved_policy_" + "c" * 64,
@@ -1786,6 +1765,7 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
                 }
             ],
         }
+        return preview
     if path == "/api/v1/metadata-policy/shadow":
         return {
             "schema_version": "shadow-posture-v1",

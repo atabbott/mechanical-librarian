@@ -895,6 +895,7 @@ def test_language_ask_stays_case_bound_then_retires_with_report_replacement(
             original.policy_id,
             ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
             5,
+            expected_active_generation=2,
         )
         # The old case retains its original Ask resolution, not the new profile.
         assert next(
@@ -971,6 +972,7 @@ def test_language_preserve_label_in_persisted_automatic_and_policy_activity(
             original.policy_id,
             ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
             5,
+            expected_active_generation=2,
         )
     with closing(open_repository(path)) as repository:
         decision = next(

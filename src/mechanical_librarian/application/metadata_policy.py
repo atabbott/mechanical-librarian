@@ -13,7 +13,11 @@ from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.audiobook_decision_qualification import (
     qualified_policy_bases,
 )
-from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
+from mechanical_librarian.domain.automatic_decision import (
+    F19A_QUALIFICATION_MANIFEST_SHA256,
+    F19A_QUALIFIED_POLICY_OPTIONS,
+    AutomaticSafetyState,
+)
 from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
     cover_aware_qualified_policy_options,
@@ -28,8 +32,10 @@ from mechanical_librarian.domain.metadata_policy import (
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.rich_metadata_preview import (
+    RichFieldPreview,
     RichMetadataPreview,
     compile_rich_metadata_preview,
+    select_automatic_taxonomy_candidate,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_PASSING_AUTOMATIC_OPTIONS,
@@ -210,6 +216,51 @@ def current_resolved_policy(
 
 
 @dataclass(frozen=True, slots=True)
+class PolicyPreviewLibraryCapture:
+    library: str
+    resolution: ResolvedMetadataPolicy | None
+    current_unapplied_count: int
+    pairs: tuple[tuple[MetadataReport, ProposalSet], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyPreviewCapture:
+    active: MetadataPolicyProfile
+    generation: int
+    libraries: tuple[PolicyPreviewLibraryCapture, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyFieldComparison:
+    active: RichFieldPreview
+    draft: RichFieldPreview
+    active_destination: str
+    draft_destination: str
+    changed: bool
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "active": self.active.to_data(),
+            "draft": self.draft.to_data(),
+            "active_destination": self.active_destination,
+            "draft_destination": self.draft_destination,
+            "changed": self.changed,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PolicyCaseComparison:
+    media_kind: str
+    fields: tuple[PolicyFieldComparison, ...]
+
+    def to_data(self) -> dict[str, object]:
+        return {
+            "media_kind": self.media_kind,
+            "fields": [field.to_data() for field in self.fields],
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class LibraryPolicyImpact:
     library: str
     affected_categories: tuple[str, ...]
@@ -219,12 +270,14 @@ class LibraryPolicyImpact:
     cases_total: int = 0
     cases_truncated: bool = False
     work_labels: tuple[str, ...] = ()
+    comparisons: tuple[PolicyCaseComparison, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
 class PolicyPreview:
     profile_id: str
     active_policy_id: str
+    active_generation: int
     validation: tuple[str, ...]
     libraries: tuple[LibraryPolicyImpact, ...]
 
@@ -275,24 +328,16 @@ class PolicyPreviewRepository(Protocol):
     does not have.
     """
 
-    def current_unapplied_count(self, library: str) -> int: ...
-
-    def current_policy_impact_pairs(
-        self, library: str, limit: int
-    ) -> tuple[int, tuple[tuple[MetadataReport, ProposalSet], ...]]: ...
-
-    def active_metadata_policy(self) -> str: ...
-
-    def metadata_policy_resolution_for_preview(
-        self, library: str
-    ) -> ResolvedMetadataPolicy | None: ...
-
-    def metadata_policy_preview_baseline(
-        self, libraries: tuple[str, ...]
-    ) -> tuple[str, tuple[tuple[str, ResolvedMetadataPolicy | None], ...]]: ...
+    def capture_policy_preview(
+        self, libraries: tuple[str, ...], limit: int
+    ) -> PolicyPreviewCapture: ...
 
 
 class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
+    def current_unapplied_count(self, library: str) -> int: ...
+
+    def active_metadata_policy(self) -> str: ...
+
     def create_metadata_policy_draft(self, document: str) -> str: ...
 
     def get_metadata_policy_draft(self, policy_id: str) -> str: ...
@@ -303,6 +348,8 @@ class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
         expected_active_policy_id: str,
         resolutions: tuple[tuple[str, str, str], ...],
         activated_at: int,
+        *,
+        expected_active_generation: int,
     ) -> PolicyTransition | None: ...
 
     def metadata_policy_transition(self) -> PolicyTransition | None: ...
@@ -342,45 +389,32 @@ def preview_policy(
     ):
         raise MetadataPolicyApplicationError("policy preview is invalid")
     impacts: list[LibraryPolicyImpact] = []
-    remaining_cases = MAX_RICH_PREVIEW_CASES
     try:
-        if hasattr(repository, "metadata_policy_preview_baseline"):
-            active_document, persisted_baseline = (
-                repository.metadata_policy_preview_baseline(libraries)
-            )
-        else:
-            active_document = (
-                repository.active_metadata_policy()
-                if hasattr(repository, "active_metadata_policy")
-                else MetadataPolicyProfile.builtin().canonical_json
-            )
-            persisted_baseline = tuple(
-                (
-                    library,
-                    repository.metadata_policy_resolution_for_preview(library)
-                    if hasattr(repository, "metadata_policy_resolution_for_preview")
-                    else None,
-                )
-                for library in libraries
-            )
-        active_profile = MetadataPolicyProfile.from_data(json.loads(active_document))
-        active_resolutions = dict(persisted_baseline)
-        if tuple(sorted(active_resolutions)) != libraries:
+        capture = repository.capture_policy_preview(libraries, MAX_RICH_PREVIEW_CASES)
+        active_profile = capture.active
+        if (
+            type(capture) is not PolicyPreviewCapture
+            or type(capture.generation) is not int
+            or capture.generation < 1
+            or tuple(item.library for item in capture.libraries) != libraries
+            or sum(len(item.pairs) for item in capture.libraries)
+            > MAX_RICH_PREVIEW_CASES
+        ):
             raise MetadataPolicyApplicationError("policy preview is unavailable")
-        for library in libraries:
+        for captured in capture.libraries:
+            library = captured.library
             resolved = resolve_policy(profile, library, overrides.get(library))
-            # Existing libraries compare with the generation-bound resolution
-            # actually in force. A newly configured library has no persisted
-            # resolution yet and is resolved from the same active-profile
-            # snapshot using its current override.
-            active = active_resolutions[library] or resolve_policy(
+            configured_active = resolve_policy(
                 active_profile, library, overrides.get(library)
             )
-            # Compatibility callers expose this aggregate separately; the
-            # concrete repository below proves it equals the read snapshot.
-            count = repository.current_unapplied_count(library)
-            if type(count) is not int or count < 0:
+            active = captured.resolution or configured_active
+            if (
+                active.profile_id != active_profile.policy_id
+                or active.library != library
+            ):
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
+            count = captured.current_unapplied_count
+            pairs_total, pairs = count, captured.pairs
             resolved_options = dict(resolved.options)
             resolved_destinations = dict(resolved.destinations)
             active_options = dict(active.options)
@@ -391,24 +425,8 @@ def preview_policy(
                 if resolved_options[field] != active_options[field]
                 or resolved_destinations[field] != active_destinations[field]
             )
-            pairs_total, pairs = (
-                (count, ())
-                if remaining_cases == 0
-                else repository.current_policy_impact_pairs(
-                    library, min(20, remaining_cases)
-                )
-                if hasattr(repository, "current_policy_impact_pairs")
-                else (0, ())
-            )
-            if (
-                type(pairs_total) is not int
-                or pairs_total < 0
-                or type(pairs) is not tuple
-                or len(pairs) > 20
-            ):
+            if type(count) is not int or count < len(pairs):
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
-            if hasattr(repository, "current_policy_impact_pairs"):
-                count = pairs_total
             # The stored pair proves exact-current lineage. Re-evaluate its
             # immutable report through the existing pure proposal compiler so
             # a changed draft receives a new exact policy binding without
@@ -419,19 +437,98 @@ def preview_policy(
                 for report, proposal in pairs
             ):
                 raise MetadataPolicyApplicationError("policy preview is unavailable")
-            cases = tuple(
-                compile_rich_metadata_preview(
-                    resolved,
-                    report,
+            # Keep both pure proposal results for meaningful candidate routing:
+            # a preserved incumbent has no selected source ID, but can still
+            # have a supported candidate whose review destination changed.
+            compiled_pairs = tuple(
+                tuple(
                     evaluate_report(
-                        report,
-                        resolved.resolved_id,
-                        dict(resolved.destinations),
-                    ),
+                        report, policy.resolved_id, dict(policy.destinations)
+                    )
+                    for policy in (active, resolved)
                 )
                 for report, _ in pairs
             )
-            remaining_cases -= len(cases)
+            active_cases = tuple(
+                compile_rich_metadata_preview(active, report, compiled[0])
+                for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
+            )
+            cases = tuple(
+                compile_rich_metadata_preview(resolved, report, compiled[1])
+                for (report, _), compiled in zip(pairs, compiled_pairs, strict=True)
+            )
+            comparisons = tuple(
+                PolicyCaseComparison(
+                    proposal.media_kind,
+                    tuple(
+                        PolicyFieldComparison(
+                            before,
+                            after,
+                            active_destinations[before.field],
+                            resolved_destinations[after.field],
+                            (
+                                before.outcome,
+                                before.desired_value,
+                                before.qualified_value,
+                            )
+                            != (
+                                after.outcome,
+                                after.desired_value,
+                                after.qualified_value,
+                            )
+                            or (
+                                active_destinations[before.field]
+                                != resolved_destinations[after.field]
+                                and (
+                                    before.source_candidate_id is not None
+                                    or after.source_candidate_id is not None
+                                    or (
+                                        {
+                                            active_destinations[before.field],
+                                            resolved_destinations[after.field],
+                                        }
+                                        == {"ask", "automatic"}
+                                        and before.field in {"genres", "tags"}
+                                        and any(
+                                            projected.outcome == "no_op"
+                                            and projected.reason == "target_preserved"
+                                            and projected.option == "fill_empty"
+                                            and projected.target_state == "value"
+                                            and select_automatic_taxonomy_candidate(
+                                                report,
+                                                result,
+                                                projected.field,
+                                                projected.option,
+                                            )[0]
+                                            is not None
+                                            for route, projected, compiled in (
+                                                (
+                                                    active_destinations[before.field],
+                                                    before,
+                                                    compiled_pair[0],
+                                                ),
+                                                (
+                                                    resolved_destinations[after.field],
+                                                    after,
+                                                    compiled_pair[1],
+                                                ),
+                                            )
+                                            if route == "automatic"
+                                            for result in compiled.results
+                                            if result.destination.value
+                                            == projected.field
+                                        )
+                                    )
+                                )
+                            ),
+                        )
+                        for before, after in zip(old.fields, new.fields, strict=True)
+                    ),
+                )
+                for old, new, (report, proposal), compiled_pair in zip(
+                    active_cases, cases, pairs, compiled_pairs, strict=True
+                )
+            )
             work_labels = tuple(
                 report.target.current_title or "Untitled" for report, _ in pairs
             )
@@ -445,6 +542,7 @@ def preview_policy(
                     cases_total=pairs_total,
                     cases_truncated=pairs_total > len(pairs),
                     work_labels=work_labels,
+                    comparisons=comparisons,
                 )
             )
     except MetadataPolicyApplicationError:
@@ -452,7 +550,11 @@ def preview_policy(
     except (MetadataPolicyError, Exception) as error:
         raise MetadataPolicyApplicationError("policy preview is unavailable") from error
     return PolicyPreview(
-        profile.policy_id, active_profile.policy_id, (), tuple(impacts)
+        profile.policy_id,
+        active_profile.policy_id,
+        capture.generation,
+        (),
+        tuple(impacts),
     )
 
 
@@ -484,15 +586,42 @@ def rich_qualification(profile: MetadataPolicyProfile) -> tuple[dict[str, object
     """Expose the fixed public rich-field and cover terminal dispositions."""
     if type(profile) is not MetadataPolicyProfile:
         raise MetadataPolicyApplicationError("policy validation is invalid")
-    return public_summary() + (
-        {
-            "automatic_available": True,
-            "candidate_sha256": COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
-            "disposition": "pass",
-            "field": "cover_order",
-            "option": "fixed_source_order",
-        },
-    )
+    retained = {
+        (str(item["field"]), str(item["option"])): item for item in public_summary()
+    }
+    summaries = []
+    for field, options in OPTION_CATALOGUE.items():
+        for option in options:
+            item = retained.get((field, option))
+            if item is None:
+                cover = field == "cover_order"
+                available = (
+                    cover or f"{field}:{option}" in F19A_QUALIFIED_POLICY_OPTIONS
+                )
+                item = {
+                    "automatic_available": available,
+                    "candidate_sha256": COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
+                    if cover
+                    else F19A_QUALIFICATION_MANIFEST_SHA256,
+                    "disposition": "pass" if available else "not_qualified",
+                    "field": field,
+                    "option": option,
+                }
+            scope = (
+                "none"
+                if not item["automatic_available"]
+                else "fill"
+                if (field == "cover_order" and option == "replace_if_strictly_better")
+                or field in {"subtitle", "description_fill", "isbn_form", "series"}
+                or option == "fill_empty"
+                else "add"
+                if option == "add"
+                else "replace"
+                if option == "replace"
+                else "fill_or_replace"
+            )
+            summaries.append({**item, "operation_scope": scope})
+    return tuple(summaries)
 
 
 def audiobook_qualification(
@@ -815,10 +944,14 @@ class PolicyNotebook:
         policy_id: object,
         expected_active_policy_id: object,
         activated_at: object,
+        *,
+        expected_active_generation: object,
     ) -> PolicyActivation:
         if (
             type(policy_id) is not str
             or type(expected_active_policy_id) is not str
+            or type(expected_active_generation) is not int
+            or expected_active_generation < 1
             or type(activated_at) is not int
             or activated_at < 0
         ):
@@ -848,7 +981,11 @@ class PolicyNotebook:
             if not requested.issubset(cover_aware_qualified_policy_options()):
                 raise MetadataPolicyApplicationError("policy automatic unqualified")
             transition = self._repository.activate_metadata_policy(
-                policy_id, expected_active_policy_id, resolutions, activated_at
+                policy_id,
+                expected_active_policy_id,
+                resolutions,
+                activated_at,
+                expected_active_generation=expected_active_generation,
             )
             return PolicyActivation(profile, transition)
         except MetadataPolicyApplicationError:

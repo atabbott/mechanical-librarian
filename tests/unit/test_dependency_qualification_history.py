@@ -120,3 +120,42 @@ def test_revision_three_documents_decode_without_current_authority(family):
         AutomaticDecision.create(
             **cast("dict[str, Any]", decision._core()), occurred_at=decision.occurred_at
         )
+
+
+@pytest.mark.parametrize(
+    "filename,source_sha",
+    (
+        ("before-generation-cas.json", "b1b2799ba031d198ac3c49bb8099560afc984656"),
+        ("before-policy-impact.json", "2fb536784394f578d38b90fc8c35bde2fa2ecf62"),
+        ("before-policy-summary.json", "252f1577047c4d64ac2c18cbf4f725b36814edc5"),
+        (
+            "before-cover-option-binding.json",
+            "9867cdafd5f42f7282980e20b607189826498c11",
+        ),
+    ),
+)
+@pytest.mark.parametrize("family", ("F19A", "F20", "F46"))
+def test_policy_impact_predecessors_decode_without_current_authority(
+    family, filename, source_sha
+):
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/automatic_decision_predecessors"
+            / filename
+        ).read_bytes()
+    )
+    assert fixture["source_sha"] == source_sha
+    for raw in fixture["decisions"][family]:
+        decision = AutomaticDecision.from_json(raw)
+        assert decision.to_json() == raw
+        assert not qualification_manifest_is_current(
+            decision.policy_category,
+            decision.policy_option,
+            decision.qualification_manifest_sha256,
+        )
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **cast("dict[str, Any]", decision._core()),
+                occurred_at=decision.occurred_at,
+            )

@@ -809,9 +809,12 @@ state.
 The policy notebook and `policy-preview` CLI read at most 20 exact-current
 review lineages across the complete response, in stable library then
 connection/item/case order. The persisted
-pair establishes current lineage; preview replays the immutable report through
-the pure proposal evaluator under the requested resolved draft, then projects
-the eight closed rich-field choices. The response reports the total and whether
+pair establishes current lineage. Active policy, generation, resolutions,
+counts and ordered pairs are captured in one SQLite read snapshot. After the
+read transaction ends, preview replays each immutable report under both active
+and draft policy, then compares the eight closed rich-field choices. Changed
+candidate routing and selected outcomes count as impact; ID-only rebinding and
+reason-only differences do not. The response reports the total and whether
 the sample was truncated. It performs no provider request, database mutation,
 decision, activation, queue transition, target call, or media write.
 

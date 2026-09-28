@@ -447,6 +447,11 @@ _COVER_SELECTION_AUTHORITIES_SQL = (
     "supersedes_selection_id TEXT REFERENCES cover_selection_authorities(selection_id), "
     "occurred_at INTEGER NOT NULL CHECK(typeof(occurred_at)='integer' AND occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072), "
+    "CHECK(kind<>'automatic' OR (CASE WHEN json_valid(document) "
+    "AND json_type(document,'$.decision_document')='text' "
+    "THEN CASE WHEN json_valid(json_extract(document,'$.decision_document')) "
+    "THEN json_extract(json_extract(document,'$.decision_document'),'$.schema_version')='cover-automatic-decision-v3' "
+    "ELSE 0 END ELSE 0 END) IS 1), "
     "CHECK(supersedes_selection_id IS NULL OR supersedes_selection_id<>selection_id))"
 )
 _CURRENT_COVER_SELECTION_AUTHORITIES_SQL = (

@@ -8,6 +8,17 @@
 
 ## Unreleased
 
+- Policy preview shows active-to-draft changes from one retained snapshot, with
+  separate ebook/audiobook selected behavior and sample counts. Activation checks
+  the captured policy generation. Write permission opens one scoped review that
+  stays closed after cancellation or success; history distinguishes recorded
+  choices from verified effects and shows event times (#1011).
+
+- Ebook cover correction: “Replace if strictly better” fills a known-empty
+  cover using existing deterministic admission; it does not replace a confirmed
+  ebook cover. Its v3 audit records the actual option; clean rebuild required.
+  Fixed-source upgrades and audiobook replacement stay unchanged (#1011).
+
 - Find books by configured library names and retained titles or authors even
   when preparation fails. Library shows actual field observations, distinct
   source roles and truthful lookup status; long descriptions expand without

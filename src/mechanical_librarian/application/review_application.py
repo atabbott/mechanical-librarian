@@ -330,11 +330,19 @@ class PolicyOperations:
         return self._gate(lambda: self._notebook.shadow_sample(limit))
 
     def activate(
-        self, policy_id: object, expected_active_policy_id: object, activated_at: object
+        self,
+        policy_id: object,
+        expected_active_policy_id: object,
+        activated_at: object,
+        *,
+        expected_active_generation: object,
     ) -> PolicyActivation:
         return self._gate(
             lambda: self._notebook.activate(
-                policy_id, expected_active_policy_id, activated_at
+                policy_id,
+                expected_active_policy_id,
+                activated_at,
+                expected_active_generation=expected_active_generation,
             )
         )
 

@@ -467,6 +467,7 @@ def _seed_policy(repository: SQLiteMetadataReportRepository) -> None:
         builtin.policy_id,
         ((LIBRARY, resolved.resolved_id, resolved.canonical_json),),
         SEED_NOW - 20 * DAY,
+        expected_active_generation=1,
     )
 
 

@@ -908,6 +908,7 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
         json={
             "policy_id": policy_id,
             "expected_active_policy_id": active.json()["policy_id"],
+            "expected_active_generation": preview.json()["active_generation"],
         },
     )
     assert 403 == denied_activation.status_code
@@ -917,6 +918,7 @@ def test_policy_routes_are_closed_read_only_and_schema_deterministic(
         json={
             "policy_id": policy_id,
             "expected_active_policy_id": active.json()["policy_id"],
+            "expected_active_generation": preview.json()["active_generation"],
         },
     )
     assert 200 == activated.status_code
@@ -989,6 +991,7 @@ def test_shadow_posture_and_sample_are_authenticated_non_authoritative(
         json={
             "policy_id": policy_id,
             "expected_active_policy_id": active["policy_id"],
+            "expected_active_generation": previewed.json()["active_generation"],
         },
     )
     assert 200 == activated.status_code, activated.text

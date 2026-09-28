@@ -335,3 +335,18 @@ suspensions still apply. Books with owner decisions, manual holds, stale evidenc
 Ask/Ignore policy or work already in progress are not requeued. An empty eligible
 cohort is a successful recovery with no new work. A failed request retains the
 suspension and work; inspect current state and retry explicitly.
+
+
+### Policy comparison response
+
+The versioned preview response retains `cases` and adds parallel `comparisons`
+for each sampled case. Each comparison names `media_kind` and carries active and
+draft field projections, their destinations, and `changed`. Both projections
+come from one captured retained database snapshot; `changed` excludes ID-only
+rebinding and reason-only differences. Current unapplied counts include work
+outside the global 20-case sample; truncation is explicit. The ebook
+`rich_qualification` response covers every policy option and includes
+`operation_scope`; the separate audiobook summary retains its exact qualified
+operations. Missing entries are unavailable, not a fallback qualification.
+These read models confer no consent or effect authority. The reproducible
+[OpenAPI document](../reference/review-openapi-v1.json) is the exact wire contract.
