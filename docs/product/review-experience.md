@@ -830,3 +830,19 @@ unavailable behavior. Eligibility shown for another mode is explicitly labelled
 as hypothetical Automatic eligibility. Activation review repeats the selected
 behavior. Closing or completing write-permission review consumes its deep-link
 fragment while preserving Activity filters; reload does not reopen a closed review.
+
+
+## Reviewer provisioning and recovery (#1009)
+
+First-run offers equal-level optional cover reviewer choices, plainly naming
+the admitted contained model and current status. Description advice remains
+optional in Settings, with a destination available after setup. Device sign-in
+can be cancelled, resumed after reload or retried; session expiry preserves
+recorded setup steps. Shared OpenRouter credential replacement invalidates
+captured access for both tasks.
+
+Settings shows advisory availability, engine and model. Provisioning remedies
+are distinct from host, authentication and provider failures; generated profile
+digests live in an advanced identity disclosure. Usable advice does not imply
+application permission: Policy owns the separate automatic preference, and
+Activity owns current consent and renewal. Reviewer selection never enables it.

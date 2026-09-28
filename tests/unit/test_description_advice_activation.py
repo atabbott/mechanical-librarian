@@ -16,6 +16,9 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 )
 from mechanical_librarian.application.description_advice import DescriptionAdviceService
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.application.reviewer_contracts import (
+    ReviewerProvisioningStatus,
+)
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.description_advice import (
     DescriptionAdviceSettings,
@@ -460,7 +463,7 @@ def test_real_projection_hook_prepares_and_admits_description(tmp_path: Path) ->
     repository, *_ = _prepared(
         tmp_path,
         pipeline_probe=pipeline_probe,
-        contained_identity=lambda: ("synthetic-model", profile.read_bytes()),
+        contained_identity=lambda: ("gpt-5.6-sol", profile.read_bytes()),
     )
     repository.close()
 
@@ -493,7 +496,7 @@ def test_invalid_adviser_output_is_bounded_failed_history_without_retry(
     attempt = repository._connection.execute(
         "SELECT state,failure,engine,model FROM description_advice_attempts"
     ).fetchone()
-    assert attempt == ("failed", "invalid_output", "codex", "synthetic-model")
+    assert attempt == ("failed", "invalid_output", "codex", "gpt-5.6-sol")
     assert repository._connection.execute(
         "SELECT count(*) FROM description_advice_candidates"
     ).fetchone() == (0,)
@@ -611,13 +614,16 @@ def test_second_preparation_worker_observes_running_attempt_without_lock_or_disp
             other_access = ReviewerAccessOperations(
                 second.reviewer_access_store(),
                 codex_auth=_Auth("usable"),
+                codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+                    True, None, model="gpt-5.6-sol"
+                ),
                 codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
                 codex_identity=lambda: (
-                    "synthetic-model",
+                    "gpt-5.6-sol",
                     b"synthetic-contained-profile",
                 ),
                 codex_binding=lambda: (
-                    "synthetic-model",
+                    "gpt-5.6-sol",
                     b"synthetic-contained-profile",
                     unexpected_dispatch,
                 ),
@@ -824,7 +830,7 @@ def test_live_contained_identity_drift_refuses_admission_and_authority(
 ) -> None:
     from mechanical_librarian.domain.field_effect import FieldEffectError
 
-    identity = ("synthetic-model", b"synthetic-contained-profile")
+    identity = ("gpt-5.6-sol", b"synthetic-contained-profile")
     unavailable = False
 
     def current_identity() -> tuple[str, bytes]:
@@ -875,7 +881,7 @@ def test_profile_drift_between_guarded_boundaries_never_writes(
     from mechanical_librarian.domain.field_effect import FieldEffectError
     from tests.support.field_effects import CAPABILITY
 
-    identity = ("synthetic-model", b"synthetic-contained-profile")
+    identity = ("gpt-5.6-sol", b"synthetic-contained-profile")
     calls = []
 
     def capture(_repository, _report, _decision, _access, dispatched):
@@ -934,7 +940,7 @@ def test_primary_and_independent_activity_bind_passive_profile_after_reopen(
 
     profile = _contained_profile(tmp_path)
     repository, store, binding, candidate, _ = _prepared(
-        tmp_path, contained_identity=lambda: ("synthetic-model", profile.read_bytes())
+        tmp_path, contained_identity=lambda: ("gpt-5.6-sol", profile.read_bytes())
     )
     configuration = _pipeline_configuration()
     assert configuration.review is not None
@@ -1313,7 +1319,7 @@ def test_coalesced_successor_continues_through_real_projection(
             result = _prepared(
                 tmp_path,
                 automatic=automatic,
-                contained_identity=lambda: ("synthetic-model", profile.read_bytes()),
+                contained_identity=lambda: ("gpt-5.6-sol", profile.read_bytes()),
                 during_dispatch=block,
                 result_current=False,
             )
@@ -1336,8 +1342,11 @@ def test_coalesced_successor_continues_through_real_projection(
         access = ReviewerAccessOperations(
             access_repository.reviewer_access_store(),
             codex_auth=_Auth("usable"),
+            codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+                True, None, model="gpt-5.6-sol"
+            ),
             codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
-            codex_identity=lambda: ("synthetic-model", profile.read_bytes()),
+            codex_identity=lambda: ("gpt-5.6-sol", profile.read_bytes()),
             codex_binding=lambda: pytest.fail("unexpected cover dispatch"),
             codex_description_binding=lambda: pytest.fail(
                 "continuation dispatched again"
@@ -1531,7 +1540,7 @@ def test_composed_contained_description_uses_image_free_port_and_exact_profile(
     repository, store, binding, previous, _ = _prepared(
         tmp_path,
         automatic=False,
-        contained_identity=lambda: ("synthetic-model", profile.read_bytes()),
+        contained_identity=lambda: ("gpt-5.6-sol", profile.read_bytes()),
     )
     review = _pipeline_configuration().review
     assert review is not None
@@ -1573,7 +1582,7 @@ def test_composed_contained_description_uses_image_free_port_and_exact_profile(
         store, access, store.current_settings, lambda: 20
     ).prepare(report, binding, lambda: store.binding_is_current(binding), retry=True)
     assert candidate is not None and candidate.candidate_id != previous.candidate_id
-    assert candidate.engine == "codex" and candidate.model == "synthetic-model"
+    assert candidate.engine == "codex" and candidate.model == "gpt-5.6-sol"
     assert candidate.profile_digest == hashlib.sha256(profile.read_bytes()).hexdigest()
     assert candidate.output.description == "Composed authored description."
     assert len(dispatched) == 1
@@ -1757,7 +1766,7 @@ def test_guarded_runtime_composition_binds_its_reopened_description_store(
 
     profile = _contained_profile(tmp_path)
     repository, _, binding, _, _ = _prepared(
-        tmp_path, contained_identity=lambda: ("synthetic-model", profile.read_bytes())
+        tmp_path, contained_identity=lambda: ("gpt-5.6-sol", profile.read_bytes())
     )
     reopened = open_repository(
         tmp_path / "reports.sqlite", authority=repository.authority
@@ -2027,6 +2036,9 @@ def test_worker_attempt_and_owner_gate_waiting_for_sqlite_complete_without_inver
         access = ReviewerAccessOperations(
             own.reviewer_access_store(),
             codex_auth=_Auth("usable"),
+            codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+                True, None, model="gpt-5.6-sol"
+            ),
             codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
             codex_identity=lambda: (candidate.model, profile),
             codex_binding=original_access._codex_binding,
@@ -2079,7 +2091,7 @@ def test_worker_attempt_and_owner_gate_waiting_for_sqlite_complete_without_inver
 def test_attempt_transition_drift_never_publishes_or_admits_stale_request(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, boundary: str, drift: str
 ) -> None:
-    identity = ("synthetic-model", b"synthetic-contained-profile")
+    identity = ("gpt-5.6-sol", b"synthetic-contained-profile")
     captured = []
 
     def capture(_repository, report, _decision, access, calls):
@@ -2353,7 +2365,7 @@ def test_real_projection_consumes_disabled_description_intent_once(tmp_path):
     captured = []
     repository, store, binding, _, deterministic = _prepared(
         tmp_path,
-        contained_identity=lambda: ("synthetic-model", profile.read_bytes()),
+        contained_identity=lambda: ("gpt-5.6-sol", profile.read_bytes()),
         pipeline_probe=lambda _repo, report, _decision, access, calls: captured.append(
             (report, access, calls)
         ),

@@ -866,3 +866,90 @@ def test_completed_first_library_keeps_marker_until_initial_cohort_is_terminal(
         assert repository.has_first_boot_preparation()
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize(
+    "mutation,reason",
+    [
+        ("missing", "profile_not_provisioned"),
+        ("mode", "profile_unreadable"),
+        ("symlink", "profile_unreadable"),
+        ("nested", "profile_unreadable"),
+        ("noncanonical", "profile_unreadable"),
+        ("model", "profile_contract_mismatch"),
+        ("memory", "profile_contract_mismatch"),
+        ("processes", "profile_contract_mismatch"),
+    ],
+)
+def test_composed_provisioning_precedes_host_and_refuses_current_drift(
+    tmp_path, monkeypatch, mutation, reason
+):
+    import json
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from mechanical_librarian.application.contained_reviewer_contract import (
+        canonical_json,
+    )
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessApplicationError,
+    )
+    from tests.support.description_advice import _contained_profile
+
+    profile = _contained_profile(tmp_path)
+    repository = open_repository(tmp_path / "reports.sqlite")
+    operations = composition._compose_reviewer_access(
+        repository,
+        ReviewWebConfiguration(
+            canonical_origin="http://127.0.0.1:8443",
+            owner_password_hash_file="/unused/owner",
+            cover_reviewer_profile_file=str(profile),
+        ),
+    )
+    try:
+        assert operations.read().codex.model == "gpt-5.6-sol"
+        assert operations.current_cover_observation_identity() is None
+        if mutation == "missing":
+            profile.unlink()
+        elif mutation == "mode":
+            profile.chmod(0o644)
+        elif mutation == "symlink":
+            target = profile.with_suffix(".target")
+            profile.rename(target)
+            profile.symlink_to(target)
+        elif mutation == "noncanonical":
+            profile.write_bytes(profile.read_bytes() + b"\n")
+        else:
+            raw = json.loads(profile.read_bytes())
+            if mutation == "nested":
+                raw["codex"] = []
+            elif mutation == "model":
+                raw["model"] = "synthetic-model"
+            elif mutation == "memory":
+                raw["limits"]["memory_bytes"] = 536870912
+            else:
+                raw["limits"]["processes"] = 16
+            profile.write_text(canonical_json(raw))
+        # A generic read is cached passive evidence. Every explicit admission
+        # re-reads the profile and refuses before host, credentials or process.
+        assert operations.read().codex.model == "gpt-5.6-sol"
+        monkeypatch.setattr(operations, "_codex_host", lambda: pytest.fail("host read"))
+        for action in (
+            operations.describe_contained_description,
+            operations.recheck_codex,
+            lambda: operations.start_codex(expected_revision=1),
+            lambda: operations.select_codex(expected_revision=1),
+        ):
+            with pytest.raises(ReviewerAccessApplicationError) as caught:
+                action()
+            assert caught.value.code == "not_provisioned"
+        view = operations.read()
+        assert view.codex.state == "not_provisioned"
+        assert view.codex.reason == reason
+        assert view.codex.model is None
+        assert view.mapping is None and view.description_mapping is None
+    finally:
+        operations.close()
+        repository.close()

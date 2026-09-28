@@ -1239,8 +1239,8 @@
             "type": "integer"
           },
           "schema_version": {
-            "const": "reviewer-access-view-v1",
-            "default": "reviewer-access-view-v1",
+            "const": "reviewer-access-view-v2",
+            "default": "reviewer-access-view-v2",
             "title": "Schema Version",
             "type": "string"
           }
@@ -1292,6 +1292,9 @@
             "anyOf": [
               {
                 "enum": [
+                  "profile_not_provisioned",
+                  "profile_unreadable",
+                  "profile_contract_mismatch",
                   "host_evidence_unavailable",
                   "cgroup_limit_below_1_gib",
                   "headroom_below_1_gib",
@@ -1318,6 +1321,7 @@
           },
           "state": {
             "enum": [
+              "not_provisioned",
               "ready",
               "starting",
               "issued",

@@ -230,7 +230,7 @@ proceeds by useful outcome under the native issue dependencies:
 | Useful field decisions | #1071, #1074, #1075, #1070, #1076 | Language, genre, same-name series and synopsis behavior; #1080 precedes #1070/#1076. |
 | Bounded evidence investigations | #1077, #1079, #1082 | ISBN, full-work/prologue identity and throttling/overflow; an evidenced correction or precise retained boundary, without invented authority. |
 | Trustworthy Library and Policy | #1081, #1010, #1011 | Durable field-specific refusal explanations precede choices/evidence and true active-versus-draft impact, permission and history. Compact Policy summary/actions stay pinned; expanded results remain below choices in document flow. |
-| Reviewer and Settings operation | #1009, #1069, #1060, #1034 | In-container reviewer setup with deployment override; observed prices/tooling before separately authorized collection; protected Settings section editor with one configuration draft and separate Policy save. Authentication and test actions remain immediate. |
+| Reviewer and Settings operation | #1009, #1069, #1060, #1034 | Image-provisioned reviewer setup with deployment override and separate advisory/application permission; observed prices/tooling before separately authorized collection; protected Settings section editor with one configuration draft and separate Policy save. Authentication and test actions remain immediate. |
 | Retained cover choice | #1078 / F52 | One manual-only vertical activation, with explicit owner confirmation and no automatic-admission expansion. |
 | Integrated completion | #1013 | All other open outcomes receive their required disposition before final responsive/copy consistency and acceptance. |
 

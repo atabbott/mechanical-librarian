@@ -20,7 +20,7 @@ import { createHttp, renderRoute } from './fixtures'
 import { document, view } from './settingsFixtures'
 
 const reviewerView: ReviewerAccessView = {
-  schema_version: 'reviewer-access-view-v1',
+  schema_version: 'reviewer-access-view-v2',
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -31,7 +31,7 @@ const reviewerView: ReviewerAccessView = {
     engine: 'codex',
     state: 'failed',
     reason: 'permission_or_profile',
-    model: null,
+    model: 'gpt-5.6-sol',
     tier: null,
     host_headroom_bytes: 2_147_483_648,
   },
@@ -610,7 +610,7 @@ describe('owner settings route', () => {
       }),
     )
     expect(key).toHaveValue('')
-    expect(await screen.findByText('Status: usable')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: usable')).toBeVisible()
   })
 
   it.each([
@@ -622,11 +622,11 @@ describe('owner settings route', () => {
       'OpenRouter — openai/gpt-4o-mini',
     ],
     [
-      'contained Codex, which reports no model of its own here',
+      'contained Codex with the admitted profile model',
       'codex',
       '',
-      'Contained Codex — no model selection; the installed profile fixes the model',
-      'Contained Codex',
+      'Contained Codex — gpt-5.6-sol',
+      'Contained Codex — gpt-5.6-sol',
     ],
     ['cleared', 'none', '', 'No reviewer', 'No reviewer'],
   ] as const)(
@@ -777,7 +777,7 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=reviewer', http)
 
     await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
-    expect(await screen.findByText(`Status: ${state}`)).toBeVisible()
+    expect(await screen.findByText(`Advisory availability: ${state}`)).toBeVisible()
     expect(http.recheckCodex).toHaveBeenCalledOnce()
     if (failure) expect(screen.getByRole('alert')).toBeVisible()
   })
@@ -824,7 +824,7 @@ describe('owner settings route', () => {
     )
     await user.type(screen.getByLabelText('API key'), 'secret-key')
     await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
-    expect(screen.getByText('Status: validating')).toBeVisible()
+    expect(screen.getByText('Advisory availability: validating')).toBeVisible()
     finish({
       ...reviewerView,
       revision: 4,
@@ -840,7 +840,7 @@ describe('owner settings route', () => {
         tier: 'free',
       },
     })
-    expect(await screen.findByText('Status: usable')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: usable')).toBeVisible()
   })
 
   it('uses the replacement deselection revision before Codex reselection', async () => {
@@ -882,7 +882,7 @@ describe('owner settings route', () => {
     await user.click(await screen.findByRole('button', { name: 'Replace Codex sign-in' }))
     await user.click(screen.getByRole('button', { name: 'Confirm replace Codex sign-in' }))
     expect(await screen.findByText(/Current selection:/u)).toHaveTextContent('No reviewer')
-    expect(await screen.findByText('Status: usable')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: usable')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Use Codex for cover observations' }))
     expect(http.selectReviewer).toHaveBeenCalledWith('codex', 4)
   })
@@ -1003,7 +1003,7 @@ describe('owner settings route', () => {
       },
     }))
     const { queryClient } = renderRoute('/settings?group=reviewer', http)
-    await screen.findByText('Status: host unsupported')
+    await screen.findByText('Advisory availability: host unsupported')
 
     act(() => {
       queryClient.setQueryData(['reviewer-access', 'codex-device'], {
@@ -1047,10 +1047,10 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=reviewer', http)
 
     await user.click(await screen.findByRole('button', { name: 'Check existing Codex sign-in' }))
-    expect(await screen.findByText('Status: usable')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: usable')).toBeVisible()
     await user.click(screen.getByRole('button', { name: 'Clear Codex sign-in' }))
     await user.click(screen.getByRole('button', { name: 'Confirm clear Codex sign-in' }))
-    expect(await screen.findByText('Status: ready')).toBeVisible()
+    expect(await screen.findByText('Advisory availability: ready')).toBeVisible()
     expect(
       screen.queryByRole('button', { name: 'Use Codex for cover observations' }),
     ).not.toBeInTheDocument()
@@ -1258,6 +1258,14 @@ it('inspects the exact contained description model before selection without star
   expect(await screen.findByText('contained-model', { selector: 'dd' })).toBeVisible()
   expect(screen.getByText(/per-request monetary estimate is unavailable/)).toBeVisible()
   expect(use).toBeEnabled()
+  const identity = screen.getByText('a'.repeat(64))
+  expect(identity).not.toBeVisible()
+  await userEvent.setup().click(screen.getByText('Inspect contained profile identity'))
+  expect(identity).toBeVisible()
+  expect(
+    screen.getByRole('link', { name: 'Check current write consent in Activity' }),
+  ).toHaveAttribute('href', '/activity')
+  expect(screen.getByText(/Adviser availability does not grant permission/)).toBeVisible()
   expect(http.selectReviewer).not.toHaveBeenCalled()
 })
 

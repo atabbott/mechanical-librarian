@@ -144,3 +144,82 @@ def test_setup_inventory_is_refreshed_after_root_admission(
         assert (tmp_path / "foreign").exists()
     else:
         assert select() is FirstBootMode.RESUME_SETUP
+
+
+@pytest.mark.parametrize("unsafe", ["unknown", "symlink", "mode"])
+def test_reviewer_directory_refuses_unsafe_setup_entries(tmp_path, unsafe):
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    auth = reviewer / "auth"
+    if unsafe == "unknown":
+        (reviewer / "unexpected").mkdir(mode=0o700)
+    elif unsafe == "symlink":
+        auth.symlink_to(tmp_path, target_is_directory=True)
+    else:
+        auth.mkdir(mode=0o755)
+    with pytest.raises(FirstBootError):
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+        )
+
+
+def test_empty_fixed_reviewer_directories_preserve_fresh_and_resume(tmp_path):
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    for name in ("auth", "jobs"):
+        (reviewer / name).mkdir(mode=0o700)
+    assert (
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: False, resumable_setup=lambda: False
+        )
+        == FirstBootMode.INITIALIZE_SETUP
+    )
+    (tmp_path / "application.sqlite3").touch()
+    assert (
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+        )
+        == FirstBootMode.RESUME_SETUP
+    )
+    assert (
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: True, resumable_setup=lambda: False
+        )
+        == FirstBootMode.NORMAL
+    )
+    (tmp_path / "unrelated").touch()
+    with pytest.raises(FirstBootError):
+        select_first_boot_mode(
+            tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+        )
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "reviewer-auth-",
+        "reviewer-auth-1234567",
+        "reviewer-auth-123456789",
+        "reviewer-auth-ABCDEFGH",
+        "reviewer-auth-1234.678",
+    ],
+)
+def test_malformed_reviewer_staging_name_refuses_resume(
+    tmp_path: Path, name: str
+) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    (reviewer / name).mkdir(mode=0o700)
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)
+
+
+@pytest.mark.parametrize("name", ["auth", "jobs", "reviewer-auth-abcd1234"])
+def test_reviewer_child_must_be_a_private_directory(tmp_path: Path, name: str) -> None:
+    (tmp_path / "application.sqlite3").touch()
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    (reviewer / name).touch(mode=0o600)
+    with pytest.raises(FirstBootError):
+        _select(tmp_path, resume=True)

@@ -1125,7 +1125,7 @@ describe('shipped first-run setup script', () => {
     const fetch = vi.fn(async (request: RequestInfo | URL) => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
         return response({
-          schema_version: 'reviewer-access-view-v1',
+          schema_version: 'reviewer-access-view-v2',
           revision: 3,
           mapping: null,
           openrouter_key_configured: false,
@@ -1133,7 +1133,7 @@ describe('shipped first-run setup script', () => {
             engine: 'codex',
             state: 'host_unsupported',
             reason: 'insufficient_headroom',
-            model: null,
+            model: 'gpt-5.6-sol',
             tier: null,
             host_headroom_bytes: 512,
           },
@@ -1460,3 +1460,123 @@ describe('shipped first-run setup script', () => {
     expect(clear).toHaveBeenCalled()
   })
 })
+
+const reviewerAccess = (state: string, reason: string | null = null) => ({
+  schema_version: 'reviewer-access-view-v2',
+  revision: 3,
+  mapping: null,
+  codex: { state, reason, model: state === 'not_provisioned' ? null : 'gpt-5.6-sol' },
+  recommendations: [],
+  candidates: [],
+  free_tier_caveat: 'Account limits apply.',
+  data_use_caveat: 'Cover previews are sent to the selected provider.',
+})
+
+it('keeps alternatives usable when the contained profile is absent', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) =>
+      response(
+        requestUrl(request) === '/api/setup/reviewer-access'
+          ? reviewerAccess('not_provisioned', 'profile_not_provisioned')
+          : setupState('reviewer'),
+      ),
+    ),
+  )
+  runSetup()
+  expect(await screen.findByText(/The contained profile is missing/u)).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Start device sign-in' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Check existing sign-in' })).toBeDisabled()
+  expect(screen.getByRole('button', { name: 'Continue without a reviewer' })).toBeEnabled()
+  expect(screen.getByRole('button', { name: 'Validate and use OpenRouter' })).toBeEnabled()
+  expect(screen.getByText(/Optional description advice is configured separately/u)).toBeVisible()
+})
+
+it('resumes an issued device flow after reload, cancels it, and offers a restart', async () => {
+  let cancelled = false
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/device/cancel')) {
+      cancelled = true
+      return response({ state: 'cancelled' })
+    }
+    if (url.endsWith('/device'))
+      return response({
+        state: 'waiting',
+        verification_url: 'https://auth.openai.com/codex/device',
+        user_code: 'ABCD-EFGH',
+      })
+    if (url.endsWith('/reviewer-access'))
+      return response(reviewerAccess(cancelled ? 'cancelled' : 'waiting'))
+    expect(init?.method).not.toBe('POST')
+    return response(setupState('reviewer'))
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  expect(await screen.findByRole('link', { name: 'Open the device sign-in page' })).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel sign-in' }))
+  expect(await screen.findByRole('button', { name: 'Restart device sign-in' })).toBeEnabled()
+  expect(
+    fetch.mock.calls.filter(
+      ([request, init]) => requestUrl(request).endsWith('/device') && init?.method === 'POST',
+    ),
+  ).toHaveLength(0)
+})
+
+it('prevents duplicate starts and preserves the reviewer step after session expiry', async () => {
+  let release: ((value: Response) => void) | undefined
+  const fetch = vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+    const url = requestUrl(request)
+    if (url.endsWith('/device') && init?.method === 'POST')
+      return new Promise<Response>((resolve) => {
+        release = resolve
+      })
+    if (url.endsWith('/reviewer-access')) return response(reviewerAccess('ready'))
+    return response(
+      setupState('reviewer', {
+        completed_steps: ['claim', 'connect', 'providers', 'libraries', 'mounts'],
+      }),
+    )
+  })
+  vi.stubGlobal('fetch', fetch)
+  runSetup()
+  const start = await screen.findByRole('button', { name: 'Start device sign-in' })
+  fireEvent.click(start)
+  fireEvent.click(start)
+  expect(start).toBeDisabled()
+  expect(
+    fetch.mock.calls.filter(
+      ([request, init]) => requestUrl(request).endsWith('/device') && init?.method === 'POST',
+    ),
+  ).toHaveLength(1)
+  release?.(response({ error: 'unauthorized' }, 401))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Your setup sign-in expired')
+  expect(screen.getByRole('heading', { name: 'Choose an optional cover reviewer' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Change Choose libraries' })).toBeVisible()
+  expect(start).toBeEnabled()
+})
+
+it.each([
+  ['reviewer_unconfigured', 'The selected reviewer is no longer ready'],
+  ['not_provisioned', 'The contained reviewer profile is unavailable'],
+  ['unreachable', 'OpenRouter could not be reached'],
+])(
+  'gives actionable reviewer recovery for %s without losing prior steps',
+  async (code, message) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (request: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method === 'POST') return response({ error: code }, 422)
+        return response(
+          requestUrl(request).endsWith('/reviewer-access')
+            ? reviewerAccess('ready')
+            : setupState('reviewer'),
+        )
+      }),
+    )
+    runSetup()
+    fireEvent.click(await screen.findByRole('button', { name: 'Start device sign-in' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(message)
+    expect(screen.getByRole('button', { name: 'Continue without a reviewer' })).toBeEnabled()
+  },
+)

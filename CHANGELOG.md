@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Supported containers supply the contained reviewer profile for optional cover
+  setup and description advice. Wizard and Settings distinguish provisioning,
+  host and sign-in readiness, support recovery, and show the admitted model.
+  Reviewer availability stays separate from permission to apply changes (#1009).
+
 - Policy preview shows active-to-draft changes from one retained snapshot, with
   separate ebook/audiobook selected behavior and sample counts. Activation checks
   the captured policy generation. Write permission opens one scoped review that

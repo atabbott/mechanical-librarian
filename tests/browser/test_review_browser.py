@@ -58,6 +58,9 @@ from mechanical_librarian.application.reviewer_access import (
     ReviewerAccessView,
     ReviewerEngineStatus,
 )
+from mechanical_librarian.application.reviewer_contracts import (
+    ReviewerProvisioningStatus,
+)
 from mechanical_librarian.domain import audiobook_decision_qualification
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapter,
@@ -494,6 +497,9 @@ def _server(
         reviewer_access = ReviewerAccessOperations(
             repository.reviewer_access_store(),
             codex_auth=_Auth("usable"),
+            codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+                True, None, model="gpt-5.6-sol"
+            ),
             codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
             codex_binding=lambda: (
                 "synthetic-contained-model",
@@ -1086,6 +1092,7 @@ def _server(
         openrouter_key_configured=False,
         codex=ReviewerEngineStatus(
             engine="codex",
+            model="gpt-5.6-sol",
             state="host_unsupported",
             reason="headroom_below_1_gib",
             host_headroom_bytes=536_870_912,
@@ -1257,6 +1264,9 @@ def _server(
         reviewer_access = ReviewerAccessOperations(
             repository.reviewer_access_store(),
             codex_auth=_Auth("usable"),
+            codex_provisioning=lambda _refresh: ReviewerProvisioningStatus(
+                True, None, model="gpt-5.6-sol"
+            ),
             codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
             codex_identity=lambda: ("synthetic-contained-model", description_profile),
             codex_binding=lambda: (
@@ -4997,6 +5007,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                             openrouter_key_configured=False,
                             codex=ReviewerEngineStatus(
                                 engine="codex",
+                                model="gpt-5.6-sol",
                                 state="host_unsupported",
                                 reason="headroom_below_1_gib",
                                 host_headroom_bytes=536_870_912,

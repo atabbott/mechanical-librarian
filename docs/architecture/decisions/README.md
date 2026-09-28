@@ -103,3 +103,5 @@ an accepted ADR to make history match current preference; supersede it.
 | [0079](0079-supported-title-preservation-and-recovery.md) | accepted | Preserve supported unchanged titles and atomically requeue explicit recovery |
 
 | [0080](0080-isbn-evidence-without-image.md) | accepted | Verify ebook ISBN identity independently of image retrieval |
+
+| [0081](0081-image-owned-reviewer-provisioning.md) | accepted | Ship and validate the contained reviewer profile |

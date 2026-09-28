@@ -652,8 +652,9 @@ including when `Content-Length` is absent or false. Cover previews, the sealed
 packet, instruction, and strict schema are the only model inputs; no target
 credential or write authority crosses this boundary.
 
-Codex setup reads the deployment-owned contained profile only when a Codex
-status, setup, selection, or dispatch action requires it. Device flow uses a
+Codex boot passively admits the image-owned or explicit deployment-owned
+contained profile. Setup, selection and dispatch re-admit current bytes before
+use; ordinary status uses cached provisioning evidence. Device flow uses a
 private staged `CODEX_HOME`; bounded stdout chunks are parsed through the exact
 URL/code grammar. Owner cancellation, expiry, runtime cutover, and shutdown
 stop the exact process group with TERM, a bounded wait, KILL when needed, a
@@ -1669,3 +1670,23 @@ captured by preview. Returning to an earlier policy identity cannot revive a sta
 preview. Idempotent retries match the immediately following generation and its
 recorded from/to identities; internal same-policy reconciliation cannot masquerade
 as an externally requested no-op. These checks use existing transaction records.
+
+
+## Image-owned reviewer provisioning (#1009)
+
+ADR-0081 extends the historical lazy-profile rule: runtime composition may
+passively read the bounded canonical profile and required model/resource
+contract at boot. It does not read credentials or executables, create a device
+manager, start a process or contact a provider. Store-mode default and explicit
+override remain deployment authority; invalid overrides never fall back.
+Use-time and passive advice-currentness admission validate current bytes, and
+invocation binds the admitted identity. Provisioning precedes host and credential
+readiness without bypassing session, origin or access-revision gates.
+Cancellation, clear and cleanup remain reachable during profile drift.
+
+The image owns its fixed read-only profile; container initialization creates
+only the fixed owner-private reviewer directories. Existing unsafe entries are
+refused, never chmod/chown repaired or followed. Known bounded staging remains
+owned by the existing device manager, not a new recovery mechanism. Task
+selection is advisory availability, separate from Policy preferences and
+Activity write consent. No prompt, tool, model or provider authority changes.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import signal
 import stat
 import subprocess
@@ -1358,3 +1359,60 @@ def test_atomic_install_loops_short_writes_and_cleans_failed_replace(
     with pytest.raises(OSError, match="replace"):
         _install_auth(source, target)
     assert not list(target.glob(".auth-*"))
+
+
+def test_actual_device_directories_resume_setup_after_install_and_cancel(tmp_path):
+    from mechanical_librarian.infrastructure.first_boot import (
+        FirstBootMode,
+        select_first_boot_mode,
+    )
+
+    (tmp_path / "application.sqlite3").touch()
+    reviewer = tmp_path / "reviewer"
+    reviewer.mkdir(mode=0o700)
+    (reviewer / "jobs").mkdir(mode=0o700)
+    manager = _manager(reviewer)
+    manager._auth_store = reviewer / "auth"
+    command = manager._command_factory
+    names = []
+
+    def observe(staging, action):
+        if action == "start":
+            names.append(staging.name)
+            assert staging.parent == reviewer
+            assert (
+                select_first_boot_mode(
+                    tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+                )
+                == FirstBootMode.RESUME_SETUP
+            )
+        return command(staging, action)
+
+    manager._command_factory = observe
+    try:
+        _finish(manager)
+        assert manager.status().state == "usable"
+        assert names and all(
+            re.fullmatch(r"reviewer-auth-[a-z0-9_]{8}", name) for name in names
+        )
+        assert (reviewer / "auth/auth.json").is_file()
+        assert (
+            select_first_boot_mode(
+                tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+            )
+            == FirstBootMode.RESUME_SETUP
+        )
+        manager.cancel()
+        assert (
+            select_first_boot_mode(
+                tmp_path, complete_store=lambda: False, resumable_setup=lambda: True
+            )
+            == FirstBootMode.RESUME_SETUP
+        )
+        (tmp_path / "application.sqlite3").unlink()
+        with pytest.raises(ValueError, match="first boot"):
+            select_first_boot_mode(
+                tmp_path, complete_store=lambda: False, resumable_setup=lambda: False
+            )
+    finally:
+        manager.close()

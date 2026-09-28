@@ -33,6 +33,8 @@ const failureCopy: Readonly<Record<string, string>> = {
   unreachable: 'OpenRouter could not be reached. Check network access, then retry.',
   credential_clear_failed:
     'The credential could not be removed. It remains protected; retry the clear action.',
+  not_provisioned:
+    'The contained reviewer is not ready in this deployment. Reload its status for the required remedy.',
   host_unsupported: 'This host cannot safely run the contained Codex reviewer.',
   credential_unavailable:
     'Codex sign-in is unavailable. Test or replace the sign-in, then select Codex again.',
@@ -50,6 +52,12 @@ const deviceFailureCopy: Readonly<Record<NonNullable<CodexDeviceAuthState['failu
 }
 
 const codexReasonCopy: Readonly<Record<ReviewerReason, string>> = {
+  profile_not_provisioned:
+    'The contained reviewer profile is missing. A deployment owner must restore the supported image profile or its explicit override. OpenRouter and no reviewer remain available.',
+  profile_unreadable:
+    'The contained reviewer profile cannot be read safely. A deployment owner must correct its ownership, permissions or contents, then restart.',
+  profile_contract_mismatch:
+    'The contained reviewer profile does not match the required model and resource limits. A deployment owner must replace it with a current supported profile, then restart.',
   host_evidence_unavailable:
     'Host memory evidence is unavailable. Fix the host or container memory reporting before using Codex.',
   cgroup_limit_below_1_gib:
@@ -197,7 +205,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     )
   const view = query.data
   const device = deviceQuery.data
-  const hostUnsupported = view.codex.state === 'host_unsupported'
+  const hostUnsupported = ['host_unsupported', 'not_provisioned'].includes(view.codex.state)
   const codexState = hostUnsupported ? view.codex.state : (device?.state ?? view.codex.state)
   const codexUsable =
     !hostUnsupported && (view.codex.state === 'usable' || device?.state === 'usable')
@@ -210,10 +218,6 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         ? codexReasonCopy[view.codex.reason]
         : null
   const effectiveModel = model || (view.mapping?.engine === 'openrouter' ? view.mapping.model : '')
-  // The cover task states its configured model beside the engine, as the
-  // description task already does. Only the engine and a model it actually has
-  // are emphasised; contained Codex reports no model of its own here, because
-  // the installed profile fixes one and this view never carries it.
   const coverEngine =
     view.mapping === null
       ? 'No reviewer'
@@ -245,7 +249,8 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             One sign-in serves cover observations and description advice. Select each task
             separately below.
           </p>
-          <p aria-live="polite">Status: {codexState.replaceAll('_', ' ')}</p>
+          <p>Model: {view.codex.model ?? 'Unavailable until provisioning is corrected'}</p>
+          <p aria-live="polite">Advisory availability: {codexState.replaceAll('_', ' ')}</p>
           {codexReason ? <p role="alert">{codexReason}</p> : null}
           {view.codex.host_headroom_bytes !== null ? (
             <small>
@@ -358,7 +363,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
               </button>
               <button
                 type="button"
-                disabled={mutation.isPending || view.codex.state === 'host_unsupported'}
+                disabled={mutation.isPending || hostUnsupported}
                 onClick={() => mutation.mutate({ kind: 'codex-start', revision: view.revision })}
               >
                 {['expired', 'failed', 'cancelled', 'interrupted'].includes(view.codex.state)
@@ -545,7 +550,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                   : 'alert'
               }
             >
-              Status:{' '}
+              Advisory availability:{' '}
               {mutation.isPending && mutation.variables.kind === 'openrouter'
                 ? 'validating'
                 : view.openrouter.state.replaceAll('_', ' ')}

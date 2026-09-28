@@ -67,12 +67,17 @@ export const DescriptionReviewerSettings = ({
         <div className="settings-field-control">
           <p role="status">
             {selected
-              ? `Selected: ${selected.engine === 'openrouter' ? selected.model : 'contained Codex'}. ${view.description?.state ?? 'unavailable'}.`
+              ? `Selected: ${selected.engine === 'openrouter' ? selected.model : `contained Codex — ${view.codex.model ?? 'model unavailable'}`}. Advisory availability: ${view.description?.state ?? 'unavailable'}.`
               : 'No description adviser selected.'}
           </p>
           <a href="/policy?section=curation#description-advice">
             Review cleanup preferences and the separate automatic application switch
           </a>
+          <p>
+            Adviser availability does not grant permission to change your library.{' '}
+            <a href="/activity">Check current write consent in Activity</a>, including consent that
+            needs renewal. Your automatic application preference remains separate.
+          </p>
           <button disabled={busy || selected === null} onClick={() => selection.mutate(null)}>
             Continue without description advice
           </button>
@@ -94,7 +99,11 @@ export const DescriptionReviewerSettings = ({
           </p>
         </div>
         <div className="settings-field-control">
-          <button disabled={busy} onClick={() => contained.mutate()}>
+          <p>Model: {view.codex.model ?? 'Unavailable until provisioning is corrected'}</p>
+          <button
+            disabled={busy || view.codex.state === 'not_provisioned'}
+            onClick={() => contained.mutate()}
+          >
             Inspect contained description model
           </button>
           {contained.data ? (
@@ -104,8 +113,13 @@ export const DescriptionReviewerSettings = ({
                 <dd>{contained.data.model}</dd>
               </div>
               <div>
-                <dt>Contained profile</dt>
-                <dd>{contained.data.profile_sha256}</dd>
+                <dt>Advanced identity</dt>
+                <dd>
+                  <details>
+                    <summary>Inspect contained profile identity</summary>
+                    <p>{contained.data.profile_sha256}</p>
+                  </details>
+                </dd>
               </div>
             </dl>
           ) : null}

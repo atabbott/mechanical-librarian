@@ -34,6 +34,8 @@ from mechanical_librarian.infrastructure.configuration import (
     load_configuration_file,
 )
 
+DEFAULT_REVIEWER_PROFILE = "/opt/mechanical-librarian/reviewer/profile.json"
+
 _Configuration = TypeVar("_Configuration")
 
 
@@ -114,7 +116,9 @@ def store_runtime_configuration(
         diagnostic_timings_enabled=document.server.diagnostic_timings_enabled,
         # The deployment owns the executable profile; application state owns
         # whether Codex is selected for any task.
-        cover_reviewer_profile_file=bootstrap.cover_reviewer_profile_file,
+        cover_reviewer_profile_file=(
+            bootstrap.cover_reviewer_profile_file or DEFAULT_REVIEWER_PROFILE
+        ),
         cover_avoid_promotional_text=document.cover_preferences.avoid_promotional_text,
         cover_avoid_tie_in_branding=document.cover_preferences.avoid_tie_in_branding,
         cover_prefer_minimal_composition=document.cover_preferences.prefer_minimal_composition,
