@@ -233,12 +233,13 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                 )
             ),
             activate_metadata_policy=(
-                lambda policy_id, expected, resolutions, activated_at, *, reconcile_current=False: (
+                lambda policy_id, expected, resolutions, activated_at, *, expected_active_generation, reconcile_current=False: (
                     self.activate_metadata_policy(
                         policy_id,
                         expected,
                         resolutions,
                         activated_at,
+                        expected_active_generation=expected_active_generation,
                         reconcile_current=reconcile_current,
                     )
                 )
@@ -1940,6 +1941,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         resolutions: tuple[tuple[str, str, str], ...],
         activated_at: int,
         *,
+        expected_active_generation: int,
         reconcile_current: bool = False,
     ) -> PolicyTransition | None:
         return self._metadata_policy.activate_metadata_policy(
@@ -1947,6 +1949,7 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             expected_active_policy_id,
             resolutions,
             activated_at,
+            expected_active_generation=expected_active_generation,
             reconcile_current=reconcile_current,
         )
 

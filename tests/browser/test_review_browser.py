@@ -337,6 +337,7 @@ def _publish_audiobook_tranche_case(repository: Any) -> str:
         MetadataPolicyProfile.builtin().policy_id,
         (("ebooks", resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     repository.activate_qualified_automatic(3)
     proposal = evaluate_report(
@@ -938,6 +939,7 @@ def _server(
                     ),
                 ),
                 2,
+                expected_active_generation=1,
             )
             if automatic_fixture:
                 repository.activate_qualified_automatic(3)

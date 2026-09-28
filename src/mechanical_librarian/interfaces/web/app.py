@@ -1585,6 +1585,7 @@ class _PolicyImpactResponse(_ClosedModel):
 
 
 class _PolicyPreviewResponse(_ClosedModel):
+    active_generation: StrictInt = Field(ge=1)
     active_policy_id: str
     libraries: list[_PolicyImpactResponse]
     policy_id: str
@@ -1593,6 +1594,7 @@ class _PolicyPreviewResponse(_ClosedModel):
 
 
 class _PolicyActivationRequest(_ClosedModel):
+    expected_active_generation: StrictInt = Field(ge=1)
     policy_id: StrictStr = Field(pattern=r"^policy_[0-9a-f]{64}$")
     expected_active_policy_id: StrictStr = Field(pattern=r"^policy_[0-9a-f]{64}$")
 
@@ -2989,6 +2991,7 @@ def _register_policy_routes(
             raise _policy_application_http_error(error) from None
         return _PolicyPreviewResponse(
             active_policy_id=preview.active_policy_id,
+            active_generation=preview.active_generation,
             policy_id=profile.policy_id,
             rich_qualification=[
                 _RICH_QUALIFICATION_ADAPTER.validate_python(item)
@@ -3036,6 +3039,7 @@ def _register_policy_routes(
                 payload.policy_id,
                 payload.expected_active_policy_id,
                 application.now(),
+                expected_active_generation=payload.expected_active_generation,
             )
         except MetadataPolicyApplicationError as error:
             raise _policy_application_http_error(error) from None

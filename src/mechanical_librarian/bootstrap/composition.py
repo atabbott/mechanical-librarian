@@ -4618,6 +4618,8 @@ def run_policy_preview(
                 for item in preview.libraries
             ],
             "policy_id": profile.policy_id,
+            "active_policy_id": preview.active_policy_id,
+            "active_generation": preview.active_generation,
             "rich_qualification": list(application.rich_qualification(profile)),
             "schema_version": "metadata-policy-preview-v1",
         }

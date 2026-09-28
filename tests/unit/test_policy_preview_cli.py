@@ -118,6 +118,7 @@ def test_composed_preview_uses_active_profile_for_new_library() -> None:
             builtin.policy_id,
             (("first", resolved.resolved_id, resolved.canonical_json),),
             1,
+            expected_active_generation=1,
         )
         repository.close()
 

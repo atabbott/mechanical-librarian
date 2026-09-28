@@ -190,6 +190,7 @@ def test_activity_ignores_consent_orphaned_by_policy_activation(
         builtin.policy_id,
         (("remaining", remaining.resolved_id, remaining.canonical_json),),
         2,
+        expected_active_generation=1,
     )
 
     activity = effects.repository.field_effect_activity_data(50)
@@ -245,6 +246,7 @@ def test_a_policy_row_carries_the_exact_settings_its_own_transition_moved(
         builtin.policy_id,
         (("remaining", remaining.resolved_id, remaining.canonical_json),),
         2,
+        expected_active_generation=1,
     )
 
     page = effects.repository.field_effect_activity_page(
@@ -1091,6 +1093,7 @@ def test_activity_page_cache_invalidates_an_in_place_policy_transition_update(
         builtin.policy_id,
         (("books", resolution.resolved_id, resolution.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     reader = open_repository(
         effects.database_path,
@@ -5673,6 +5676,7 @@ def test_pair_admission_boundaries(tmp_path, field, mode):
                     ),
                 ),
                 2,
+                expected_active_generation=1,
             )
             repo.activate_qualified_automatic(3)
             proposal = evaluate_report(

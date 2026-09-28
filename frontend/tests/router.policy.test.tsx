@@ -204,9 +204,11 @@ describe('Policy route', () => {
     expect(within(asin).getByRole('button', { name: 'Automatic' })).toBeEnabled()
     expect(within(asin).queryByText('Automatic mode not supported')).toBeNull()
     expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: No automatic effect — owner review required',
+      'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
     )
-    expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent('Audiobooks: Asin: fill')
+    expect(asin.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+      'Audiobooks: Ask me — owner choice required. Automatic eligibility if selected: Asin: fill',
+    )
     await user.click(within(asin).getByText('Audiobook operations'))
     expect(within(asin).getByText(/Fill an empty field — Automatic available/u)).toBeVisible()
     expect(within(asin).getByText(/Replace a valid ASIN — Review required/u)).toBeVisible()
@@ -220,7 +222,7 @@ describe('Policy route', () => {
     const title = await screen.findByRole('region', { name: 'Title and subtitle' })
     expect(within(title).getByRole('button', { name: 'Automatic' })).toBeDisabled()
     expect(title.querySelector('.cm-policy-media-scope')).toHaveTextContent(
-      'Ebooks: No automatic effect — owner review required',
+      'Ebooks: Ask me — owner choice required. Automatic eligibility if selected: No automatic effect — owner review required',
     )
   })
 
@@ -281,6 +283,7 @@ describe('Policy route', () => {
           active_policy_id: activePolicyId,
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [
             {
               library: 'Hostile <script> library',
@@ -595,6 +598,7 @@ describe('Policy route', () => {
     expect(policyCommand).toHaveBeenCalledWith('activate', {
       policy_id: 'policy-draft',
       expected_active_policy_id: 'policy-preview-authority',
+      expected_active_generation: 1,
     })
     expect(staleResponse).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('button', { name: 'Review activation' })).toBeNull()
@@ -651,6 +655,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-preview-authority',
           policy_id: 'policy-reviewed',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [
             {
               library: 'Fiction',
@@ -723,6 +728,7 @@ describe('Policy route', () => {
       expect(policyCommand).toHaveBeenCalledWith('activate', {
         policy_id: 'policy-reviewed',
         expected_active_policy_id: 'policy-preview-authority',
+        expected_active_generation: 1,
       }),
     )
     expect(policyCommand.mock.calls.filter(([path]) => path === 'activate')).toHaveLength(1)
@@ -766,6 +772,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           rich_qualification: [],
           libraries: [
             {
@@ -831,6 +838,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [
             {
               library: 'Empty library',
@@ -889,6 +897,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [],
         }
       if (path === 'activate')
@@ -945,6 +954,7 @@ describe('Policy route', () => {
             active_policy_id: 'policy-active',
             policy_id: 'policy-draft',
             schema_version: 'metadata-policy-preview-v1',
+            active_generation: 1,
             libraries: [],
           }
         if (path === 'activate') throw activationError
@@ -985,6 +995,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [],
         }
       if (path === 'activate') return {}
@@ -1022,6 +1033,7 @@ describe('Policy route', () => {
           active_policy_id: 'policy-active',
           policy_id: 'policy-draft',
           schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
           libraries: [],
         }
       if (path === 'activate') throw new ApiError(409, 'policy_transition_is_processing')
@@ -1370,3 +1382,127 @@ it.each([
     expect(http.getPreparation).toHaveBeenCalledTimes(2)
   },
 )
+
+it.each([
+  ['ignore', 'Ignored — no metadata action'],
+  ['ask', 'Ask me — owner choice required'],
+  ['automatic', 'Automatic —'],
+])(
+  'states selected %s behavior before eligibility in cards and activation',
+  async (mode, label) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const baseline = await http.getPolicyState()
+    http.getPolicyState = vi.fn(async (): Promise<PolicyStateView> => ({
+      ...baseline,
+      rich_qualification: (['fill_empty', 'add'] as const).map((option) => ({
+        automatic_available: true,
+        candidate_sha256: 'a'.repeat(64),
+        disposition: 'passing_automatic',
+        field: 'tags',
+        operation_scope: option === 'add' ? 'add' : 'fill',
+        option,
+      })),
+      profile: {
+        ...baseline.profile,
+        options: { tags: 'fill_empty' },
+        destinations: { tags: mode },
+      },
+    }))
+    http.policyCommand = async <T,>(path: string) =>
+      (path === 'preview'
+        ? {
+            schema_version: 'metadata-policy-preview-v1',
+            policy_id: 'draft',
+            active_policy_id: 'policy-1',
+            active_generation: 7,
+            libraries: [],
+          }
+        : { policy_id: 'draft', schema_version: 'metadata-policy-profile-v3' }) as T
+    renderRoute('/policy?section=curation', http)
+    const tags = await screen.findByRole('region', { name: 'Tags' })
+    expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(`Ebooks: ${label}`)
+    expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(`Audiobooks: ${label}`)
+    if (mode !== 'automatic')
+      expect(tags.querySelector('.cm-policy-media-scope')).toHaveTextContent(
+        'Automatic eligibility if selected:',
+      )
+    await user.click(within(tags).getByRole('combobox', { name: 'Tags representation' }))
+    await user.click(screen.getByRole('option', { name: 'Add missing values' }))
+    await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+    await user.click(await screen.findByRole('button', { name: 'Review activation' }))
+    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(`Ebooks — ${label}`)
+    expect(screen.getByLabelText('Review policy activation')).toHaveTextContent(
+      `Audiobooks — ${label}`,
+    )
+  },
+)
+
+it('keeps the draft after a real stale envelope and binds explicit repreview to the new generation', async () => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  let generation = 1
+  const transport = new ReviewApiClient({
+    buildIdentity: 'a'.repeat(64),
+    csrf: { current: () => 'b'.repeat(32), renew: async () => 'b'.repeat(32) },
+    fetch: vi.fn(async () =>
+      Response.json(
+        { schema_version: 'review-error-v1', error: { code: 'policy_activation_is_stale' } },
+        { status: 409 },
+      ),
+    ),
+  })
+  const commands = vi.fn(async (path: string, body?: unknown): Promise<unknown> => {
+    if (path === 'preview')
+      return {
+        schema_version: 'metadata-policy-preview-v1',
+        policy_id: 'draft',
+        active_policy_id: 'policy-1',
+        active_generation: generation,
+        libraries: [],
+      }
+    if (path === 'activate' && generation === 1) {
+      generation = 3
+      return transport.policyCommand(path, body)
+    }
+    if (path === 'activate')
+      return {
+        schema_version: 'metadata-policy-activation-v1',
+        policy_id: 'draft',
+        transition: null,
+      }
+    return { policy_id: 'draft', schema_version: 'metadata-policy-profile-v3' }
+  })
+  http.policyCommand = async <T,>(path: string, body?: unknown) => (await commands(path, body)) as T
+  renderRoute('/policy?section=identity', http)
+  const title = await screen.findByRole('region', { name: 'Title and subtitle' })
+  await user.click(within(title).getByRole('button', { name: 'Ignore' }))
+  await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+  await user.click(await screen.findByRole('button', { name: 'Review activation' }))
+  await user.click(screen.getByRole('button', { name: 'Activate policy' }))
+  expect(
+    await screen.findByText(
+      'The active policy changed before activation. Review the refreshed policy and create a new draft.',
+    ),
+  ).toBeVisible()
+  expect(within(title).getByRole('button', { name: 'Ignore' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  expect(commands).toHaveBeenCalledWith('activate', {
+    policy_id: 'draft',
+    expected_active_policy_id: 'policy-1',
+    expected_active_generation: 1,
+  })
+  await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+  await user.click(await screen.findByRole('button', { name: 'Review activation' }))
+  await user.click(screen.getByRole('button', { name: 'Activate policy' }))
+  expect(
+    await screen.findByText('Policy activated. Current unapplied work is being reconciled.'),
+  ).toBeVisible()
+  expect(commands).toHaveBeenLastCalledWith('activate', {
+    policy_id: 'draft',
+    expected_active_policy_id: 'policy-1',
+    expected_active_generation: 3,
+  })
+})

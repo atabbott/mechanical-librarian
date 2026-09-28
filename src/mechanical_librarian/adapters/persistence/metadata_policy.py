@@ -174,7 +174,12 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                             for resolved in (resolve_policy(profile, library[0]),)
                         )
                     self._activate_metadata_policy(
-                        row[0], row[0], resolutions, updated_at, reconcile_current=True
+                        row[0],
+                        row[0],
+                        resolutions,
+                        updated_at,
+                        expected_active_generation=row[1],
+                        reconcile_current=True,
                     )
             self._connection.execute(
                 "UPDATE metadata_policy_state SET posture='preview' WHERE singleton=1"
@@ -584,11 +589,14 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
         resolutions: tuple[tuple[str, str, str], ...],
         activated_at: int,
         *,
+        expected_active_generation: int,
         reconcile_current: bool = False,
     ) -> PolicyTransition | None:
         if (
             type(policy_id) is not str
             or type(expected_active_policy_id) is not str
+            or type(expected_active_generation) is not int
+            or expected_active_generation < 1
             or type(resolutions) is not tuple
             or resolutions != tuple(sorted(resolutions))
             or len(resolutions) != len({library for library, _, _ in resolutions})
@@ -615,7 +623,10 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 raise PolicyContentionError(
                     "stale", "metadata policy activation is stale"
                 )
-            if state[0] != expected_active_policy_id:
+            if (
+                state[0] != expected_active_policy_id
+                or state[1] != expected_active_generation
+            ):
                 replay = self._connection.execute(
                     "SELECT transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged "
                     "FROM metadata_policy_transitions WHERE generation=?",
@@ -623,9 +634,12 @@ class SQLiteMetadataPolicyRepository(ConnectionScoped):
                 ).fetchone()
                 if (
                     state[0] == policy_id
+                    and state[1] == expected_active_generation + 1
+                    and (policy_id != expected_active_policy_id or reconcile_current)
                     and replay is not None
                     and replay[1] == expected_active_policy_id
                     and replay[2] == policy_id
+                    and replay[3] == expected_active_generation + 1
                 ):
                     result = self.metadata_policy_transition()
                     if result is None or result.transition_id != replay[0]:

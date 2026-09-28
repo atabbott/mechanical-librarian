@@ -6358,6 +6358,11 @@
       "_PolicyActivationRequest": {
         "additionalProperties": false,
         "properties": {
+          "expected_active_generation": {
+            "minimum": 1.0,
+            "title": "Expected Active Generation",
+            "type": "integer"
+          },
           "expected_active_policy_id": {
             "pattern": "^policy_[0-9a-f]{64}$",
             "title": "Expected Active Policy Id",
@@ -6370,6 +6375,7 @@
           }
         },
         "required": [
+          "expected_active_generation",
           "policy_id",
           "expected_active_policy_id"
         ],
@@ -6592,6 +6598,11 @@
       "_PolicyPreviewResponse": {
         "additionalProperties": false,
         "properties": {
+          "active_generation": {
+            "minimum": 1.0,
+            "title": "Active Generation",
+            "type": "integer"
+          },
           "active_policy_id": {
             "title": "Active Policy Id",
             "type": "string"
@@ -6689,6 +6700,7 @@
           }
         },
         "required": [
+          "active_generation",
           "active_policy_id",
           "libraries",
           "policy_id",

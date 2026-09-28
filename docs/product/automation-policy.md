@@ -456,7 +456,9 @@ The preview captures active policy, library generation/resolutions and at most
 active and draft are evaluated after that read ends, using the same retained
 inputs and values. This is a captured database view, not a promise that the
 remote service or a later request is unchanged. Activation still checks the
-captured active-policy identity.
+captured active-policy identity and generation. A later return to the same policy
+identity does not make an older preview current. Only a retry of the exact next
+generation transition may return its prior result.
 
 Primary counts describe sampled works and fields whose selected outcome or
 meaningful candidate routing changed because of the edit. A supported

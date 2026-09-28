@@ -3080,6 +3080,7 @@ def test_unbindable_isbn_does_not_starve_a_later_human_acceptance(
                 for report, policy in zip((first, second), resolutions, strict=True)
             ),
             2,
+            expected_active_generation=1,
         )
         repository.activate_qualified_automatic(3)
         cases = []
@@ -6168,6 +6169,7 @@ def test_old_claim_cannot_project_same_ids_at_newer_lineage_checkpoint() -> None
             (("ebooks", resolved.resolved_id, resolved.canonical_json),),
             3,
             reconcile_current=True,
+            expected_active_generation=1,
         )
         assert transition is not None
         assert 2 == transition.generation
@@ -6767,6 +6769,7 @@ def _activate_profile(
         MetadataPolicyProfile.builtin().policy_id,
         ((library, resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
 
 
@@ -7239,6 +7242,7 @@ def test_owner_activation_acknowledgement_is_durable() -> None:
             MetadataPolicyProfile.builtin().policy_id,
             ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
             2,
+            expected_active_generation=1,
         )
         transition = repository.metadata_policy_transition()
         assert transition is not None
@@ -8648,14 +8652,15 @@ def test_title_recovery_commit_order_revalidates_later_authority(
     else:
         profile = MetadataPolicyProfile.builtin()
         resolved = resolve_policy(profile, report.target.library)
-        active = repository._connection.execute(
-            "SELECT active_policy_id FROM metadata_policy_state"
-        ).fetchone()[0]
+        active, active_generation = repository._connection.execute(
+            "SELECT active_policy_id,generation FROM metadata_policy_state"
+        ).fetchone()
         repository.activate_metadata_policy(
             profile.policy_id,
             active,
             ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
             31,
+            expected_active_generation=active_generation,
         )
     if not recover_first:
         unblock(32)

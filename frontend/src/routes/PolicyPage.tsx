@@ -669,6 +669,10 @@ const isPolicyPreview = (value: unknown): value is PolicyPreviewView =>
   value.schema_version === 'metadata-policy-preview-v1' &&
   'active_policy_id' in value &&
   typeof value.active_policy_id === 'string' &&
+  'active_generation' in value &&
+  typeof value.active_generation === 'number' &&
+  Number.isSafeInteger(value.active_generation) &&
+  value.active_generation > 0 &&
   'libraries' in value &&
   Array.isArray(value.libraries) &&
   value.libraries.every((library: unknown) => {
@@ -945,7 +949,11 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     try {
       const result = await command.mutateAsync({
         action: 'activate',
-        body: { policy_id: snapshotId, expected_active_policy_id: previewActivePolicyId },
+        body: {
+          policy_id: snapshotId,
+          expected_active_policy_id: previewActivePolicyId,
+          expected_active_generation: preview.active_generation,
+        },
       })
       if (!isPolicyActivation(result, snapshotId))
         throw new ApiError(502, 'invalid_policy_activation_response')
@@ -1096,6 +1104,20 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
     return media === 'audiobook' && field.key === 'contributor_names' && option !== 'canonical'
       ? `${operations} · Narrators: no automatic effect`
       : operations
+  }
+
+  const mediaBehavior = (field: FieldDefinition, option: string, media: 'ebook' | 'audiobook') => {
+    const destination =
+      draft.destinations[field.key] ?? fieldDefaults[field.key]?.destination ?? 'ask'
+    const eligibility = mediaQualification(field, option, media)
+    if (destination === 'automatic') return `Automatic — ${eligibility}`
+    const selected =
+      destination === 'ignore'
+        ? 'Ignored — no metadata action'
+        : destination === 'ask'
+          ? 'Ask me — owner choice required'
+          : 'Unavailable — no metadata action'
+    return `${selected}. Automatic eligibility if selected: ${eligibility}`
   }
 
   const impactTotals = useMemo(
@@ -1379,9 +1401,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     </span>
                     <p>{field.meaning}</p>
                     <p className="cm-policy-media-scope">
-                      <strong>Ebooks:</strong> {mediaQualification(field, option, 'ebook')}
+                      <strong>Ebooks:</strong> {mediaBehavior(field, option, 'ebook')}
                       <br />
-                      <strong>Audiobooks:</strong> {mediaQualification(field, option, 'audiobook')}
+                      <strong>Audiobooks:</strong> {mediaBehavior(field, option, 'audiobook')}
                     </p>
                     {data.state.audiobook_qualification.some(
                       (entry) => entry.field === field.key && entry.option === option,
@@ -1685,9 +1707,8 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                   {changedFields.map((field) => (
                     <li key={field.key}>
                       <strong>{field.label}:</strong> Ebooks —{' '}
-                      {mediaQualification(field, draft.options[field.key] ?? '', 'ebook')};
-                      Audiobooks —{' '}
-                      {mediaQualification(field, draft.options[field.key] ?? '', 'audiobook')}
+                      {mediaBehavior(field, draft.options[field.key] ?? '', 'ebook')}; Audiobooks —{' '}
+                      {mediaBehavior(field, draft.options[field.key] ?? '', 'audiobook')}
                     </li>
                   ))}
                 </ul>

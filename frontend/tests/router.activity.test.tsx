@@ -314,9 +314,8 @@ describe('Activity route', () => {
         throw new AmbiguousMutationError()
       }),
     }
-    renderRoute('/activity', http)
+    const { router } = renderRoute('/activity#activity-consent', http)
     await openActivityAuthority(user)
-    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
     await user.click(screen.getByRole('checkbox'))
     current = { ...initial, capabilities: [] }
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
@@ -327,6 +326,8 @@ describe('Activity route', () => {
       ),
     )
     expect(http.activityCommand).toHaveBeenCalledOnce()
+    expect(router.state.location.hash).toBe('activity-consent')
+    expect(screen.getByRole('button', { name: 'Cancel permission review' })).toBeVisible()
   })
 
   it('clears protected consent selection when current eligibility changes', async () => {
@@ -2292,4 +2293,74 @@ it('skips speculative Activity data work and starts its required navigation read
   })
   expect(await screen.findByRole('heading', { name: 'Activity and recovery' })).toBeVisible()
   expect(http.getActivity).toHaveBeenCalledTimes(2)
+})
+
+it.each([
+  ['cancel', 'activity-consent'],
+  ['success', 'activity-consent'],
+  ['toggle', 'activity-consent'],
+  ['cancel', 'other-section'],
+])('closes %s from #%s without reopening on remount', async (close, hash) => {
+  const user = userEvent.setup()
+  const http = createHttp()
+  http.getActivity = vi.fn(async () =>
+    activity({
+      configured_libraries: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          prepared: { automatic: 1, human: 0, total: 1 },
+        },
+      ],
+      capabilities: [
+        {
+          connection: 'primary',
+          library: 'fiction',
+          state: 'allowed',
+          destinations: [{ destination: 'title', state: 'allowed', consented: false, prepared: 1 }],
+        },
+      ],
+    }),
+  )
+  const { router } = renderRoute(
+    `/activity?eventType=policy&rangeDays=7&page=1&pageSize=50#${hash}`,
+    http,
+  )
+  if (hash !== 'activity-consent') {
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
+  }
+  await screen.findByRole('button', { name: 'Cancel permission review' })
+  if (close === 'success') {
+    await user.click(screen.getByRole('checkbox'))
+    await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
+    await waitFor(() =>
+      expect(http.activityCommand).toHaveBeenCalledExactlyOnceWith('activity/consent', {
+        grants: [{ library: 'fiction', destinations: ['title'] }],
+      }),
+    )
+  } else if (close === 'toggle') {
+    await openActivityAuthority(user)
+    await user.click(screen.getByRole('button', { name: 'Review write permissions' }))
+  } else await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
+  const closedHash = hash === 'activity-consent' ? '' : hash
+  await waitFor(() => expect(router.state.location.hash).toBe(closedHash))
+  expect(router.state.location.search).toEqual({
+    eventType: 'policy',
+    rangeDays: 7,
+    page: 1,
+    pageSize: 50,
+  })
+  expect(screen.queryByRole('button', { name: 'Cancel permission review' })).toBeNull()
+  const search = { eventType: 'policy', rangeDays: 7, page: 1, pageSize: 50 } as const
+  await act(async () => {
+    await router.navigate({ to: '/library', search: { lens: 'all' } })
+  })
+  await screen.findByRole('heading', { level: 2, name: 'Works' })
+  await act(async () => {
+    await router.navigate({ to: '/activity', search, hash: closedHash })
+  })
+  await screen.findByRole('heading', { name: 'Activity and recovery' })
+  expect(screen.queryByRole('button', { name: 'Cancel permission review' })).toBeNull()
+  if (close !== 'success') expect(http.activityCommand).not.toHaveBeenCalled()
 })

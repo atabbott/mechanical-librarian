@@ -112,6 +112,7 @@ def publish_language_case(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     if destination == "automatic":
         repository.activate_qualified_automatic(3)

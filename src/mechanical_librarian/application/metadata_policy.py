@@ -277,6 +277,7 @@ class LibraryPolicyImpact:
 class PolicyPreview:
     profile_id: str
     active_policy_id: str
+    active_generation: int
     validation: tuple[str, ...]
     libraries: tuple[LibraryPolicyImpact, ...]
 
@@ -347,6 +348,8 @@ class PolicyImpactRepository(PolicyPreviewRepository, Protocol):
         expected_active_policy_id: str,
         resolutions: tuple[tuple[str, str, str], ...],
         activated_at: int,
+        *,
+        expected_active_generation: int,
     ) -> PolicyTransition | None: ...
 
     def metadata_policy_transition(self) -> PolicyTransition | None: ...
@@ -547,7 +550,11 @@ def preview_policy(
     except (MetadataPolicyError, Exception) as error:
         raise MetadataPolicyApplicationError("policy preview is unavailable") from error
     return PolicyPreview(
-        profile.policy_id, active_profile.policy_id, (), tuple(impacts)
+        profile.policy_id,
+        active_profile.policy_id,
+        capture.generation,
+        (),
+        tuple(impacts),
     )
 
 
@@ -937,10 +944,14 @@ class PolicyNotebook:
         policy_id: object,
         expected_active_policy_id: object,
         activated_at: object,
+        *,
+        expected_active_generation: object,
     ) -> PolicyActivation:
         if (
             type(policy_id) is not str
             or type(expected_active_policy_id) is not str
+            or type(expected_active_generation) is not int
+            or expected_active_generation < 1
             or type(activated_at) is not int
             or activated_at < 0
         ):
@@ -970,7 +981,11 @@ class PolicyNotebook:
             if not requested.issubset(cover_aware_qualified_policy_options()):
                 raise MetadataPolicyApplicationError("policy automatic unqualified")
             transition = self._repository.activate_metadata_policy(
-                policy_id, expected_active_policy_id, resolutions, activated_at
+                policy_id,
+                expected_active_policy_id,
+                resolutions,
+                activated_at,
+                expected_active_generation=expected_active_generation,
             )
             return PolicyActivation(profile, transition)
         except MetadataPolicyApplicationError:

@@ -192,7 +192,7 @@ class FakeReviewRepository:
     ) -> PolicyPreviewCapture:
         return PolicyPreviewCapture(
             MetadataPolicyProfile.from_data(json.loads(self.active_metadata_policy())),
-            1,
+            1 if self.policy_transition is None else self.policy_transition.generation,
             tuple(
                 PolicyPreviewLibraryCapture(
                     library, None, self.current_unapplied_count(library), ()
@@ -219,9 +219,21 @@ class FakeReviewRepository:
         return self.policy_documents[self.active_policy_id]
 
     def activate_metadata_policy(
-        self, policy_id, expected_active_policy_id, resolutions, activated_at
+        self,
+        policy_id,
+        expected_active_policy_id,
+        resolutions,
+        activated_at,
+        *,
+        expected_active_generation,
     ):
-        if expected_active_policy_id != self.active_policy_id:
+        generation = (
+            1 if self.policy_transition is None else self.policy_transition.generation
+        )
+        if (
+            expected_active_policy_id != self.active_policy_id
+            or expected_active_generation != generation
+        ):
             # The real seam signals contention with a typed condition, and this
             # double only ever satisfied the old message search by accident of
             # the word it chose.
@@ -234,7 +246,7 @@ class FakeReviewRepository:
             "policy_transition_" + "a" * 64,
             previous,
             policy_id,
-            2,
+            generation + 1,
             "completed",
             0,
             0,

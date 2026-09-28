@@ -178,6 +178,7 @@ def test_tags_edit_compares_both_media_on_the_same_captured_inputs(
             for library, resolved in resolutions.items()
         ),
         1,
+        expected_active_generation=1,
     )
     for report in reports:
         resolved = resolutions[report.target.library]
@@ -472,6 +473,7 @@ def test_actual_candidate_routing_is_distinct_from_library_value_change(
             MetadataPolicyProfile.builtin().policy_id,
             ((library, resolved.resolved_id, resolved.canonical_json),),
             1,
+            expected_active_generation=1,
         )
         repository.publish(report, lambda: True)
         proposal = evaluate_report(
@@ -658,6 +660,7 @@ def test_preserved_genre_routing_requires_qualified_work_evidence(
             builtin.policy_id,
             ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
             1,
+            expected_active_generation=1,
         )
         repository.publish(report, lambda: True)
         proposal = evaluate_report(
@@ -679,5 +682,129 @@ def test_preserved_genre_routing_requires_qualified_work_evidence(
                 projected.desired_value,
                 projected.source_candidate_id,
             ) == ("no_op", "target_preserved", ("Existing",), None)
+    finally:
+        repository.close()
+
+
+def test_real_activation_api_rejects_aba_and_requires_preview_generation(tmp_path):
+    from argon2 import PasswordHasher
+    from fastapi.testclient import TestClient
+
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+    from tests.unit.review_app_fixture import (
+        TEST_REACT_BUILD_IDENTITY,
+        create_transport_test_app,
+    )
+
+    password = tmp_path / "owner.hash"
+    password.write_text(PasswordHasher().hash("synthetic owner password"))
+    password.chmod(0o600)
+    repository = open_repository(tmp_path / "reports.sqlite", cross_thread=True)
+    repository.enter_shadow_preview(1)
+    app = create_transport_test_app(
+        repository,
+        ReviewWebConfiguration(
+            canonical_origin="http://review.test",
+            owner_password_hash_file=str(password),
+        ),
+    )
+    try:
+        with TestClient(app, base_url="http://review.test") as client:
+            headers = {
+                "Origin": "http://review.test",
+                "X-ML-Build-Identity": TEST_REACT_BUILD_IDENTITY,
+            }
+            login = client.post(
+                "/api/v1/session/login",
+                headers=headers,
+                json={"password": "synthetic owner password"},
+            )
+            assert login.status_code == 200
+            headers["X-CSRF-Token"] = login.json()["csrf_token"]
+            baseline = MetadataPolicyProfile.builtin()
+            profiles = [
+                MetadataPolicyProfile.create(
+                    name, dict(baseline.options), dict(baseline.destinations)
+                )
+                for name in ("Other", "Reviewed")
+            ]
+            payloads = [
+                {
+                    "name": p.name,
+                    "options": dict(p.options),
+                    "destinations": dict(p.destinations),
+                }
+                for p in profiles
+            ]
+            for payload in payloads:
+                assert (
+                    client.post(
+                        "/api/v1/metadata-policy/drafts", headers=headers, json=payload
+                    ).status_code
+                    == 201
+                )
+            captured = client.post(
+                "/api/v1/metadata-policy/preview", headers=headers, json=payloads[1]
+            ).json()
+            assert captured["active_generation"] == 1
+            for target, expected, generation in (
+                (profiles[0].policy_id, baseline.policy_id, 1),
+                (baseline.policy_id, profiles[0].policy_id, 2),
+            ):
+                changed = client.post(
+                    "/api/v1/metadata-policy/activate",
+                    headers=headers,
+                    json={
+                        "policy_id": target,
+                        "expected_active_policy_id": expected,
+                        "expected_active_generation": generation,
+                    },
+                )
+                assert changed.status_code == 200, changed.text
+            body = {
+                "policy_id": profiles[1].policy_id,
+                "expected_active_policy_id": captured["active_policy_id"],
+                "expected_active_generation": captured["active_generation"],
+            }
+            for invalid in (None, True, False, 0, -1, "3", 3.0):
+                assert (
+                    client.post(
+                        "/api/v1/metadata-policy/activate",
+                        headers=headers,
+                        json=body | {"expected_active_generation": invalid},
+                    ).status_code
+                    == 422
+                )
+            missing = dict(body)
+            missing.pop("expected_active_generation")
+            assert (
+                client.post(
+                    "/api/v1/metadata-policy/activate", headers=headers, json=missing
+                ).status_code
+                == 422
+            )
+            stale = client.post(
+                "/api/v1/metadata-policy/activate", headers=headers, json=body
+            )
+            assert stale.status_code == 409
+            assert stale.json()["error"]["code"] == "policy_activation_is_stale"
+            assert (
+                repository._connection.execute(
+                    "SELECT generation FROM metadata_policy_state"
+                ).fetchone()[0]
+                == 3
+            )
+            fresh = client.post(
+                "/api/v1/metadata-policy/preview", headers=headers, json=payloads[1]
+            ).json()
+            assert fresh["active_generation"] == 3
+            accepted = client.post(
+                "/api/v1/metadata-policy/activate",
+                headers=headers,
+                json=body | {"expected_active_generation": fresh["active_generation"]},
+            )
+            assert accepted.status_code == 200, accepted.text
+            assert accepted.json()["transition"]["generation"] == 4
     finally:
         repository.close()

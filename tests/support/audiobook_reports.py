@@ -783,6 +783,7 @@ def publish_audiobook_preview(
         MetadataPolicyProfile.builtin().policy_id,
         ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
         2,
+        expected_active_generation=1,
     )
     repository.activate_qualified_automatic(3)
     proposal = evaluate_report(

@@ -824,3 +824,9 @@ Per-media sampled-work counts include every captured case, including unchanged
 works. Changed-field counts include only policy-caused changes. The secondary
 unchanged context excludes changed primary rows. A route change for a preserved
 taxonomy field counts only when the Automatic side has qualified evidence.
+
+Policy media guidance leads with the selected Automatic, Ask me, Ignore or
+unavailable behavior. Eligibility shown for another mode is explicitly labelled
+as hypothetical Automatic eligibility. Activation review repeats the selected
+behavior. Closing or completing write-permission review consumes its deep-link
+fragment while preserving Activity filters; reload does not reopen a closed review.

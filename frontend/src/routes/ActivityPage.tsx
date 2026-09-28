@@ -419,12 +419,17 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     if (consentOpen)
       document.getElementById('activity-consent')?.scrollIntoView({ block: 'nearest' })
   }, [consentOpen])
+  const closeConsentReview = () => {
+    setConsentOpen(false)
+    if (router.state.location.hash === 'activity-consent')
+      void navigate({ search: (current) => current, hash: '', replace: true })
+  }
   const mutation = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) =>
       http.activityCommand(path, body),
     retry: false,
     onSuccess: async () => {
-      setConsentOpen(false)
+      closeConsentReview()
       setSelection({ source: data, names: new Set() })
       setStatus('Activity state refreshed from the authoritative server.')
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
@@ -1045,7 +1050,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             off. Backup and service capability are checked again on confirmation.
           </p>
           {consentFeedback ? commandStatus : null}
-          <button type="button" onClick={() => setConsentOpen(false)} disabled={mutation.isPending}>
+          <button type="button" onClick={closeConsentReview} disabled={mutation.isPending}>
             Cancel permission review
           </button>
           <button
@@ -1223,7 +1228,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               ))}
               {needsConsent ? (
                 <button
-                  onClick={() => setConsentOpen((value) => !value)}
+                  onClick={() => (consentOpen ? closeConsentReview() : setConsentOpen(true))}
                   aria-expanded={consentOpen}
                   aria-controls="activity-consent"
                 >

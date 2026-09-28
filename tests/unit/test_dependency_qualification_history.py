@@ -125,6 +125,7 @@ def test_revision_three_documents_decode_without_current_authority(family):
 @pytest.mark.parametrize(
     "filename,source_sha",
     (
+        ("before-generation-cas.json", "b1b2799ba031d198ac3c49bb8099560afc984656"),
         ("before-policy-impact.json", "2fb536784394f578d38b90fc8c35bde2fa2ecf62"),
         ("before-policy-summary.json", "252f1577047c4d64ac2c18cbf4f725b36814edc5"),
         (

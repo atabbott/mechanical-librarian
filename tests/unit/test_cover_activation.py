@@ -139,6 +139,7 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             MetadataPolicyProfile.builtin().policy_id,
             ((report.target.library, resolved.resolved_id, resolved.canonical_json),),
             2,
+            expected_active_generation=1,
         )
         repository.activate_qualified_automatic(3)
         recovery = composition.SQLiteProviderRecoveryStore.open(
