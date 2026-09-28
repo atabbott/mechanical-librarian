@@ -299,6 +299,8 @@ def test_show_and_select_delegate_closed_values() -> None:
         "show",
         None,
         None,
+        None,
+        False,
     )
 
     runner.reset_mock()
@@ -329,6 +331,8 @@ def test_show_and_select_delegate_closed_values() -> None:
         "history",
         None,
         None,
+        None,
+        False,
     )
 
     runner.reset_mock()
@@ -363,6 +367,8 @@ def test_show_and_select_delegate_closed_values() -> None:
         "select",
         "cover_" + "b" * 64,
         "owner-command-0001",
+        None,
+        False,
     )
 
 
@@ -418,6 +424,7 @@ def _cover_detail() -> dict[str, object]:
                 "proposal_id": "proposal_" + "d" * 64,
                 "target_fingerprint": "fingerprint_" + "e" * 64,
                 "cover_consideration": {"consideration_id": "consideration_1"},
+                "current_cover_selection_id": None,
             },
         ]
     }
@@ -465,12 +472,15 @@ def _run(repository: Mock, application: Mock, *arguments: object) -> object:
 def test_a_projecting_action_reads_without_deciding(
     action: str, projection: str
 ) -> None:
-    repository, application = _composed({})
+    repository, application = _composed(_cover_detail())
     getattr(application, projection).return_value = {"schema_version": "projection"}
 
-    assert {"schema_version": "projection"} == _run(
-        repository, application, action, None, None
+    expected = (
+        {"schema_version": "projection"}
+        if action == "history"
+        else {"consideration_id": "consideration_1", "current_cover_selection_id": None}
     )
+    assert expected == _run(repository, application, action, None, None)
 
     getattr(application, projection).assert_called_once_with(_CASE)
     application.record_decision.assert_not_called()
@@ -514,6 +524,10 @@ def test_a_deciding_action_records_its_own_outcome_against_the_cover_field(
         selected_value=selected,
         idempotency_key="owner-command-0001",
         consideration_id="consideration_1",
+        cover_confirmation={
+            "expected_selection_id": None,
+            "confirm_unverified_match": False,
+        },
     )
     repository.close.assert_called_once_with()
 
@@ -551,3 +565,191 @@ def test_cover_review_refuses_an_absent_review_configuration() -> None:
         )
 
     repository.assert_not_called()
+
+
+@pytest.mark.parametrize("unknown", [False, True])
+def test_installed_cover_commands_persist_explicit_confirmation_and_revision(
+    tmp_path, unknown
+):
+    from dataclasses import replace
+
+    from mechanical_librarian.domain.metadata_report import MetadataReport
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.cover_producers import _qualified_cover_report
+    from tests.unit.test_metadata_configuration import _review, _source
+
+    tmp_path.chmod(0o700)
+    report, _ = _qualified_cover_report(tmp_path)
+    if unknown:
+        report = MetadataReport.create(
+            target=report.target,
+            file=report.file,
+            local_claims=(),
+            local_reasons=("no_opening_claims",),
+            providers=(),
+            cover_sources=report.cover_sources,
+        )
+    database = tmp_path / "application.sqlite"
+    repository = open_repository(database)
+    repository.publish(report, lambda: True)
+    proposals = evaluate_report(report)
+    repository.publish_proposal(proposals)
+    case_id = json.loads(repository.admit_review_case(proposals))["review_case_id"]
+    repository.close()
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({**_source(tmp_path), "review": _review(tmp_path)}))
+
+    def command(action, *extra, success=True):
+        output, errors = io.StringIO(), io.StringIO()
+        status = main(
+            [
+                "cover-review",
+                action,
+                "--config",
+                str(config),
+                "--database",
+                str(database),
+                "--artifacts",
+                str(tmp_path / "artifacts"),
+                "--case",
+                case_id,
+                *extra,
+            ],
+            cover_review_runner=run_cover_review,
+            stdout=output,
+            stderr=errors,
+        )
+        assert status == (0 if success else 1), errors.getvalue()
+        return json.loads(output.getvalue()) if success else None
+
+    shown = command("show")
+    assert shown["current_cover_selection_id"] is None
+    chosen = next(c for c in shown["candidates"] if not c["incumbent"])
+    request = [
+        "--artifact",
+        chosen["artifact_id"],
+        "--idempotency-key",
+        "cli-select-command-0001",
+    ]
+    if unknown:
+        command("select", *request, success=False)
+        request += ["--confirm-unverified-match"]
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+    from tests.unit.test_provider_recovery import _job
+
+    recovery_path = tmp_path / "private" / "provider-recovery.sqlite"
+    recovery_path.parent.mkdir(mode=0o700)
+    recovery = SQLiteProviderRecoveryStore.open(recovery_path)
+    recovery.enqueue_jobs(
+        (
+            replace(
+                _job("target"),
+                target_connection=report.target.connection,
+                library=report.target.library,
+                item=report.target.item,
+                source_report_id=report.report_id,
+                package_report_id=report.report_id,
+            ),
+        ),
+        enqueued_at=3,
+    )
+    assert (
+        recovery.claim_one(generation=1, now=7203, token="cli-active-fetch") is not None
+    )
+    recovery.close()
+    before = recovery_path.read_bytes()
+    assert command("show")["provider_fetching"] is True
+    command("select", *request, success=False)
+    assert recovery_path.read_bytes() == before
+    recovery_path.unlink()  # End this isolated acquisition fixture, not a CLI operation.
+    assert command("show")["provider_fetching"] is False
+    accepted = command("select", *request)
+    assert command("select", *request) == accepted
+    first = command("show")["current_cover_selection_id"]
+    assert first is not None
+    command("keep", "--idempotency-key", "cli-keep-command-0001", success=False)
+    command(
+        "keep",
+        "--idempotency-key",
+        "cli-keep-command-0001",
+        "--expected-selection-id",
+        first,
+    )
+    second = command("show")["current_cover_selection_id"]
+    assert second != first
+    command("select", *request, success=False)
+    command(
+        "no-action",
+        "--idempotency-key",
+        "cli-reject-command-0001",
+        "--expected-selection-id",
+        second,
+    )
+    assert not (tmp_path / "private" / "provider-recovery.sqlite").exists()
+    reopened = open_repository(database, create=False)
+    try:
+        assert reopened._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (3,)
+        assert reopened._connection.execute(
+            "SELECT count(*) FROM cover_selection_authorities"
+        ).fetchone() == (3,)
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--expected-selection-id", "not-a-selection"],
+        ["--confirm-unverified-match"],
+    ],
+)
+def test_invalid_cover_confirmation_never_invokes_runner(extra):
+    runner = Mock()
+    assert (
+        main(
+            [
+                "cover-review",
+                "keep",
+                "--config",
+                "/config.json",
+                "--database",
+                "/database.sqlite",
+                "--artifacts",
+                "/artifacts",
+                "--case",
+                _CASE,
+                "--idempotency-key",
+                "command-invalid-0001",
+                *extra,
+            ],
+            cover_review_runner=runner,
+            stderr=io.StringIO(),
+        )
+        == 1
+    )
+    runner.assert_not_called()
+
+
+def test_read_only_recovery_open_never_initializes_absent_or_empty_state(tmp_path):
+    import sqlite3
+
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+
+    path = tmp_path / "recovery.sqlite"
+    with pytest.raises(sqlite3.OperationalError):
+        SQLiteProviderRecoveryStore.open(path, read_only=True)
+    assert not path.exists()
+    path.touch()
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        ProviderRecoveryStoreError,
+    )
+
+    with pytest.raises(ProviderRecoveryStoreError, match="unavailable|incompatible"):
+        SQLiteProviderRecoveryStore.open(path, read_only=True)
+    assert path.read_bytes() == b""

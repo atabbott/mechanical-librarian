@@ -1558,3 +1558,55 @@ def test_dormant_preparation_classifies_startup_and_recovery_as_background(
         assert observed["owner"] == "foreground"
     finally:
         fixture.close()
+
+
+def test_active_cover_acquisition_has_collection_detail_attention_parity(tmp_path):
+    from dataclasses import replace
+
+    from tests.unit.test_provider_recovery import _job
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 1)
+    try:
+        case = fixture.cases[0]
+        report = fixture.reports["work-0000"]
+        fixture.recovery.enqueue_jobs(
+            (
+                replace(
+                    _job("target"),
+                    target_connection=report.target.connection,
+                    library=report.target.library,
+                    item=report.target.item,
+                    source_report_id=report.report_id,
+                    package_report_id=report.report_id,
+                ),
+            ),
+            enqueued_at=3,
+        )
+        assert (
+            fixture.recovery.claim_one(generation=1, now=7203, token="active-cover")
+            is not None
+        )
+        fixture.covers.ensure(
+            case.review_case_id,
+            report.to_json(),
+            next(p for p in case.proposals if p["destination"] == "cover"),
+        )
+        detail = fixture.application.case_detail(case.review_case_id).to_data()
+        cover = next(
+            field for field in detail["fields"] if field["destination"] == "cover"
+        )
+        assert cover["needs_attention"] is False
+        assert cover["editable"] is False
+        assert cover["cover_consideration"]["provider_fetching"] is True
+        assert cover["cover_consideration"]["ready"] is False
+        assert cover["cover_consideration"]["candidates"]
+        page = fixture.application.library(
+            lens="all", search=None, limit=5, cursor=None
+        )
+        assert page.items[0]["attention_count"] == sum(
+            field["needs_attention"] for field in detail["fields"]
+        )
+        attention = fixture.application.attention(search=None, limit=10, cursor=None)
+        assert all(item["destination"] != "cover" for item in attention.items)
+    finally:
+        fixture.close()

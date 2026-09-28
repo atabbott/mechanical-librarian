@@ -3350,6 +3350,8 @@ describe('Library route', () => {
     ).toBeVisible()
     expect(within(comparison).queryByText(/Recommended/u)).not.toBeInTheDocument()
     expect(comparison.querySelectorAll('.library-cover-card:disabled')).toHaveLength(6)
+    expect(screen.queryByText(/1 remaining/u)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cover Needs review' })).not.toBeInTheDocument()
     expect(http.recordDecision).not.toHaveBeenCalled()
     const cleanChecks = within(comparison).getByLabelText('Current cover visual checks')
     expect(within(cleanChecks).getByText('No visual defects flagged')).toBeVisible()

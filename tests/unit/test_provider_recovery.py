@@ -4560,11 +4560,13 @@ def test_a_full_database_reports_the_disk_failure_from_schema_creation() -> None
         *,
         isolation_level: Literal["DEFERRED", "EXCLUSIVE", "IMMEDIATE"] | None,
         check_same_thread: bool,
+        uri: bool = False,
     ) -> sqlite3.Connection:
         connection = connect(
             database,
             isolation_level=isolation_level,
             check_same_thread=check_same_thread,
+            uri=uri,
         )
         connection.execute("PRAGMA page_size=512")
         connection.execute(f"PRAGMA max_page_count={limit}")

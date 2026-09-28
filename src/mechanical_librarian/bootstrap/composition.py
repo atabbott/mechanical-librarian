@@ -4518,6 +4518,8 @@ def run_cover_review(
     action: str,
     artifact_id: str | None,
     idempotency_key: str | None,
+    expected_selection_id: str | None = None,
+    confirm_unverified_match: bool = False,
 ) -> dict[str, object]:
     """Project or record one cover outcome through the installed application seams."""
     configuration = load_configuration_file(config_path)
@@ -4525,10 +4527,20 @@ def run_cover_review(
         raise ConfigurationError("review configuration is unavailable")
     repository = open_repository(database_path, create=False)
     reviewer_access: ReviewerAccessOperations | None = None
+    provider_recovery = None
     try:
+        recovery_path = database_path.parent / "private" / "provider-recovery.sqlite"
+        if recovery_path.exists() or recovery_path.is_symlink():
+            provider_recovery = SQLiteProviderRecoveryStore.open(
+                recovery_path, read_only=True
+            )
         reviewer_access = _compose_reviewer_access(repository, configuration.review)
         considerations = _compose_cover_considerations(
-            repository, artifact_store_path, configuration.review, reviewer_access
+            repository,
+            artifact_store_path,
+            configuration.review,
+            reviewer_access,
+            provider_recovery,
         )
         application = compose_review_application(
             state_owner=repository,
@@ -4549,7 +4561,7 @@ def run_cover_review(
         if action == "history":
             return application.history(review_case_id)
         if action == "show":
-            return application.prepare_cover_consideration(review_case_id)
+            application.prepare_cover_consideration(review_case_id)
         detail = application.case_detail(review_case_id).to_data()
         field = next(
             # ``CaseDetailView.to_data`` always projects "fields" from its own
@@ -4560,6 +4572,11 @@ def run_cover_review(
         )
         consideration = field["cover_consideration"]
         assert type(consideration) is dict
+        if action == "show":
+            return {
+                **consideration,
+                "current_cover_selection_id": field["current_cover_selection_id"],
+            }
         outcome = {
             "keep": "keep_current",
             "select": "accept",
@@ -4580,6 +4597,10 @@ def run_cover_review(
             selected_value=selected_value,
             idempotency_key=idempotency_key,
             consideration_id=str(consideration["consideration_id"]),
+            cover_confirmation={
+                "expected_selection_id": expected_selection_id,
+                "confirm_unverified_match": confirm_unverified_match,
+            },
         )
         return {
             "consideration_id": consideration["consideration_id"],
@@ -4587,6 +4608,8 @@ def run_cover_review(
             "schema_version": "cover-review-cli-v1",
         }
     finally:
+        if provider_recovery is not None:
+            provider_recovery.close()
         if reviewer_access is not None:
             reviewer_access.close()
         repository.close()

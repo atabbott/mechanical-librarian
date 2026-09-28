@@ -16,12 +16,14 @@ from mechanical_librarian.application.qualification_state_bridge import (
     QUALIFICATION_STATE_BRIDGE_PLANS,
     QualificationStateBridgeRecoveryRequired,
 )
+from mechanical_librarian.domain.human_decision import validate_cover_confirmation
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 
 ReviewServeRunner = Callable[[Path, Path, Path, Path, str, int], None]
 PolicyPreviewRunner = Callable[[Path, Path, dict[str, object]], dict[str, object]]
 CoverReviewRunner = Callable[
-    [Path, Path, Path, str, str, str | None, str | None], dict[str, object]
+    [Path, Path, Path, str, str, str | None, str | None, str | None, bool],
+    dict[str, object],
 ]
 ReviewActivityRunner = Callable[[Path, Path], dict[str, object]]
 ProviderRecoveryRunner = Callable[[Path, Path, Path, Path], None]
@@ -102,6 +104,8 @@ def _parser() -> _Parser:
     cover.add_argument("--case", required=True, metavar="ID")
     cover.add_argument("--artifact", metavar="COVER_ID")
     cover.add_argument("--idempotency-key", metavar="KEY")
+    cover.add_argument("--expected-selection-id", metavar="ID")
+    cover.add_argument("--confirm-unverified-match", action="store_true")
     activity = commands.add_parser(
         "review-activity", help="inspect guarded application and recovery history"
     )
@@ -195,7 +199,12 @@ def main(
             if cover_review_runner is None:
                 raise RuntimeError("runtime composition unavailable")
             if (
-                (arguments.action == "select") != (arguments.artifact is not None)
+                (arguments.confirm_unverified_match and arguments.action != "select")
+                or (
+                    arguments.expected_selection_id is not None
+                    and arguments.action in {"show", "history"}
+                )
+                or (arguments.action == "select") != (arguments.artifact is not None)
                 or (arguments.action in {"show", "history"})
                 != (arguments.idempotency_key is None)
                 or arguments.action not in {"show", "history"}
@@ -205,6 +214,12 @@ def main(
                 )
             ):
                 raise ValueError("invalid cover review invocation")
+            validate_cover_confirmation(
+                {
+                    "expected_selection_id": arguments.expected_selection_id,
+                    "confirm_unverified_match": arguments.confirm_unverified_match,
+                }
+            )
             value = cover_review_runner(
                 arguments.config,
                 arguments.database,
@@ -213,6 +228,8 @@ def main(
                 arguments.action,
                 arguments.artifact,
                 arguments.idempotency_key,
+                arguments.expected_selection_id,
+                arguments.confirm_unverified_match,
             )
             output.write(
                 json.dumps(

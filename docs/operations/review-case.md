@@ -303,7 +303,17 @@ still pass. There is no bulk or model-selected cover application.
 The installed `cover-review` CLI exposes the same server-authoritative current
 consideration and bounded historical evidence used by the API and React view;
 its explicit keep, select, and no-action commands record through the same
-application service. `review-activity` projects the same bounded guarded plan,
+application service. `show` includes `current_cover_selection_id` from the same
+current detail snapshot as its consideration. Deciding commands accept
+`--expected-selection-id ID`; omitting it explicitly expects no current selection.
+For a fresh revision, supply the shown selection ID and a new idempotency key.
+An unconfirmed match requires `select --confirm-unverified-match`; the CLI never
+infers that confirmation. Retry an uncertain command with its original key,
+selection baseline, artifact and confirmation flag, rather than silently using a
+new baseline. Existing provider recovery state is read-only and active cover
+acquisition refuses a choice; absent recovery state is not created.
+
+`review-activity` projects the same bounded guarded plan,
 verification, stale, failure, and recovery ledger as authenticated Activity and
 is read-only. It requires only the configured application database and the
 configuration whose review limits shape that projection. It does not compose a

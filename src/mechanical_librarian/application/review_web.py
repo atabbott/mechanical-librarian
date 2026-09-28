@@ -620,7 +620,11 @@ class InspectCurrentReviewCase:
                         (
                             destination != "cover"
                             or snapshot.cover_consideration_document is None
-                            or cover_is_current
+                            or (
+                                cover_is_current
+                                and current_cover_consideration is not None
+                                and current_cover_consideration["ready"] is True
+                            )
                             or (
                                 cover_refresh_required
                                 and result["outcome"] == "unresolved_choice"
