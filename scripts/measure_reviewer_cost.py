@@ -363,8 +363,12 @@ class Capture(httpx.BaseTransport):
                 raw_cost = usage.get("cost") if type(usage) is dict else None
                 if type(raw_cost) in (int, Decimal) and not isinstance(raw_cost, bool):
                     cost = str(raw_cost)
-                    DescriptionModelMetadata.bounded_price(cost)
-                    self.charge = Decimal(cost)
+                    try:
+                        DescriptionModelMetadata.bounded_price(cost)
+                    except ValueError:
+                        pass  # Unknown charge must not discard independent final evidence.
+                    else:
+                        self.charge = Decimal(cost)
                 record["generation_id"] = (
                     value.get("id")
                     if type(value.get("id")) is str and len(value["id"]) <= 256
@@ -412,8 +416,12 @@ class Capture(httpx.BaseTransport):
             encoded(record),
         )
         self.exchanges[-1] = record
+        headers = response.headers.copy()
+        # iter_bytes has decoded the entity; let HTTPX size the decoded body.
+        for name in ("content-encoding", "content-length", "transfer-encoding"):
+            headers.pop(name, None)
         return httpx.Response(
-            response.status_code, headers=response.headers, content=bytes(body)
+            response.status_code, headers=headers, content=bytes(body)
         )
 
     def close(self) -> None:

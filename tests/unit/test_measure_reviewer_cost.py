@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 from typing import Any
 
@@ -560,3 +561,69 @@ def test_explicit_preflight_only_uses_capability_gets(
         ("GET", "/api/v1/key"),
         ("GET", "/api/v1/models"),
     ]
+
+
+@pytest.mark.parametrize("charge", ["-0.01", "1e100"])
+def test_invalid_charge_preserves_failed_final_evidence_and_stops(
+    frozen, tmp_path, charge
+):
+    inputs, *_ = frozen
+    factory, exchanges = transport_factory(inputs, charge=charge, invalid=True)
+    directory = tmp_path / "unknown-charge"
+    result = measure.execute(
+        directory,
+        inputs,
+        measure.selection(inputs, ("example/model",), (), 50, None),
+        manifest(inputs),
+        "secret",
+        "1",
+        "1",
+        transport=factory,
+    )
+    assert result["status"] == "incomplete"
+    assert result["requests_attempted"] == 1 and result["public_evidence"] is None
+    assert [row[0] for row in exchanges] == ["GET", "GET", "POST"]
+    assert (directory / "attempt-0/final-response.txt").read_bytes() == b"invalid"
+    record = json.loads((directory / "attempt-0/exchange-2-terminal.json").read_bytes())
+    assert record["charge_usd"] is None
+    assert record["generation_id"] == "synthetic-generation"
+    assert record["usage"] == {"prompt_tokens": 10}
+
+
+def test_compressed_capabilities_and_final_response_use_real_parser(frozen, tmp_path):
+    inputs, *_ = frozen
+    factory, exchanges = transport_factory(inputs)
+
+    def compressed_factory():
+        delegate = factory()
+
+        def respond(request):
+            original = delegate.handle_request(request)
+            compressed = gzip.compress(original.read())
+            return httpx.Response(
+                original.status_code,
+                headers={
+                    "content-encoding": "gzip",
+                    "content-length": str(len(compressed)),
+                },
+                stream=httpx.ByteStream(compressed),
+            )
+
+        return httpx.MockTransport(respond)
+
+    result = measure.execute(
+        tmp_path / "compressed",
+        inputs,
+        measure.selection(inputs, ("example/model",), ("example/model",), 50, None),
+        manifest(inputs),
+        "secret",
+        "1",
+        "1",
+        transport=compressed_factory,
+    )
+    assert result["status"] == "complete"
+    assert [row[0] for row in exchanges] == ["GET", "GET", "POST"] * 4
+    assert [
+        (row["task"], row["requests_completed"])
+        for row in result["public_evidence"]["models"]
+    ] == [("cover", 2), ("description", 2)]
