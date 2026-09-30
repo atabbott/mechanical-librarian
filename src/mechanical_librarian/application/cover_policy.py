@@ -470,7 +470,6 @@ def _validated_observation_rows(
         not in {
             LEGACY_SCHEMA_VERSION,
             PREVIOUS_SCHEMA_VERSION,
-            RETAINED_V3_INSTRUCTION_SHA256,
             OBSERVATION_SCHEMA_VERSION,
         }
         or value["cover_packet_reference"] != packet_reference

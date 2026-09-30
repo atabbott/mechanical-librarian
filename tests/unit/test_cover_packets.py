@@ -90,6 +90,7 @@ from mechanical_librarian.application.cover_observation import (  # noqa: E402
     OUTPUT_SCHEMA_VERSION,
     PREVIOUS_INSTRUCTION_SHA256,
     PREVIOUS_SCHEMA_VERSION,
+    RETAINED_V3_INSTRUCTION_SHA256,
     TAXONOMY,
     TAXONOMY_DOCUMENT,
     TAXONOMY_REFERENCE,
@@ -3289,7 +3290,12 @@ def test_observation_error_precedence_is_stable_across_document_schema_and_profi
         for profile in (None, object(), b'{"profile":"synthetic"}'):
             rejects(document, profile, "cover observation document is invalid")
 
-    for schema_value in (None, 1, "cover-observation-report-v999"):
+    for schema_value in (
+        None,
+        1,
+        "cover-observation-report-v999",
+        RETAINED_V3_INSTRUCTION_SHA256,
+    ):
         invalid_schema = dict(observation)
         if schema_value is None:
             invalid_schema.pop("schema_version")
