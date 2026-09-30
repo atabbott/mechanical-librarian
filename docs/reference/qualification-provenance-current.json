@@ -578,7 +578,7 @@
     "tests/fixtures/shadow-outcome-v6/preservation-outcomes.json": "6325a4e148109b0509c0b6443f694109e80241a9b1cb7823e0da99df2c240158",
     "tests/fixtures/shadow-outcome-v6/preservation-v6.sql": "fd9d2d1d56a7b20d3e8b0834be2c1ae5652df8caf1163142a5ccec6a08491d20",
     "tests/fixtures/shadow-outcome-v9.json": "9c979a146b3fa91c46c5efefbf7cc9d0ed0adaedf4ce2807752ff11f28d66791",
-    "tests/installed/test_continuous_review_scale.py": "b6381129490c114f36f3f9b1d4d6dcd6b46e0d5dd687493198036d34716f65f8",
+    "tests/installed/test_continuous_review_scale.py": "96c9893aafc9c6f008d99f103dd4dc64a9f64af2cff5dc303c0d68eb47a7d25f",
     "tests/integration/test_audiobook_provider_activation.py": "84248d4f7d841b1d4edd5cbc32d8beb757bda6fdea90c5638d8c88286da9ec08",
     "tests/integration/test_continuous_review_scale.py": "a3700a28f38289a898ea75b9693efd304974ba6a41dcc1ad3ee9ce80ff757e23",
     "tests/integration/test_database_crash_recovery.py": "285eb4cb629482f192426f61b11f306c352f53a8b40fbdea9d2b1452041619f0",
