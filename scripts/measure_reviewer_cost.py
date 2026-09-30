@@ -295,7 +295,7 @@ def installed_identity(
         purelib,
         "mechanical-librarian",
         manifest=manifest,
-        console=interpreter.parent / "mechanical-librarian",
+        console=(interpreter.parent / "mechanical-librarian").resolve(strict=True),
     )
     qualifier._verify_installed_origin(
         purelib / manifest.dist_info / "direct_url.json", wheel
