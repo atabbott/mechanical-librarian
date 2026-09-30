@@ -325,3 +325,14 @@ Upgrading to this F39 schema requires a clean application-state rebuild under
 Retain any needed historical state separately; ordinary startup does not migrate
 it. See [configuration](../reference/configuration.md) for exact versions and
 bounds. Media and target-service libraries remain outside this rebuild.
+
+
+### Cover reviewer data use
+
+Setup and Settings offer three named paid cover choices with their exact model
+IDs; custom model entry remains available. Cover requests deny provider data
+collection but allow retention, without requiring ZDR. Review the selected
+provider's data policies before enabling hosted advice. A failed or unavailable
+observation remains visible and requires explicit retry. Changing reviewer
+selection invalidates current advice while retaining its recorded model and
+history. Description advice has its own task profile and selection.

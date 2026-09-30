@@ -767,7 +767,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
         clock=lambda: case.now + 1,
     )
     assert model_free.replay_reference == (
-        "cover_replay_52e3385691a66acdf235e551986dffed7ec5d32c4ebcfad447a841e91b4a1760"
+        "cover_replay_49813bbafb8fe90845cb0ffab0f394f2f68ccdaf15ea04294feff7150bafd33b"
     )
     assert (
         model_free.ensure(case_id, case.report.to_json(), case.proposal)[
@@ -810,7 +810,7 @@ def test_absent_mismatch_binding_preserves_existing_replays_and_decisions(
     assert len(dispatches) == 1
     replayed_qualified = qualified()
     assert replayed_qualified.replay_reference == (
-        "cover_replay_54ceec1345ca7528ea965b105d4b714df08af9706f6616be12a634527243f363"
+        "cover_replay_be89b2f953fb9e25231ca6d900b72cf41017ee18cda9ea285e7af1d61340aa14"
     )
     assert (
         replayed_qualified.ensure(
@@ -1355,3 +1355,96 @@ def test_owner_can_choose_smaller_confirmed_cover_without_changing_policy(tmp_pa
         {"kind": "cover", "value": candidate["artifact_id"]},
     )
     assert store.current[case_id] == before
+
+
+def test_base_produced_observation_reopens_and_current_semantics_create_one_successor(
+    case: _Case, tmp_path
+) -> None:
+    from pathlib import Path
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.application.cover_policy import _observation_rows
+    from mechanical_librarian.application.reviewer_contracts import (
+        openrouter_cover_profile,
+    )
+
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures/stable-cover-reviewer-predecessor/consideration.json"
+        ).read_text()
+    )
+    assert fixture["source_sha"] == "3a7d15aad11c6dc24aa52eb78a25b5d0cbf9bee8"
+    raw = fixture["consideration"]
+    prior = CoverConsideration(raw).data
+    assert prior["reviewer_status"] == "completed"
+    packet = json.loads(prior["packet_document"])
+    with pytest.raises(ValueError, match="not current"):
+        _observation_rows(
+            prior["observation_document"],
+            packet["packet_reference"],
+            packet["candidates"],
+            tuple(c["reference"] for c in packet["candidates"]),
+            fixture["profile"].encode(),
+        )
+    database = tmp_path / "history.sqlite"
+    repository = open_repository(database)
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    report = MetadataReport.from_json(fixture["report"])
+    repository.publish(report, lambda: True)
+    proposals = evaluate_report(report)
+    repository.publish_proposal(proposals)
+    assert (
+        json.loads(repository.admit_review_case(proposals))["review_case_id"]
+        == prior["review_case_id"]
+    )
+    repository.record_cover_consideration(
+        raw,
+        review_case_id=prior["review_case_id"],
+        report_id=prior["report_id"],
+        replay_digest=prior["replay_digest"],
+        supersedes_id=None,
+        occurred_at=10,
+    )
+    repository.close()
+    repository = open_repository(database, create=False)
+    assert (
+        repository.current_cover_consideration_document(prior["review_case_id"]) == raw
+    )
+    model = "mistralai/ministral-3b-2512"
+    profile = openrouter_cover_profile(model)
+    dispatches = []
+
+    def reviewer(*args):
+        dispatches.append(args)
+        return _observer_result(*args)
+
+    service = CoverConsiderationService(
+        repository,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=case.payload_by_preview.__getitem__,
+        clock=lambda: 11,
+        reviewer_dispatch=lambda: ReviewerDispatch(
+            1, "openrouter", model, profile, reviewer
+        ),
+        reviewer_identity=lambda: (1, "openrouter", model, profile),
+        reviewer_revision_current=lambda revision: revision == 1,
+    )
+    current = service.ensure(
+        prior["review_case_id"], fixture["report"], fixture["proposal"]
+    )
+    assert current["reviewer_status"] == "completed"
+    assert current["supersedes_id"] == prior["consideration_id"]
+    replay = service.ensure(
+        prior["review_case_id"], fixture["report"], fixture["proposal"]
+    )
+    assert replay["consideration_id"] == current["consideration_id"]
+    assert len(dispatches) == 1
+    assert repository._connection.execute(
+        "SELECT document FROM cover_considerations WHERE consideration_id=?",
+        (prior["consideration_id"],),
+    ).fetchone() == (raw,)
+    repository.close()

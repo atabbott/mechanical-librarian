@@ -145,6 +145,21 @@ def openrouter_profile(model: str) -> bytes:
     ).encode("utf-8")
 
 
+def openrouter_cover_profile(model: str) -> bytes:
+    """Bind cover advice to its exact model and shipped request posture."""
+    selection = OpenRouterTaskSelection(engine="openrouter", model=model)
+    return canonical_json(
+        {
+            "engine": "openrouter",
+            "model": selection.model,
+            "schema_version": "openrouter-cover-reviewer-profile-v1",
+            "max_tokens": 8192,
+            "provider": {"require_parameters": True, "data_collection": "deny"},
+            "reasoning": "minimal-exclude-when-supported",
+        }
+    ).encode("utf-8")
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewerDispatch:
     access_revision: int
@@ -176,4 +191,5 @@ __all__ = [
     "ReviewerStatus",
     "ReviewerStatusReason",
     "openrouter_profile",
+    "openrouter_cover_profile",
 ]

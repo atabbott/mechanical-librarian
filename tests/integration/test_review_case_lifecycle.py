@@ -35,7 +35,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFacts,
     default_target_fields,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.audiobook_reports import admitted_audiobook_report
 
@@ -1433,4 +1433,164 @@ def test_owner_confirmed_unknown_cover_lifecycle(
                 cover_consideration_id=payload["consideration_id"],
                 cover_confirmation=payload["cover_confirmation"],
             )
+    repository.close()
+
+
+@pytest.mark.parametrize(
+    "model",
+    (
+        "mistralai/ministral-3b-2512",
+        "openai/gpt-5.6-luna",
+        "mistralai/mistral-small-2603",
+    ),
+)
+def test_exact_cover_reviewer_configuration_http_persistence_and_selection_drift(
+    tmp_path, model
+):
+    from unittest.mock import Mock
+
+    import httpx
+
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
+    from mechanical_librarian.application.cover_consideration import (
+        CoverConsiderationError,
+        CoverConsiderationService,
+    )
+    from mechanical_librarian.application.cover_observation import (
+        OUTPUT_SCHEMA_VERSION,
+        TAXONOMY,
+    )
+    from mechanical_librarian.application.reviewer_access import (
+        ReviewerAccessOperations,
+    )
+    from mechanical_librarian.application.reviewer_contracts import (
+        CodexDeviceAuthState,
+        ReviewerProvisioningStatus,
+    )
+    from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
+    from tests.support.cover_producers import _qualified_cover_report
+
+    report, proposals = _qualified_cover_report(tmp_path)
+    assert isinstance(proposals, ProposalSet)
+    artifacts = CoverArtifactStore(tmp_path / "artifacts")
+    database = tmp_path / "reviews.sqlite"
+    repository = open_repository(database)
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposals)
+    case_id = json.loads(repository.admit_review_case(proposals))["review_case_id"]
+    case = ReviewCase.from_json(
+        json.dumps(
+            json.loads(repository.get_review_case(case_id))["case"],
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+    proposal = next(p for p in case.proposals if p["destination"] == "cover")
+    chats = []
+
+    def http(request):
+        if request.url.path == "/api/v1/key":
+            return httpx.Response(200, json={"data": {"is_free_tier": False}})
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(
+                200,
+                json={
+                    "data": [
+                        {
+                            "id": model,
+                            "architecture": {
+                                "input_modalities": ["text", "image"],
+                                "output_modalities": ["text"],
+                            },
+                            "supported_parameters": ["structured_outputs"],
+                        }
+                    ]
+                },
+            )
+        body = json.loads(request.content)
+        chats.append(body)
+        assert body["model"] == model
+        assert body["provider"] == {
+            "require_parameters": True,
+            "data_collection": "deny",
+        }
+        packet = json.loads(
+            body["messages"][0]["content"][0]["text"].split("\nSealed packet:\n")[1]
+        )
+        result = {
+            "schema_version": OUTPUT_SCHEMA_VERSION,
+            "observations": [
+                {
+                    "candidate_reference": row["reference"],
+                    **{name: values[0][0] for name, values in TAXONOMY},
+                }
+                for row in packet["candidates"]
+            ],
+        }
+        return httpx.Response(
+            200,
+            json={
+                "model": model,
+                "choices": [{"message": {"content": json.dumps(result)}}],
+            },
+        )
+
+    def bind(repo):
+        access = ReviewerAccessOperations(
+            repo.reviewer_access_store(),
+            codex_auth=Mock(
+                passive_status=Mock(return_value=CodexDeviceAuthState("ready"))
+            ),
+            codex_provisioning=lambda _: ReviewerProvisioningStatus(
+                False, "profile_not_provisioned"
+            ),
+            codex_host=lambda: ReviewerHostStatus(True, None, 2 * 1024**3),
+            codex_binding=Mock(),
+            openrouter_factory=lambda key, selected: OpenRouterReviewer(
+                key, selected, transport=httpx.MockTransport(http)
+            ),
+        )
+        service = CoverConsiderationService(
+            repo,
+            read_preview=lambda artifact, _: artifacts.read_preview_digest(
+                next(
+                    s.artifact.preview_digest
+                    for s in report.cover_sources
+                    if s.artifact and s.artifact.artifact_id == artifact
+                )
+            ),
+            read_preview_digest=artifacts.read_preview_digest,
+            clock=lambda: 10,
+            reviewer_dispatch=access.dispatch_cover_observation,
+            reviewer_identity=access.current_cover_observation_identity,
+            reviewer_revision_current=access.revision_is_current,
+        )
+        return access, service
+
+    access, service = bind(repository)
+    selected = access.configure_openrouter(
+        expected_revision=1, api_key="synthetic-key", model=model
+    )
+    assert selected.mapping.model == model
+    first = service.ensure(case_id, report.to_json(), proposal)
+    assert first["reviewer_status"] == "completed"
+    assert first["reviewer_model"] == model
+    assert len(chats) == 1
+    access.close()
+    repository.close()
+    repository = open_repository(database, create=False)
+    access, service = bind(repository)
+    assert access.read().mapping.model == model
+    replay = service.ensure(case_id, report.to_json(), proposal)
+    assert replay["consideration_id"] == first["consideration_id"]
+    assert len(chats) == 1
+    request = service.prepare_observation(case_id, report.to_json())
+    access.select_none(expected_revision=selected.revision)
+    evidence = service.observe(request)
+    with pytest.raises(CoverConsiderationError, match="stale|changed"):
+        service.ensure(case_id, report.to_json(), proposal, reviewer_evidence=evidence)
+    access.close()
     repository.close()

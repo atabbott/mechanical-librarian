@@ -1838,9 +1838,9 @@ def test_expanded_prompt_and_schema_are_pinned_inside_the_profile_contract() -> 
     references = ("cover_ref_" + "a" * 64, "cover_ref_" + "b" * 64)
     schema = _output_schema(references)
 
-    assert len(INSTRUCTION.encode()) == 3953
+    assert len(INSTRUCTION.encode()) == 4027
     assert hashlib.sha256(INSTRUCTION.encode()).hexdigest() == (
-        "7bc0c116253a1015f6c6863622affb8f9d422ac93807f70c67c3b2b1d34b8c5b"
+        "d872692b3aca75ee0f81fbc436680a001f823e8f560d2e27a66c903b04a8e176"
     )
     assert len(schema.encode()) == 1811
     assert hashlib.sha256(schema.encode()).hexdigest() == (
@@ -3694,3 +3694,17 @@ def test_an_ebook_report_never_states_a_cover_corroboration_reason() -> None:
 
     for value in reasons.values():
         assert not any(item.startswith("cover_hash_") for item in value)
+
+
+def test_format_branding_clarification_preserves_visual_positive_and_collision_rules():
+    assert "Format_branding is visual only: ignore metadata." in INSTRUCTION
+    assert "text_edition requires explicit" in INSTRUCTION
+    assert (
+        "print/paperback/hardcover/ebook/Kindle/text-format words or logo; otherwise absent."
+        in INSTRUCTION
+    )
+    assert (
+        "Ordinary\ncovers, title/author/publisher/logos/series, bestseller/award/adaptation/tie-in badges alone\nare not text_edition."
+        in INSTRUCTION
+    )
+    assert len(INSTRUCTION.encode()) <= 4096

@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Cover setup and Settings expose three exact named paid reviewer choices, with
+  visual-only format-branding guidance, explicit data-collection denial and
+  retention disclosure. Comparison and history identify the recorded model;
+  earlier advice stays historical after reviewer changes. Current live
+  qualification remains pending (#1124).
+
 - Owners can explicitly confirm current retained covers with an unconfirmed match
   or lower visual quality, and revise their choice before application begins.
   Contradictions remain refused; history retains the observed match status.

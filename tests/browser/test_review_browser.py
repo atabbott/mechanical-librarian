@@ -5490,6 +5490,21 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         "document.documentElement.scrollWidth <= window.innerWidth"
                     )
                 retest.click()
+                for label, model in (
+                    ("Ministral 3B", "mistralai/ministral-3b-2512"),
+                    ("GPT-5.6 Luna", "openai/gpt-5.6-luna"),
+                    ("Mistral Small 4", "mistralai/mistral-small-2603"),
+                ):
+                    page.get_by_role("button", name=f"Use {label} ({model})").click()
+                    expect(page.get_by_label("Model ID", exact=True)).to_have_value(
+                        model
+                    )
+                    expect(page.get_by_label("Model ID", exact=True)).to_be_focused()
+                expect(
+                    page.get_by_text(
+                        "Cover requests deny provider data collection", exact=False
+                    )
+                ).to_be_visible()
                 page.get_by_role("button", name="Continue without a reviewer").click()
                 expect(
                     page.get_by_role("heading", name="Kick off preparation")
@@ -6093,13 +6108,11 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     "element => element.getBoundingClientRect().toJSON()"
                 )
                 assert reviewer_metrics["height"] >= 44
+                expect(page.get_by_text("Paid cover reviewer choices:")).to_be_visible()
                 expect(
-                    page.get_by_text(
-                        "Evidence-qualified paid model on the delivered real-cover corpus:"
+                    page.get_by_role(
+                        "button", name="Use Ministral 3B (mistralai/ministral-3b-2512)"
                     )
-                ).to_be_visible()
-                expect(
-                    page.get_by_role("button", name="Use openai/gpt-4o-mini")
                 ).to_be_visible()
                 expect(
                     page.get_by_text("Catalogue-capability-only free option:")

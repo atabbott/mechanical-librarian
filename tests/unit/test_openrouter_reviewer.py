@@ -10,6 +10,7 @@ from mechanical_librarian.adapters.reviewers import openrouter as module
 from mechanical_librarian.adapters.reviewers.openrouter import OpenRouterReviewer
 from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterReviewerError,
+    openrouter_cover_profile,
     openrouter_profile,
 )
 
@@ -139,7 +140,7 @@ def test_chunked_oversize_is_rejected_without_content_length(
         with pytest.raises(OpenRouterReviewerError) as caught:
             if target == "chat":
                 reviewer.run(
-                    openrouter_profile("example/vision"),
+                    openrouter_cover_profile("example/vision"),
                     b"instruction",
                     b"{}",
                     b"{}",
@@ -177,7 +178,10 @@ def test_one_run_shapes_reasoning_from_one_immediate_probe_then_one_chat_call(
         body = json.loads(request.content)
         assert body["model"] == "example/vision"
         assert body["max_tokens"] == 8192
-        assert body["provider"] == {"require_parameters": True}
+        assert body["provider"] == {
+            "require_parameters": True,
+            "data_collection": "deny",
+        }
         assert body["response_format"]["json_schema"]["strict"] is True
         if reasoning_supported:
             assert body["reasoning"] == {"effort": "minimal", "exclude": True}
@@ -197,7 +201,7 @@ def test_one_run_shapes_reasoning_from_one_immediate_probe_then_one_chat_call(
     )
     try:
         reviewer.run(
-            openrouter_profile("example/vision"),
+            openrouter_cover_profile("example/vision"),
             b"instruction",
             b"{}",
             b"{}",
@@ -336,3 +340,94 @@ def test_description_text_model_needs_pricing_without_changing_cover_capability(
         assert "synthetic-secret" not in json.dumps(posted)
     finally:
         reviewer.close()
+
+
+@pytest.mark.parametrize(
+    "model",
+    (
+        "mistralai/ministral-3b-2512",
+        "openai/gpt-5.6-luna",
+        "mistralai/mistral-small-2603",
+    ),
+)
+@pytest.mark.parametrize("result_kind", ("valid", "invented", "wrong_model", "fenced"))
+def test_real_cover_producer_admission_http_and_strict_observer(model, result_kind):
+    from mechanical_librarian.application.cover_observation import (
+        OUTPUT_SCHEMA_VERSION,
+        TAXONOMY,
+        observe_cover_packet,
+    )
+    from tests.unit.test_cover_packets import _packet_case
+
+    packet, images = _packet_case(2)
+    posted = []
+
+    def handler(request):
+        if request.url.path == "/api/v1/key":
+            return httpx.Response(200, json=_key())
+        if request.url.path == "/api/v1/models":
+            return httpx.Response(200, json=_models(model))
+        body = json.loads(request.content)
+        posted.append(body)
+        assert body["model"] == model
+        assert body["max_tokens"] == 8192
+        assert body["provider"] == {
+            "require_parameters": True,
+            "data_collection": "deny",
+        }
+        assert "reasoning" not in body
+        result = {
+            "schema_version": OUTPUT_SCHEMA_VERSION,
+            "observations": [
+                {
+                    "candidate_reference": row["reference"],
+                    **{name: values[0][0] for name, values in TAXONOMY},
+                }
+                for row in json.loads(packet.document)["candidates"]
+            ],
+        }
+        if result_kind == "invented":
+            result["observations"][0]["candidate_reference"] = "cover_ref_" + "0" * 64
+        content = json.dumps(result)
+        if result_kind == "fenced":
+            content = "```json\n" + content + "\n```"
+        return httpx.Response(
+            200,
+            json={
+                "model": "example/other" if result_kind == "wrong_model" else model,
+                "choices": [{"message": {"content": content}}],
+            },
+        )
+
+    reviewer = OpenRouterReviewer(
+        "synthetic-secret", model, transport=httpx.MockTransport(handler)
+    )
+    try:
+        if result_kind == "valid":
+            report = observe_cover_packet(
+                openrouter_cover_profile(model),
+                packet.document.encode(),
+                images,
+                reviewer.run,
+            )
+            assert len(json.loads(report.document)["observations"]) == 2
+        else:
+            with pytest.raises((ValueError, OpenRouterReviewerError)):
+                observe_cover_packet(
+                    openrouter_cover_profile(model),
+                    packet.document.encode(),
+                    images,
+                    reviewer.run,
+                )
+    finally:
+        reviewer.close()
+    assert len(posted) == 1
+
+
+def test_description_profile_bytes_remain_independent_of_cover_posture():
+    assert openrouter_profile("example/text") == (
+        b'{"engine":"openrouter","model":"example/text","schema_version":"openrouter-reviewer-profile-v1"}'
+    )
+    assert openrouter_cover_profile("example/text") != openrouter_profile(
+        "example/text"
+    )

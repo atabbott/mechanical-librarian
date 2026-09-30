@@ -6,7 +6,7 @@ import { Link } from '@tanstack/react-router'
 import { MediaHealth } from '../components/MediaHealth'
 import type { CaseDetailView, EvidenceView, HistoryValueView, HistoryView } from '../api/http'
 import { displayValue } from '../api/http'
-import { evidenceRoleLabel, fieldLabel, labelWords } from '../labels'
+import { coverReviewerLabel, evidenceRoleLabel, fieldLabel, labelWords } from '../labels'
 import { detailRoute, normalizeDetailSearch, useReviewContext } from '../router'
 
 function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
@@ -116,8 +116,9 @@ function HistoryItem({ item }: { item: HistoryView['items'][number] }) {
     <article className="diagnostic-entry">
       <h3>Cover {labelWords(item.outcome)}</h3>
       <p>
-        Visual review {labelWords(item.reviewerStatus)} across {String(item.candidateCount)}{' '}
-        {item.candidateCount === 1 ? 'candidate' : 'candidates'}.
+        Visual review {labelWords(item.reviewerStatus)}
+        {item.reviewerModel ? ` by ${coverReviewerLabel(item.reviewerModel)}` : ''} across{' '}
+        {String(item.candidateCount)} {item.candidateCount === 1 ? 'candidate' : 'candidates'}.
       </p>
       {item.ownerOutcome ? (
         <p>

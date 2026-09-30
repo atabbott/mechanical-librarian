@@ -198,3 +198,27 @@ def test_owner_cover_base_documents_remain_history(family):
                 **cast("dict[str, Any]", decision._core()),
                 occurred_at=decision.occurred_at,
             )
+
+
+@pytest.mark.parametrize("family", ("F19A", "F20", "F46"))
+def test_stable_cover_reviewer_predecessor_preserves_history_only(family):
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "fixtures/stable-cover-reviewer-predecessor/automatic.json"
+        ).read_text()
+    )
+    assert fixture["source_sha"] == "3a7d15aad11c6dc24aa52eb78a25b5d0cbf9bee8"
+    for raw in fixture["decisions"][family]:
+        decision = AutomaticDecision.from_json(raw)
+        assert decision.to_json() == raw
+        assert not qualification_manifest_is_current(
+            decision.policy_category,
+            decision.policy_option,
+            decision.qualification_manifest_sha256,
+        )
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(
+                **cast("dict[str, Any]", decision._core()),
+                occurred_at=decision.occurred_at,
+            )

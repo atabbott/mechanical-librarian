@@ -94,12 +94,23 @@ OpenRouter uses only `https://openrouter.ai/api/v1/chat/completions`, the exact
 selected model, strict structured output with required parameters, bounded
 responses, and no redirects or arbitrary endpoint. Ordinary Settings reads do
 not probe the network; explicit refresh and dispatch use typed redacted failure
-states. GPT-4o Mini is the one recommendation qualified by the delivered
-real-cover corpus: it completed all 39 invocations and 111 observations with the
-exact schema and taxonomy, without a systematic dimension collapse. The UI also
-shows the bounded delivery-time free catalogue candidate and documented free-tier
-caps, but labels that entry catalogue-capability-only. OpenRouter response streams
-are consumed in bounded chunks.
+states. Cover requests deny provider data collection, permit retention without a
+ZDR requirement, and bind an 8,192-token ceiling plus capability-driven minimal,
+excluded reasoning into a cover-only profile. Description profile bytes and
+request behavior remain separate and unchanged.
+
+The paid cover choices are Ministral 3B (`mistralai/ministral-3b-2512`), GPT-5.6
+Luna (`openai/gpt-5.6-luna`) and Mistral Small 4 (`mistralai/mistral-small-2603`).
+Their recovered development evidence does not establish current installed
+qualification; that acceptance remains pending for #1124. Catalogue candidates
+remain explicitly unqualified. Response streams are consumed in bounded chunks.
+
+One shared visual-only instruction requires explicit text-format branding for
+`text_edition`; ordinary book-cover features are insufficient. Its semantic
+digest changes without changing the observation schema or taxonomy. The one
+known displaced v3 instruction remains readable as historical evidence only;
+current producer admission and authority require current semantics. Retained
+observations and their exact model labels are never rewritten.
 
 Codex profile parsing, staging recovery, and device-manager construction are
 lazy: no-reviewer and OpenRouter operation do not touch them. Runtime generation

@@ -29,7 +29,13 @@ import type {
 } from '../api/http'
 import { useCoverChoiceData } from '../coverChoices'
 import { useRouteReadyFocus } from '../focus'
-import { evidenceRoleLabel, fieldLabel, labelWords, opaqueSource } from '../labels'
+import {
+  coverReviewerLabel,
+  evidenceRoleLabel,
+  fieldLabel,
+  labelWords,
+  opaqueSource,
+} from '../labels'
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
   detailQuery,
@@ -1939,6 +1945,9 @@ function LibraryCoverChoicesContent({
         </small>
       </header>
       <p className="reviewer-unavailable-detail">{reviewerLabel}</p>
+      {consideration.reviewerModel ? (
+        <p>Reviewer: {coverReviewerLabel(consideration.reviewerModel)}</p>
+      ) : null}
       {field.humanDecision ? (
         <p className="reviewer-unavailable-detail">
           Owner choice takes precedence over automation.{' '}

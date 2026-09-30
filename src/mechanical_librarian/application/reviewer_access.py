@@ -18,6 +18,7 @@ from mechanical_librarian.application.reviewer_contracts import (
     ReviewerProvisioningStatus,
     ReviewerStatus,
     ReviewerStatusReason,
+    openrouter_cover_profile,
     openrouter_profile,
 )
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
@@ -162,7 +163,11 @@ class ReviewerAccessView(_Closed):
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus
     openrouter: ReviewerEngineStatus
-    recommendations: tuple[StrictStr, ...] = ("openai/gpt-4o-mini",)
+    recommendations: tuple[StrictStr, ...] = (
+        "mistralai/ministral-3b-2512",
+        "openai/gpt-5.6-luna",
+        "mistralai/mistral-small-2603",
+    )
     candidates: tuple[OpenRouterRecommendation, ...] = (
         OpenRouterRecommendation(
             model="dots-studio/dots-3-note-preview:free",
@@ -177,8 +182,8 @@ class ReviewerAccessView(_Closed):
         "provider limits may change."
     )
     data_use_caveat: StrictStr = (
-        "OpenRouter and the selected endpoint may process submitted cover previews; "
-        "review current provider data policies before use."
+        "Cover requests deny provider data collection and allow retention; "
+        "zero data retention is not required. Review provider data policies before use."
     )
 
 
@@ -767,7 +772,11 @@ class ReviewerAccessOperations:
             document.revision,
             "openrouter",
             selection.model,
-            openrouter_profile(selection.model),
+            (
+                openrouter_cover_profile(selection.model)
+                if task == "cover_observation"
+                else openrouter_profile(selection.model)
+            ),
         )
         if key is None:
             raise ReviewerAccessApplicationError("credential_unavailable", identity)
@@ -821,7 +830,11 @@ class ReviewerAccessOperations:
             document.revision,
             "openrouter",
             selection.model,
-            openrouter_profile(selection.model),
+            (
+                openrouter_cover_profile(selection.model)
+                if task == "cover_observation"
+                else openrouter_profile(selection.model)
+            ),
         )
 
     def revision_is_current(self, revision: int) -> bool:
@@ -894,7 +907,16 @@ class ReviewerAccessOperations:
                 client.close()
 
         return ReviewerDispatch(
-            revision, "openrouter", model, openrouter_profile(model), run, client.close
+            revision,
+            "openrouter",
+            model,
+            (
+                openrouter_cover_profile(model)
+                if task == "cover_observation"
+                else openrouter_profile(model)
+            ),
+            run,
+            client.close,
         )
 
 

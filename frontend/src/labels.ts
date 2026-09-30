@@ -124,3 +124,12 @@ export const evidenceRoleLabel = (role: EvidenceRole) =>
     external_corroboration: 'External corroboration',
     external_observation: 'External observation',
   })[role]
+
+const coverReviewerNames: Record<string, string> = {
+  'mistralai/ministral-3b-2512': 'Ministral 3B',
+  'openai/gpt-5.6-luna': 'GPT-5.6 Luna',
+  'mistralai/mistral-small-2603': 'Mistral Small 4',
+}
+
+export const coverReviewerLabel = (model: string) =>
+  coverReviewerNames[model] ? `${coverReviewerNames[model]} (${model})` : model

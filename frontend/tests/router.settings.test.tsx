@@ -43,7 +43,11 @@ const reviewerView: ReviewerAccessView = {
     tier: null,
     host_headroom_bytes: null,
   },
-  recommendations: ['openai/gpt-4o-mini'],
+  recommendations: [
+    'mistralai/ministral-3b-2512',
+    'openai/gpt-5.6-luna',
+    'mistralai/mistral-small-2603',
+  ],
   candidates: [
     {
       model: 'dots-studio/dots-3-note-preview:free',
@@ -562,6 +566,30 @@ describe('owner settings route', () => {
     expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
   })
 
+  it.each([
+    ['Ministral 3B', 'mistralai/ministral-3b-2512'],
+    ['GPT-5.6 Luna', 'openai/gpt-5.6-luna'],
+    ['Mistral Small 4', 'mistralai/mistral-small-2603'],
+  ])('selects the labelled exact %s cover reviewer', async (label, model) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view('file'))
+    http.getReviewerAccess = vi.fn(async () => reviewerView)
+    http.configureOpenRouter = vi.fn(async () => ({ ...reviewerView, revision: 4 }))
+    renderRoute('/settings?group=reviewer', http)
+    await user.click(await screen.findByRole('button', { name: `Use ${label} (${model})` }))
+    expect(screen.getByRole('textbox', { name: 'Model ID' })).toHaveValue(model)
+    await user.type(screen.getByLabelText('API key'), 'synthetic-key')
+    await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
+    await waitFor(() =>
+      expect(http.configureOpenRouter).toHaveBeenCalledWith({
+        expected_revision: 3,
+        api_key: 'synthetic-key',
+        model,
+      }),
+    )
+  })
+
   it('renders wire recommendations, catalogue candidates, and manual model entry honestly', async () => {
     const user = userEvent.setup()
     const http = createHttp()
@@ -584,13 +612,15 @@ describe('owner settings route', () => {
     }))
     renderRoute('/settings?group=reviewer', http)
 
-    expect(await screen.findByText(/Evidence-qualified paid model/u)).toBeVisible()
+    expect(await screen.findByText(/Paid cover reviewer choices/u)).toBeVisible()
     expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
     expect(screen.getByText(/20 requests\/minute/u)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Use openai/gpt-4o-mini' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Use Ministral 3B (mistralai/ministral-3b-2512)' }),
+    )
     const model = screen.getByRole('textbox', { name: 'Model ID' })
-    expect(model).toHaveValue('openai/gpt-4o-mini')
+    expect(model).toHaveValue('mistralai/ministral-3b-2512')
     await user.click(
       screen.getByRole('button', {
         name: 'Use dots-studio/dots-3-note-preview:free',
