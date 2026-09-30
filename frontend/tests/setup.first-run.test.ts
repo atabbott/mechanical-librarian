@@ -1145,7 +1145,7 @@ describe('shipped first-run setup script', () => {
             tier: null,
             host_headroom_bytes: null,
           },
-          recommendations: ['openai/gpt-4o-mini'],
+          recommendations: ['openai/gpt-6-luna'],
           candidates: [
             {
               model: 'dots-studio/dots-3-note-preview:free',
@@ -1169,7 +1169,8 @@ describe('shipped first-run setup script', () => {
     vi.stubGlobal('fetch', fetch)
     runSetup()
 
-    expect(await screen.findByText(/Evidence-qualified paid model/u)).toBeVisible()
+    expect(await screen.findByText(/Recommended advisory cover reviewer/u)).toBeVisible()
+    expect(screen.getByText(/paid; cover observations remain advisory/u)).toBeVisible()
     expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
     expect(
       screen.getByText(
@@ -1178,8 +1179,8 @@ describe('shipped first-run setup script', () => {
     ).toBeVisible()
     expect(screen.getByText('Cover previews are sent to the selected provider.')).toBeVisible()
     const model = screen.getByLabelText('Model ID')
-    fireEvent.click(screen.getByRole('button', { name: 'Use openai/gpt-4o-mini' }))
-    expect(model).toHaveValue('openai/gpt-4o-mini')
+    fireEvent.click(screen.getByRole('button', { name: 'Use GPT-6 Luna (openai/gpt-6-luna)' }))
+    expect(model).toHaveValue('openai/gpt-6-luna')
     expect(model).toHaveFocus()
     fireEvent.click(
       screen.getByRole('button', { name: 'Use dots-studio/dots-3-note-preview:free' }),
