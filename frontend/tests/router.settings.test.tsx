@@ -693,6 +693,9 @@ describe('owner settings route', () => {
       // explanation of an absent model stays plain text.
       expect(line.querySelector('strong')).toHaveTextContent(emphasised)
       expect(line.querySelector('strong')?.textContent).toBe(emphasised)
+      const allowance = screen.getByText(/Usage consumes your plan allowance/)
+      expect(allowance).toHaveTextContent('no per-request monetary estimate is available')
+      expect(allowance).not.toHaveTextContent('$')
     },
   )
 

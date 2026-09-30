@@ -433,7 +433,10 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           <div className="settings-field-row">
             <div>
               <h4>Contained Codex</h4>
-              <p>Use the shared sign-in above for cover observations.</p>
+              <p>
+                Use the shared sign-in above for cover observations. Usage consumes your plan
+                allowance; no per-request monetary estimate is available.
+              </p>
             </div>
             <div className="settings-field-control">
               <button
