@@ -451,7 +451,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             <p>Choose a vision model that currently supports strict structured output.</p>
             <p>{view.free_tier_caveat}</p>
             <p>{view.data_use_caveat}</p>
-            <p>Paid cover reviewer choices:</p>
+            <p>Recommended advisory cover reviewer:</p>
             <ul className="settings-reviewer-suggestions">
               {view.recommendations.map((recommendation) => (
                 <li key={recommendation}>

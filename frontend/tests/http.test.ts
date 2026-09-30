@@ -96,14 +96,11 @@ describe('reviewer access transport vocabulary', () => {
     }
   })
 
-  it.each(['mistralai/ministral-3b-2512', 'openai/gpt-5.6-luna', 'mistralai/mistral-small-2603'])(
-    'preserves the exact cover recommendation %s',
-    (model) => {
-      expect(
-        mapReviewerAccess(reviewerAccessPayload({ recommendations: [model] })).recommendations,
-      ).toEqual([model])
-    },
-  )
+  it.each(['openai/gpt-6-luna'])('preserves the exact cover recommendation %s', (model) => {
+    expect(
+      mapReviewerAccess(reviewerAccessPayload({ recommendations: [model] })).recommendations,
+    ).toEqual([model])
+  })
 
   it.each([
     'invalid_key',

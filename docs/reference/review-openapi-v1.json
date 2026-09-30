@@ -1226,9 +1226,7 @@
           },
           "recommendations": {
             "default": [
-              "mistralai/ministral-3b-2512",
-              "openai/gpt-5.6-luna",
-              "mistralai/mistral-small-2603"
+              "openai/gpt-6-luna"
             ],
             "items": {
               "type": "string"

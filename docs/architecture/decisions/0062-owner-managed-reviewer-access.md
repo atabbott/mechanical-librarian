@@ -99,11 +99,17 @@ ZDR requirement, and bind an 8,192-token ceiling plus capability-driven minimal,
 excluded reasoning into a cover-only profile. Description profile bytes and
 request behavior remain separate and unchanged.
 
-The paid cover choices are Ministral 3B (`mistralai/ministral-3b-2512`), GPT-5.6
-Luna (`openai/gpt-5.6-luna`) and Mistral Small 4 (`mistralai/mistral-small-2603`).
-Their recovered development evidence does not establish current installed
-qualification; that acceptance remains pending for #1124. Catalogue candidates
-remain explicitly unqualified. Response streams are consumed in bounded chunks.
+GPT-6 Luna (`openai/gpt-6-luna`) is the sole recommended paid advisory cover
+reviewer. The accepted development comparison covered 39 works, 111 image
+appearances and 96 distinct images: Luna returned 39/39 valid reports with
+13 objective errors across 1,060 assessed fields. This author-scored corpus is
+not independent gold and contains no explicit text-edition positive. Residual
+errors are accepted for advisory recommendation only, not automated policy or
+write authority. MiMo 2.6 Flash (`xiaomi/mimo-v2.6-flash`) remains a documented
+comparator selectable through custom model entry, not an equal recommendation.
+Qwen and earlier models are not recommended; their exact historical labels and
+custom selection remain available. Catalogue candidates remain explicitly
+unqualified. Response streams are consumed in bounded chunks.
 
 One shared visual-only instruction requires explicit text-format branding for
 `text_edition`; ordinary book-cover features are insufficient. Its semantic

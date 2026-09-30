@@ -16,6 +16,7 @@ import {
   settingsTextValid,
 } from '../src/api/http'
 import type { ReviewHttp, ReviewerAccessView, SettingsView, SettingsWrite } from '../src/api/http'
+import { coverReviewerLabel } from '../src/labels'
 import { createHttp, renderRoute } from './fixtures'
 import { document, view } from './settingsFixtures'
 
@@ -43,11 +44,7 @@ const reviewerView: ReviewerAccessView = {
     tier: null,
     host_headroom_bytes: null,
   },
-  recommendations: [
-    'mistralai/ministral-3b-2512',
-    'openai/gpt-5.6-luna',
-    'mistralai/mistral-small-2603',
-  ],
+  recommendations: ['openai/gpt-6-luna'],
   candidates: [
     {
       model: 'dots-studio/dots-3-note-preview:free',
@@ -567,28 +564,37 @@ describe('owner settings route', () => {
   })
 
   it.each([
-    ['Ministral 3B', 'mistralai/ministral-3b-2512'],
-    ['GPT-5.6 Luna', 'openai/gpt-5.6-luna'],
-    ['Mistral Small 4', 'mistralai/mistral-small-2603'],
-  ])('selects the labelled exact %s cover reviewer', async (label, model) => {
-    const user = userEvent.setup()
-    const http = createHttp()
-    http.getSettings = vi.fn(async () => view('file'))
-    http.getReviewerAccess = vi.fn(async () => reviewerView)
-    http.configureOpenRouter = vi.fn(async () => ({ ...reviewerView, revision: 4 }))
-    renderRoute('/settings?group=reviewer', http)
-    await user.click(await screen.findByRole('button', { name: `Use ${label} (${model})` }))
-    expect(screen.getByRole('textbox', { name: 'Model ID' })).toHaveValue(model)
-    await user.type(screen.getByLabelText('API key'), 'synthetic-key')
-    await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
-    await waitFor(() =>
-      expect(http.configureOpenRouter).toHaveBeenCalledWith({
-        expected_revision: 3,
-        api_key: 'synthetic-key',
-        model,
-      }),
-    )
+    ['mistralai/ministral-3b-2512', 'Ministral 3B'],
+    ['openai/gpt-5.6-luna', 'GPT-5.6 Luna'],
+    ['mistralai/mistral-small-2603', 'Mistral Small 4'],
+    ['xiaomi/mimo-v2.6-flash', 'MiMo 2.6 Flash'],
+    ['qwen/qwen3.8-flash', 'Qwen 3.8 Flash'],
+  ])('retains the readable historical or custom label for %s', (model, label) => {
+    expect(coverReviewerLabel(model)).toBe(`${label} (${model})`)
   })
+
+  it.each([['GPT-6 Luna', 'openai/gpt-6-luna']])(
+    'selects the labelled exact %s cover reviewer',
+    async (label, model) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      http.getSettings = vi.fn(async () => view('file'))
+      http.getReviewerAccess = vi.fn(async () => reviewerView)
+      http.configureOpenRouter = vi.fn(async () => ({ ...reviewerView, revision: 4 }))
+      renderRoute('/settings?group=reviewer', http)
+      await user.click(await screen.findByRole('button', { name: `Use ${label} (${model})` }))
+      expect(screen.getByRole('textbox', { name: 'Model ID' })).toHaveValue(model)
+      await user.type(screen.getByLabelText('API key'), 'synthetic-key')
+      await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
+      await waitFor(() =>
+        expect(http.configureOpenRouter).toHaveBeenCalledWith({
+          expected_revision: 3,
+          api_key: 'synthetic-key',
+          model,
+        }),
+      )
+    },
+  )
 
   it('renders wire recommendations, catalogue candidates, and manual model entry honestly', async () => {
     const user = userEvent.setup()
@@ -612,15 +618,18 @@ describe('owner settings route', () => {
     }))
     renderRoute('/settings?group=reviewer', http)
 
-    expect(await screen.findByText(/Paid cover reviewer choices/u)).toBeVisible()
+    expect(await screen.findByText(/Recommended advisory cover reviewer/u)).toBeVisible()
+    for (const label of ['Ministral 3B', 'GPT-5.6 Luna', 'Mistral Small 4', 'MiMo', 'Qwen']) {
+      expect(
+        screen.queryByRole('button', { name: new RegExp(`Use ${label}`) }),
+      ).not.toBeInTheDocument()
+    }
     expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
     expect(screen.getByText(/20 requests\/minute/u)).toBeVisible()
     expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
-    await user.click(
-      screen.getByRole('button', { name: 'Use Ministral 3B (mistralai/ministral-3b-2512)' }),
-    )
+    await user.click(screen.getByRole('button', { name: 'Use GPT-6 Luna (openai/gpt-6-luna)' }))
     const model = screen.getByRole('textbox', { name: 'Model ID' })
-    expect(model).toHaveValue('mistralai/ministral-3b-2512')
+    expect(model).toHaveValue('openai/gpt-6-luna')
     await user.click(
       screen.getByRole('button', {
         name: 'Use dots-studio/dots-3-note-preview:free',
@@ -628,7 +637,7 @@ describe('owner settings route', () => {
     )
     expect(model).toHaveValue('dots-studio/dots-3-note-preview:free')
     await user.clear(model)
-    await user.type(model, 'manual/vision-model')
+    await user.type(model, 'xiaomi/mimo-v2.6-flash')
     const key = screen.getByLabelText('API key')
     await user.type(key, 'secret-key')
     await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
@@ -636,7 +645,7 @@ describe('owner settings route', () => {
       expect(http.configureOpenRouter).toHaveBeenCalledWith({
         expected_revision: 3,
         api_key: 'secret-key',
-        model: 'manual/vision-model',
+        model: 'xiaomi/mimo-v2.6-flash',
       }),
     )
     expect(key).toHaveValue('')

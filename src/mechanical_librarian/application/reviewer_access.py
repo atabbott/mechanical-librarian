@@ -163,11 +163,7 @@ class ReviewerAccessView(_Closed):
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus
     openrouter: ReviewerEngineStatus
-    recommendations: tuple[StrictStr, ...] = (
-        "mistralai/ministral-3b-2512",
-        "openai/gpt-5.6-luna",
-        "mistralai/mistral-small-2603",
-    )
+    recommendations: tuple[StrictStr, ...] = ("openai/gpt-6-luna",)
     candidates: tuple[OpenRouterRecommendation, ...] = (
         OpenRouterRecommendation(
             model="dots-studio/dots-3-note-preview:free",

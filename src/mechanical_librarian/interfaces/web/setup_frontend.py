@@ -161,9 +161,9 @@ _AUTHORED_REVIEWER = r"""const renderReviewer=async()=>{
   const caveat=document.createElement('p');caveat.textContent=access.data_use_caveat;
   const shared=document.createElement('p');shared.textContent='One OpenRouter key serves cover and description advice. Replacing or clearing it invalidates both tasks’ captured access. Each task is selected separately.';
   const model=input('reviewer-model');model.placeholder=access.mapping?.engine==='openrouter'?access.mapping.model:'provider/model';model.value=access.mapping?.engine==='openrouter'?access.mapping.model:'';model.maxLength=256;
-  const reviewerLabels={'mistralai/ministral-3b-2512':'Ministral 3B','openai/gpt-5.6-luna':'GPT-5.6 Luna','mistralai/mistral-small-2603':'Mistral Small 4'};
+  const reviewerLabels={'openai/gpt-6-luna':'GPT-6 Luna','xiaomi/mimo-v2.6-flash':'MiMo 2.6 Flash','qwen/qwen3.8-flash':'Qwen 3.8 Flash','mistralai/ministral-3b-2512':'Ministral 3B','openai/gpt-5.6-luna':'GPT-5.6 Luna','mistralai/mistral-small-2603':'Mistral Small 4'};
   const recommendation=document.createElement('div');
-  for(const [label,entries] of [['Paid cover reviewer choices:',access.recommendations.map(model=>({model,tier:'paid',suggested:true}))],['Catalogue-capability-only free option:',access.candidates]]){
+  for(const [label,entries] of [['Recommended advisory cover reviewer:',access.recommendations.map(model=>({model,tier:'paid',suggested:true}))],['Catalogue-capability-only free option:',access.candidates]]){
     const title=document.createElement('p');title.textContent=label;const list=document.createElement('ul');
     for(const candidate of entries){const item=document.createElement('li');const choose=button(`Use ${reviewerLabels[candidate.model]?`${reviewerLabels[candidate.model]} (${candidate.model})`:candidate.model}`);choose.type='button';choose.addEventListener('click',()=>{model.value=candidate.model;model.focus()});item.append(choose,document.createTextNode(candidate.suggested?' (paid; cover observations remain advisory)':` (${candidate.tier}; catalogue capability only, not yet qualified)`));list.append(item)}recommendation.append(title,list);
   }

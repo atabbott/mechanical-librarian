@@ -173,11 +173,7 @@ def test_generic_reads_only_use_cheap_codex_host_evidence() -> None:
     operations._codex_host = codex_host
     initial = operations.read()
     assert initial.mapping is None
-    assert initial.recommendations == (
-        "mistralai/ministral-3b-2512",
-        "openai/gpt-5.6-luna",
-        "mistralai/mistral-small-2603",
-    )
+    assert initial.recommendations == ("openai/gpt-6-luna",)
     assert tuple(candidate.model for candidate in initial.candidates) == (
         "dots-studio/dots-3-note-preview:free",
     )

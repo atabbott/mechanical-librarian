@@ -1439,6 +1439,8 @@ def test_owner_confirmed_unknown_cover_lifecycle(
 @pytest.mark.parametrize(
     "model",
     (
+        "openai/gpt-6-luna",
+        "xiaomi/mimo-v2.6-flash",
         "mistralai/ministral-3b-2512",
         "openai/gpt-5.6-luna",
         "mistralai/mistral-small-2603",

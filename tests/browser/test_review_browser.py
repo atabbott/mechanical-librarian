@@ -5490,11 +5490,7 @@ def test_first_run_installed_semantics_responsiveness_and_handoff() -> None:
                         "document.documentElement.scrollWidth <= window.innerWidth"
                     )
                 retest.click()
-                for label, model in (
-                    ("Ministral 3B", "mistralai/ministral-3b-2512"),
-                    ("GPT-5.6 Luna", "openai/gpt-5.6-luna"),
-                    ("Mistral Small 4", "mistralai/mistral-small-2603"),
-                ):
+                for label, model in (("GPT-6 Luna", "openai/gpt-6-luna"),):
                     page.get_by_role("button", name=f"Use {label} ({model})").click()
                     expect(page.get_by_label("Model ID", exact=True)).to_have_value(
                         model
@@ -6108,10 +6104,12 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     "element => element.getBoundingClientRect().toJSON()"
                 )
                 assert reviewer_metrics["height"] >= 44
-                expect(page.get_by_text("Paid cover reviewer choices:")).to_be_visible()
+                expect(
+                    page.get_by_text("Recommended advisory cover reviewer:")
+                ).to_be_visible()
                 expect(
                     page.get_by_role(
-                        "button", name="Use Ministral 3B (mistralai/ministral-3b-2512)"
+                        "button", name="Use GPT-6 Luna (openai/gpt-6-luna)"
                     )
                 ).to_be_visible()
                 expect(
