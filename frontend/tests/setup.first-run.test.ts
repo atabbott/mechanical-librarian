@@ -56,7 +56,7 @@ const runSetup = () => {
   window.eval(script)
 }
 
-beforeEach(() => {
+const resetSetupDocument = () => {
   document.head.innerHTML = `<style>${css}</style>`
   // The shipped shell carries the prerequisites beside the ledger, and the
   // kickoff step retires them, so the harness has to carry them too.
@@ -69,6 +69,10 @@ beforeEach(() => {
     <main id="setup-main"></main>
     <div id="setup-status"></div>
   `
+}
+
+beforeEach(() => {
+  resetSetupDocument()
   vi.stubGlobal(
     'matchMedia',
     vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
@@ -1126,6 +1130,12 @@ describe('shipped first-run setup script', () => {
       if (requestUrl(request) === '/api/setup/reviewer-access')
         return response({
           schema_version: 'reviewer-access-view-v2',
+          cover_metadata: null,
+          cost_evidence: {
+            schema_version: 'reviewer-cost-evidence-v1',
+            measured_run: null,
+            models: [],
+          },
           revision: 3,
           mapping: null,
           openrouter_key_configured: false,
@@ -1464,6 +1474,8 @@ describe('shipped first-run setup script', () => {
 
 const reviewerAccess = (state: string, reason: string | null = null) => ({
   schema_version: 'reviewer-access-view-v2',
+  cover_metadata: null,
+  cost_evidence: { schema_version: 'reviewer-cost-evidence-v1', measured_run: null, models: [] },
   revision: 3,
   mapping: null,
   codex: { state, reason, model: state === 'not_provisioned' ? null : 'gpt-5.6-sol' },
@@ -1601,4 +1613,54 @@ it.each([
   expect(await screen.findByText(new RegExp(message.replaceAll('.', '\\.')))).toBeVisible()
   expect(screen.getByRole('button', { name: 'Start device sign-in' })).toBeDisabled()
   expect(screen.getByText('Status: not provisioned')).toBeVisible()
+})
+
+it('keeps validated reviewer prices visible before Continue and on reopen', async () => {
+  let saved = false
+  let advanced = false
+  const access = () => ({
+    ...reviewerAccess('not_provisioned', 'profile_not_provisioned'),
+    mapping: saved ? { engine: 'openrouter', model: 'openai/gpt-6-luna' } : null,
+    cover_metadata: saved
+      ? {
+          model: 'openai/gpt-6-luna',
+          observed_at: 1700000000,
+          prompt_price: '0.000001',
+          completion_price: null,
+          image_price: '0',
+          request_price: '0',
+        }
+      : null,
+  })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: RequestInfo | URL) => {
+      const url = requestUrl(request)
+      if (url === '/api/setup/reviewer-access') return response(access())
+      if (url === '/api/setup/reviewer/openrouter') {
+        saved = true
+        return response(access())
+      }
+      if (url === '/api/setup/reviewer') advanced = true
+      return response(setupState('reviewer'))
+    }),
+  )
+  runSetup()
+  fireEvent.input(await screen.findByRole('textbox', { name: 'Model ID' }), {
+    target: { value: 'openai/gpt-6-luna' },
+  })
+  fireEvent.input(screen.getByLabelText('API key (write-only)'), {
+    target: { value: 'synthetic-key' },
+  })
+  fireEvent.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
+  expect(await screen.findByText(/Observed USD rates: 0.000001/u)).toBeVisible()
+  expect(screen.getByText('Request cost: not measured for this model.')).toBeVisible()
+  expect(screen.getByText('Current cover selection: OpenRouter — GPT-6 Luna')).toBeVisible()
+  expect(advanced).toBe(false)
+  expect(screen.getByRole('button', { name: 'Continue with this reviewer' })).toBeEnabled()
+  resetSetupDocument()
+  runSetup()
+  expect(await screen.findByText(/Observed USD rates: 0.000001/u)).toBeVisible()
+  fireEvent.click(screen.getByRole('button', { name: 'Continue with this reviewer' }))
+  await waitFor(() => expect(advanced).toBe(true))
 })

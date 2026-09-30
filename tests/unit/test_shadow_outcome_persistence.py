@@ -266,7 +266,7 @@ def _test_reviewer_access(
     if document.cover_observation is None:
         store.replace(
             ReviewerAccessDocument(
-                schema_version="reviewer-access-v2",
+                schema_version="reviewer-access-v3",
                 revision=document.revision + 1,
                 cover_observation=CodexTaskSelection(engine="codex"),
             ),

@@ -1,3 +1,4 @@
+import { ReviewerCost } from './ReviewerCost'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
@@ -52,7 +53,12 @@ export const DescriptionReviewerSettings = ({
   })
   const busy = contained.isPending || test.isPending || selection.isPending || refresh.isPending
   const selected = view.description_mapping
-  const disclosure = metadata ?? view.description_metadata
+  const disclosure =
+    metadata?.model === model
+      ? metadata
+      : view.description_metadata?.model === model
+        ? view.description_metadata
+        : null
   return (
     <section aria-labelledby="description-reviewer-heading">
       <div className="settings-field-row">
@@ -189,28 +195,10 @@ export const DescriptionReviewerSettings = ({
                 <dd>Text input, text output and structured output supported.</dd>
               </div>
               <div>
-                <dt>Metadata observed</dt>
-                <dd>{new Date(disclosure.observed_at * 1000).toLocaleString()}</dd>
-              </div>
-              <div>
                 <dt>Prices in USD</dt>
                 <dd>
                   {disclosure.prompt_price} per input token, {disclosure.completion_price} per
                   output token, {disclosure.request_price} per request.
-                </dd>
-              </div>
-              <div>
-                <dt>Maximum-size input estimate</dt>
-                <dd>
-                  $
-                  {(
-                    262144 * Number(disclosure.prompt_price) +
-                    8192 * Number(disclosure.completion_price) +
-                    Number(disclosure.request_price)
-                  ).toFixed(6)}{' '}
-                  per request, based on about 262,144 input tokens and an 8,192 output-token cap.
-                  Actual tokenization, output length and charges vary; this is an estimate, not a
-                  quote.
                 </dd>
               </div>
             </dl>
@@ -219,6 +207,9 @@ export const DescriptionReviewerSettings = ({
               Price and text capability metadata must be available before this task can be selected.
             </p>
           )}
+          <dl className="settings-reviewer-facts" aria-live="polite">
+            <ReviewerCost view={view} model={model} task="description" />
+          </dl>
           <button
             disabled={busy || metadata?.model !== model}
             onClick={() => selection.mutate('openrouter')}

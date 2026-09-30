@@ -61,3 +61,17 @@ def test_all_modules_import_outside_checkout_without_creating_state() -> None:
     assert completed.returncode == 0, completed.stderr
     assert completed.stdout.strip() == mechanical_librarian.__version__
     assert created_entries == []
+
+
+def test_installed_reviewer_cost_resource_is_closed_and_unmeasured() -> None:
+    from importlib.resources import files
+
+    from mechanical_librarian.domain.reviewer_cost import ReviewerCostEvidence
+
+    evidence = ReviewerCostEvidence.model_validate_json(
+        files("mechanical_librarian")
+        .joinpath("resources/reviewer-cost-evidence-v1.json")
+        .read_bytes()
+    )
+    assert evidence.measured_run is None
+    assert evidence.models == ()

@@ -3815,6 +3815,12 @@ describe('Library route', () => {
           cleanup()
           const access: ReviewerAccessView = {
             schema_version: 'reviewer-access-view-v2',
+            cover_metadata: null,
+            cost_evidence: {
+              schema_version: 'reviewer-cost-evidence-v1',
+              measured_run: null,
+              models: [],
+            },
             revision: 9,
             mapping:
               capability === 'null'

@@ -105,23 +105,21 @@ class OpenRouterReviewer:
             raise OpenRouterReviewerError("model_text_only")
         if "structured_outputs" not in parameters:
             raise OpenRouterReviewerError("model_unavailable")
-        prices: list[str | None] = [None, None, None]
-        if description:
-            pricing = model.get("pricing")
-            if type(pricing) is not dict:
-                raise OpenRouterReviewerError("model_unavailable")
-            prices = []
-            for name in ("prompt", "completion", "request"):
-                value = pricing.get(name)
-                try:
-                    if type(value) is not str or not 1 <= len(value) <= 40:
-                        raise ValueError
-                    number = Decimal(value)
-                    if not number.is_finite() or not 0 <= number <= 1_000_000:
-                        raise ValueError
-                except (ValueError, InvalidOperation):
+        prices: list[str | None] = []
+        pricing = model.get("pricing")
+        for name in ("prompt", "completion", "request", "image"):
+            value = pricing.get(name) if type(pricing) is dict else None
+            try:
+                if type(value) is not str or not 1 <= len(value) <= 40:
+                    raise ValueError
+                number = Decimal(value)
+                if not number.is_finite() or not 0 <= number <= 1_000_000:
+                    raise ValueError
+            except (ValueError, InvalidOperation):
+                if description and name != "image":
                     raise OpenRouterReviewerError("model_unavailable") from None
-                prices.append(value)
+                value = None
+            prices.append(value)
         return (
             OpenRouterAccountStatus(
                 tier="free" if data["is_free_tier"] else "paid",
@@ -129,10 +127,11 @@ class OpenRouterReviewer:
                 input_modalities=inputs,
                 output_modalities=outputs,
                 structured_outputs=True,
-                observed_at=int(time.time()) if description else None,
+                observed_at=int(time.time()),
                 prompt_price=prices[0],
                 completion_price=prices[1],
                 request_price=prices[2],
+                image_price=prices[3],
             ),
             "reasoning" in parameters,
         )

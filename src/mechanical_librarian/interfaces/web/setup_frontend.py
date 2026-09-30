@@ -119,7 +119,7 @@ _AUTHORED_REVIEWER = r"""const renderReviewer=async()=>{
   const later=document.createElement('p');later.textContent='Optional description advice is configured separately in Settings → Reviewer after setup.';form.append(later);
   const failed=e=>error(form,e.status===401?'session_expired':e.message);
   let access;try{access=await api('/api/setup/reviewer-access')}catch(e){failed(e);return}
-  const current=document.createElement('p');current.textContent=`Current cover selection: ${access.mapping?.engine==='openrouter'?`OpenRouter — ${access.mapping.model}`:access.mapping?.engine==='codex'?`Contained Codex — ${access.codex.model||'model unavailable'}`:'No reviewer'}`;form.append(current);
+  const current=document.createElement('p');current.textContent=`Current cover selection: ${access.mapping?.engine==='openrouter'?`OpenRouter — ${access.mapping.model==='openai/gpt-6-luna'?'GPT-6 Luna':access.mapping.model}`:access.mapping?.engine==='codex'?`Contained Codex — ${access.codex.model||'model unavailable'}`:'No reviewer'}`;form.append(current);
   const skip=button('Continue without a reviewer');skip.type='button';skip.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'skipped'},form));form.append(skip);
   const codex=document.createElement('div');codex.className='option';
   const heading=document.createElement('h3');heading.textContent='Contained Codex';
@@ -127,7 +127,7 @@ _AUTHORED_REVIEWER = r"""const renderReviewer=async()=>{
   const blocked=['host_unsupported','not_provisioned'].includes(access.codex.state);
   const codexState=blocked?access.codex:(codexTerminal||access.codex);
   const line=document.createElement('p');line.setAttribute('aria-live','polite');line.textContent=`Status: ${codexState.state.replaceAll('_',' ')}`;
-  codex.append(heading,modelName,line);
+  const allowance=document.createElement('p');allowance.textContent='Uses your signed-in plan allowance. No per-request monetary estimate is available.';codex.append(heading,modelName,line,allowance);
   const reasons={profile_not_provisioned:'The contained profile is missing. A deployment owner must restore the supported image profile or explicit override. OpenRouter and no reviewer remain available.',profile_unreadable:'The contained profile cannot be read safely. A deployment owner must correct its ownership, permissions or contents, then restart.',profile_contract_mismatch:'The contained profile does not match the required model and resource limits. A deployment owner must replace it with a supported profile, then restart.',host_evidence_unavailable:'Host memory evidence is unavailable. A deployment owner must correct host or container memory reporting.',cgroup_limit_below_1_gib:'The container memory limit is below 1 GiB. A deployment owner must increase it.',headroom_below_1_gib:'Less than 1 GiB of reviewer headroom is available. Free memory, then retry.'};
   if(access.codex.reason&&reasons[access.codex.reason]){const remedy=document.createElement('p');remedy.textContent=reasons[access.codex.reason];codex.append(remedy)}
   const active=value=>['starting','issued','waiting','validating'].includes(value);
@@ -141,7 +141,7 @@ _AUTHORED_REVIEWER = r"""const renderReviewer=async()=>{
   };
   if(active(access.codex.state)){void follow()}
   else if(codexState.state==='usable'||codexState.state==='configured'){
-    const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{if(use.disabled)return;use.disabled=true;try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form)}catch(e){use.disabled=false;failed(e)}});codex.append(use);
+    const use=button('Use Codex');use.type='button';use.addEventListener('click',async()=>{if(use.disabled)return;use.disabled=true;try{await api('/api/setup/reviewer/selection',{method:'POST',body:JSON.stringify({expected_revision:access.revision,engine:'codex'}),mutation:true});await render();announce('Codex selected. Review the selection, then continue.')}catch(e){use.disabled=false;failed(e)}});codex.append(use);
   }else{
     const check=button('Check existing sign-in');check.type='button';check.disabled=blocked;
     check.addEventListener('click',async()=>{if(check.disabled)return;check.disabled=true;try{codexTerminal=await api('/api/setup/reviewer/codex/recheck',{method:'POST',body:'{}',mutation:true});await render()}catch(e){check.disabled=blocked;failed(e)}});
@@ -165,12 +165,16 @@ _AUTHORED_REVIEWER = r"""const renderReviewer=async()=>{
   const recommendation=document.createElement('div');
   for(const [label,entries] of [['Recommended advisory cover reviewer:',access.recommendations.map(model=>({model,tier:'paid',suggested:true}))],['Catalogue-capability-only free option:',access.candidates]]){
     const title=document.createElement('p');title.textContent=label;const list=document.createElement('ul');
-    for(const candidate of entries){const item=document.createElement('li');const choose=button(`Use ${reviewerLabels[candidate.model]?`${reviewerLabels[candidate.model]} (${candidate.model})`:candidate.model}`);choose.type='button';choose.addEventListener('click',()=>{model.value=candidate.model;model.focus()});item.append(choose,document.createTextNode(candidate.suggested?' (paid; cover observations remain advisory)':` (${candidate.tier}; catalogue capability only, not yet qualified)`));list.append(item)}recommendation.append(title,list);
+    for(const candidate of entries){const item=document.createElement('li');const choose=button(`Use ${reviewerLabels[candidate.model]?`${reviewerLabels[candidate.model]} (${candidate.model})`:candidate.model}`);choose.type='button';choose.addEventListener('click',()=>{model.value=candidate.model;model.dispatchEvent(new Event('input'));model.focus()});item.append(choose,document.createTextNode(candidate.suggested?' (paid; cover observations remain advisory)':` (${candidate.tier}; catalogue capability only, not yet qualified)`));list.append(item)}recommendation.append(title,list);
   }
   const key=input('reviewer-key','password');key.autocomplete='new-password';key.maxLength=2048;
   const save=button('Validate and use OpenRouter');save.type='button';
-  save.addEventListener('click',async()=>{if(save.disabled)return;save.disabled=true;save.setAttribute('aria-live','polite');save.textContent='Validating OpenRouter…';try{await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});key.value='';await mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form)}catch(e){key.value='';save.disabled=false;save.textContent='Validate and use OpenRouter';failed(e)}});
-  router.append(routerHeading,freeCaveat,caveat,shared,recommendation,field('Model ID',model),field('API key (write-only)',key),save);form.append(router);
+  save.addEventListener('click',async()=>{if(save.disabled)return;save.disabled=true;save.setAttribute('aria-live','polite');save.textContent='Validating OpenRouter…';try{await api('/api/setup/reviewer/openrouter',{method:'POST',body:JSON.stringify({expected_revision:access.revision,api_key:key.value,model:model.value}),mutation:true});key.value='';await render();announce('OpenRouter validated and saved. Review the prices, then continue.')}catch(e){key.value='';save.disabled=false;save.textContent='Validate and use OpenRouter';failed(e)}});
+  const disclosure=document.createElement('div');disclosure.setAttribute('aria-live','polite');
+  const showPrices=()=>{disclosure.replaceChildren();const observed=document.createElement('p');const prices=access.cover_metadata?.model===model.value?access.cover_metadata:null;observed.textContent=prices?`Observed USD rates: ${prices.prompt_price??'Unavailable'} per input token; ${prices.completion_price??'Unavailable'} per output token; ${prices.image_price??'Unavailable'} per image; ${prices.request_price??'Unavailable'} per request.`:'Validate and save this model to observe its prices.';const estimate=document.createElement('p');const measured=access.cost_evidence.models.find(row=>row.model===model.value&&row.task==='cover');estimate.textContent=measured?`About $${Number(measured.per_1000_usd).toLocaleString('en-US',{maximumSignificantDigits:4})} per 1,000 cover review requests (estimate).`:'Request cost: not measured for this model.';const packet=document.createElement('p');packet.textContent='One cover request is one work packet, which may contain several images.';disclosure.append(observed,estimate,packet)};
+  model.addEventListener('input',showPrices);showPrices();
+  router.append(routerHeading,freeCaveat,caveat,shared,recommendation,field('Model ID',model),field('API key (write-only)',key),save,disclosure);form.append(router);
+  if(access.mapping){const next=button('Continue with this reviewer',true);next.type='button';next.addEventListener('click',()=>mutate('/api/setup/reviewer',{expected_revision:state.revision,outcome:'configured'},form));form.append(next)}
 };
 """
 

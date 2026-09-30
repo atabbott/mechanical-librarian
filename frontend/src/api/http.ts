@@ -67,6 +67,8 @@ export interface ReviewerAccessView {
   mapping: { engine: 'codex' } | { engine: 'openrouter'; model: string } | null
   description_mapping: ReviewerAccessView['mapping']
   description_metadata: DescriptionModelMetadata | null
+  cover_metadata: Schema<'CoverModelMetadata'> | null
+  cost_evidence: Schema<'ReviewerCostEvidence'>
   description: ReviewerEngineStatus | null
   openrouter_key_configured: boolean
   codex: ReviewerEngineStatus
@@ -1663,6 +1665,87 @@ const mapDescriptionMetadata = (value: unknown): DescriptionModelMetadata => {
   return value as unknown as DescriptionModelMetadata
 }
 
+const costPrice = (value: unknown): value is string =>
+  typeof value === 'string' &&
+  value.length > 0 &&
+  value.length <= 40 &&
+  value.trim() !== '' &&
+  Number.isFinite(Number(value)) &&
+  Number(value) >= 0 &&
+  Number(value) <= 1000000
+
+const mapCostEvidence = (value: unknown): void => {
+  if (
+    !record(value) ||
+    !exactKeys(value, ['schema_version', 'measured_run', 'models']) ||
+    value.schema_version !== 'reviewer-cost-evidence-v1' ||
+    !Array.isArray(value.models) ||
+    value.models.length > 100
+  )
+    throw new ApiError(502, 'invalid_cost_evidence')
+  const run = value.measured_run
+  if (
+    (run === null) !== (value.models.length === 0) ||
+    (run !== null &&
+      (!record(run) ||
+        !exactKeys(run, ['source_head', 'cohort_sha256', 'observed_at']) ||
+        typeof run.source_head !== 'string' ||
+        !/^[0-9a-f]{40}$/.test(run.source_head) ||
+        typeof run.cohort_sha256 !== 'string' ||
+        !/^[0-9a-f]{64}$/.test(run.cohort_sha256) ||
+        !Number.isSafeInteger(run.observed_at) ||
+        Number(run.observed_at) < 0))
+  )
+    throw new ApiError(502, 'invalid_cost_evidence')
+  const seen = new Set<string>()
+  for (const row of value.models) {
+    if (
+      !record(row) ||
+      !exactKeys(row, [
+        'model',
+        'task',
+        'requests_selected',
+        'requests_attempted',
+        'requests_completed',
+        'requests_failed',
+        'works',
+        'distinct_images',
+        'total_cost_usd',
+        'per_1000_usd',
+      ]) ||
+      typeof row.model !== 'string' ||
+      !openRouterModel.test(row.model) ||
+      typeof row.task !== 'string' ||
+      !['cover', 'description'].includes(row.task) ||
+      ![
+        'requests_selected',
+        'requests_attempted',
+        'requests_completed',
+        'requests_failed',
+        'works',
+        'distinct_images',
+      ].every(
+        (key) =>
+          Number.isSafeInteger(row[key]) && Number(row[key]) >= 0 && Number(row[key]) <= 100000,
+      ) ||
+      Number(row.requests_attempted) < 1 ||
+      row.requests_attempted !== row.requests_selected ||
+      Number(row.requests_completed) + Number(row.requests_failed) !== row.requests_attempted ||
+      Number(row.works) < 1 ||
+      Number(row.works) > Number(row.requests_selected) ||
+      (row.task === 'description' && row.distinct_images !== 0) ||
+      !costPrice(row.total_cost_usd) ||
+      !costPrice(row.per_1000_usd) ||
+      Math.abs(
+        Number(row.per_1000_usd) - (Number(row.total_cost_usd) / row.requests_attempted) * 1000,
+      ) > 1e-9 ||
+      seen.has(`${row.model}/${row.task}`)
+    )
+      throw new ApiError(502, 'invalid_cost_evidence')
+    seen.add(`${row.model}/${row.task}`)
+  }
+}
+
 export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
   if (
     !record(value) ||
@@ -1672,6 +1755,8 @@ export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
       'mapping',
       'description_mapping',
       'description_metadata',
+      'cover_metadata',
+      'cost_evidence',
       'description',
       'openrouter_key_configured',
       'codex',
@@ -1736,6 +1821,29 @@ export const mapReviewerAccess = (value: unknown): ReviewerAccessView => {
       ))
   )
     throw new ApiError(502, 'invalid_description_reviewer')
+  mapCostEvidence(value.cost_evidence)
+  const prices = value.cover_metadata
+  if (
+    prices !== null &&
+    (!record(prices) ||
+      !exactKeys(prices, [
+        'model',
+        'observed_at',
+        'prompt_price',
+        'completion_price',
+        'image_price',
+        'request_price',
+      ]) ||
+      !record(value.mapping) ||
+      value.mapping.engine !== 'openrouter' ||
+      prices.model !== value.mapping.model ||
+      !Number.isSafeInteger(prices.observed_at) ||
+      Number(prices.observed_at) < 0 ||
+      !['prompt_price', 'completion_price', 'image_price', 'request_price'].every(
+        (key) => prices[key] === null || costPrice(prices[key]),
+      ))
+  )
+    throw new ApiError(502, 'invalid_cover_metadata')
   if (value.description_metadata !== null) mapDescriptionMetadata(value.description_metadata)
   const mapping = value.description_mapping
   if (!(

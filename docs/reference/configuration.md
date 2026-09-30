@@ -456,33 +456,24 @@ Store-managed equivalents live in `owner-settings-v4.description_advice` as
 `automatic_application`. Policy → Curation saves them separately from its
 metadata-policy draft. File-managed preferences are read-only in the browser.
 
-`reviewer-access-v2` has independent optional `cover_observation` and
-`description_rewrite` mappings. Each selects contained Codex or one OpenRouter
-model; the latter share one secret while retaining independent availability.
-Settings → Reviewer discloses the exact model and destination before selection.
-OpenRouter description selection requires observed text/structured-output
-capabilities and bounded prompt, completion and request prices. Refresh is
-explicit; unavailable metadata does not disable the cover task. Contained
-usage identifies the exact profile/model and consumes its plan allowance;
-per-request monetary quantification is unavailable.
+`reviewer-access-v3` retains independent optional cover and description mappings,
+sharing one OpenRouter secret. **Clean rebuild required**: prior reviewer JSON
+and the predecessor table definition, even empty, are rejected without adoption.
+Cover price observations are bound to the saved model. Refresh replaces them
+through revision comparison; failure retains the prior observation. Deselecting,
+clearing the key or skipping setup clears cover metadata without borrowing
+another model's prices. Description capability and required-price gates remain.
 
-The cover task's selection line in Settings → Reviewer states its configured
-model beside its engine. Contained Codex reports no model on that one line
-because its installed profile fixes one, and that absence is stated there
-rather than filled in; the description task names its own selected model and
-offers a separate contained inspection that reports the exact contained model
-and profile. The cover task carries
-its own disclosure: the configured model, the image, text and structured-output
-capabilities a cover model must have, and the maximum-size request basis. That
-basis is at most 12 previews of at most 320 by 480 pixels and 1 MiB each and
-8 MiB together, plus a text prompt of the pinned instruction of at most 4 KiB
-and the sealed packet text of at most 1 MiB, a strict output schema of at most
-64 KiB, and an 8,192-token reply cap; the 8 MiB bound covers the image payloads
-alone, so text input is priced separately. The cover capability check reads
-capabilities only and never prices, so that disclosure carries no rate, no
-price-observation date and no per-request monetary figure; a cost derived from
-the selected model's published text-input, image-input and output rates is an
-estimate, not a quote, and no model is presented as the cheapest.
+Setup and Settings separate observed prompt, completion, image and request
+rates from measured request estimates. Missing cover rates are unavailable,
+never zero or a capability failure. Estimates state an amount per 1,000 review
+requests, or not measured. A cover request is one work packet that may contain
+multiple images. Dates and sample counts remain evidence data, outside the app
+copy. Contained Codex consumes plan allowance and has no monetary estimate.
+Setup keeps validation results visible before Continue and when reopened.
+The shipped measured-evidence set is empty. See the
+[owner measurement procedure](../development/reviewer-cost-measurement.md) for
+explicit, source-bound collection and its monitored budget boundary.
 
 A description request contains only canonical deduplicated provider-backed
 alternatives and the three cleanup choices, with pinned instruction/schema.

@@ -215,7 +215,7 @@ def _seed_full_store(
 
 def _reviewer_document() -> ReviewerAccessDocument:
     return ReviewerAccessDocument(
-        schema_version="reviewer-access-v2",
+        schema_version="reviewer-access-v3",
         revision=2,
         cover_observation=OpenRouterTaskSelection(
             engine="openrouter", model="provider/model"

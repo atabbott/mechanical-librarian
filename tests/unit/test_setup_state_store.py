@@ -27,6 +27,7 @@ from mechanical_librarian.application.review_web import OwnerSessionService
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
 from mechanical_librarian.domain.owner_settings import OwnerSettingsError
 from mechanical_librarian.domain.reviewer_access import (
+    DescriptionModelMetadata,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
 )
@@ -294,9 +295,19 @@ def _reviewer_ready(store: SetupStateStore) -> SetupStateDocument:
 
 
 def _configured_reviewer(store: ReviewerAccessStore) -> ReviewerAccessDocument:
+    from mechanical_librarian.domain.reviewer_access import CoverModelMetadata
+
     return store.replace(
         ReviewerAccessDocument(
-            schema_version="reviewer-access-v2",
+            schema_version="reviewer-access-v3",
+            cover_metadata=CoverModelMetadata(
+                model="provider/model",
+                observed_at=123,
+                prompt_price="0",
+                completion_price=None,
+                image_price=None,
+                request_price=None,
+            ),
             revision=2,
             cover_observation=OpenRouterTaskSelection(
                 engine="openrouter", model="provider/model"
@@ -328,7 +339,10 @@ def test_reviewer_transition_rejects_independent_connection_clear(
     state = _reviewer_ready(setup)
     reviewer = _configured_reviewer(ReviewerAccessStore(first))
     ReviewerAccessStore(second).replace(
-        reviewer.model_copy(update={"revision": 3, "cover_observation": None}), 2
+        reviewer.model_copy(
+            update={"revision": 3, "cover_observation": None, "cover_metadata": None}
+        ),
+        2,
     )
 
     with pytest.raises(SetupStateError):
@@ -357,6 +371,7 @@ def test_stale_skip_changes_neither_authority_and_preserves_key(tmp_path: Path) 
         )
     document, key = ReviewerAccessStore(first).snapshot()
     assert document.cover_observation is not None
+    assert document.cover_metadata is not None
     assert key == "reusable-secret"
 
 
@@ -381,6 +396,7 @@ def test_reviewer_transition_failure_rolls_back_both_authorities(
     assert setup.read() == state
     document, key = ReviewerAccessStore(connection).snapshot()
     assert document.cover_observation is not None
+    assert document.cover_metadata is not None
     assert key == "reusable-secret"
 
 
@@ -424,7 +440,11 @@ def test_same_connection_ports_serialize_whole_transactions(
             else:
                 reviewer_store.replace(
                     reviewer.model_copy(
-                        update={"revision": 3, "cover_observation": None}
+                        update={
+                            "revision": 3,
+                            "cover_observation": None,
+                            "cover_metadata": None,
+                        }
                     ),
                     2,
                 )
@@ -984,3 +1004,46 @@ def test_stale_write_changes_neither_document_nor_secrets() -> None:
         ).fetchall()
         == before_secrets
     )
+
+
+def test_direct_setup_skip_clears_saved_cover_prices():
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    _create_schema(connection)
+    setup = SetupStateStore(connection)
+    state = _reviewer_ready(setup)
+    reviewer_store = ReviewerAccessStore(connection)
+    configured = _configured_reviewer(reviewer_store)
+    assert configured.cover_metadata is not None
+    sibling = DescriptionModelMetadata(
+        model="provider/text",
+        observed_at=456,
+        prompt_price="0",
+        completion_price="0",
+        request_price="0",
+    )
+    configured = reviewer_store.replace(
+        configured.model_copy(
+            update={
+                "revision": configured.revision + 1,
+                "description_rewrite": OpenRouterTaskSelection(
+                    engine="openrouter", model="provider/text"
+                ),
+                "description_metadata": sibling,
+            }
+        ),
+        configured.revision,
+    )[0]
+    setup.transition_reviewer(
+        _reviewer_successor(state, "skipped"),
+        state.revision,
+        configured.revision,
+        "skipped",
+    )
+    current, key = reviewer_store.snapshot()
+    assert current.cover_observation is None
+    assert current.cover_metadata is None
+    assert current.description_metadata == sibling
+    assert current.description_rewrite == configured.description_rewrite
+    assert current.revision == configured.revision + 1
+    assert key == "reusable-secret"
+    connection.close()

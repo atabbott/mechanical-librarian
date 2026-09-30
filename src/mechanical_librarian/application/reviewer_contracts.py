@@ -132,6 +132,7 @@ class OpenRouterAccountStatus:
     prompt_price: str | None = None
     completion_price: str | None = None
     request_price: str | None = None
+    image_price: str | None = None
 
 
 def openrouter_profile(model: str) -> bytes:

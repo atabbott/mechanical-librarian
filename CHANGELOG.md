@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Setup and Settings separate observed reviewer rates from measured request
+  estimates, or show not measured. Validation stays visible before continuing.
+  An explicit owner tool captures private, source-bound cost evidence with a
+  monitored budget; no measurements ship yet. Clean rebuild required (#1069).
+
 - Cover setup and Settings recommend GPT-6 Luna for advisory observations,
   with visual-only format guidance, data-collection denial and retention
   disclosure. Custom models and exact model-labelled history remain available;

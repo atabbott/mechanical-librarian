@@ -12,7 +12,7 @@ from mechanical_librarian.domain.reviewer_access import (
 def test_document_admits_only_two_tasks_and_two_fixed_engines() -> None:
     assert ReviewerAccessDocument.model_validate(
         {
-            "schema_version": "reviewer-access-v2",
+            "schema_version": "reviewer-access-v3",
             "revision": 1,
             "cover_observation": {"engine": "openrouter", "model": "example/vision"},
         }
@@ -22,7 +22,7 @@ def test_document_admits_only_two_tasks_and_two_fixed_engines() -> None:
     with pytest.raises(ValidationError):
         ReviewerAccessDocument.model_validate(
             {
-                "schema_version": "reviewer-access-v2",
+                "schema_version": "reviewer-access-v3",
                 "revision": 1,
                 "description_advice": {
                     "engine": "openrouter",
@@ -33,7 +33,7 @@ def test_document_admits_only_two_tasks_and_two_fixed_engines() -> None:
     with pytest.raises(ValidationError):
         ReviewerAccessDocument.model_validate(
             {
-                "schema_version": "reviewer-access-v2",
+                "schema_version": "reviewer-access-v3",
                 "revision": 1,
                 "cover_observation": {"engine": "other"},
             }
@@ -81,4 +81,33 @@ def test_predecessor_reviewer_document_is_rejected() -> None:
     with pytest.raises(ValidationError):
         ReviewerAccessDocument.model_validate_json(
             '{"cover_observation":null,"revision":1,"schema_version":"reviewer-access-v1"}'
+        )
+
+
+def test_frozen_v2_producer_document_is_rejected():
+    with pytest.raises(ValidationError):
+        ReviewerAccessDocument.model_validate_json(
+            '{"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v2"}'
+        )
+
+
+@pytest.mark.parametrize("model", [None, "example/other"])
+def test_cover_prices_reject_absent_or_different_model(model):
+    with pytest.raises(ValidationError):
+        ReviewerAccessDocument.model_validate(
+            {
+                "schema_version": "reviewer-access-v3",
+                "revision": 1,
+                "cover_observation": None
+                if model is None
+                else {"engine": "openrouter", "model": model},
+                "cover_metadata": {
+                    "model": "example/vision",
+                    "observed_at": 1,
+                    "prompt_price": "0",
+                    "completion_price": None,
+                    "image_price": None,
+                    "request_price": None,
+                },
+            }
         )

@@ -22,6 +22,8 @@ import { document, view } from './settingsFixtures'
 
 const reviewerView: ReviewerAccessView = {
   schema_version: 'reviewer-access-view-v2',
+  cover_metadata: null,
+  cost_evidence: { schema_version: 'reviewer-cost-evidence-v1', measured_run: null, models: [] },
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -719,27 +721,18 @@ describe('owner settings route', () => {
     expect(cover.getAllByRole('term').map((term) => term.textContent)).toEqual([
       'Model',
       'Capabilities',
-      'Price metadata observed',
-      'Prices in USD',
-      'Maximum-size request estimate',
+      'Observed prices in USD',
+      'Measured request cost',
+      'Cover request',
     ])
     expect(cover.getByText('openai/gpt-4o-mini', { selector: 'dd' })).toBeVisible()
     expect(cover.getByText(/Image input, text output and structured output/u)).toBeVisible()
-    expect(cover.getByText(/no price observation date exists/u)).toBeVisible()
-    expect(cover.getByText(/no model is presented as the cheapest/u)).toBeVisible()
-    const estimate = cover.getByText(/at most 12 cover previews/u)
-    expect(estimate).toHaveTextContent('320 by 480 pixels and 1 MiB and together at most 8 MiB')
-    // The request also carries bounded text, so the basis names it rather than
-    // asking the owner to price images and output alone.
-    expect(estimate).toHaveTextContent('the pinned instruction (at most 4 KiB)')
-    expect(estimate).toHaveTextContent('the sealed packet text (at most 1 MiB)')
-    expect(estimate).toHaveTextContent('a strict output schema (at most 64 KiB)')
-    expect(estimate).toHaveTextContent('8,192 output tokens')
-    expect(estimate).toHaveTextContent(
-      'Apply the published text-input, image-input and output rates',
-    )
-    expect(estimate).toHaveTextContent('an estimate, not a quote')
-    expect(cover.queryByText(/per input token/u)).toBeNull()
+    expect(cover.getByText('Validate and save this model to observe its prices.')).toBeVisible()
+    expect(cover.getByText('Not measured for this model.')).toBeVisible()
+    expect(
+      cover.getByText('One work packet, which may contain several cover images.'),
+    ).toBeVisible()
+    expect(cover.queryByText(/Metadata observed|Maximum-size|sample|methodology/u)).toBeNull()
     // The Model row tracks a controlled input, so the list must not be a live
     // region; the status paragraph above owns the announcements.
     expect(facts).not.toHaveAttribute('aria-live')
@@ -789,7 +782,7 @@ describe('owner settings route', () => {
         { selector: 'dd' },
       ),
     ).toBeVisible()
-    expect(cover.getByText(/an estimate, not a quote/u)).toBeVisible()
+    expect(cover.getByText('Not measured for this model.')).toBeVisible()
   })
 
   it.each([
@@ -1259,9 +1252,9 @@ it('discloses description prices before activation and preserves the cover task 
     metadata.model,
   )
   await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
-  expect(await screen.findByText(/Maximum-size input estimate/)).toBeVisible()
+  expect(await screen.findAllByText('Not measured for this model.')).toHaveLength(2)
   expect(screen.getByText(metadata.model, { selector: 'dd' })).toBeVisible()
-  expect(screen.getByText('Metadata observed', { selector: 'dt' })).toBeVisible()
+  expect(screen.queryByText('Metadata observed', { selector: 'dt' })).toBeNull()
   expect(screen.getByText(/0.000001 per input token/)).toBeVisible()
   expect(http.configureOpenRouter).not.toHaveBeenCalled()
   await user.click(enable)
@@ -1507,4 +1500,57 @@ it('keeps shared sign-in clear available for a description-only selection after 
   expect(await screen.findByText('No description adviser selected.')).toBeVisible()
   expect(http.recheckCodex).not.toHaveBeenCalled()
   expect(http.startCodexDevice).not.toHaveBeenCalled()
+})
+
+it('separates measured cover cost from observed rates and never lends prices to typed models', async () => {
+  const http = createHttp()
+  http.getSettings = vi.fn(async () => view())
+  http.getReviewerAccess = vi.fn(async () => ({
+    ...reviewerView,
+    mapping: { engine: 'openrouter' as const, model: 'openai/gpt-6-luna' },
+    cover_metadata: {
+      model: 'openai/gpt-6-luna',
+      observed_at: 1700000000,
+      prompt_price: '0.000001',
+      completion_price: null,
+      image_price: '0',
+      request_price: null,
+    },
+    cost_evidence: {
+      schema_version: 'reviewer-cost-evidence-v1' as const,
+      measured_run: {
+        source_head: 'a'.repeat(40),
+        cohort_sha256: 'b'.repeat(64),
+        observed_at: 1700000000,
+      },
+      models: [
+        {
+          model: 'openai/gpt-6-luna',
+          task: 'cover' as const,
+          requests_selected: 10,
+          requests_attempted: 10,
+          requests_completed: 9,
+          requests_failed: 1,
+          works: 10,
+          distinct_images: 20,
+          total_cost_usd: '0.0042',
+          per_1000_usd: '0.42',
+        },
+      ],
+    },
+  }))
+  renderRoute('/settings?group=reviewer', http)
+  const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
+  expect(cover.getByText('About $0.42 per 1,000 cover review requests (estimate).')).toBeVisible()
+  expect(
+    cover.getByText(/0.000001 per input token; Unavailable per output token; 0 per image/u),
+  ).toBeVisible()
+  expect(cover.queryByText(/2023|1700000000|sample|Maximum-size/u)).toBeNull()
+  const user = userEvent.setup()
+  const model = cover.getByRole('textbox', { name: 'Model ID' })
+  await user.clear(model)
+  await user.type(model, 'example/unsaved')
+  expect(cover.getByText('Validate and save this model to observe its prices.')).toBeVisible()
+  expect(cover.getByText('Not measured for this model.')).toBeVisible()
+  expect(cover.queryByText(/0.000001 per input token/u)).toBeNull()
 })

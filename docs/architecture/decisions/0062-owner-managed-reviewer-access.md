@@ -189,3 +189,15 @@ browser-excluded. Composition performs passive bounded contract admission, while
 authentication, staging and process construction remain lazy. The new profile
 has operational/synthetic proof, without inheriting historical full-profile
 corpus qualification. No task selection grants application permission.
+
+
+## Observed prices and measured costs (#1069)
+
+Reviewer-access-v3 adds closed model-bound cover price observations to the same
+CAS authority. Missing prices do not revoke cover capability. The exact table
+DDL changes, including its version constraint, so predecessor empty tables and
+v2 producer documents require a clean rebuild under ADR-0013; there is no
+adoption or migration. Description gates, advisory status and write boundaries
+remain unchanged. Public request estimates are separately validated aggregates,
+not inferred from catalogue prices. Owner-run collection is explicitly invoked,
+private and report-only; it adds no runtime scheduler or automatic spending.

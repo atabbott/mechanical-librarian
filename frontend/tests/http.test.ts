@@ -33,6 +33,8 @@ const csrf = {
 
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
   schema_version: 'reviewer-access-view-v2',
+  cover_metadata: null,
+  cost_evidence: { schema_version: 'reviewer-cost-evidence-v1', measured_run: null, models: [] },
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -2841,5 +2843,41 @@ it.each(['invalid JSON', 'interrupted body'])(
       status: 502,
     })
     expect(fetchMock).toHaveBeenCalledTimes(2)
+  },
+)
+
+it.each([null, '0', '0.000001'])(
+  'admits independent cover price %s bound to the saved model',
+  (price) => {
+    const metadata = {
+      model: 'example/model',
+      observed_at: 1,
+      prompt_price: price,
+      completion_price: null,
+      image_price: '0',
+      request_price: null,
+    }
+    const value = reviewerAccessPayload({
+      mapping: { engine: 'openrouter', model: 'example/model' },
+      cover_metadata: metadata,
+    })
+    expect(mapReviewerAccess(value).cover_metadata).toEqual(metadata)
+    expect(() =>
+      mapReviewerAccess({ ...value, mapping: { engine: 'openrouter', model: 'example/other' } }),
+    ).toThrow()
+    expect(() =>
+      mapReviewerAccess({ ...value, cover_metadata: { ...metadata, image_price: 'NaN' } }),
+    ).toThrow()
+    expect(() =>
+      mapReviewerAccess({
+        ...value,
+        cost_evidence: {
+          schema_version: 'reviewer-cost-evidence-v1',
+          measured_run: null,
+          models: [],
+          private: 'forbidden',
+        },
+      }),
+    ).toThrow()
   },
 )

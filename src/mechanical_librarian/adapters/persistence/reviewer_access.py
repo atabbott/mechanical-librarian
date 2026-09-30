@@ -190,7 +190,7 @@ class ReviewerAccessStore(ConnectionScoped):
                     raise ReviewerAccessStoreError("reviewer access is unavailable")
                 return (
                     ReviewerAccessDocument(
-                        schema_version="reviewer-access-v2", revision=1
+                        schema_version="reviewer-access-v3", revision=1
                     ),
                     None,
                 )

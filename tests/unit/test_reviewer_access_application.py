@@ -92,6 +92,7 @@ class _OpenRouter:
             input_modalities=("text", "image"),
             output_modalities=("text",),
             structured_outputs=True,
+            observed_at=1,
         )
 
     def run(self, *_args):
@@ -886,3 +887,63 @@ def test_profile_replacement_between_identity_and_binding_cannot_dispatch():
         operations.dispatch_cover_observation()
     assert caught.value.code == "access_changed"
     assert not calls
+
+
+@pytest.mark.parametrize("next_engine", [None, "codex", "clear"])
+def test_cover_prices_persist_refresh_and_clear_without_changing_description(
+    next_engine,
+):
+    from dataclasses import replace
+
+    operations, _, calls, _ = _operations(auth_state="usable")
+
+    class Priced(_OpenRouter):
+        def probe(self):
+            return replace(
+                super().probe(),
+                prompt_price="0.000001",
+                image_price="0",
+                observed_at=123,
+            )
+
+    operations._openrouter_factory = lambda key, model: Priced(key, model, calls)
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="secret", model="example/cover"
+    )
+    assert cover.cover_metadata is not None
+    assert cover.cover_metadata.model == "example/cover"
+    assert operations.read().cover_metadata == cover.cover_metadata
+    both = operations.configure_openrouter(
+        expected_revision=cover.revision,
+        api_key="secret",
+        model="example/text",
+        task="description_rewrite",
+    )
+    refreshed = operations.refresh_openrouter()
+    assert refreshed.revision == both.revision + 1
+    assert refreshed.cover_metadata is not None
+    assert refreshed.cover_metadata.observed_at == 123
+    assert refreshed.cover_metadata.prompt_price == "0.000001"
+    assert refreshed.cover_metadata.image_price == "0"
+    assert refreshed.description_metadata == both.description_metadata
+
+    class Refused(_OpenRouter):
+        def probe(self):
+            raise OpenRouterReviewerError("unreachable")
+
+    operations._openrouter_factory = lambda key, model: Refused(key, model, calls)
+    failed = operations.refresh_openrouter()
+    assert failed.openrouter.state == "unreachable"
+    assert failed.cover_metadata == refreshed.cover_metadata
+    assert failed.revision == refreshed.revision
+    result = (
+        operations.clear_openrouter(expected_revision=failed.revision)
+        if next_engine == "clear"
+        else operations.select_codex(expected_revision=failed.revision)
+        if next_engine == "codex"
+        else operations.select_none(expected_revision=failed.revision)
+    )
+    assert result.cover_metadata is None
+    if next_engine != "clear":
+        assert result.description_metadata == both.description_metadata
+        assert result.description_mapping == both.description_mapping
