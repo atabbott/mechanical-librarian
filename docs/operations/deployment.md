@@ -329,9 +329,10 @@ bounds. Media and target-service libraries remain outside this rebuild.
 
 ### Cover reviewer data use
 
-Setup and Settings offer three named paid cover choices with their exact model
-IDs; custom model entry remains available. Cover requests deny provider data
-collection but allow retention, without requiring ZDR. Review the selected
+Setup and Settings recommend GPT-6 Luna (`openai/gpt-6-luna`) for advisory cover
+review; custom model entry remains available, including the MiMo comparator.
+Cover requests deny provider data collection but allow retention, without
+requiring ZDR. Review the selected
 provider's data policies before enabling hosted advice. A failed or unavailable
 observation remains visible and requires explicit retry. Changing reviewer
 selection invalidates current advice while retaining its recorded model and
