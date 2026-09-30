@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
+import { coverReviewerLabel } from '../labels'
 import { ApiError } from '../api/http'
 import type {
   CodexDeviceAuthState,
@@ -225,7 +226,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
     view.mapping === null
       ? 'No reviewer'
       : view.mapping.engine === 'openrouter'
-        ? `OpenRouter — ${view.mapping.model}`
+        ? `OpenRouter — ${coverReviewerLabel(view.mapping.model)}`
         : view.codex.model === null
           ? 'Contained Codex'
           : `Contained Codex — ${view.codex.model}`
@@ -450,14 +451,14 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
             <p>Choose a vision model that currently supports strict structured output.</p>
             <p>{view.free_tier_caveat}</p>
             <p>{view.data_use_caveat}</p>
-            <p>Evidence-qualified paid model on the delivered real-cover corpus:</p>
+            <p>Recommended advisory cover reviewer:</p>
             <ul className="settings-reviewer-suggestions">
               {view.recommendations.map((recommendation) => (
                 <li key={recommendation}>
                   <button type="button" onClick={() => setModel(recommendation)}>
-                    Use {recommendation}
+                    Use {coverReviewerLabel(recommendation)}
                   </button>
-                  <small>Paid; evidence-qualified on the delivered real-cover corpus.</small>
+                  <small>Paid; cover observations remain advisory.</small>
                 </li>
               ))}
             </ul>

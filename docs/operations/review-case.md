@@ -285,6 +285,15 @@ unconfigured or fails, retained manual choices remain usable;
 an explicit advisory retry creates a successor record and leaves the cover
 unchanged.
 
+Setup and Settings recommend GPT-6 Luna (`openai/gpt-6-luna`) for advisory
+observations. The development comparison covered 39 works, 111 image appearances
+and 96 distinct images; Luna returned 39/39 valid reports with 13 objective errors
+across 1,060 assessed fields. This is not independent gold or error-free
+qualification, and no explicit text-edition positive was tested. Inspect the
+covers: accepted residual errors grant no automatic selection or write authority.
+MiMo 2.6 Flash (`xiaomi/mimo-v2.6-flash`) remains a comparator available through
+custom Model ID entry. Historical model labels remain unchanged.
+
 Preparing or retrying a cover comparison is an explicit authenticated action.
 Case, evidence, and history reads project one persisted snapshot and never run
 the observer, policy, or a persistence command as a side effect.

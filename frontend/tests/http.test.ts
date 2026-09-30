@@ -96,11 +96,10 @@ describe('reviewer access transport vocabulary', () => {
     }
   })
 
-  it('preserves a closed provider-local recommendation', () => {
+  it.each(['openai/gpt-6-luna'])('preserves the exact cover recommendation %s', (model) => {
     expect(
-      mapReviewerAccess(reviewerAccessPayload({ recommendations: ['openai/gpt-4o-mini'] }))
-        .recommendations,
-    ).toEqual(['openai/gpt-4o-mini'])
+      mapReviewerAccess(reviewerAccessPayload({ recommendations: [model] })).recommendations,
+    ).toEqual([model])
   })
 
   it.each([
@@ -1154,6 +1153,20 @@ describe('ReviewApiClient', () => {
       review_case_id: 'case-1',
       schema_version: 'cover-consideration-event-v1',
     }
+    expect(
+      mapHistory({
+        ...payload,
+        items: [
+          {
+            ...cover,
+            consideration: {
+              ...cover.consideration,
+              reviewer_model: 'mistralai/ministral-3b-2512',
+            },
+          },
+        ],
+      }).items[0],
+    ).toMatchObject({ reviewerModel: 'mistralai/ministral-3b-2512' })
     expect(mapHistory({ ...payload, items: [cover] })).toEqual({
       items: [
         {

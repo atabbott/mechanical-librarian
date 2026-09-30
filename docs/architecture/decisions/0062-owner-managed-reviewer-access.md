@@ -94,12 +94,29 @@ OpenRouter uses only `https://openrouter.ai/api/v1/chat/completions`, the exact
 selected model, strict structured output with required parameters, bounded
 responses, and no redirects or arbitrary endpoint. Ordinary Settings reads do
 not probe the network; explicit refresh and dispatch use typed redacted failure
-states. GPT-4o Mini is the one recommendation qualified by the delivered
-real-cover corpus: it completed all 39 invocations and 111 observations with the
-exact schema and taxonomy, without a systematic dimension collapse. The UI also
-shows the bounded delivery-time free catalogue candidate and documented free-tier
-caps, but labels that entry catalogue-capability-only. OpenRouter response streams
-are consumed in bounded chunks.
+states. Cover requests deny provider data collection, permit retention without a
+ZDR requirement, and bind an 8,192-token ceiling plus capability-driven minimal,
+excluded reasoning into a cover-only profile. Description profile bytes and
+request behavior remain separate and unchanged.
+
+GPT-6 Luna (`openai/gpt-6-luna`) is the sole recommended paid advisory cover
+reviewer. The accepted development comparison covered 39 works, 111 image
+appearances and 96 distinct images: Luna returned 39/39 valid reports with
+13 objective errors across 1,060 assessed fields. This author-scored corpus is
+not independent gold and contains no explicit text-edition positive. Residual
+errors are accepted for advisory recommendation only, not automated policy or
+write authority. MiMo 2.6 Flash (`xiaomi/mimo-v2.6-flash`) remains a documented
+comparator selectable through custom model entry, not an equal recommendation.
+Qwen and earlier models are not recommended; their exact historical labels and
+custom selection remain available. Catalogue candidates remain explicitly
+unqualified. Response streams are consumed in bounded chunks.
+
+One shared visual-only instruction requires explicit text-format branding for
+`text_edition`; ordinary book-cover features are insufficient. Its semantic
+digest changes without changing the observation schema or taxonomy. The one
+known displaced v3 instruction remains readable as historical evidence only;
+current producer admission and authority require current semantics. Retained
+observations and their exact model labels are never rewritten.
 
 Codex profile parsing, staging recovery, and device-manager construction are
 lazy: no-reviewer and OpenRouter operation do not touch them. Runtime generation

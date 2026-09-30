@@ -38,6 +38,7 @@ from .cover_observation import (
     OUTPUT_SCHEMA_VERSION,
     PREVIOUS_INSTRUCTION_SHA256,
     PREVIOUS_SCHEMA_VERSION,
+    RETAINED_V3_INSTRUCTION_SHA256,
     TAXONOMY,
     TAXONOMY_REFERENCE,
     _observer_reference,
@@ -322,6 +323,8 @@ def _observation_rows(
     value, taxonomy, taxonomy_reference, expected_instruction, expected_schema = (
         _observation_header(document, references)
     )
+    if expected_instruction == RETAINED_V3_INSTRUCTION_SHA256:
+        raise ValueError("cover observation report is not current")
     if type(profile_payload) is not bytes:
         raise ValueError("cover observation profile is invalid")
     expected_observer = _observer_reference(
@@ -396,6 +399,11 @@ def _observation_header(
             INSTRUCTION.encode("utf-8")
         ).hexdigest(),
     }.get(schema_version)
+    if (
+        schema_version == OBSERVATION_SCHEMA_VERSION
+        and value.get("instruction_sha256") == RETAINED_V3_INSTRUCTION_SHA256
+    ):
+        expected_instruction = RETAINED_V3_INSTRUCTION_SHA256
     expected_schema = hashlib.sha256(
         _output_schema(
             references,

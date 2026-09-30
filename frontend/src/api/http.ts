@@ -550,6 +550,7 @@ export type HistoryItemView = (
       policyReasons: readonly string[]
       policyStatus?: string
       reviewerStatus: string
+      reviewerModel?: string
       supersedesAutomatic: boolean
     }
   | { category: 'transition'; outcome: string; reason: string }
@@ -3300,6 +3301,15 @@ export const mapHistory = (value: unknown): HistoryView => {
           occurredAt,
           ...(automaticOutcome ? { automaticOutcome } : {}),
           candidateCount: item.consideration.candidates.length,
+          ...(item.consideration.reviewer_model == null
+            ? {}
+            : {
+                reviewerModel: boundedStringValue(
+                  item.consideration.reviewer_model,
+                  'history_reviewer_model',
+                  256,
+                ),
+              }),
           outcome: kind,
           ...(ownerOutcome
             ? {

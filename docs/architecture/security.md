@@ -1709,3 +1709,15 @@ guarded planning/claim. Recovery storage and artifacts remain outside SQLite's
 atomic boundary. Drift removes effect eligibility without rewriting history;
 consent, backup, final target comparison, supported API upload and read-back remain
 mandatory. No provider, reviewer or Settings calls occur inside this transaction.
+
+
+## Stable cover reviewer posture (#1124)
+
+Cover-only OpenRouter profiles bind the exact selected model, 8,192-token
+ceiling, data-collection denial and capability-driven minimal/excluded reasoning.
+Retention is allowed; ZDR is not required. Description profiles and request
+behavior remain unchanged. Strict current instruction, schema, image, candidate
+and response-model binding precede advisory publication. The displaced v3
+instruction is admitted only when reading retained history, never as current
+observation authority. No automatic policy, credential or effect authority is
+added; unavailable advice requires explicit manual retry.

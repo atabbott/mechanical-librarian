@@ -19,6 +19,7 @@ from mechanical_librarian.application.contained_reviewer_contract import (
 from mechanical_librarian.application.reviewer_contracts import (
     OpenRouterAccountStatus,
     OpenRouterReviewerError,
+    openrouter_cover_profile,
     openrouter_profile,
 )
 from mechanical_librarian.domain.description_advice import (
@@ -144,7 +145,7 @@ class OpenRouterReviewer:
         schema: bytes,
         images: tuple[tuple[str, str, bytes], ...],
     ) -> str:
-        if profile != openrouter_profile(self._model):
+        if profile != openrouter_cover_profile(self._model):
             raise OpenRouterReviewerError("profile_mismatch")
         try:
             instruction_text = instruction.decode("utf-8", "strict")
@@ -177,7 +178,7 @@ class OpenRouterReviewer:
             "max_tokens": 8192,
             "messages": [{"role": "user", "content": content}],
             "model": self._model,
-            "provider": {"require_parameters": True},
+            "provider": {"require_parameters": True, "data_collection": "deny"},
             "response_format": {
                 "type": "json_schema",
                 "json_schema": {
