@@ -6,7 +6,15 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictInt,
+    StrictStr,
+    field_validator,
+    model_validator,
+)
 
 ReviewerTask = Literal["cover_observation", "description_rewrite"]
 ReviewerEngine = Literal["codex", "openrouter"]
@@ -66,14 +74,40 @@ class DescriptionModelMetadata(_Closed):
         return value
 
 
+class CoverModelMetadata(_Closed):
+    """Observed catalogue prices for exactly the saved cover model."""
+
+    model: OpenRouterModelId
+    observed_at: Annotated[StrictInt, Field(ge=0)]
+    prompt_price: Annotated[StrictStr, Field(min_length=1, max_length=40)] | None
+    completion_price: Annotated[StrictStr, Field(min_length=1, max_length=40)] | None
+    image_price: Annotated[StrictStr, Field(min_length=1, max_length=40)] | None
+    request_price: Annotated[StrictStr, Field(min_length=1, max_length=40)] | None
+
+    @field_validator("prompt_price", "completion_price", "image_price", "request_price")
+    @classmethod
+    def bounded_price(cls, value: str | None) -> str | None:
+        return None if value is None else DescriptionModelMetadata.bounded_price(value)
+
+
 class ReviewerAccessDocument(_Closed):
     """The task-scoped exact-current application authority for reviewer access."""
 
-    schema_version: Literal["reviewer-access-v2"]
+    schema_version: Literal["reviewer-access-v3"]
     revision: Annotated[StrictInt, Field(ge=1)]
     cover_observation: ReviewerTaskSelection | None = None
     description_rewrite: ReviewerTaskSelection | None = None
     description_metadata: DescriptionModelMetadata | None = None
+    cover_metadata: CoverModelMetadata | None = None
+
+    @model_validator(mode="after")
+    def bound_cover_prices(self) -> ReviewerAccessDocument:
+        if self.cover_metadata is not None and (
+            not isinstance(self.cover_observation, OpenRouterTaskSelection)
+            or self.cover_metadata.model != self.cover_observation.model
+        ):
+            raise ValueError("cover prices do not match selection")
+        return self
 
 
 __all__ = [

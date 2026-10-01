@@ -25,7 +25,7 @@ from mechanical_librarian.domain.reviewer_access import (
 def _document(revision: int, model: str = "example/vision") -> ReviewerAccessDocument:
     return ReviewerAccessDocument.model_validate(
         {
-            "schema_version": "reviewer-access-v2",
+            "schema_version": "reviewer-access-v3",
             "revision": revision,
             "cover_observation": {"engine": "openrouter", "model": model},
         }
@@ -43,7 +43,7 @@ def _store() -> ReviewerAccessStore:
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            '{"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v2"}',
+            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}',
         ),
     )
     return ReviewerAccessStore(connection)
@@ -109,7 +109,7 @@ def _connection_store() -> Iterator[tuple[sqlite3.Connection, ReviewerAccessStor
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            '{"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v2"}',
+            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}',
         ),
     )
     try:
@@ -192,7 +192,7 @@ def test_reviewer_replace_commit_release_propagates_process_control(
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            '{"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v2"}',
+            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}',
         ),
     )
     fault = fault_type("private reviewer commit release")
@@ -227,7 +227,7 @@ def test_nested_reviewer_read_release_preserves_outer_authority(
     connection.execute(
         "INSERT INTO reviewer_access(singleton,revision,document) VALUES(1,1,?)",
         (
-            '{"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v2"}',
+            '{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}',
         ),
     )
     fault = fault_type("private nested reviewer read release")
@@ -271,7 +271,7 @@ def test_compare_and_swap_refuses_a_lost_writer() -> None:
         "DELETE FROM reviewer_access",
         "UPDATE reviewer_access SET revision=x'31'",
         "UPDATE reviewer_access SET document='{}'",
-        'INSERT INTO reviewer_access VALUES(1,1,\'{"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v2"}\')',
+        'INSERT INTO reviewer_access VALUES(1,1,\'{"cover_metadata":null,"cover_observation":null,"description_metadata":null,"description_rewrite":null,"revision":1,"schema_version":"reviewer-access-v3"}\')',
     ),
 )
 def test_corrupt_duplicate_or_missing_singleton_state_fails_closed(
@@ -380,3 +380,21 @@ def test_independent_connections_never_mix_document_and_secret_snapshots(
         )
     thread.join(timeout=2)
     assert not thread.is_alive()
+
+
+def test_exact_predecessor_empty_reviewer_table_is_rejected_without_mutation():
+    from mechanical_librarian.adapters.persistence.schema import _validate_schema
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+
+    connection = sqlite3.connect(":memory:", isolation_level=None)
+    _create_schema(connection)
+    _validate_schema(connection)
+    connection.execute("DROP TABLE reviewer_access")
+    connection.execute(
+        "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))"
+    )
+    before = tuple(connection.iterdump())
+    with pytest.raises(MetadataReportError):
+        _validate_schema(connection)
+    assert tuple(connection.iterdump()) == before
+    connection.close()

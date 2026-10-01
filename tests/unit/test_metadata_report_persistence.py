@@ -665,6 +665,13 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
     )
     path = tmp_path / "prior-shadow.sqlite"
     with monkeypatch.context() as old:
+        # Reconstruct the frozen producer's reviewer table too; never update
+        # its historical inventory digest to the current schema.
+        old.setattr(
+            schema,
+            "_REVIEWER_ACCESS_SQL",
+            "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))",
+        )
         old.setattr(
             schema,
             "_COVER_SELECTION_AUTHORITIES_SQL",

@@ -1,3 +1,4 @@
+import { ReviewerCost } from './ReviewerCost'
 import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
@@ -432,7 +433,10 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
           <div className="settings-field-row">
             <div>
               <h4>Contained Codex</h4>
-              <p>Use the shared sign-in above for cover observations.</p>
+              <p>
+                Use the shared sign-in above for cover observations. Usage consumes your plan
+                allowance; no per-request monetary estimate is available.
+              </p>
             </div>
             <div className="settings-field-control">
               <button
@@ -581,6 +585,9 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                 ? 'validating'
                 : view.openrouter.state.replaceAll('_', ' ')}
             </p>
+            {view.openrouter.reason && failureCopy[view.openrouter.reason] ? (
+              <p role="alert">{failureCopy[view.openrouter.reason]}</p>
+            ) : null}
             {mutation.isError && mutation.variables.kind.startsWith('openrouter') ? (
               <p role="alert">{mutationFailure}</p>
             ) : null}
@@ -601,32 +608,17 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                 </dd>
               </div>
               <div>
-                <dt>Price metadata observed</dt>
+                <dt>Observed prices in USD</dt>
                 <dd>
-                  Not recorded. The cover capability check reads image and structured-output support
-                  only, never this model&apos;s prices, so no price observation date exists for the
-                  cover task.
+                  {view.cover_metadata?.model === effectiveModel
+                    ? `${view.cover_metadata.prompt_price ?? 'Unavailable'} per input token; ${view.cover_metadata.completion_price ?? 'Unavailable'} per output token; ${view.cover_metadata.image_price ?? 'Unavailable'} per image; ${view.cover_metadata.request_price ?? 'Unavailable'} per request.`
+                    : 'Validate and save this model to observe its prices.'}
                 </dd>
               </div>
+              <ReviewerCost view={view} model={effectiveModel} task="cover" />
               <div>
-                <dt>Prices in USD</dt>
-                <dd>
-                  Unavailable here. Providers charge cover previews by their own image tokenization,
-                  which this application never observes, so no rate is shown and no model is
-                  presented as the cheapest.
-                </dd>
-              </div>
-              <div>
-                <dt>Maximum-size request estimate</dt>
-                <dd>
-                  One request carries at most 12 cover previews, each at most 320 by 480 pixels and
-                  1 MiB and together at most 8 MiB, plus a text prompt of the pinned instruction (at
-                  most 4 KiB) and the sealed packet text (at most 1 MiB), a strict output schema (at
-                  most 64 KiB), and a reply capped at 8,192 output tokens. Apply the published
-                  text-input, image-input and output rates of the selected model to that whole
-                  request to judge cost. Actual tokenization, output length and charges vary; any
-                  such figure is an estimate, not a quote.
-                </dd>
+                <dt>Cover request</dt>
+                <dd>One work packet, which may contain several cover images.</dd>
               </div>
             </dl>
           </div>

@@ -431,3 +431,37 @@ def test_description_profile_bytes_remain_independent_of_cover_posture():
     assert openrouter_cover_profile("example/text") != openrouter_profile(
         "example/text"
     )
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["0", "0.000002", None, "NaN", "Infinity", "-1", "1000001", {"usd": "1"}, 0],
+)
+def test_cover_prices_are_individually_observed_without_capability_rejection(value):
+    document = _models()
+    document["data"][0]["pricing"] = {
+        "prompt": "0.000001",
+        "completion": value,
+        "image": "0.01",
+    }
+    requests = []
+
+    def respond(request):
+        requests.append((request.method, request.url.path))
+        return httpx.Response(
+            200, json=_key() if request.url.path == "/api/v1/key" else document
+        )
+
+    reviewer = OpenRouterReviewer(
+        "secret", "example/vision", transport=httpx.MockTransport(respond)
+    )
+    try:
+        status = reviewer.probe()
+    finally:
+        reviewer.close()
+    assert status.prompt_price == "0.000001"
+    assert status.image_price == "0.01"
+    assert status.request_price is None
+    assert status.completion_price == (value if value in ("0", "0.000002") else None)
+    assert status.observed_at is not None
+    assert requests == [("GET", "/api/v1/key"), ("GET", "/api/v1/models")]

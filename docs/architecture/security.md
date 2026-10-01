@@ -1721,3 +1721,20 @@ and response-model binding precede advisory publication. The displaced v3
 instruction is admitted only when reading retained history, never as current
 observation authority. No automatic policy, credential or effect authority is
 added; unavailable advice requires explicit manual retry.
+
+
+## Reviewer cost measurement (#1069)
+
+The owner-run measurement script defaults to local read-only inventory and has
+no runtime scheduler. Explicit preflight permits existing capability GETs only;
+execute binds a qualified installed wheel, immutable cohort, task/model choices,
+data-use confirmation and monitored budget. Sequential dispatch stops at known
+threshold or unknown charge; an in-flight request may overshoot. No account
+limit, retry, endpoint or write authority is added. Existing contained local-abort
+retry evidence remains disclosed. Owner-private exclusive files preserve starts,
+supported final responses and terminal accounting, excluding credentials, hidden
+reasoning and unrestricted streams. Incomplete runs publish no aggregate rows.
+The public allowlist separates strict parse success from charged failures.
+Reviewer-access-v3 and exact reviewer-table DDL require a clean rebuild, including
+empty predecessor stores. Cover prices remain saved-model-bound; description
+capability, currentness, key confinement and advisory-only authority are unchanged.

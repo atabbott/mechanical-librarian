@@ -162,6 +162,12 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             "mapping": {"engine": "codex"},
                             "description_mapping": None,
                             "description_metadata": None,
+                            "cover_metadata": None,
+                            "cost_evidence": {
+                                "schema_version": "reviewer-cost-evidence-v1",
+                                "measured_run": None,
+                                "models": [],
+                            },
                             "description": None,
                             "openrouter_key_configured": False,
                             "codex": {

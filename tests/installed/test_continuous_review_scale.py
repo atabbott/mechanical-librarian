@@ -251,6 +251,13 @@ def test_current_authority_and_predecessor_refusal_without_history(
     )
     old_path = tmp_path / "prior.sqlite"
     with monkeypatch.context() as old_schema:
+        # Preserve the frozen producer's full schema inventory, including its
+        # reviewer table; the historical digest remains unchanged.
+        old_schema.setattr(
+            schema,
+            "_REVIEWER_ACCESS_SQL",
+            "CREATE TABLE reviewer_access (singleton INTEGER PRIMARY KEY NOT NULL CHECK(singleton=1),revision INTEGER NOT NULL CHECK(revision>=1),document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 262144))",
+        )
         old_schema.setattr(
             schema,
             "_COVER_SELECTION_AUTHORITIES_SQL",

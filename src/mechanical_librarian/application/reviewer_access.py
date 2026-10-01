@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Callable
+from importlib.resources import files
 from threading import RLock
 from typing import Literal, Protocol, cast
 
-from pydantic import BaseModel, ConfigDict, StrictBool, StrictInt, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, StrictInt, StrictStr
 
 from mechanical_librarian.application.cover_observation import Reviewer
 from mechanical_librarian.application.reviewer_contracts import (
@@ -24,6 +25,7 @@ from mechanical_librarian.application.reviewer_contracts import (
 from mechanical_librarian.application.reviewer_host import ReviewerHostStatus
 from mechanical_librarian.domain.reviewer_access import (
     CodexTaskSelection,
+    CoverModelMetadata,
     DescriptionModelMetadata,
     OpenRouterTaskSelection,
     ReviewerAccessDocument,
@@ -31,6 +33,7 @@ from mechanical_librarian.domain.reviewer_access import (
     ReviewerTask,
     ReviewerTaskSelection,
 )
+from mechanical_librarian.domain.reviewer_cost import ReviewerCostEvidence
 from mechanical_librarian.domain.validation import credential
 
 ReviewerAccessFailure = Literal[
@@ -153,12 +156,25 @@ class OpenRouterRecommendation(_Closed):
     requests_per_day: StrictStr | None = None
 
 
+def _cost_evidence() -> ReviewerCostEvidence:
+    payload = (
+        files("mechanical_librarian")
+        .joinpath("resources/reviewer-cost-evidence-v1.json")
+        .read_bytes()
+    )
+    if len(payload) > 262144:
+        raise ValueError("reviewer cost evidence is oversized")
+    return ReviewerCostEvidence.model_validate_json(payload)
+
+
 class ReviewerAccessView(_Closed):
     schema_version: Literal["reviewer-access-view-v2"] = "reviewer-access-view-v2"
+    cost_evidence: ReviewerCostEvidence = Field(default_factory=_cost_evidence)
     revision: StrictInt
     mapping: ReviewerTaskSelection | None
     description_mapping: ReviewerTaskSelection | None = None
     description_metadata: DescriptionModelMetadata | None = None
+    cover_metadata: CoverModelMetadata | None = None
     description: ReviewerEngineStatus | None = None
     openrouter_key_configured: StrictBool
     codex: ReviewerEngineStatus
@@ -303,6 +319,17 @@ class ReviewerAccessOperations:
                 )
                 self._replace_document(document, document.revision - 1)
                 self._changed()
+            else:
+                self._require_revision(document.revision)
+                document = ReviewerAccessDocument.model_validate(
+                    {
+                        **document.model_dump(),
+                        "revision": document.revision + 1,
+                        "cover_metadata": _cover_metadata(account),
+                    }
+                )
+                self._replace_document(document, document.revision - 1)
+                self._changed()
             status = ReviewerEngineStatus(
                 engine="openrouter",
                 state="usable",
@@ -424,6 +451,7 @@ class ReviewerAccessOperations:
             mapping=selection,
             description_mapping=document.description_rewrite,
             description_metadata=document.description_metadata,
+            cover_metadata=document.cover_metadata,
             description=(
                 description
                 or (
@@ -543,6 +571,11 @@ class ReviewerAccessOperations:
                 **document.model_dump(),
                 "revision": expected_revision + 1,
                 task: OpenRouterTaskSelection(engine="openrouter", model=model),
+                "cover_metadata": (
+                    _cover_metadata(account)
+                    if task == "cover_observation"
+                    else document.cover_metadata
+                ),
                 "description_metadata": (
                     DescriptionModelMetadata.model_validate(
                         {
@@ -620,6 +653,7 @@ class ReviewerAccessOperations:
                 **document.model_dump(),
                 "revision": expected_revision + 1,
                 "cover_observation": selection,
+                "cover_metadata": None,
                 "description_metadata": None,
                 "description_rewrite": (
                     None
@@ -855,6 +889,9 @@ class ReviewerAccessOperations:
                 **document.model_dump(),
                 "revision": expected_revision + 1,
                 task: selection,
+                "cover_metadata": (
+                    None if task == "cover_observation" else document.cover_metadata
+                ),
                 "description_metadata": (
                     None
                     if task == "description_rewrite"
@@ -953,3 +990,16 @@ __all__ = [
     "ReviewerEngineStatus",
     "OpenRouterRecommendation",
 ]
+
+
+def _cover_metadata(account: OpenRouterAccountStatus) -> CoverModelMetadata:
+    return CoverModelMetadata.model_validate(
+        {
+            "model": account.model,
+            "observed_at": account.observed_at,
+            "prompt_price": account.prompt_price,
+            "completion_price": account.completion_price,
+            "image_price": account.image_price,
+            "request_price": account.request_price,
+        }
+    )

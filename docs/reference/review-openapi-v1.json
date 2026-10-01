@@ -245,6 +245,86 @@
         "title": "CodexTaskSelection",
         "type": "object"
       },
+      "CoverModelMetadata": {
+        "additionalProperties": false,
+        "description": "Observed catalogue prices for exactly the saved cover model.",
+        "properties": {
+          "completion_price": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completion Price"
+          },
+          "image_price": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Image Price"
+          },
+          "model": {
+            "maxLength": 256,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
+            "title": "Model",
+            "type": "string"
+          },
+          "observed_at": {
+            "minimum": 0.0,
+            "title": "Observed At",
+            "type": "integer"
+          },
+          "prompt_price": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Prompt Price"
+          },
+          "request_price": {
+            "anyOf": [
+              {
+                "maxLength": 40,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Request Price"
+          }
+        },
+        "required": [
+          "model",
+          "observed_at",
+          "prompt_price",
+          "completion_price",
+          "image_price",
+          "request_price"
+        ],
+        "title": "CoverModelMetadata",
+        "type": "object"
+      },
       "CoverPreferenceSettings": {
         "additionalProperties": false,
         "properties": {
@@ -754,6 +834,33 @@
         "title": "LibrarySettings",
         "type": "object"
       },
+      "MeasuredRun": {
+        "additionalProperties": false,
+        "properties": {
+          "cohort_sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Cohort Sha256",
+            "type": "string"
+          },
+          "observed_at": {
+            "minimum": 0.0,
+            "title": "Observed At",
+            "type": "integer"
+          },
+          "source_head": {
+            "pattern": "^[0-9a-f]{40}$",
+            "title": "Source Head",
+            "type": "string"
+          }
+        },
+        "required": [
+          "source_head",
+          "cohort_sha256",
+          "observed_at"
+        ],
+        "title": "MeasuredRun",
+        "type": "object"
+      },
       "OpenLibraryProviderSettings": {
         "additionalProperties": false,
         "properties": {
@@ -1137,6 +1244,19 @@
           "codex": {
             "$ref": "#/components/schemas/ReviewerEngineStatus"
           },
+          "cost_evidence": {
+            "$ref": "#/components/schemas/ReviewerCostEvidence"
+          },
+          "cover_metadata": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CoverModelMetadata"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "data_use_caveat": {
             "default": "Cover requests deny provider data collection and allow retention; zero data retention is not required. Review provider data policies before use.",
             "title": "Data Use Caveat",
@@ -1253,6 +1373,123 @@
           "openrouter"
         ],
         "title": "ReviewerAccessView",
+        "type": "object"
+      },
+      "ReviewerCostEstimate": {
+        "additionalProperties": false,
+        "properties": {
+          "distinct_images": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Distinct Images",
+            "type": "integer"
+          },
+          "model": {
+            "maxLength": 256,
+            "minLength": 3,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}/[A-Za-z0-9][A-Za-z0-9._-]{0,190}(?::[A-Za-z0-9][A-Za-z0-9._-]{0,31})?$",
+            "title": "Model",
+            "type": "string"
+          },
+          "per_1000_usd": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Per 1000 Usd",
+            "type": "string"
+          },
+          "requests_attempted": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Requests Attempted",
+            "type": "integer"
+          },
+          "requests_completed": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Requests Completed",
+            "type": "integer"
+          },
+          "requests_failed": {
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "title": "Requests Failed",
+            "type": "integer"
+          },
+          "requests_selected": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Requests Selected",
+            "type": "integer"
+          },
+          "task": {
+            "enum": [
+              "cover",
+              "description"
+            ],
+            "title": "Task",
+            "type": "string"
+          },
+          "total_cost_usd": {
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Total Cost Usd",
+            "type": "string"
+          },
+          "works": {
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Works",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "model",
+          "task",
+          "requests_selected",
+          "requests_attempted",
+          "requests_completed",
+          "requests_failed",
+          "works",
+          "distinct_images",
+          "total_cost_usd",
+          "per_1000_usd"
+        ],
+        "title": "ReviewerCostEstimate",
+        "type": "object"
+      },
+      "ReviewerCostEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "measured_run": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MeasuredRun"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/ReviewerCostEstimate"
+            },
+            "maxItems": 100,
+            "title": "Models",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "reviewer-cost-evidence-v1",
+            "title": "Schema Version",
+            "type": "string"
+          }
+        },
+        "required": [
+          "schema_version",
+          "measured_run",
+          "models"
+        ],
+        "title": "ReviewerCostEvidence",
         "type": "object"
       },
       "ReviewerEngineStatus": {

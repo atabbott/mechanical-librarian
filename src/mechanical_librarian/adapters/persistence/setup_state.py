@@ -258,7 +258,7 @@ class SetupStateStore(ConnectionScoped):
             ).fetchone()
             if row is None:
                 reviewer = ReviewerAccessDocument(
-                    schema_version="reviewer-access-v2", revision=1
+                    schema_version="reviewer-access-v3", revision=1
                 )
             else:
                 reviewer = ReviewerAccessDocument.model_validate_json(row[1])
@@ -286,6 +286,7 @@ class SetupStateStore(ConnectionScoped):
                     update={
                         "revision": reviewer.revision + 1,
                         "cover_observation": None,
+                        "cover_metadata": None,
                     }
                 )
                 if row is None:
