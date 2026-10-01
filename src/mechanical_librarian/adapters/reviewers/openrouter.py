@@ -116,7 +116,15 @@ class OpenRouterReviewer:
                 if not number.is_finite() or not 0 <= number <= 1_000_000:
                     raise ValueError
             except (ValueError, InvalidOperation):
-                if description and name != "image":
+                if (
+                    description
+                    and name != "image"
+                    and not (
+                        name == "request"
+                        and type(pricing) is dict
+                        and name not in pricing
+                    )
+                ):
                     raise OpenRouterReviewerError("model_unavailable") from None
                 value = None
             prices.append(value)

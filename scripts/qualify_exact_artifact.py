@@ -126,11 +126,11 @@ _CREDENTIAL_URL = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://[^/@\s]*:[^/@\s]*@")
 # slashes in it like anything else. A path announces itself at its start.
 _FILESYSTEM_PATH = re.compile(r"^(?:[/~]|\.{1,2}[/\\]|[A-Za-z]:[/\\]|\\\\)")
 _MIN_OPAQUE_VALUE_CHARACTERS = 24
-# The installed-wheel suite intentionally exercises the complete repository.
-# Keep its subprocess deadline below the 15-minute workflow ceiling while
-# allowing slower hosted runners enough headroom as the suite grows. Setup and
-# post-test probes retain a bounded share of the job-level allowance.
+# Required qualification, setup and probes retain the hosted subprocess budget.
 _COMMAND_TIMEOUT_SECONDS = 825
+# Local scale qualification runs two complete slow partitions with more wall time;
+# each test's latency and resource assertions remain the performance authority.
+_SLOW_COMMAND_TIMEOUT_SECONDS = 1800
 _CANONICAL_TEST_ARGS = (
     "-m",
     "unittest",
@@ -454,6 +454,11 @@ def qualify_exact_artifact(
                     (str(environment_python), "-I", *invocation),
                     cwd=build_source,
                     env=runtime_environment,
+                    timeout_seconds=(
+                        _SLOW_COMMAND_TIMEOUT_SECONDS
+                        if "--slow-part" in invocation
+                        else None
+                    ),
                     reason=(
                         f"installed_slow_{invocation[-1].replace('-', '_')}_failed"
                         if "--slow-part" in invocation
@@ -884,8 +889,11 @@ def _run(
     reason: str,
     cwd: Path | None = None,
     env: dict[str, str] | None = None,
+    timeout_seconds: float | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
-    deadline = time.monotonic() + _COMMAND_TIMEOUT_SECONDS
+    deadline = time.monotonic() + (
+        _COMMAND_TIMEOUT_SECONDS if timeout_seconds is None else timeout_seconds
+    )
     try:
         process = subprocess.Popen(
             command,

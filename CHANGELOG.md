@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Description cost measurement and advice from an already configured model work
+  when OpenRouter omits its catalogue request fee. Actual charges still govern
+  measurement budgets; Settings continues to require complete prices (#1129).
+
 - Preparation progress stays consistent when a library connection becomes
   unavailable, so queued work remains visible and the app can reopen safely
   without stale running counts. Recorded automatic decisions remain readable

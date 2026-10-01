@@ -546,7 +546,10 @@ def test_description_deselection_discards_prices_but_preserves_cover(next_engine
     assert cleared.description_metadata is None
 
 
-def test_missing_description_prices_do_not_disable_cover_and_refresh_recovers():
+@pytest.mark.parametrize("missing_price", ["prompt_price", "request_price"])
+def test_missing_description_prices_do_not_disable_cover_and_refresh_recovers(
+    missing_price,
+):
     from dataclasses import replace
 
     operations, _, calls, _ = _operations()
@@ -563,9 +566,22 @@ def test_missing_description_prices_do_not_disable_cover_and_refresh_recovers():
 
     class MissingPrices(_OpenRouter):
         def probe_description(self):
-            return replace(super().probe_description(), prompt_price=None)
+            return replace(super().probe_description(), **{missing_price: None})
 
     operations._openrouter_factory = lambda key, model: MissingPrices(key, model, calls)
+    if missing_price == "request_price":
+        with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
+            operations.test_description_model("", "example/b")
+    with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
+        operations.configure_openrouter(
+            expected_revision=both.revision,
+            api_key="replacement-secret",
+            model="example/b",
+            task="description_rewrite",
+        )
+    assert operations.read().revision == both.revision
+    assert operations.read().description_metadata == both.description_metadata
+    assert operations._repository.openrouter_key() == "secret"
     unavailable = operations.refresh_openrouter("description_rewrite")
     assert unavailable.mapping == both.mapping
     assert unavailable.description_mapping == both.description_mapping
@@ -947,3 +963,33 @@ def test_cover_prices_persist_refresh_and_clear_without_changing_description(
     if next_engine != "clear":
         assert result.description_metadata == both.description_metadata
         assert result.description_mapping == both.description_mapping
+
+
+def test_description_missing_request_fee_precedes_stale_revision(monkeypatch):
+    from dataclasses import replace
+
+    operations, _, calls, _ = _operations()
+    cover = operations.configure_openrouter(
+        expected_revision=1, api_key="secret", model="example/a"
+    )
+
+    class MissingFee(_OpenRouter):
+        def probe_description(self):
+            return replace(super().probe_description(), request_price=None)
+
+    operations._openrouter_factory = lambda key, model: MissingFee(key, model, calls)
+    with monkeypatch.context() as stale:
+        stale.setattr(
+            operations._repository, "revision_is_current", lambda _revision: False
+        )
+        with pytest.raises(ReviewerAccessApplicationError, match="model_unavailable"):
+            operations.test_description_model("", "example/b")
+        operations._openrouter_factory = lambda key, model: _OpenRouter(
+            key, model, calls
+        )
+        with pytest.raises(ReviewerAccessApplicationError, match="access_changed"):
+            operations.test_description_model("", "example/b")
+    assert operations.read().mapping == cover.mapping
+    assert operations.read().description_mapping is None
+    assert operations._repository.openrouter_key() == "secret"
+    assert not any(kind == "run" for kind, _ in calls)

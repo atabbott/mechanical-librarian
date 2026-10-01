@@ -67,7 +67,9 @@ def frozen(tmp_path):
     assert database.read_bytes() == before
 
 
-def transport_factory(inputs, *, charge="0.01", invalid=False, interrupt=False):
+def transport_factory(
+    inputs, *, charge="0.01", invalid=False, interrupt=False, omit_request_fee=False
+):
     exchanges = []
 
     def factory():
@@ -92,7 +94,7 @@ def transport_factory(inputs, *, charge="0.01", invalid=False, interrupt=False):
                                 "pricing": {
                                     "prompt": "0",
                                     "completion": "0",
-                                    "request": "0",
+                                    **({} if omit_request_fee else {"request": "0"}),
                                 },
                             }
                         ]
@@ -166,7 +168,10 @@ def manifest(inputs):
     }
 
 
-def test_composed_real_reports_packets_dispatch_capture_and_read_only(frozen, tmp_path):
+@pytest.mark.parametrize("omit_request_fee", [False, True])
+def test_composed_real_reports_packets_dispatch_capture_and_read_only(
+    frozen, tmp_path, omit_request_fee
+):
     inputs, database, artifacts, cohort = frozen
     for value in inputs:
 
@@ -198,7 +203,7 @@ def test_composed_real_reports_packets_dispatch_capture_and_read_only(frozen, tm
         ("description", 0),
         ("description", 1),
     ]
-    factory, exchanges = transport_factory(inputs)
+    factory, exchanges = transport_factory(inputs, omit_request_fee=omit_request_fee)
     directory = tmp_path / "capture"
     result = measure.execute(
         directory,
@@ -247,15 +252,24 @@ def test_composed_real_reports_packets_dispatch_capture_and_read_only(frozen, tm
         ("0", "1", "complete", 2),
     ],
 )
+@pytest.mark.parametrize("description", [False, True])
 def test_monitored_threshold_overshoot_unknown_and_zero(
-    frozen, tmp_path, charge, threshold, expected, attempts
+    frozen, tmp_path, charge, threshold, expected, attempts, description
 ):
     inputs, *_ = frozen
-    factory, exchanges = transport_factory(inputs, charge=charge)
+    factory, exchanges = transport_factory(
+        inputs, charge=charge, omit_request_fee=description
+    )
     result = measure.execute(
         tmp_path / "run",
         inputs,
-        measure.selection(inputs, ("example/model",), (), 50, None),
+        measure.selection(
+            inputs,
+            () if description else ("example/model",),
+            ("example/model",) if description else (),
+            50,
+            None,
+        ),
         manifest(inputs),
         "secret",
         "0.1" if threshold == "0.1" else "1",
@@ -268,13 +282,22 @@ def test_monitored_threshold_overshoot_unknown_and_zero(
         assert result["public_evidence"] is None
 
 
-def test_charged_parser_failure_is_in_attempt_denominator(frozen, tmp_path):
+@pytest.mark.parametrize("description", [False, True])
+def test_charged_parser_failure_is_in_attempt_denominator(
+    frozen, tmp_path, description
+):
     inputs, *_ = frozen
-    factory, _ = transport_factory(inputs, invalid=True)
+    factory, _ = transport_factory(inputs, invalid=True, omit_request_fee=description)
     result = measure.execute(
         tmp_path / "run",
         inputs,
-        measure.selection(inputs, ("example/model",), (), 50, None),
+        measure.selection(
+            inputs,
+            () if description else ("example/model",),
+            ("example/model",) if description else (),
+            50,
+            None,
+        ),
         manifest(inputs),
         "secret",
         "1",
@@ -511,8 +534,9 @@ def test_timeout_is_unknown_and_never_retried(frozen, tmp_path):
     )
 
 
+@pytest.mark.parametrize("omit_request_fee", [False, True])
 def test_explicit_preflight_only_uses_capability_gets(
-    frozen, tmp_path, monkeypatch, capsys
+    frozen, tmp_path, monkeypatch, capsys, omit_request_fee
 ):
     inputs, database, artifacts, cohort = frozen
     cohort_path = tmp_path / "cohort.json"
@@ -521,7 +545,7 @@ def test_explicit_preflight_only_uses_capability_gets(
     key_path = tmp_path / "key.txt"
     key_path.write_text("synthetic-secret")
     key_path.chmod(0o600)
-    factory, exchanges = transport_factory(inputs)
+    factory, exchanges = transport_factory(inputs, omit_request_fee=omit_request_fee)
     reviewer = measure.OpenRouterReviewer
     monkeypatch.setattr(
         measure,
@@ -564,16 +588,25 @@ def test_explicit_preflight_only_uses_capability_gets(
 
 
 @pytest.mark.parametrize("charge", ["-0.01", "1e100"])
+@pytest.mark.parametrize("description", [False, True])
 def test_invalid_charge_preserves_failed_final_evidence_and_stops(
-    frozen, tmp_path, charge
+    frozen, tmp_path, charge, description
 ):
     inputs, *_ = frozen
-    factory, exchanges = transport_factory(inputs, charge=charge, invalid=True)
+    factory, exchanges = transport_factory(
+        inputs, charge=charge, invalid=True, omit_request_fee=description
+    )
     directory = tmp_path / "unknown-charge"
     result = measure.execute(
         directory,
         inputs,
-        measure.selection(inputs, ("example/model",), (), 50, None),
+        measure.selection(
+            inputs,
+            () if description else ("example/model",),
+            ("example/model",) if description else (),
+            50,
+            None,
+        ),
         manifest(inputs),
         "secret",
         "1",

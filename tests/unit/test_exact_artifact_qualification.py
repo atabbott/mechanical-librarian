@@ -283,6 +283,21 @@ def test_command_timeout_is_distinct_from_a_nonzero_failure() -> None:
             )
     assert "installed_test_suite_timeout" == timed_out.value.reason
 
+    with patch.object(qualifier_module, "_COMMAND_TIMEOUT_SECONDS", 0.01):
+        completed = _run(
+            (sys.executable, "-c", "import time; time.sleep(0.05)"),
+            reason="installed_test_suite_failed",
+            timeout_seconds=2,
+        )
+    assert completed.returncode == 0
+    with pytest.raises(QualificationFailure) as explicit_timeout:
+        _run(
+            (sys.executable, "-c", "import time; time.sleep(10)"),
+            reason="installed_test_suite_failed",
+            timeout_seconds=0.01,
+        )
+    assert explicit_timeout.value.reason == "installed_test_suite_timeout"
+
     with pytest.raises(QualificationFailure) as failed:
         _run(
             (sys.executable, "-c", "raise SystemExit(2)"),
@@ -1031,11 +1046,15 @@ def test_partitioned_complete_uses_one_installed_wheel_and_stops_on_failure(
     )
     source_sha = _commit(source, "partitioned qualification probe")
     real_run = qualifier_module._run
+    selected_timeouts = []
 
     def run(command, **kwargs):
-        if timeout and "scripts/run_test_tier.py" in command:
-            with patch.object(qualifier_module, "_COMMAND_TIMEOUT_SECONDS", 0.2):
-                return real_run(command, **kwargs)
+        if "scripts/run_test_tier.py" in command:
+            selected_timeouts.append(kwargs.get("timeout_seconds"))
+            if timeout:
+                kwargs["timeout_seconds"] = 0.2
+        else:
+            assert kwargs.get("timeout_seconds") is None
         return real_run(command, **kwargs)
 
     test_args = {
@@ -1084,6 +1103,9 @@ def test_partitioned_complete_uses_one_installed_wheel_and_stops_on_failure(
     elif tier == "required":
         order = order[:1]
     expected = order if failure is None else order[: order.index(failure) + 1]
+    assert selected_timeouts == [
+        None if part == "required-installed" else 1800 for part in expected
+    ]
     assert [record[0] for record in records] == expected
     assert len({record[1] for record in records}) == 1
     assert len({record[2] for record in records}) == 1
