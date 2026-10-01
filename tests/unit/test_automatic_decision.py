@@ -1054,6 +1054,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
 @pytest.mark.parametrize(
     "digest,permissions",
     (
+        pytest.param(
+            "6151378c5ec4c044731eef559736ca9a09144c271644f7bfd8970c7d2fa98337",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="preparation-predecessor-f19a",
+        ),
+        pytest.param(
+            "fb1c3754ef9167a37fe49e27421688632e8ed8871e539289be5385ce483c8520",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="preparation-predecessor-f20",
+        ),
+        pytest.param(
+            "96a1a33494ebf7af4c4cf2146b124fc75f6f489567f8b2281adce25787f5bc59",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="preparation-predecessor-f46",
+        ),
         (
             "796b2a4d55851a997dae96f0863a527c8820a841e1a90c9712f4cf9fc50a4c29",
             automatic_decision._HISTORICAL_PERMISSIONS_2,
