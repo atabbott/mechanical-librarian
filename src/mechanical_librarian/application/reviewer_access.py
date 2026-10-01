@@ -523,6 +523,8 @@ class ReviewerAccessOperations:
                 raise ValueError("invalid reviewer credential")
             try:
                 account = self._probe_openrouter(key, model, "description_rewrite")
+                if account.request_price is None:
+                    raise ReviewerAccessApplicationError("model_unavailable")
                 self._require_revision(document.revision)
                 return DescriptionModelMetadata.model_validate(
                     {

@@ -216,10 +216,10 @@ def test_one_run_shapes_reasoning_from_one_immediate_probe_then_one_chat_call(
     ]
 
 
-@pytest.mark.parametrize("pricing_available", [True, False])
+@pytest.mark.parametrize("pricing_available", ["full", "omitted_request", "absent"])
 @pytest.mark.parametrize("response_kind", ["valid", "wrong_model", "duplicate"])
 def test_description_text_model_needs_pricing_without_changing_cover_capability(
-    pricing_available: bool,
+    pricing_available: str,
     response_kind: str,
 ) -> None:
     from mechanical_librarian.application.contained_reviewer_contract import (
@@ -264,10 +264,14 @@ def test_description_text_model_needs_pricing_without_changing_cover_capability(
                                     "pricing": {
                                         "prompt": "0.000001",
                                         "completion": "0.000002",
-                                        "request": "0",
+                                        **(
+                                            {"request": "0"}
+                                            if pricing_available == "full"
+                                            else {}
+                                        ),
                                     }
                                 }
-                                if pricing_available
+                                if pricing_available != "absent"
                                 else {}
                             ),
                         }
@@ -301,13 +305,15 @@ def test_description_text_model_needs_pricing_without_changing_cover_capability(
     try:
         with pytest.raises(OpenRouterReviewerError, match="model_text_only"):
             reviewer.probe()
-        if not pricing_available:
+        if pricing_available == "absent":
             with pytest.raises(OpenRouterReviewerError, match="model_unavailable"):
                 reviewer.probe_description()
             assert posted == []
             return
         status = reviewer.probe_description()
         assert status.prompt_price == "0.000001" and status.observed_at is not None
+        assert status.request_price == ("0" if pricing_available == "full" else None)
+        assert posted == []
         if response_kind != "valid":
             with pytest.raises(OpenRouterReviewerError, match="malformed_response"):
                 reviewer.run_description(
@@ -331,6 +337,7 @@ def test_description_text_model_needs_pricing_without_changing_cover_capability(
             "description": "Rewritten text.",
             "disposition": "ready",
         }
+        assert len(posted) == 1
         assert posted[0]["provider"] == {
             "require_parameters": True,
             "allow_fallbacks": False,
@@ -465,3 +472,51 @@ def test_cover_prices_are_individually_observed_without_capability_rejection(val
     assert status.completion_price == (value if value in ("0", "0.000002") else None)
     assert status.observed_at is not None
     assert requests == [("GET", "/api/v1/key"), ("GET", "/api/v1/models")]
+
+
+@pytest.mark.parametrize("field", ["prompt", "completion", "request"])
+@pytest.mark.parametrize(
+    "value", [None, 0, {}, "", "NaN", "Infinity", "-1", "1000001", "0" * 41]
+)
+def test_description_rejects_present_invalid_prices(field, value):
+    document = _models()
+    document["data"][0]["pricing"] = {"prompt": "0", "completion": "0", "request": "0"}
+    document["data"][0]["pricing"][field] = value
+    requests = []
+
+    def respond(request):
+        requests.append(request.method)
+        return httpx.Response(
+            200, json=_key() if request.url.path == "/api/v1/key" else document
+        )
+
+    reviewer = OpenRouterReviewer(
+        "secret", "example/vision", transport=httpx.MockTransport(respond)
+    )
+    try:
+        with pytest.raises(OpenRouterReviewerError, match="model_unavailable"):
+            reviewer.probe_description()
+    finally:
+        reviewer.close()
+    assert requests == ["GET", "GET"]
+
+
+@pytest.mark.parametrize("field", ["prompt", "completion"])
+def test_description_requires_both_token_prices(field):
+    document = _models()
+    document["data"][0]["pricing"] = {"prompt": "0", "completion": "0"}
+    del document["data"][0]["pricing"][field]
+    reviewer = OpenRouterReviewer(
+        "secret",
+        "example/vision",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200, json=_key() if request.url.path == "/api/v1/key" else document
+            )
+        ),
+    )
+    try:
+        with pytest.raises(OpenRouterReviewerError, match="model_unavailable"):
+            reviewer.probe_description()
+    finally:
+        reviewer.close()
