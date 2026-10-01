@@ -73,6 +73,14 @@ Missing or ambiguous charge, timeout, interruption or undispatched input makes
 the run incomplete. No price arithmetic, history lookup or assumed zero replaces
 an unknown charge. The tool and OpenRouter path never retry.
 
+For a bounded smoke that must stop on any failure, also pass
+`--stop-on-failure`. After retaining the failed attempt and any known charge,
+it stops before the next dispatch, including after a contained failure or a
+charged parse failure. The run remains incomplete even if the failed attempt
+was last, and emits no public aggregate. Its private manifest records the
+enabled option. Without the flag, known-charge parser failures retain the
+existing collection behavior and remain in the attempted-request denominator.
+
 For a contained cover run, select the exact `--codex-model` and
 `--contained-profile` instead of an OpenRouter cover model. Its supported tuple
 retains one existing bounded local-abort retry; private `attempt_evidence`

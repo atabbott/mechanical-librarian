@@ -439,6 +439,7 @@ def execute(
     *,
     transport: Any = None,
     contained_profile: bytes | None = None,
+    stop_on_failure: bool = False,
 ) -> dict[str, Any]:
     budget, stop = Decimal(target), Decimal(threshold)
     if not budget.is_finite() or not stop.is_finite() or not 0 < stop <= budget:
@@ -455,6 +456,7 @@ def execute(
                 "budget_target_usd": target,
                 "stop_threshold_usd": threshold,
                 "budget_is_hard_cap": False,
+                **({"stop_on_failure": True} if stop_on_failure else {}),
             }
         ),
     )
@@ -643,6 +645,9 @@ def execute(
             break
         if charge is not None:
             known += charge
+        if stop_on_failure and failure is not None:
+            complete = False
+            break
     complete = complete and len(results) == len(selected)
     result = {
         "status": "complete" if complete else "incomplete",
@@ -728,6 +733,11 @@ def main() -> int:
     parser.add_argument("--confirm-data-use", action="store_true")
     parser.add_argument("--budget-target-usd")
     parser.add_argument("--stop-threshold-usd")
+    parser.add_argument(
+        "--stop-on-failure",
+        action="store_true",
+        help="stop after a failed attempt, retaining private incomplete evidence",
+    )
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     cohort_bytes = read_private(arguments.cohort, 262144)
@@ -837,7 +847,7 @@ def main() -> int:
             raise ValueError("contained profile required")
         profile = read_required_contained_reviewer_profile(arguments.contained_profile)
         if (
-            load_contained_reviewer_profile_bytes(profile).model
+            load_contained_reviewer_profile_bytes(profile).identity.model
             != arguments.codex_model
         ):
             raise ValueError("contained model mismatch")
@@ -862,6 +872,7 @@ def main() -> int:
         arguments.budget_target_usd,
         arguments.stop_threshold_usd,
         contained_profile=profile,
+        stop_on_failure=arguments.stop_on_failure,
     )
     print(
         description_document(

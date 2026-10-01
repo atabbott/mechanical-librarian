@@ -10,6 +10,9 @@ from scripts import measure_reviewer_cost as measure
 
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.contained_reviewer_contract import (
+    admit_cover_review_request,
+)
 from mechanical_librarian.application.cover_observation import (
     OUTPUT_SCHEMA_VERSION,
     TAXONOMY,
@@ -20,6 +23,7 @@ from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.audiobook_synopsis import synopsis_report
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_producers import _preview, _source
+from tests.support.description_advice import _contained_profile
 
 
 @pytest.fixture
@@ -283,11 +287,14 @@ def test_monitored_threshold_overshoot_unknown_and_zero(
 
 
 @pytest.mark.parametrize("description", [False, True])
+@pytest.mark.parametrize("stop_on_failure", [False, True])
 def test_charged_parser_failure_is_in_attempt_denominator(
-    frozen, tmp_path, description
+    frozen, tmp_path, description, stop_on_failure
 ):
     inputs, *_ = frozen
-    factory, _ = transport_factory(inputs, invalid=True, omit_request_fee=description)
+    factory, exchanges = transport_factory(
+        inputs, invalid=True, omit_request_fee=description
+    )
     result = measure.execute(
         tmp_path / "run",
         inputs,
@@ -303,7 +310,25 @@ def test_charged_parser_failure_is_in_attempt_denominator(
         "1",
         "1",
         transport=factory,
+        stop_on_failure=stop_on_failure,
     )
+    saved_manifest = json.loads((tmp_path / "run/manifest.json").read_bytes())
+    if stop_on_failure:
+        assert saved_manifest["stop_on_failure"] is True
+        assert result["status"] == "incomplete"
+        assert result["requests_attempted"] == 1
+        assert result["known_cost_usd"] == "0.01"
+        assert result["public_evidence"] is None
+        assert len([row for row in exchanges if row[0] == "POST"]) == 1
+        terminal = json.loads((tmp_path / "run/attempt-0/terminal.json").read_bytes())
+        assert terminal["failure"] == "dispatch_or_parse_failed"
+        assert terminal["charge_usd"] == "0.01"
+        assert not (tmp_path / "run/attempt-1").exists()
+        assert (
+            tmp_path / "run/attempt-0/final-response.txt"
+        ).read_bytes() == b"invalid"
+        return
+    assert "stop_on_failure" not in saved_manifest
     row = result["public_evidence"]["models"][0]
     assert row["requests_completed"] == 0 and row["requests_failed"] == 2
     assert row["per_1000_usd"] == "10.00"
@@ -660,3 +685,150 @@ def test_compressed_capabilities_and_final_response_use_real_parser(frozen, tmp_
         (row["task"], row["requests_completed"])
         for row in result["public_evidence"]["models"]
     ] == [("cover", 2), ("description", 2)]
+
+
+@pytest.mark.parametrize(
+    "model,failure_at",
+    [
+        ("gpt-5.6-sol", None),
+        ("different-model", None),
+        ("gpt-5.6-sol", 0),
+        ("gpt-5.6-sol", 1),
+    ],
+)
+def test_contained_cli_model_admission_and_failure_stop(
+    frozen, tmp_path, monkeypatch, capsys, model, failure_at
+):
+    inputs, database, artifacts, cohort = frozen
+    cohort_path = tmp_path / "cohort.json"
+    cohort_path.write_text(cohort.model_dump_json())
+    cohort_path.chmod(0o600)
+    profile_path = _contained_profile(tmp_path)
+    output = tmp_path / "run"
+    arguments = [
+        "measure",
+        "--database",
+        str(database),
+        "--artifacts",
+        str(artifacts),
+        "--cohort",
+        str(cohort_path),
+        "--codex-model",
+        model,
+        "--contained-profile",
+        str(profile_path),
+    ]
+    monkeypatch.setattr("sys.argv", arguments)
+    assert measure.main() == 0
+    inventory = json.loads(capsys.readouterr().out)
+    # Qualification is separately tested against a real wheel; retain the actual
+    # CLI profile reader/parser, inventory, execute, observation parser and files.
+    monkeypatch.setattr(measure, "installed_identity", lambda *args: manifest(inputs))
+    calls = []
+
+    def runner(profile, instruction, packet, schema, images):
+        assert profile == profile_path.read_bytes()
+        calls.append(packet)
+        if len(calls) - 1 == failure_at:
+            raise ValueError("synthetic contained failure")
+        admitted = admit_cover_review_request(
+            instruction.decode(), packet.decode(), schema.decode(), images
+        )
+        result = {
+            "schema_version": OUTPUT_SCHEMA_VERSION,
+            "observations": [
+                {
+                    "candidate_reference": row["reference"],
+                    **{name: values[0][0] for name, values in TAXONOMY},
+                }
+                for row in json.loads(packet)["candidates"]
+            ],
+        }
+        # The exact envelope shape is the response-binding contract under test.
+        return measure.encoded(
+            {
+                "schema_version": "cover-contained-reviewer-result-v1",
+                "status": "completed",
+                "attempt_evidence": [{"dispatched": True}],
+                "execution_sha256": measure.digest(
+                    measure.encoded(
+                        {
+                            "profile_sha256": measure.digest(profile),
+                            "request_sha256": admitted.digest,
+                        }
+                    )
+                ),
+                "request_sha256": admitted.digest,
+                "input_sha256": measure.digest(packet),
+                "image_count": len(images),
+                "image_binding_sha256": measure.digest(
+                    measure.encoded(
+                        [
+                            {"reference": reference, "sha256": sha}
+                            for reference, sha, _ in images
+                        ]
+                    )
+                ),
+                "result": result,
+                "result_sha256": measure.digest(measure.encoded(result)),
+            }
+        ).decode()
+
+    monkeypatch.setattr(measure, "run_cover_packet_reviewer", runner)
+    arguments += [
+        "--execute",
+        "--source-head",
+        "a" * 40,
+        "--wheel",
+        str(tmp_path / "wheel"),
+        "--receipt",
+        str(tmp_path / "receipt"),
+        "--installed-python",
+        str(tmp_path / "python"),
+        "--confirmed-cohort",
+        inventory["cohort_sha256"],
+        "--confirmed-inventory",
+        inventory["inventory_sha256"],
+        "--confirm-data-use",
+        "--budget-target-usd",
+        "2",
+        "--stop-threshold-usd",
+        "1.5",
+        "--stop-on-failure",
+        "--output",
+        str(output),
+    ]
+    if model != "gpt-5.6-sol":
+        with pytest.raises(ValueError, match="^contained model mismatch$"):
+            measure.main()
+        assert calls == [] and not output.exists()
+        return
+    assert measure.main() == (0 if failure_at is None else 2)
+    summary = json.loads(capsys.readouterr().out)
+    attempts = 2 if failure_at is None else failure_at + 1
+    assert summary == {
+        "status": "complete" if failure_at is None else "incomplete",
+        "requests_attempted": attempts,
+    }
+    assert len(calls) == attempts
+    assert not (output / f"attempt-{attempts}").exists()
+    assert (
+        json.loads((output / "manifest.json").read_bytes())["stop_on_failure"] is True
+    )
+    result = json.loads((output / "result.json").read_bytes())
+    assert result["known_cost_usd"] == "0" and result["public_evidence"] is None
+    for index in range(attempts):
+        attempt = output / f"attempt-{index}"
+        terminal = json.loads((attempt / "terminal.json").read_bytes())
+        assert terminal["charge_state"] == "plan_allowance"
+        assert terminal["charge_usd"] is None
+        assert json.loads((attempt / "request.json").read_bytes())[
+            "profile_sha256"
+        ] == measure.digest(profile_path.read_bytes())
+        assert terminal["completed"] is (index != failure_at)
+        if index == failure_at:
+            assert terminal["failure"] == "dispatch_or_parse_failed"
+        else:
+            assert terminal["parsed_result"] is not None
+            assert terminal["attempt_evidence"] == [{"dispatched": True}]
+            assert (attempt / "supported-envelope.json").is_file()
