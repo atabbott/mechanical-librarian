@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.persistence.preparation_presentation import (
     mark_preparation_recovery,
     refresh_preparation_presentation,
     refresh_preparation_run_state,
+    refresh_preparation_work,
 )
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -852,6 +853,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
+            if action.stage != "discovery":
+                refresh_preparation_work(self._connection, action.action_id, checked_at)
             transaction.commit(after_commit=claim_released)
             return False
         except BaseException as error:
@@ -980,6 +983,8 @@ class SQLiteReviewScanRepository(ConnectionScoped):
                 ).rowcount
             if updated != 1:
                 raise MetadataReportError("review preparation state changed")
+            if action.stage != "discovery":
+                refresh_preparation_work(self._connection, action.action_id, updated_at)
             affected = self._target_connection_affected(action.connection)
             self._connection.execute(
                 "UPDATE review_preparation_connection_conditions SET affected=? "
