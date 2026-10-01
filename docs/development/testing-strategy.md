@@ -206,8 +206,10 @@ blocking lock; it does not reproduce a current production locking defect.
 
 Exact-artifact `--test-tier slow` runs the complete slow inventory as two
 sequential commands in the same freshly built wheel environment: the remaining
-slow files, then `test_owner_browser_responsiveness.py`. Each command retains
-the 825-second deadline. Before execution, both subsets must be nonempty,
+slow files, then `test_owner_browser_responsiveness.py`. Each slow command has
+a 1,800-second orchestration deadline; required-installed, setup, build and
+probes retain their 825-second deadlines. Per-test latency and resource
+assertions are unchanged. Before execution, both subsets must be nonempty,
 disjoint, and together equal the full current slow test IDs; omission or overlap
 refuses qualification. `--test-tier complete` first runs `required-installed`
 in that same environment, then both slow commands. Completion evidence is issued
