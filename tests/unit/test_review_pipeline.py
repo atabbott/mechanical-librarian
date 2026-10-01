@@ -25,6 +25,7 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
+    open_shadow_preview_repository,
 )
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     _completion_sequence_count,
@@ -5399,6 +5400,159 @@ def test_post_cutover_settlement_failure_propagates_closed_persistence_error() -
     with pytest.raises(ReviewPipelineError) as raised:
         pipeline._advance(Repository(), action, None, claim_next=True)
     assert "persistence" == raised.value.code
+
+
+@pytest.mark.parametrize("method", ("defer", "guard"))
+@pytest.mark.parametrize("refresh_fails", (False, True), ids=("commit", "rollback"))
+def test_work_connection_deferral_keeps_presentation_atomic(
+    application_path: Path, method: str, refresh_fails: bool
+) -> None:
+    seeded, work_id = _seed_partly_completed_presentation(
+        application_path, failed=False
+    )
+    repository = cast(SQLiteMetadataReportRepository, seeded)
+    work = repository.claim_review_pipeline_work(work_id, 104)
+    assert work is not None and work.stage == "extraction"
+    # The callback is the executing lane's claim receipt, not database authority.
+    receipts: list[PipelineAction | None] = [work]
+    repository.bind_review_pipeline_owner(receipts.append)
+    if method == "guard":
+        repository.request_review_scan("primary", "history", "lib-2", _PRODUCER, 104)
+        discovery = repository.claim_review_pipeline_action(104)
+        assert discovery is not None and discovery.stage == "discovery"
+        repository.complete_review_discovery(
+            discovery,
+            1,
+            "c" * 64,
+            (
+                replace(
+                    _entry("sibling", "3" * 64), library="history", library_id="lib-2"
+                ),
+            ),
+            104,
+        )
+        sibling = repository.claim_review_pipeline_action(105)
+        assert sibling is not None and sibling.stage == "extraction"
+        repository.defer_for_target_connection(sibling, "unavailable", 105)
+        receipts.clear()
+        receipts.append(work)
+    tables = (
+        "review_preparation_work",
+        "review_preparation_connection_conditions",
+        "review_preparation_presentation",
+    )
+    before = {
+        table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+        for table in tables
+    }
+    facts_sql = (
+        "SELECT row_id,work_stage,work_outcome,completion_sequence,"
+        "recovery_high_water_stage,recovery_high_water_outcome "
+        "FROM review_preparation_presentation WHERE row_kind='work' ORDER BY row_id"
+    )
+    facts = repository._connection.execute(facts_sql).fetchall()
+    assert any(row[2] is not None and row[3] is not None for row in facts)
+    assert repository._connection.execute(
+        "SELECT active_count,completion_count FROM review_preparation_presentation "
+        "WHERE row_id='run'"
+    ).fetchone() == (1, 1)
+
+    def defer() -> None:
+        if method == "guard":
+            assert not repository.guard_target_connection(work, 106)
+        else:
+            repository.defer_for_target_connection(work, "unavailable", 106)
+
+    if refresh_fails:
+
+        def fail_after_refresh(*args: object) -> None:
+            refresh_preparation_work(*args)
+            raise RuntimeError("refresh sentinel")
+
+        with (
+            patch(
+                "mechanical_librarian.adapters.persistence.review_scans.refresh_preparation_work",
+                side_effect=fail_after_refresh,
+            ),
+            pytest.raises(RuntimeError, match="refresh sentinel"),
+        ):
+            defer()
+        assert {
+            table: tuple(repository._connection.execute(f"SELECT * FROM {table}"))
+            for table in tables
+        } == before
+        assert receipts == [work]
+        assert not repository._connection.in_transaction
+        independent = sqlite3.connect(application_path, timeout=0)
+        independent.execute("BEGIN IMMEDIATE")
+        independent.rollback()
+        independent.close()
+    else:
+        defer()
+        assert receipts == [work, None]
+        assert repository._connection.execute(
+            "SELECT state,attempt FROM review_preparation_work WHERE work_id=?",
+            (work_id,),
+        ).fetchone() == ("queued", 0)
+        assert repository._connection.execute(
+            "SELECT current_work_state FROM review_preparation_presentation "
+            "WHERE row_kind='work' AND work_id=?",
+            (work_id,),
+        ).fetchone() == ("queued",)
+        assert repository._connection.execute(
+            "SELECT active_count,completion_count FROM review_preparation_presentation "
+            "WHERE row_id='run'"
+        ).fetchone() == (0, 1)
+        assert repository._connection.execute(facts_sql).fetchall() == facts
+        expected = repository.preparation_presentation(106)
+        repository.close()
+        readonly = open_shadow_preview_repository(application_path)
+        readonly.close()
+        repository = open_repository(application_path, create=False)
+        assert repository.preparation_presentation(106) == expected
+    repository.close()
+
+
+def test_pipeline_target_connection_error_reopens_queued_work(
+    application_path: Path,
+) -> None:
+    seeded, work_id = _seed_partly_completed_presentation(
+        application_path, failed=False
+    )
+    cast(SQLiteMetadataReportRepository, seeded).close()
+    observed: list[str] = []
+
+    def unavailable(_repository, action, _claim_next):
+        observed.append(action.action_id)
+        raise TargetConnectionError("unavailable")
+
+    pipeline = ReviewPreparationPipeline(
+        repository_factory=lambda: open_repository(application_path, create=False),
+        libraries=(("primary", "fiction", "lib-1", _PRODUCER),),
+        discover=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        extract=unavailable,
+        providers=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        propose=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        admit=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        project=lambda *_: (_ for _ in ()).throw(AssertionError()),
+        clock=lambda: 104,
+    )
+    assert pipeline.run_next(maximum_actions=1)
+    assert observed == [work_id]
+    assert not pipeline.recovery_required
+    readonly = open_shadow_preview_repository(application_path)
+    readonly.close()
+    repository = open_repository(application_path, create=False)
+    assert repository._connection.execute(
+        "SELECT state,attempt FROM review_preparation_work WHERE work_id=?",
+        (work_id,),
+    ).fetchone() == ("queued", 0)
+    assert repository._connection.execute(
+        "SELECT active_count,completion_count FROM review_preparation_presentation "
+        "WHERE row_id='run'"
+    ).fetchone() == (0, 1)
+    assert repository.target_connection_conditions()[0].code == "unavailable"
+    repository.close()
 
 
 def test_connection_hold_guards_claims_and_stale_checkers_fail_closed(

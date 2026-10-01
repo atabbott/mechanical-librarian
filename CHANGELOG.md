@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Preparation progress stays consistent when a library connection becomes
+  unavailable, so queued work remains visible and the app can reopen safely
+  without stale running counts. Recorded automatic decisions remain readable
+  as history without granting current authority (#1127).
+
 - Browser CI allows 15 minutes for setup and the existing bounded tests (#1069).
 
 - Setup and Settings separate observed reviewer rates from measured request
