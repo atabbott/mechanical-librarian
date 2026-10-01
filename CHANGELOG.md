@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+- Browser CI allows 15 minutes for setup and the existing bounded tests (#1069).
+
 - Setup and Settings separate observed reviewer rates from measured request
   estimates, or show not measured. Validation stays visible before continuing.
   An explicit owner tool captures private, source-bound cost evidence with a

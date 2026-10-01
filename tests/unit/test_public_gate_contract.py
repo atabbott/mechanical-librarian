@@ -154,7 +154,11 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
         "  fast-source:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25\n"
     ) in workflow
     assert workflow.count("timeout-minutes: 25") == 1
-    assert workflow.count("timeout-minutes: 10") == 4
+    assert (
+        "  protected-browser:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n"
+    ) in workflow
+    assert workflow.count("timeout-minutes: 15") == 1
+    assert workflow.count("timeout-minutes: 10") == 3
     # The three commands CONTRIBUTING.md documents as reproducing this job.
     # `ruff format --check` is the backend's line-width contract, so a tree
     # that is not formatted has to fail here rather than pass unnoticed.
