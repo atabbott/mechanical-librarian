@@ -11,7 +11,8 @@ The closed report-only cohort contains 100 reports: 50 ebook and 50 audiobook,
 representing 50 matched work keys. There were 91 usable cover packets
 (47 ebook, 44 audiobook), 307 candidate occurrences and 266 distinct transport
 images. Nine reports lacked a packet (three ebook, six audio). The producer's
-candidate limit and 244 omissions were retained without collection truncation.
+candidate cap of 12 and 244 omissions were retained without collection
+truncation; the observed maximum was nine candidates per packet.
 Description eligibility was 84 reports (38 ebook, 46 audio); the first 50
 eligible reports in original order were selected (25 per medium), representing
 37 matched work keys. Sixteen were ineligible; 34 eligible reports were
@@ -55,8 +56,9 @@ could exceed either. Preliminary smoke runs are separate: six paid successes
 They are excluded from all collection totals and distributions here.
 
 The [native 50-description evidence](../reference/reviewer-cost-evidence-v1.json)
-is packaged for setup and Settings: $0.1713055000 per 1,000 attempted description
-requests. Other model/task estimates remain unavailable in the application.
+is packaged for Settings: $0.1713055000 per 1,000 attempted description
+requests. Setup is cover-only and remains unmeasured; other model/task estimates
+remain unavailable in the application.
 The [native 71-MiMo continuation evidence](../reference/reviewer-cost-cover-continuation-v1.json)
 is documentation-only: $0.8084875774647887323943661972 per 1,000 cover requests
 on that continuation subset, not a whole-cohort comparison. Each retains its
@@ -114,6 +116,10 @@ application permission or automatic behavior changes follow from this study.
 | gpt-5.6-sol | audiobook | cover | 44 | 44 | 0 |
 
 ## Dimension distributions
+
+All admitted cover-language observations were English or unknown, and no
+placeholder-positive case was observed. Non-English cover language and positive
+placeholder strata therefore remain unqualified.
 
 Counts are candidate occurrences in strictly parsed outputs, not independent
 images or correctness scores. Missing outputs are excluded; `unknown` is an
