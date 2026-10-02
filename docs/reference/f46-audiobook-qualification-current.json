@@ -83,13 +83,13 @@
       "title_layout:title_and_subtitle:audiobook_title_preserve",
       "title_layout:title_and_subtitle:audiobook_title_replace"
     ],
-    "semantic_input_sha256": "e2916fa8af7836081d6ffe00fb7926000c8da7e13ad42a9a5fa054b379463cda",
-    "semantic_revision": 11
+    "semantic_input_sha256": "45a6344cfe573105a7bf12a38e66d81b904b4c4478ed2d01220d70069b5bf40f",
+    "semantic_revision": 12
   },
   "predecessor": {
     "path": "docs/reference/f46-audiobook-qualification-current.json",
-    "sha256": "9aadbc589c2d57fc483873e87be8e4812c47b34d9773da35de5cb9847588d317",
-    "source_sha": "19508708532cec662d7e182dfaa40e3008b843b8"
+    "sha256": "c96b003fb55a8f9c16284a31bfc09759adb7743e464469c5dc35f405c24e6ed3",
+    "source_sha": "54584c4ba542593d72ddb9016b3542af42e8b4b7"
   },
   "provenance": "qualification-provenance-current.json",
   "schema": "qualification-current-v1"

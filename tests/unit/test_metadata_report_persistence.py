@@ -2203,3 +2203,46 @@ def test_owner_cover_predecessor_refuses_without_mutation(tmp_path, name):
     with pytest.raises(MetadataReportError, match="incompatible"):
         open_repository(database)
     assert database.read_bytes() == before
+
+
+def test_actual_v18_title_conflict_state_is_rejected_without_change(
+    tmp_path, monkeypatch
+):
+    from contextlib import closing
+
+    from mechanical_librarian.domain.shadow_decision import ShadowDecisionSet
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+
+    fixture = json.loads(
+        (Path(__file__).parents[1] / "fixtures/title-conflict-v18.json").read_text()
+    )
+    assert fixture["source_sha"] == "54584c4ba542593d72ddb9016b3542af42e8b4b7"
+    for parser, key in (
+        (ShadowDecisionSet.from_json, "decision"),
+        (ShadowOutcomeSet.from_json, "outcome"),
+    ):
+        with pytest.raises(ValueError):
+            parser(fixture[key])
+    path = tmp_path / "prior-title.sqlite"
+    with monkeypatch.context() as old:
+        old.setattr(
+            persistence_schema,
+            "_SHADOW_DECISION_OUTCOMES_SQL",
+            fixture["shadow_decision_outcomes_sql"],
+        )
+        with closing(open_repository(path)) as repository:
+            rows = repository._connection.execute(
+                "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
+            ).fetchall()
+            assert (
+                hashlib.sha256(
+                    json.dumps(rows, ensure_ascii=False, separators=(",", ":")).encode()
+                ).hexdigest()
+                == fixture["schema_inventory_sha256"]
+            )
+    before = path.read_bytes()
+    inventory = sorted(p.name for p in tmp_path.iterdir())
+    with pytest.raises(MetadataReportError):
+        open_repository(path, create=False)
+    assert path.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == inventory

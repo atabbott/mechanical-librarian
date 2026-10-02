@@ -892,7 +892,7 @@ def _server(
         )
 
         report = isbn_title_report(
-            titles=("Example Title", "Another Work")
+            titles=("Example Title", "Example Title", "Another Work")
             if isbn_title_fixture == "conflict"
             else ("Example Title",),
             failed=isbn_title_fixture == "unavailable",
@@ -900,12 +900,14 @@ def _server(
                 "A very long local title with repeated source context " * 8
             ).strip()
             if isbn_title_fixture == "long"
+            else "Example Title"
+            if isbn_title_fixture == "conflict"
             else "Example Series 03 - Example Title",
         )
         case_id, proposal_set = publish_title_case(
             repository,
             report,
-            "automatic" if isbn_title_fixture == "automatic" else "ask",
+            "automatic" if isbn_title_fixture in {"automatic", "conflict"} else "ask",
         )
     elif description_fixture is not None:
         case_id = ""  # The real description producer below owns case admission.

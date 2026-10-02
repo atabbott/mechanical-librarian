@@ -807,3 +807,12 @@ before mutation: **clean rebuild required**, with no adoption. The compact base
 fixture binds the actual predecessor table, complete object-inventory digest and
 three producer-created decisions. Current reason counts may use the refined codes;
 retained #877/v44 measurements remain historical, partial and curtailed.
+
+## Material ISBN/title conflict precedence (#1132)
+
+An explicit ISBN/title material conflict remains manual even when a supported
+candidate equals the current title. Automatic records a conflict without
+suspending title automation; Ask and Ignore retain their policy behavior.
+Ordinary title preservation, independently supported replacements and explicit
+owner choices retain their existing authority and effect guards. Shadow policy
+v19 and compact successor qualification bindings require a clean rebuild.
