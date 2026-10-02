@@ -118,7 +118,11 @@ _DISPOSITIONS = frozenset(
     }
 )
 _CONFLICT_REASONS = frozenset(
-    {"ambiguous_eligible_actions", "bibliographic_combination_unresolved"}
+    {
+        "ambiguous_eligible_actions",
+        "bibliographic_combination_unresolved",
+        "isbn_title_material_conflict",
+    }
 )
 _ISBN_ELECTION_REASONS = frozenset(
     {
@@ -214,6 +218,7 @@ _REASON_CODES = _RICH_REASON_CODES | frozenset(
         "bibliographic_combination_unresolved",
         "evidence_sufficiency_manual",
         "insufficient_support",
+        "isbn_title_material_conflict",
         "no_eligible_action",
         "target_only_preservation",
         "unique_supported_candidate",

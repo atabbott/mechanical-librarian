@@ -23,7 +23,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v18"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v19"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -41,6 +41,7 @@ _REASON_CODES = frozenset(
         "bibliographic_combination_unresolved",
         "evidence_sufficiency_manual",
         "insufficient_support",
+        "isbn_title_material_conflict",
         "no_eligible_action",
         "target_only_preservation",
         "unique_supported_candidate",
@@ -49,6 +50,10 @@ _REASON_CODES = frozenset(
     }
 )
 _RULE_TABLE = {
+    "title_material_conflict": {
+        "reason": "isbn_title_material_conflict",
+        "manual_before_candidate_or_combination_selection": True,
+    },
     "ebook_synopsis": {
         "execution": "rich_metadata_preview",
         "comparison": "canonical_description_whole_value",
@@ -969,6 +974,11 @@ def decide_shadow_packet(packet: ShadowReviewPacket) -> ShadowDecisionSet:
         ):
             action = _manual_action(catalogue, proposal_id)
             reason = "unsupported_destination"
+        elif destination == "title" and "isbn_title_material_conflict" in cast(
+            "list[str]", proposal["reasons"]
+        ):
+            action = _manual_action(catalogue, proposal_id)
+            reason = "isbn_title_material_conflict"
         elif (
             destination == "title"
             and proposal["reasons"] == [EVIDENCE_LED_TITLE_REASON]

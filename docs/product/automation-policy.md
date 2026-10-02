@@ -755,3 +755,12 @@ effect validation still compile retained evidence through their existing guards.
 Outcome v10: **clean rebuild required** for prior derived stores;
 there is no adoption or migration. F19a, F20 and F46 semantic revision 4 preserves
 the existing permission sets. Earlier documents remain historical decoding only.
+
+## Material ISBN/title conflict precedence (#1132)
+
+An explicit ISBN/title material conflict remains manual even when a supported
+candidate equals the current title. Automatic records a conflict without
+suspending title automation; Ask and Ignore retain their policy behavior.
+Ordinary title preservation, independently supported replacements and explicit
+owner choices retain their existing authority and effect guards. Shadow policy
+v19 and compact successor qualification bindings require a clean rebuild.

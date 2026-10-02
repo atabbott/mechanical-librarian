@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Conflicting ISBN-linked titles stay available for owner review even when most
+  sources support the current title, without disabling automatic title handling.
+  Existing installs require a clean rebuild (#1132).
+
 - Settings shows the accepted measured Luna description request cost.
   The bounded reviewer collection report preserves incomplete phases, unknown
   charges and independently inspected sample limitations. Contained measurement

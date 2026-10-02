@@ -31,7 +31,7 @@ The current installed contract is intentionally narrow:
   `fixed-conservative-v32`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
-  `deterministic-shadow-decision-policy-v18`,
+  `deterministic-shadow-decision-policy-v19`,
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v9`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;
@@ -310,3 +310,10 @@ decision and idempotency digests. **Clean rebuild required** under ADR-0013: old
 v2 documents and predecessor application databases, even empty ones, are refused
 before mutation. No migration or adoption is supplied; the selection wrapper
 remains `cover-selection-authority-v1`.
+
+## Material ISBN/title conflict precedence (#1132)
+
+Shadow decision policy v19 preserves explicit material title conflicts for owner
+review before candidate or combination selection. Outcome shape v10 is unchanged,
+but its exact policy-bound DDL requires a **clean rebuild** of prior derived
+stores under ADR-0013. No adoption or historical rewriting is provided.

@@ -70,6 +70,7 @@ from mechanical_librarian.domain.review_field_classification import (
 from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
 _AUTOMATIC_REFUSAL_TEXT = {
+    "isbn_title_material_conflict": "The sources disagree about the work or title; choose the title yourself.",
     "no_candidate": "No eligible value was found in the retained evidence.",
     "ambiguous_evidence": "The retained evidence does not select one value for automatic handling.",
     "target_work_contradicted": "The retained evidence contradicts applicability to this work.",

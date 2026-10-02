@@ -353,6 +353,15 @@ def test_supported_title_is_independent_and_retains_alternatives(options):
 @pytest.mark.parametrize(
     "options",
     [
+        *(
+            {"current": "Example Title", "titles": titles, "subtitle": subtitle}
+            for titles in (
+                ("Example Title", "Example Title", "Other Work"),
+                ("Other Work", "Example Title", "Example Title"),
+                ("Example Title", "Other Work", "Example Title"),
+            )
+            for subtitle in (None, "A Subtitle")
+        ),
         {"author": "Different Author"},
         {"second_work": True},
         {"titles": ("Example Title", "Other Work")},
@@ -404,13 +413,18 @@ def test_material_conflict_cannot_gain_title_authority(options):
         for p in packet.proposals
         for c in p["candidates"]
     )
-    assert (
-        next(
-            d
-            for d in decide_shadow_packet(packet).decisions
-            if d.destination == "title"
-        ).recommendation
-        == "manual"
+    decision = next(
+        d for d in decide_shadow_packet(packet).decisions if d.destination == "title"
+    )
+    assert decision.recommendation == "manual"
+    assert decision.candidate_id is None
+    if result.reasons == ("isbn_title_material_conflict",):
+        assert decision.reason_code == "isbn_title_material_conflict"
+    assert any(
+        c["evidence_references"]
+        for p in packet.proposals
+        if p["destination"] == "title"
+        for c in p["candidates"]
     )
 
 

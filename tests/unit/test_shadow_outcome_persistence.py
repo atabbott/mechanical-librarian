@@ -9500,3 +9500,103 @@ def test_recorded_refusal_survives_reopen_without_explanatory_compilation(
         assert field["automatic_decision"] is None
         assert repository._connection.total_changes == changes
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize(
+    "mode,disposition",
+    [("automatic", "conflict"), ("ask", "manual"), ("ignore", "ignore")],
+)
+def test_supported_current_title_conflict_stays_manual_without_suspension(
+    tmp_path, mode, disposition
+):
+    from contextlib import closing
+
+    from mechanical_librarian.application.review_web import RecordHumanDecision
+    from tests.support.evidence_led_titles import isbn_title_report, publish_title_case
+    from tests.support.proposal_evidence import _report as title_report
+
+    report = isbn_title_report(
+        current="Example Title", titles=("Example Title", "Example Title", "Other Work")
+    )
+    publisher = LocalClaim.create(
+        kind=ClaimKind.PUBLISHER,
+        observed="Selected EPUB Press",
+        canonical="Selected EPUB Press",
+        excerpt="Selected EPUB Press",
+        applicability="not_applicable",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        scope=ClaimScope.EDITION,
+    )
+    report = title_report(
+        fields=report.target.fields,
+        local_claims=(*report.local_claims, publisher),
+        providers=report.providers,
+    )
+    path = tmp_path / "title.sqlite"
+    with closing(open_repository(path)) as repository:
+        case_id, _ = publish_title_case(
+            repository,
+            report,
+            mode,
+        )
+        persisted = repository.persist_shadow_outcome(case_id, 5)
+        title = next(
+            o
+            for o in ShadowOutcomeSet.from_json(persisted).outcomes
+            if o.destination == "title"
+        )
+        assert title.disposition == disposition
+        assert title.reason_code == (
+            "evidence_sufficiency_manual"
+            if mode == "ignore"
+            else "isbn_title_material_conflict"
+        )
+        assert title.candidate_id is None
+        assert repository.automatic_safety_state() == AutomaticSafetyState(
+            False, None, ()
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE destination='title'"
+        ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions WHERE destination='publisher'"
+        ).fetchone() == (1,)
+        detail = InspectCurrentReviewCase(repository).run(case_id)
+        field = next(f for f in detail["fields"] if f["destination"] == "title")
+        assert field["needs_attention"] is (mode != "ignore")
+        assert field["automatic_withheld_reason"] == (
+            "The sources disagree about the work or title; choose the title yourself."
+            if mode == "automatic"
+            else None
+        )
+        assert repository.persist_shadow_outcome(case_id, 6) == persisted
+    with closing(open_repository(path, create=False)) as reopened:
+        assert reopened.persist_shadow_outcome(case_id, 7) == persisted
+        assert reopened.automatic_safety_state() == AutomaticSafetyState(
+            False, None, ()
+        )
+        if mode != "ignore":
+            RecordHumanDecision(reopened, lambda: 8).run(
+                case_id,
+                proposal_id=field["proposal_id"],
+                target_fingerprint=field["target_fingerprint"],
+                destination="title",
+                actor="owner",
+                outcome="accept",
+                selected_value={"kind": "text", "value": "Other Work"},
+                idempotency_key="material-title-owner-0001",
+            )
+            after = next(
+                f
+                for f in InspectCurrentReviewCase(reopened).run(case_id)["fields"]
+                if f["destination"] == "title"
+            )
+            assert after["human_decision"]["outcome"] == "accept"
+            assert not after["needs_attention"]
+            assert reopened._connection.execute(
+                "SELECT count(*) FROM field_effects"
+            ).fetchone() == (0,)
