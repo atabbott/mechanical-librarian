@@ -1424,6 +1424,7 @@ def _server(
     language_activity = None
     if (
         isbn_fixture
+        or isbn_title_fixture is not None
         or synopsis_fixture is not None
         or language_fixture is not None
         or genre_fixture is not None
@@ -1456,6 +1457,7 @@ def _server(
         field_application=(
             _BrowserActivityApplication()
             if not isbn_fixture
+            and isbn_title_fixture is None
             and synopsis_fixture is None
             and language_fixture is None
             and genre_fixture is None

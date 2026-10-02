@@ -9568,6 +9568,11 @@ def test_supported_current_title_conflict_stays_manual_without_suspension(
         detail = InspectCurrentReviewCase(repository).run(case_id)
         field = next(f for f in detail["fields"] if f["destination"] == "title")
         assert field["needs_attention"] is (mode != "ignore")
+        assert field["automatic_withheld_reason"] == (
+            "The sources disagree about the work or title; choose the title yourself."
+            if mode == "automatic"
+            else None
+        )
         assert repository.persist_shadow_outcome(case_id, 6) == persisted
     with closing(open_repository(path, create=False)) as reopened:
         assert reopened.persist_shadow_outcome(case_id, 7) == persisted
