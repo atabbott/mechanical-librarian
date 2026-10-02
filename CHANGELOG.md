@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Settings shows the accepted measured Luna description request cost.
+  The bounded reviewer collection report preserves incomplete phases, unknown
+  charges and independently inspected sample limitations. Contained measurement
+  admits the configured model; opt-in stop-on-failure retains failed attempts
+  and known charges (#1060).
+
 - Description cost measurement and advice from an already configured model work
   when OpenRouter omits its catalogue request fee. Actual charges still govern
   measurement budgets; Settings continues to require complete prices (#1129).

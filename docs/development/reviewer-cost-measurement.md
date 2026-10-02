@@ -2,8 +2,9 @@
 
 This owner-run, report-only tool supports the separately authorized collection
 in #1060. Software delivery does not authorize paid calls or use of a live
-library. Ordinary application reads never run it. Shipped public evidence is
-empty until an entire independently inspected measurement is accepted.
+library. Ordinary application reads never run it. The [bounded collection report](reviewer-collection-report.md) records accepted
+measurements and their limitations. Packaged evidence contains only the complete
+50-description phase; the separate cover continuation remains documentation-only.
 
 Use an owner-private copy of an exact-current, closed report database and its
 retained cover artifact directory. Do not use an active database: the read-only
@@ -72,6 +73,14 @@ threshold and target. **This is not a hard cap.** No account limit is changed.
 Missing or ambiguous charge, timeout, interruption or undispatched input makes
 the run incomplete. No price arithmetic, history lookup or assumed zero replaces
 an unknown charge. The tool and OpenRouter path never retry.
+
+For a bounded smoke that must stop on any failure, also pass
+`--stop-on-failure`. After retaining the failed attempt and any known charge,
+it stops before the next dispatch, including after a contained failure or a
+charged parse failure. The run remains incomplete even if the failed attempt
+was last, and emits no public aggregate. Its private manifest records the
+enabled option. Without the flag, known-charge parser failures retain the
+existing collection behavior and remain in the attempted-request denominator.
 
 For a contained cover run, select the exact `--codex-model` and
 `--contained-profile` instead of an OpenRouter cover model. Its supported tuple

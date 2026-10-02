@@ -63,7 +63,9 @@ def test_all_modules_import_outside_checkout_without_creating_state() -> None:
     assert created_entries == []
 
 
-def test_installed_reviewer_cost_resource_is_closed_and_unmeasured() -> None:
+def test_installed_reviewer_cost_resource_preserves_accepted_description_phase() -> (
+    None
+):
     from importlib.resources import files
 
     from mechanical_librarian.domain.reviewer_cost import ReviewerCostEvidence
@@ -73,5 +75,13 @@ def test_installed_reviewer_cost_resource_is_closed_and_unmeasured() -> None:
         .joinpath("resources/reviewer-cost-evidence-v1.json")
         .read_bytes()
     )
-    assert evidence.measured_run is None
-    assert evidence.models == ()
+    assert evidence.measured_run is not None
+    assert (
+        evidence.measured_run.source_head == "4f9264a1e8759d55a40bb58129ab0820d9bfe142"
+    )
+    assert len(evidence.models) == 1
+    row = evidence.models[0]
+    assert (row.model, row.task) == ("openai/gpt-6-luna", "description")
+    assert row.requests_attempted == row.requests_completed == 50
+    assert row.requests_failed == 0
+    assert row.per_1000_usd == "0.1713055000"
