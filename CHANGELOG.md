@@ -8,7 +8,7 @@
 
 ## Unreleased
 
-- Setup and Settings show the accepted measured Luna description request cost.
+- Settings shows the accepted measured Luna description request cost.
   The bounded reviewer collection report preserves incomplete phases, unknown
   charges and independently inspected sample limitations. Contained measurement
   admits the configured model; opt-in stop-on-failure retains failed attempts
