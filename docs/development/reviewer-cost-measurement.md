@@ -2,8 +2,9 @@
 
 This owner-run, report-only tool supports the separately authorized collection
 in #1060. Software delivery does not authorize paid calls or use of a live
-library. Ordinary application reads never run it. Shipped public evidence is
-empty until an entire independently inspected measurement is accepted.
+library. Ordinary application reads never run it. The [bounded collection report](reviewer-collection-report.md) records accepted
+measurements and their limitations. Packaged evidence contains only the complete
+50-description phase; the separate cover continuation remains documentation-only.
 
 Use an owner-private copy of an exact-current, closed report database and its
 retained cover artifact directory. Do not use an active database: the read-only

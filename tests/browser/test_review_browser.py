@@ -7946,3 +7946,126 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
         finally:
             context.close()
             browser.close()
+
+
+@pytest.mark.parametrize("width", (1440, 390))
+def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) -> None:
+    from mechanical_librarian.domain.reviewer_access import OpenRouterTaskSelection
+
+    access = ReviewerAccessView(
+        revision=1,
+        mapping=OpenRouterTaskSelection(engine="openrouter", model="openai/gpt-6-luna"),
+        description_mapping=OpenRouterTaskSelection(
+            engine="openrouter", model="openai/gpt-6-luna"
+        ),
+        openrouter_key_configured=False,
+        codex=ReviewerEngineStatus(
+            engine="codex", state="not_provisioned", reason="profile_not_provisioned"
+        ),
+        openrouter=ReviewerEngineStatus(engine="openrouter", state="unconfigured"),
+    )
+    assert len(access.cost_evidence.models) == 1
+    assert access.cost_evidence.models[0].per_1000_usd == "0.1713055000"
+    with tempfile.TemporaryDirectory() as directory:
+        root = Path(directory)
+        root.chmod(0o700)
+        hash_path = root / "owner.hash"
+        hash_path.write_text(PasswordHasher().hash(_PASSWORD))
+        hash_path.chmod(0o600)
+        certificate, key = _certificate(root)
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(headless=True)
+            context = browser.new_context(
+                ignore_https_errors=True, viewport={"width": width, "height": 900}
+            )
+            with _closing_context(context):
+                page = context.new_page()
+                page.route(
+                    "**/api/v1/reviewer-access",
+                    lambda route: route.fulfill(json=access.model_dump(mode="json")),
+                )
+                with (
+                    closing(ReservedPort()) as port,
+                    _server(
+                        database=root / "review.sqlite",
+                        hash_path=hash_path,
+                        certificate=certificate,
+                        key=key,
+                        port=port,
+                    ) as (origin, _),
+                ):
+                    _login(page, origin)
+                    page.goto(f"{origin}/settings?group=reviewer")
+                    adviser = page.get_by_role(
+                        "region", name="Optional description adviser"
+                    )
+                    expect(adviser).to_contain_text(
+                        "About $0.1713 per 1,000 description review requests (estimate)."
+                    )
+                    cover = page.get_by_role("region", name="Optional cover reviewer")
+                    expect(cover).to_contain_text("Not measured for this model.")
+                    expect(adviser).not_to_contain_text("1790929488")
+                    expect(adviser).not_to_contain_text("2026")
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= innerWidth"
+                    )
+                    output = os.environ.get("ML_BROWSER_SCREENSHOT_DIR")
+                    if output:
+                        page.screenshot(
+                            path=str(
+                                Path(output) / f"reviewer-cost-settings-{width}.png"
+                            ),
+                            full_page=True,
+                        )
+
+                def setup_read(route: Any) -> None:
+                    if urlparse(route.request.url).path.endswith("reviewer-access"):
+                        route.fulfill(json=access.model_dump(mode="json"))
+                    else:
+                        route.fulfill(
+                            json={
+                                "schema_version": "setup-state-v3",
+                                "revision": 6,
+                                "csrf_token": "synthetic-csrf",
+                                "completed_steps": [
+                                    "claim",
+                                    "connect",
+                                    "providers",
+                                    "libraries",
+                                    "mounts",
+                                ],
+                                "connection": {
+                                    "endpoint": "https://example.invalid",
+                                    "name": "primary",
+                                },
+                                "providers": [],
+                                "libraries": [],
+                                "mounts": [],
+                                "next_step": "reviewer",
+                            }
+                        )
+
+                page.route("**/api/setup/**", setup_read)
+                with (
+                    closing(ReservedPort()) as port,
+                    _setup_asset_server(certificate, key, port) as origin,
+                ):
+                    page.goto(origin)
+                    expect(
+                        page.get_by_text("Request cost: not measured for this model.")
+                    ).to_be_visible()
+                    expect(
+                        page.get_by_text(
+                            "Optional description advice is configured separately in Settings → Reviewer after setup."
+                        )
+                    ).to_be_visible()
+                    expect(page.get_by_text("$0.1713", exact=False)).to_have_count(0)
+                    assert page.evaluate(
+                        "document.documentElement.scrollWidth <= innerWidth"
+                    )
+                    if output:
+                        page.screenshot(
+                            path=str(Path(output) / f"reviewer-cost-setup-{width}.png"),
+                            full_page=True,
+                        )
+            browser.close()
