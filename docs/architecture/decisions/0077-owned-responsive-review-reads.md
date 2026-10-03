@@ -88,8 +88,14 @@ short transaction containing membership, counts and row facts. Each operation
 captures live policy/replay and provider-fetching identities outside admission
 and its connection gate. One admitted browse operation installs that immutable
 observation for SQL and visible projection, clears it before releasing the gate,
-then rechecks external identities outside both gates. Drift yields unavailable; it does
-not retry silently or return mixed counts. This is a transient observation, not
+then rechecks external identities outside both gates. On fetching-only drift,
+the application discards the whole result and makes at most one complete fresh
+capture, admission, read and recheck. The first policy/replay authority pair stays
+frozen: authority drift, capture failure or a second fetching drift yields
+unavailable. Direct repository readers still refuse drift. Both attempts share
+one shutdown lifetime and the original disconnect check; all ownership and
+admission are released between attempts. This bounds work, not elapsed time,
+and leaves SQLite's existing busy timeout unchanged. No mixed counts escape. This is a transient observation, not
 cross-database atomicity. Direct nested reads reuse installed facts only when the
 calling thread owns the physical operation scope; another thread captures its own
 facts and waits for admission. The new read path does not nest application and recovery

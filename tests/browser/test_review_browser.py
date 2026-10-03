@@ -8073,3 +8073,144 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                             full_page=True,
                         )
             browser.close()
+
+
+@pytest.mark.parametrize("attention", [False, True])
+@pytest.mark.parametrize("transitions", [1, 2])
+def test_fetching_transition_browse_and_manual_recovery(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    attention: bool,
+    transitions: int,
+) -> None:
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+    from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+
+    # Only the asset location differs from installation; the real composed app,
+    # SQL projection, observation and recovery stores serve every browser request.
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    with running_owner_fixture(tmp_path, 10) as (fixture, origin):
+        actor = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+        try:
+            for index in range(transitions):
+                report = fixture.reports[f"work-{index:04d}"]
+                actor.enqueue_jobs(
+                    (
+                        ProviderRecoveryJob(
+                            f"google-{index}",
+                            "google_books",
+                            f"scope-{index}",
+                            1,
+                            f"member-{index}",
+                            report.target.connection,
+                            report.target.library,
+                            report.target.item,
+                            "file",
+                            report.report_id,
+                            "proposal",
+                            report.report_id,
+                            "case",
+                            1,
+                            "admitted",
+                            '["work"]',
+                        ),
+                    ),
+                    enqueued_at=3,
+                )
+            method = "read_review_attention" if attention else "read_review_library"
+            original = getattr(fixture.browse, method)
+            reads = 0
+            armed = False
+
+            def changing(*args):
+                nonlocal reads
+                result = original(*args)
+                if armed:
+                    reads += 1
+                    if reads <= transitions:
+                        assert (
+                            actor.claim_one(
+                                generation=1, now=7203, token=f"browser-{reads}"
+                            )
+                            is not None
+                        )
+                return result
+
+            monkeypatch.setattr(fixture.browse, method, changing)
+            with sync_playwright() as playwright:
+                browser = playwright.chromium.launch()
+                try:
+                    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                    page.goto(origin + "/login")
+                    page.get_by_label("Password").fill("synthetic-owner")
+                    page.get_by_role("button", name="Sign in").click()
+                    page.get_by_role("heading", name="Works", exact=True).wait_for()
+                    armed = True
+                    route = "/library?attention=open" if attention else "/library"
+                    with page.expect_response(
+                        lambda response: (
+                            ("/api/v1/attention" if attention else "/api/v1/library")
+                            in response.url
+                        )
+                    ) as pending:
+                        page.goto(origin + route)
+                    assert pending.value.status == (200 if transitions == 1 else 503)
+                    assert reads == 2
+                    if transitions == 2:
+                        surface = page.get_by_label(
+                            "Attention queue" if attention else "Works", exact=True
+                        )
+                        retry = surface.get_by_role(
+                            "button", name="Try again", exact=True
+                        )
+                        expect(retry).to_be_visible()
+                        retry.focus()
+                        expect(retry).to_be_focused()
+                        with page.expect_response(
+                            lambda response: (
+                                (
+                                    "/api/v1/attention"
+                                    if attention
+                                    else "/api/v1/library"
+                                )
+                                in response.url
+                            )
+                        ) as recovered:
+                            page.keyboard.press("Enter")
+                        assert recovered.value.status == 200
+                        expect(retry).to_have_count(0)
+                        # Both independent collection reads may observe the same
+                        # churn; recover Works through its own manual control.
+                        works_retry = page.get_by_role(
+                            "region", name="Works", exact=True
+                        ).get_by_role("button", name="Try again", exact=True)
+                        if works_retry.count():
+                            works_retry.click()
+                    expect(
+                        page.get_by_role("heading", name="Works", exact=True)
+                    ).to_be_visible()
+                    expect(
+                        page.get_by_text("Synthetic title", exact=True).first
+                    ).to_be_visible()
+                finally:
+                    browser.close()
+                with fixture.application._browse_lifetime:
+                    assert fixture.application._browse_lifetime.wait_for(
+                        lambda: fixture.application._active_browses == 0, 5
+                    )
+
+                def assert_released():
+                    assert fixture.browse._cover_read_observation is None
+                    assert not fixture.browse._connection.in_transaction
+
+                fixture.application.serialized(assert_released)
+        finally:
+            actor.close()

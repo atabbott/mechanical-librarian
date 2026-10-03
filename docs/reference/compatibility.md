@@ -1,5 +1,11 @@
 # Pre-release compatibility policy
 
+#1140 rotates F19a, F20 and F46 exact-current bindings because their semantic
+sources include browse orchestration. **Clean rebuild required** for predecessor
+derived application stores. Schema shapes, shadow decision policy v20 and the
+12/13/76 permission sets are unchanged. Prior automatic decisions remain
+decodable history without current authority; no adoption or migration is supplied.
+
 Audiobookshelf field-effect canaries support v2.26.0 and later without an
 upper-version promise. Each qualification records the exact latest stable image
 version and digest. Compatibility is field-local and demonstrated for metadata/

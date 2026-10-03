@@ -1,5 +1,11 @@
 # Upgrades and compatibility
 
+#1140 rotates F19a, F20 and F46 exact-current bindings because their semantic
+sources include browse orchestration. **Clean rebuild required** for predecessor
+derived application stores. Schema shapes, shadow decision policy v20 and the
+12/13/76 permission sets are unchanged. Prior automatic decisions remain
+decodable history without current authority; no adoption or migration is supplied.
+
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v49`, `proposal-set-v8` under

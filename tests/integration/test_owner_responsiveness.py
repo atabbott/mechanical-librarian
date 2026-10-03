@@ -11,6 +11,10 @@ from pathlib import Path
 import pytest
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.application.review_web import (
+    BrowseFetchingChanged,
+    ReviewWebError,
+)
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 
@@ -44,7 +48,7 @@ def test_complete_cover_browse_avoids_full_report_validation_in_counts(
         fixture.close()
 
 
-def test_external_drift_refuses_complete_browse_response(tmp_path: Path) -> None:
+def test_direct_external_drift_refuses_complete_browse_response(tmp_path: Path) -> None:
     fixture = OwnerResponsivenessFixture(tmp_path, 2)
     try:
         capture = fixture.browse._capture_cover_read
@@ -74,8 +78,11 @@ def test_external_drift_refuses_complete_browse_response(tmp_path: Path) -> None
             )
 
         fixture.browse.bind_cover_read_observation(changing)
-        with pytest.raises(MetadataReportError, match="review snapshot is unavailable"):
-            fixture.application.library(lens="all", search=None, limit=5, cursor=None)
+        with pytest.raises(
+            BrowseFetchingChanged, match="review snapshot is unavailable"
+        ):
+            with fixture.browse.browse_observation():
+                fixture.browse.read_review_library(None, 5, 0, None)
         assert calls == 2
         assert not fixture.browse._connection.in_transaction
     finally:
@@ -326,7 +333,7 @@ def test_exact_pre_currentness_schema_refuses_startup_without_mutation(
     assert database.read_bytes() == before
 
 
-@pytest.mark.parametrize("failed_capture", (1, 2))
+@pytest.mark.parametrize("failed_capture", (1, 2, 3, 4))
 def test_external_authority_failure_is_truthfully_unavailable(
     tmp_path: Path, failed_capture: int
 ) -> None:
@@ -342,13 +349,27 @@ def test_external_authority_failure_is_truthfully_unavailable(
             calls += 1
             if calls == failed_capture:
                 raise RuntimeError("private recovery storage detail")
+            if failed_capture > 2 and calls >= 2:
+                return (
+                    observation[0],
+                    frozenset(
+                        {
+                            (
+                                "primary",
+                                "books-0",
+                                "work-0000",
+                                fixture.cases[0].report_id,
+                            )
+                        }
+                    ),
+                )
             return observation
 
         fixture.browse.bind_cover_read_observation(unavailable)
-        with pytest.raises(
-            MetadataReportError, match="^review snapshot is unavailable$"
-        ):
+        with pytest.raises(ReviewWebError, match="^unavailable$"):
             fixture.application.library(lens="all", search=None, limit=5, cursor=None)
+        assert calls == failed_capture
+        assert fixture.application._active_browses == 0
         assert fixture.browse._cover_read_observation is None
         assert not fixture.browse._connection.in_transaction
     finally:
@@ -1061,9 +1082,7 @@ def test_settings_publication_and_rollback_preserve_browse_final_recheck(
             assert store.read().document.revision == 1
             assert fixture.covers.current_authority() == before
         else:
-            with pytest.raises(
-                MetadataReportError, match="review snapshot is unavailable"
-            ):
+            with pytest.raises(ReviewWebError, match="^unavailable$"):
                 fixture.application.library(
                     lens="all", search=None, limit=5, cursor=None
                 )
@@ -1352,7 +1371,7 @@ def test_direct_browse_waits_for_owned_observation_and_installs_its_own_facts(
         fixture.close()
 
 
-@pytest.mark.parametrize("held_capture", [1, 2], ids=["initial", "final"])
+@pytest.mark.parametrize("held_capture", [1, 2, 3, 4])
 @pytest.mark.parametrize("deadline_expires", [False, True], ids=["drain", "deadline"])
 def test_shutdown_retains_entire_browse_lifetime(
     tmp_path: Path,
@@ -1385,7 +1404,15 @@ def test_shutdown_retains_entire_browse_lifetime(
             assert repository._serialization_lock.depth() == 0
             entered.set()
             assert release.wait(5)
-        return capture()
+        observation = capture()
+        if held_capture > 2 and calls >= 2:
+            return (
+                observation[0],
+                frozenset(
+                    {("primary", "books-0", "work-0000", fixture.cases[0].report_id)}
+                ),
+            )
+        return observation
 
     def close_root():
         assert release.is_set()
@@ -1883,5 +1910,282 @@ def test_retained_incumbent_readiness_preserves_admitted_actions(
             assert not cover["decision_actions"]
             with pytest.raises(ReviewWebError, match="unsupported"):
                 keep()
+    finally:
+        fixture.close()
+
+
+@pytest.mark.parametrize("route", ["library?lens=all", "attention"])
+@pytest.mark.parametrize("transitions", [1, 2])
+def test_fetching_drift_recaptures_complete_http_browse(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, route: str, transitions: int
+) -> None:
+    import httpx
+
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+    from mechanical_librarian.domain.provider_recovery import ProviderRecoveryJob
+    from tests.support.owner_responsiveness import running_owner_fixture
+
+    with running_owner_fixture(tmp_path, 3) as (fixture, origin):
+        actor = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+        try:
+            for index in range(transitions):
+                report = fixture.reports[f"work-{index:04d}"]
+                actor.enqueue_jobs(
+                    (
+                        ProviderRecoveryJob(
+                            f"google-{index}",
+                            "google_books",
+                            f"scope-{index}",
+                            1,
+                            f"member-{index}",
+                            report.target.connection,
+                            report.target.library,
+                            report.target.item,
+                            "file",
+                            report.report_id,
+                            "proposal",
+                            report.report_id,
+                            "case",
+                            1,
+                            "admitted",
+                            '["work"]',
+                        ),
+                    ),
+                    enqueued_at=3,
+                )
+            capture = fixture.browse.capture_browse_observation
+            read = (
+                fixture.browse.read_review_library
+                if route.startswith("library")
+                else fixture.browse.read_review_attention
+            )
+            captures = projections = 0
+
+            def counted_capture():
+                nonlocal captures
+                captures += 1
+                assert not fixture.repository.operation_admission.held
+                assert fixture.browse._cover_read_observation is None
+                return capture()
+
+            def changing(*args):
+                nonlocal projections
+                projections += 1
+                result = read(*args)
+                assert not fixture.browse._connection.in_transaction
+                if projections <= transitions:
+                    assert (
+                        actor.claim_one(
+                            generation=1, now=7203, token=f"claim-{projections}"
+                        )
+                        is not None
+                    )
+                return result
+
+            monkeypatch.setattr(
+                fixture.browse, "capture_browse_observation", counted_capture
+            )
+            monkeypatch.setattr(
+                fixture.browse,
+                "read_review_library"
+                if route.startswith("library")
+                else "read_review_attention",
+                changing,
+            )
+            with httpx.Client(base_url=origin, headers={"Origin": origin}) as client:
+                assert client.get(f"/api/v1/{route}").status_code == 401
+                assert (
+                    client.post(
+                        "/api/v1/session/login", json={"password": "synthetic-owner"}
+                    ).status_code
+                    == 200
+                )
+                separator = "&" if "?" in route else "?"
+                assert (
+                    client.get(f"/api/v1/{route}{separator}limit=0").status_code == 422
+                )
+                assert captures == 0 and projections == 0
+                response = client.get(f"/api/v1/{route}")
+                assert response.status_code == (200 if transitions == 1 else 503)
+                assert captures == 4 and projections == 2
+                assert fixture.application._active_browses == 0
+                assert fixture.browse._cover_read_observation is None
+                assert not fixture.browse._connection.in_transaction
+                stable = client.get(f"/api/v1/{route}")
+                assert stable.status_code == 200
+                if transitions == 1:
+                    assert response.json() == stable.json()
+                else:
+                    assert response.json() == {
+                        "schema_version": "review-error-v1",
+                        "error": {"code": "unavailable"},
+                    }
+        finally:
+            actor.close()
+
+
+@pytest.mark.parametrize("component", [0, 1], ids=["policy", "replay"])
+@pytest.mark.parametrize("changed_capture", [2, 3, 4])
+def test_browse_authority_drift_never_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    component: int,
+    changed_capture: int,
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    try:
+        capture = fixture.browse._capture_cover_read
+        assert capture is not None
+        observation = capture()
+        calls = reads = 0
+        read = fixture.browse.read_review_library
+
+        def counted_read(*args):
+            nonlocal reads
+            reads += 1
+            return read(*args)
+
+        def changing():
+            nonlocal calls
+            calls += 1
+            authority = observation[0]
+            if calls >= changed_capture:
+                authority = (
+                    "cover_policy_" + "a" * 64 if component == 0 else authority[0],
+                    "cover_replay_" + "b" * 64 if component == 1 else authority[1],
+                )
+            # Simultaneous fetching drift cannot mask authority revocation.
+            fetching = (
+                observation[1]
+                if calls == 1
+                else frozenset(
+                    {("primary", "books-0", "work-0000", fixture.cases[0].report_id)}
+                )
+            )
+            return authority, fetching
+
+        monkeypatch.setattr(fixture.browse, "read_review_library", counted_read)
+        fixture.browse.bind_cover_read_observation(changing)
+        with pytest.raises(ReviewWebError, match="^unavailable$"):
+            fixture.application.library(lens="all", search=None, limit=5, cursor=None)
+        assert calls == changed_capture
+        assert reads == (2 if changed_capture == 4 else 1)
+        assert fixture.application._active_browses == 0
+        assert fixture.browse._cover_read_observation is None
+        assert not fixture.browse._connection.in_transaction
+    finally:
+        fixture.close()
+
+
+@pytest.mark.parametrize(
+    "queued", [False, True], ids=["before-retry", "retry-admission"]
+)
+def test_fetching_retry_preserves_original_disconnect_check(
+    tmp_path: Path, queued: bool
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    disconnected, entered, release = (threading.Event() for _ in range(3))
+    admission = fixture.application._admission
+    capture = fixture.browse._capture_cover_read
+    assert capture is not None
+    original = capture()
+    calls = 0
+
+    def observe():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            if queued:
+                entered.set()
+                assert release.wait(5)
+            else:
+                disconnected.set()
+        return (
+            original
+            if calls == 1
+            else (
+                original[0],
+                frozenset(
+                    {("primary", "books-0", "work-0000", fixture.cases[0].report_id)}
+                ),
+            )
+        )
+
+    def check_active():
+        if disconnected.is_set():
+            raise InterruptedError("disconnected")
+
+    fixture.browse.bind_cover_read_observation(observe)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                fixture.application.library,
+                lens="all",
+                search=None,
+                limit=5,
+                cursor=None,
+                check_active=check_active,
+            )
+            if queued:
+                assert entered.wait(5)
+                with admission.enter():
+                    release.set()
+                    with admission._condition:
+                        assert admission._condition.wait_for(
+                            lambda: len(admission._waiting) == 1, 5
+                        )
+                    disconnected.set()
+                # The same callback rejects the resumed second admission.
+            with pytest.raises(InterruptedError, match="disconnected"):
+                future.result(5)
+        assert calls == (3 if queued else 2)
+        assert fixture.application._active_browses == 0
+        assert not admission.held and not admission._waiting
+        assert fixture.browse._cover_read_observation is None
+        assert not fixture.browse._connection.in_transaction
+    finally:
+        release.set()
+        fixture.close()
+
+
+def test_malformed_recovery_capture_is_unavailable_without_retry(
+    tmp_path: Path,
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    try:
+        fixture.recovery._connection.execute("DROP TABLE provider_recovery_jobs")
+        fixture.recovery._connection.commit()
+        with pytest.raises(ReviewWebError, match="^unavailable$"):
+            fixture.application.library(lens="all", search=None, limit=5, cursor=None)
+        assert fixture.application._active_browses == 0
+        assert fixture.browse._cover_read_observation is None
+        assert not fixture.browse._connection.in_transaction
+    finally:
+        fixture.close()
+
+
+@pytest.mark.parametrize("missing", ["initial", "final"])
+def test_missing_browse_observation_is_not_fetching_drift(
+    tmp_path: Path,
+    missing: str,
+) -> None:
+    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    try:
+        capture = fixture.browse._capture_cover_read
+        assert capture is not None
+        observation = capture()
+        if missing == "final":
+            fixture.browse._capture_cover_read = None
+        with pytest.raises(
+            MetadataReportError, match="^review snapshot is unavailable$"
+        ) as raised:
+            fixture.browse.recheck_browse_observation(
+                None if missing == "initial" else observation
+            )
+        assert type(raised.value) is MetadataReportError
     finally:
         fixture.close()

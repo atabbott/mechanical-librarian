@@ -552,7 +552,11 @@ canonical consideration at publication and root open. This does not grant
 selection or effect authority: those boundaries still validate complete evidence.
 One browse operation captures live cover policy, replay identity and active
 provider fetch identities before its short application snapshot, then rechecks
-them after projection. Drift returns unavailable. It never holds the application
+them after projection. One fetching-only drift permits a complete fresh read
+under the original policy/replay authority; authority drift, capture failure and
+repeated fetching drift return unavailable. Direct repository readers refuse
+drift. The original disconnect check and shutdown lifetime span both attempts,
+with ownership released between them (#1140). It never holds the application
 and recovery locks together, and this observation does not promise cross-database
 atomicity or freshness after the response. Browse borrowers close before root
 authority during failed activation, handover and shutdown (#1072).
