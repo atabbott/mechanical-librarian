@@ -2205,8 +2205,24 @@ def test_owner_cover_predecessor_refuses_without_mutation(tmp_path, name):
     assert database.read_bytes() == before
 
 
+@pytest.mark.parametrize(
+    "fixture_name,source_sha,populated",
+    (
+        ("title-conflict-v18.json", "54584c4ba542593d72ddb9016b3542af42e8b4b7", False),
+        (
+            "title-preservation-v19.json",
+            "148ad97f1d40524014f5aa179ca1590466adabfb",
+            False,
+        ),
+        (
+            "title-preservation-v19.json",
+            "148ad97f1d40524014f5aa179ca1590466adabfb",
+            True,
+        ),
+    ),
+)
 def test_actual_v18_title_conflict_state_is_rejected_without_change(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, fixture_name, source_sha, populated
 ):
     from contextlib import closing
 
@@ -2214,9 +2230,9 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
     from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
 
     fixture = json.loads(
-        (Path(__file__).parents[1] / "fixtures/title-conflict-v18.json").read_text()
+        (Path(__file__).parents[1] / "fixtures" / fixture_name).read_text()
     )
-    assert fixture["source_sha"] == "54584c4ba542593d72ddb9016b3542af42e8b4b7"
+    assert fixture["source_sha"] == source_sha
     for parser, key in (
         (ShadowDecisionSet.from_json, "decision"),
         (ShadowOutcomeSet.from_json, "outcome"),
@@ -2240,6 +2256,38 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                 ).hexdigest()
                 == fixture["schema_inventory_sha256"]
             )
+            if populated:
+                for table in ("metadata_reports", "proposal_sets", "review_cases"):
+                    for row in fixture["parents"][table]:
+                        repository._connection.execute(
+                            f"INSERT INTO {table} VALUES({','.join('?' for _ in row)})",
+                            row,
+                        )
+                outcome = json.loads(fixture["outcome"])
+                repository._connection.execute(
+                    "INSERT INTO shadow_decision_outcomes VALUES(?,?,?,?,?,?,?,?)",
+                    tuple(
+                        outcome[key]
+                        for key in (
+                            "outcome_set_id",
+                            "review_case_id",
+                            "report_id",
+                            "proposal_set_id",
+                            "resolved_policy_id",
+                            "source_decision_set_id",
+                        )
+                    )
+                    + (fixture["evaluated_at"], fixture["outcome"]),
+                )
+                assert repository._connection.execute(
+                    "SELECT document FROM shadow_decision_outcomes"
+                ).fetchall() == [(fixture["outcome"],)]
+                assert (
+                    repository._connection.execute(
+                        "PRAGMA foreign_key_check"
+                    ).fetchall()
+                    == []
+                )
     before = path.read_bytes()
     inventory = sorted(p.name for p in tmp_path.iterdir())
     with pytest.raises(MetadataReportError):

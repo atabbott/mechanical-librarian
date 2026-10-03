@@ -764,3 +764,9 @@ suspending title automation; Ask and Ignore retain their policy behavior.
 Ordinary title preservation, independently supported replacements and explicit
 owner choices retain their existing authority and effect guards. Shadow policy
 v19 and compact successor qualification bindings require a clean rebuild.
+
+
+A sole eligible scalar title that exactly matches the incumbent uses the compiled
+preservation action only when both actions carry identical citations and neither
+belongs to a combination. It records one unchanged result without an effect or
+owner attention. Material conflicts and Ask/Ignore remain prior constraints (#1138).

@@ -1766,3 +1766,11 @@ backup, optimistic concurrency and read-back checks remain mandatory. Compact
 qualification bindings rotate without new permissions; displaced bindings are
 historical only. Prior derived stores require a clean rebuild, with no schema
 shape change, adoption, migration or historical rewrite.
+
+
+## Exact incumbent title election (#1138)
+
+Scalar incumbent election reuses the compiled citation-bound keep action; it
+adds no admission exception or permission. Material conflicts, owner-final,
+Ask/Ignore, pause, suspension, currentness and all effect guards remain intact.
+Shadow policy v20 requires a clean rebuild, with no migration or adoption.

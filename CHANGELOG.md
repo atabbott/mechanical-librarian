@@ -8,6 +8,9 @@
 
 ## Unreleased
 
+- Exact supported incumbent titles remain unchanged without suspending title
+  automation or requesting owner attention (#1138). Clean rebuild required.
+
 - Unclassified preparation failures emit bounded, value-free service diagnostics
   correlated with operations references, without changing recovery or retries.
   Prior derived application stores require a clean rebuild (#1136).

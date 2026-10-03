@@ -23,7 +23,7 @@ from mechanical_librarian.domain.shadow_review_actions import (
 )
 
 DECISION_SET_SCHEMA = "shadow-decision-set-v1"
-DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v19"
+DECISION_POLICY_VERSION = "deterministic-shadow-decision-policy-v20"
 MAX_DECISION_SET_BYTES = 1_048_576
 
 _SUPPORTED_DESTINATIONS = frozenset(
@@ -50,6 +50,12 @@ _REASON_CODES = frozenset(
     }
 )
 _RULE_TABLE = {
+    "scalar_incumbent_title": {
+        "sole_eligible_candidate_equals_current": True,
+        "compiled_keep_has_identical_citations": True,
+        "neither_action_has_combinations": True,
+        "selection": "recommend_keep_current",
+    },
     "title_material_conflict": {
         "reason": "isbn_title_material_conflict",
         "manual_before_candidate_or_combination_selection": True,
@@ -695,6 +701,26 @@ def _eligible_actions(
                 packet, proposal, candidate, action
             ):
                 actions.append(action)
+    if proposal["destination"] == "title" and len(actions) == 1:
+        selected = actions[0]
+        candidate = _candidate_for_action(proposal, selected)
+        keep = catalogue.action_for(
+            proposal["proposal_id"], "recommend_keep_current", None
+        )
+        if (
+            selected.recommendation == "recommend_candidate"
+            and candidate is not None
+            and candidate["value"]
+            == {
+                "kind": "text",
+                "value": cast("dict[str, object]", proposal["current"])["value"],
+            }
+            and keep is not None
+            and set(keep.citation_ids) == set(selected.citation_ids)
+            and not keep.combination_ids
+            and not selected.combination_ids
+        ):
+            actions = [keep]
     return tuple(actions)
 
 
