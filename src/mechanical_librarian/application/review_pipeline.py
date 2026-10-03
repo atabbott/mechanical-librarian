@@ -137,7 +137,7 @@ def _log_unknown_failure(
             exceptions.append(identity)
             trace = current.__traceback__
             while trace is not None:
-                if inspected == 64 or len(frames) == 8:
+                if inspected == 64:
                     frames_truncated = True
                     break
                 inspected += 1
@@ -155,6 +155,9 @@ def _log_unknown_failure(
                     ):
                         function = "unknown"
                     line = trace.tb_lineno
+                    if len(frames) == 8:
+                        frames.pop(0)
+                        frames_truncated = True
                     frames.append(
                         {
                             "module": module,

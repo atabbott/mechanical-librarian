@@ -1245,3 +1245,71 @@ def test_declared_failures_do_not_emit_unknown_diagnostics(
     else:
         assert state == "failed"
         assert code == ("parser_refused" if kind == "media" else "authentication")
+
+
+def test_unknown_diagnostics_retain_distinct_inner_publication_sites(
+    root: SQLiteMetadataReportRepository,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    from collections.abc import Callable
+
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+    from mechanical_librarian.application.review_pipeline import _log_unknown_failure
+
+    action = root.claim_review_pipeline_action(4)
+    assert action is not None
+    # Distinct outer wrappers reproduce a deep preparation call path, while the
+    # facade, aggregate, transaction rollback and SQL failure below are real.
+    namespace: dict[str, object] = {
+        "__name__": "mechanical_librarian.synthetic_publication",
+        "publish": lambda: root.publish(_report(), lambda: True),
+    }
+    wrappers = (
+        "execute",
+        "extract",
+        "generate_report",
+        "run_loaded",
+        "run_service",
+        "publish_report",
+        "publish_bound",
+    )
+    for index, name in enumerate(wrappers):
+        successor = wrappers[index + 1] if index + 1 < len(wrappers) else "publish"
+        exec(f"def {name}():\n    return {successor}()", namespace)
+    observed = []
+    for table in ("metadata_reports", "current_metadata_reports"):
+        root._connection.execute(
+            f"CREATE TEMP TRIGGER diagnostic_abort BEFORE INSERT ON {table} "
+            "BEGIN SELECT RAISE(ABORT,'SQL_PRIVATE_SENTINEL'); END"
+        )
+        try:
+            with pytest.raises(MetadataReportError) as caught:
+                cast(Callable[[], object], namespace["execute"])()
+            cause = caught.value.__cause__
+            assert isinstance(cause, sqlite3.IntegrityError)
+            trace = cause.__traceback__
+            assert trace is not None
+            while trace.tb_next is not None:
+                trace = trace.tb_next
+            expected = {
+                "module": "mechanical_librarian.adapters.persistence.reports",
+                "function": "publish",
+                "line": trace.tb_lineno,
+            }
+            _log_unknown_failure(caught.value, "extraction", action)
+            output = capsys.readouterr()
+            assert output.out == "" and "SQL_PRIVATE_SENTINEL" not in output.err
+            payload = json.loads(output.err)
+            assert expected in payload["frames"]
+            assert payload["frames"][-1] == expected
+            assert len(payload["frames"]) == 8 and payload["frames_truncated"]
+            assert len(output.err.encode()) <= 4096
+            observed.append(payload)
+        finally:
+            root._connection.execute("DROP TRIGGER diagnostic_abort")
+    assert observed[0]["exceptions"] == observed[1]["exceptions"]
+    assert observed[0]["frames"][-1] != observed[1]["frames"][-1]
+    assert root._connection.execute(
+        "SELECT count(*) FROM metadata_reports"
+    ).fetchone() == (0,)

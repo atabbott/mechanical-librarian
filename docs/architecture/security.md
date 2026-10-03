@@ -21,7 +21,8 @@ Unknown preparation diagnostics use one directly testable privacy projection:
 validated ASCII exception module/class and package-owned module/function/line
 identities only. Messages, arguments, notes, locals, source text, filenames and
 raw traceback formatting never cross it. Explicit cause precedes unsuppressed
-context; cycles and truncated chains/frames are marked. The projection bounds
+context; cycles and truncated chains/frames are marked. Retained frames favor
+innermost locations across the scanned exception chain. The projection bounds
 chain entries, total inspected frames, retained application frames and encoded
 output including its newline before one best-effort stderr write. The fixed
 `level: warning` records severity without invoking logging handlers or their
