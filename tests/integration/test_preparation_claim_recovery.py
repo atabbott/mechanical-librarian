@@ -129,7 +129,7 @@ def test_committed_successor_is_settled_instead_of_completed_predecessor(
 def test_reader_blocked_parser_settlement_retains_claim_and_stops_admission(
     root: SQLiteMetadataReportRepository,
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     path = tmp_path / "application.sqlite3"
     pipeline = _pipeline(root, path, blocked_settlement=True)
@@ -159,7 +159,7 @@ def test_reader_blocked_parser_settlement_retains_claim_and_stops_admission(
         pipeline.resume_claiming()
         assert not pipeline.run_next()
         assert pipeline.owned_claims == (owned,)
-        assert not caplog.records
+        assert capsys.readouterr().err == ""
     finally:
         reader.rollback()
         reader.close()
@@ -1084,7 +1084,7 @@ def test_other_owned_lane_settles_after_recovery_stop(
 def test_unknown_failure_correlates_owned_recovery_claim(
     root: SQLiteMetadataReportRepository,
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
     claim: str,
 ) -> None:
     import json
@@ -1125,13 +1125,11 @@ def test_unknown_failure_correlates_owned_recovery_claim(
         row = root._connection.execute(
             "SELECT work_id,stage,attempt,recovery_attempt,failure_code,state FROM review_preparation_work"
         ).fetchone()
-        records = [
-            r
-            for r in caplog.records
-            if r.name == "mechanical_librarian.application.review_pipeline"
-        ]
-        assert len(records) == 1
-        payload = json.loads(records[0].message)
+        output = capsys.readouterr()
+        assert output.out == "" and len(output.err.splitlines()) == 1
+        assert len(output.err.encode()) <= 4096
+        payload = json.loads(output.err)
+        assert payload["level"] == "warning"
         assert payload["observation"] == "before_fail"
         assert payload["execution_stage"] == "extraction"
         assert payload["owned_stage"] == (
@@ -1149,7 +1147,7 @@ def test_unknown_failure_correlates_owned_recovery_claim(
             frame["function"] == "_execute_claimed_action"
             for frame in payload["frames"]
         )
-        assert "PRIVATE" not in records[0].message
+        assert "PRIVATE" not in output.err and "Traceback" not in output.err
         if claim == "blocked":
             (incident,) = pipeline.recovery_incidents
             assert incident.diagnostic_reference == payload["restart_reference"]
@@ -1182,6 +1180,7 @@ def test_diagnostic_failure_does_not_replace_unknown_settlement(
     root: SQLiteMetadataReportRepository,
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
     boundary: str,
 ) -> None:
     import mechanical_librarian.application.review_pipeline as module
@@ -1191,12 +1190,19 @@ def test_diagnostic_failure_does_not_replace_unknown_settlement(
     def fail(*_: object, **__: object):
         raise RuntimeError("PRIVATE")
 
+    class BrokenStream:
+        def write(self, _text):
+            raise OSError("SINK_PRIVATE_SENTINEL")
+
     pipeline._extract = fail
-    if boundary == "projection":
-        monkeypatch.setattr(module, "preparation_failure_reference", fail)
-    else:
-        monkeypatch.setattr(module._LOGGER, "warning", fail)
-    assert pipeline.run_next()
+    with monkeypatch.context() as sink_patch:
+        if boundary == "projection":
+            sink_patch.setattr(module, "preparation_failure_reference", fail)
+        else:
+            sink_patch.setattr(module.sys, "stderr", BrokenStream())
+        assert pipeline.run_next()
+    output = capsys.readouterr()
+    assert output.out == output.err == ""
     assert root._connection.execute(
         "SELECT stage,state,failure_code,failure_root FROM review_preparation_work"
     ).fetchone() == ("extraction", "failed", "unknown", None)
@@ -1208,7 +1214,7 @@ def test_diagnostic_failure_does_not_replace_unknown_settlement(
 def test_declared_failures_do_not_emit_unknown_diagnostics(
     root: SQLiteMetadataReportRepository,
     tmp_path: Path,
-    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
     kind: str,
 ) -> None:
     from mechanical_librarian.application.catalogue import TargetConnectionError
@@ -1228,7 +1234,7 @@ def test_declared_failures_do_not_emit_unknown_diagnostics(
 
     pipeline._extract = fail
     assert pipeline.run_next()
-    assert not caplog.records
+    assert capsys.readouterr().err == ""
     assert not pipeline.owned_claims and not pipeline.recovery_required
     state, code = root._connection.execute(
         "SELECT state,failure_code FROM review_preparation_work"

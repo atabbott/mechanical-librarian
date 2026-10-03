@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
-import logging
 import re
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -51,7 +51,6 @@ _STAGES = (
 )
 
 _COOPERATIVE_ACTION_DWELL_SECONDS = 0.01
-_LOGGER = logging.getLogger(__name__)
 
 
 _ForegroundResult = TypeVar("_ForegroundResult")
@@ -174,6 +173,7 @@ def _log_unknown_failure(
         payload = json.dumps(
             {
                 "event": "preparation_unknown_failure",
+                "level": "warning",
                 "code": "unknown",
                 "observation": "before_fail",
                 "reference": preparation_failure_reference(
@@ -203,8 +203,8 @@ def _log_unknown_failure(
             sort_keys=True,
             separators=(",", ":"),
         )
-        if len(payload.encode("utf-8")) <= 4096:
-            _LOGGER.warning(payload)
+        if len((payload + "\n").encode("utf-8")) <= 4096:
+            sys.stderr.write(payload + "\n")
     except Exception:
         # Advisory projection and sinks cannot replace settlement or recovery.
         pass

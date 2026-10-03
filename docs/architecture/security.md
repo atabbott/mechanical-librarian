@@ -23,7 +23,9 @@ identities only. Messages, arguments, notes, locals, source text, filenames and
 raw traceback formatting never cross it. Explicit cause precedes unsuppressed
 context; cycles and truncated chains/frames are marked. The projection bounds
 chain entries, total inspected frames, retained application frames and encoded
-output before the standard WARNING sink. Ordinary projection or sink failures are
+output including its newline before one best-effort stderr write. The fixed
+`level: warning` records severity without invoking logging handlers or their
+exception-formatting failure paths. Ordinary projection or sink failures are
 contained; process-control exceptions retain their existing propagation boundary.
 Both prospective correlation references use the currently owned claim; the
 terminal reference includes its persisted recovery count while the restart

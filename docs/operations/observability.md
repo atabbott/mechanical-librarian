@@ -66,8 +66,8 @@ bounded `prep-` reference, stage, primary code and attempt, with optional
 terminal row. Successful fresh startup uses the existing checkpoint recovery.
 Subscriber wake failures do not fail the producer or another subscriber.
 
-Unclassified preparation exceptions emit a bounded JSON WARNING through standard
-service stderr logging (`preparation_unknown_failure`). Match `reference` to the
+Unclassified preparation exceptions emit a bounded structured JSON WARNING through one
+best-effort service stderr write (`preparation_unknown_failure`). Match `reference` to the
 terminal preparation reference in authenticated operations/support evidence when
 settlement commits; if settlement fails, match `restart_reference` to the runtime
 stop instead. `observation: before_fail` records an observed exception, not a
