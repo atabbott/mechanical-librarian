@@ -17,6 +17,22 @@ stage, primary code and attempt, with optional `settlement_code: persistence`.
 `preparation_restart_required` has runtime scope; an uncommitted settlement never
 becomes invented durable failure evidence. No raw exception value is projected.
 
+Unknown preparation diagnostics use one directly testable privacy projection:
+validated ASCII exception module/class and package-owned module/function/line
+identities only. Messages, arguments, notes, locals, source text, filenames and
+raw traceback formatting never cross it. Explicit cause precedes unsuppressed
+context; cycles and truncated chains/frames are marked. Retained frames favor
+innermost locations across the scanned exception chain. The projection bounds
+chain entries, total inspected frames, retained application frames and encoded
+output including its newline before one best-effort stderr write. The fixed
+`level: warning` records severity without invoking logging handlers or their
+exception-formatting failure paths. Ordinary projection or sink failures are
+contained; process-control exceptions retain their existing propagation boundary.
+Both prospective correlation references use the currently owned claim; the
+terminal reference includes its persisted recovery count while the restart
+reference preserves the existing runtime-stop formula. Neither asserts a committed
+settlement. No diagnostic field is persisted or added to status/support (#1136).
+
 Ordinary Linux server-root recovery is explicitly opted in under the exclusive
 bound-parent lock. A supported private DELETE journal must pass streaming envelope
 checks and native rollback plus full current-schema admission on byte-verified

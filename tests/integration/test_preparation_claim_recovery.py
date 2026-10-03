@@ -129,6 +129,7 @@ def test_committed_successor_is_settled_instead_of_completed_predecessor(
 def test_reader_blocked_parser_settlement_retains_claim_and_stops_admission(
     root: SQLiteMetadataReportRepository,
     tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
 ) -> None:
     path = tmp_path / "application.sqlite3"
     pipeline = _pipeline(root, path, blocked_settlement=True)
@@ -158,6 +159,7 @@ def test_reader_blocked_parser_settlement_retains_claim_and_stops_admission(
         pipeline.resume_claiming()
         assert not pipeline.run_next()
         assert pipeline.owned_claims == (owned,)
+        assert capsys.readouterr().err == ""
     finally:
         reader.rollback()
         reader.close()
@@ -1076,3 +1078,301 @@ def test_other_owned_lane_settles_after_recovery_stop(
         pass
     assert providers == ([report.report_id] if other_failure == "target" else [])
     assert not restarted.owned_claims and not restarted.recovery_required
+
+
+@pytest.mark.parametrize("claim", ("ordinary", "exact", "successor", "blocked"))
+def test_unknown_failure_correlates_owned_recovery_claim(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    claim: str,
+) -> None:
+    import json
+
+    from mechanical_librarian.application.review_pipeline import (
+        preparation_failure_reference,
+    )
+
+    first = root.claim_review_pipeline_action(4)
+    assert first is not None and first.recovery_attempt == 0
+    root.fail_review_pipeline_action(first, "transient", True, 5)
+    pipeline = _pipeline(
+        root, tmp_path / "application.sqlite3", blocked_settlement=claim == "blocked"
+    )
+    pipeline._clock = lambda: 20
+    reader = sqlite3.connect(tmp_path / "application.sqlite3")
+
+    def fail(*_: object):
+        if claim == "blocked":
+            reader.execute("BEGIN")
+            reader.execute("SELECT * FROM review_preparation_work").fetchall()
+        raise ValueError("PRIVATE credential /media/file metadata")
+
+    if claim == "successor":
+        pipeline._cooperative_wait = fail
+    else:
+        pipeline._extract = fail
+    try:
+        if claim == "exact":
+            action = root.claim_review_pipeline_work(first.action_id, 20)
+            assert action is not None and action.recovery_attempt == 1
+            pipeline._execute_claimed_action(root, action, claim_next=False)
+        elif claim == "blocked":
+            with pytest.raises(ReviewPipelineError, match="persistence"):
+                pipeline.run_next()
+        else:
+            assert pipeline.run_next()
+        row = root._connection.execute(
+            "SELECT work_id,stage,attempt,recovery_attempt,failure_code,state FROM review_preparation_work"
+        ).fetchone()
+        output = capsys.readouterr()
+        assert output.out == "" and len(output.err.splitlines()) == 1
+        assert len(output.err.encode()) <= 4096
+        payload = json.loads(output.err)
+        assert payload["level"] == "warning"
+        assert payload["observation"] == "before_fail"
+        assert payload["execution_stage"] == "extraction"
+        assert payload["owned_stage"] == (
+            "provider" if claim == "successor" else "extraction"
+        )
+        assert payload["recovery_attempt"] == row[3] == 1
+        assert payload["reference"] == preparation_failure_reference(
+            row[0], row[1], row[2], row[3], "unknown"
+        )
+        assert payload["reference"] != preparation_failure_reference(
+            row[0], row[1], row[2], 0, "unknown"
+        )
+        assert payload["exceptions"] == [{"module": "builtins", "type": "ValueError"}]
+        assert any(
+            frame["function"] == "_execute_claimed_action"
+            for frame in payload["frames"]
+        )
+        assert "PRIVATE" not in output.err and "Traceback" not in output.err
+        if claim == "blocked":
+            (incident,) = pipeline.recovery_incidents
+            assert incident.diagnostic_reference == payload["restart_reference"]
+            assert row[-1] == "running"
+            assert pipeline.owned_claims[0].recovery_attempt == 1
+            assert not pipeline.run_next()
+        else:
+            assert row[-2:] == ("unknown", "failed")
+            assert payload["reference"] in json.dumps(root.operational_snapshot())
+            assert not pipeline.owned_claims and not pipeline.recovery_required
+            assert not pipeline.run_next()
+    finally:
+        reader.rollback()
+        reader.close()
+    root.close()
+    reopened = open_repository(tmp_path / "application.sqlite3", create=False)
+    try:
+        assert reopened._connection.execute("PRAGMA integrity_check").fetchone() == (
+            "ok",
+        )
+        assert reopened._connection.execute(
+            "SELECT state FROM review_preparation_work"
+        ).fetchone() == (row[-1],)
+    finally:
+        reopened.close()
+
+
+@pytest.mark.parametrize("boundary", ("projection", "sink"))
+def test_diagnostic_failure_does_not_replace_unknown_settlement(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    boundary: str,
+) -> None:
+    import mechanical_librarian.application.review_pipeline as module
+
+    pipeline = _pipeline(root, tmp_path / "application.sqlite3")
+
+    def fail(*_: object, **__: object):
+        raise RuntimeError("PRIVATE")
+
+    class BrokenStream:
+        def write(self, _text):
+            raise OSError("SINK_PRIVATE_SENTINEL")
+
+    pipeline._extract = fail
+    with monkeypatch.context() as sink_patch:
+        if boundary == "projection":
+            sink_patch.setattr(module, "preparation_failure_reference", fail)
+        else:
+            sink_patch.setattr(module.sys, "stderr", BrokenStream())
+        assert pipeline.run_next()
+    output = capsys.readouterr()
+    assert output.out == output.err == ""
+    assert root._connection.execute(
+        "SELECT stage,state,failure_code,failure_root FROM review_preparation_work"
+    ).fetchone() == ("extraction", "failed", "unknown", None)
+    assert not pipeline.owned_claims and not pipeline.recovery_required
+    assert not pipeline.run_next()
+
+
+@pytest.mark.parametrize("kind", ("media", "credential", "target"))
+def test_declared_failures_do_not_emit_unknown_diagnostics(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+) -> None:
+    from mechanical_librarian.application.catalogue import TargetConnectionError
+    from mechanical_librarian.application.metadata_report import CredentialError
+
+    failure = (
+        ReviewPipelineError("parser_refused")
+        if kind == "media"
+        else CredentialError("PRIVATE", provider="hardcover-main")
+        if kind == "credential"
+        else TargetConnectionError("unavailable")
+    )
+    pipeline = _pipeline(root, tmp_path / "application.sqlite3")
+
+    def fail(*_: object):
+        raise failure
+
+    pipeline._extract = fail
+    assert pipeline.run_next()
+    assert capsys.readouterr().err == ""
+    assert not pipeline.owned_claims and not pipeline.recovery_required
+    state, code = root._connection.execute(
+        "SELECT state,failure_code FROM review_preparation_work"
+    ).fetchone()
+    if kind == "target":
+        assert state == "queued" and code is None
+        assert pipeline.connection_conditions()[0].code == "unavailable"
+    else:
+        assert state == "failed"
+        assert code == ("parser_refused" if kind == "media" else "authentication")
+
+
+def test_unknown_diagnostics_retain_distinct_inner_publication_sites(
+    root: SQLiteMetadataReportRepository,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+    from collections.abc import Callable
+
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+    from mechanical_librarian.application.review_pipeline import _log_unknown_failure
+
+    action = root.claim_review_pipeline_action(4)
+    assert action is not None
+    # Distinct outer wrappers reproduce a deep preparation call path, while the
+    # facade, aggregate, transaction rollback and SQL failure below are real.
+    namespace: dict[str, object] = {
+        "__name__": "mechanical_librarian.synthetic_publication",
+        "publish": lambda: root.publish(_report(), lambda: True),
+    }
+    wrappers = (
+        "execute",
+        "extract",
+        "generate_report",
+        "run_loaded",
+        "run_service",
+        "publish_report",
+        "publish_bound",
+    )
+    for index, name in enumerate(wrappers):
+        successor = wrappers[index + 1] if index + 1 < len(wrappers) else "publish"
+        exec(f"def {name}():\n    return {successor}()", namespace)
+    observed = []
+    for table in ("metadata_reports", "current_metadata_reports"):
+        root._connection.execute(
+            f"CREATE TEMP TRIGGER diagnostic_abort BEFORE INSERT ON {table} "
+            "BEGIN SELECT RAISE(ABORT,'SQL_PRIVATE_SENTINEL'); END"
+        )
+        try:
+            with pytest.raises(MetadataReportError) as caught:
+                cast(Callable[[], object], namespace["execute"])()
+            cause = caught.value.__cause__
+            assert isinstance(cause, sqlite3.IntegrityError)
+            trace = cause.__traceback__
+            assert trace is not None
+            while trace.tb_next is not None:
+                trace = trace.tb_next
+            expected = {
+                "module": "mechanical_librarian.adapters.persistence.reports",
+                "function": "publish",
+                "line": trace.tb_lineno,
+            }
+            _log_unknown_failure(caught.value, "extraction", action)
+            output = capsys.readouterr()
+            assert output.out == "" and "SQL_PRIVATE_SENTINEL" not in output.err
+            payload = json.loads(output.err)
+            assert expected in payload["frames"]
+            assert payload["frames"][-1] == expected
+            assert len(payload["frames"]) == 8 and payload["frames_truncated"]
+            assert len(output.err.encode()) <= 4096
+            observed.append(payload)
+        finally:
+            root._connection.execute("DROP TRIGGER diagnostic_abort")
+    assert observed[0]["exceptions"] == observed[1]["exceptions"]
+    assert observed[0]["frames"][-1] != observed[1]["frames"][-1]
+    assert root._connection.execute(
+        "SELECT count(*) FROM metadata_reports"
+    ).fetchone() == (0,)
+
+
+def test_output_rollback_releases_writer_before_unknown_diagnostic(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    import mechanical_librarian.application.review_pipeline as module
+
+    path = tmp_path / "application.sqlite3"
+    pipeline = _pipeline(root, path)
+    assert pipeline.run_next(maximum_actions=1)  # extraction
+    assert pipeline.run_next(maximum_actions=1)  # provider
+    before = root._connection.execute(
+        "SELECT updated_at FROM review_preparation_work"
+    ).fetchone()[0]
+
+    def fail(repository, _report_id):
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET updated_at=12345"
+        )
+        raise ValueError("PRIVATE proposal failure")
+
+    pipeline._propose = fail
+    stderr = module.sys.stderr
+    writer_observations: list[tuple[int, str, str]] = []
+
+    class CheckingStream:
+        def write(self, text: str) -> int:
+            writer = sqlite3.connect(path, timeout=0.01)
+            try:
+                writer.execute("BEGIN IMMEDIATE")
+                writer_observations.append(
+                    writer.execute(
+                        "SELECT updated_at,stage,state FROM review_preparation_work"
+                    ).fetchone()
+                )
+                writer.rollback()
+            finally:
+                writer.close()
+            return stderr.write(text)
+
+    with monkeypatch.context() as sink_patch:
+        sink_patch.setattr(module.sys, "stderr", CheckingStream())
+        assert pipeline.run_next()
+    # The sink has really acquired a competing SQLite writer; a swallowed sink
+    # failure cannot satisfy this assertion. Uncommitted output was rolled back.
+    assert writer_observations == [(before, "proposal", "running")]
+    output = capsys.readouterr()
+    assert output.out == "" and len(output.err.splitlines()) == 1
+    assert "PRIVATE" not in output.err and "Traceback" not in output.err
+    diagnostic = json.loads(output.err)
+    assert diagnostic["observation"] == "before_fail"
+    assert diagnostic["owned_stage"] == diagnostic["execution_stage"] == "proposal"
+    assert diagnostic["reference"] in json.dumps(root.operational_snapshot())
+    assert root._connection.execute(
+        "SELECT stage,state,failure_code FROM review_preparation_work"
+    ).fetchone() == ("proposal", "failed", "unknown")
+    assert not pipeline.owned_claims and not pipeline.recovery_required
+    assert not pipeline.run_next()

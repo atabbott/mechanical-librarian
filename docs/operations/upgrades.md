@@ -10,6 +10,13 @@ for every predecessor application database; startup refuses it before mutation.
 No migration, adoption, conversion, import or downgrade is supplied. Historical
 automatic records remain readable evidence, without current effect authority.
 
+#1136 adds value-free preparation failure logging and rotates the three current
+qualification bindings because their semantic source includes preparation.
+**Clean rebuild required** for predecessor derived application stores. Persisted
+schema shapes and historical permission sets are unchanged; historical decisions
+remain decodable evidence and cannot mint current effects. No migration or
+adoption is supplied, and no historical quality measurement is rescored.
+
 #1011 advances automatic cover authority to `cover-automatic-decision-v3` and
 its exact selection-table constraint. **Clean rebuild required** under ADR-0013,
 including empty predecessor stores. Preserve old evidence offline; do not import

@@ -126,6 +126,10 @@ def test_revision_three_documents_decode_without_current_authority(family):
     "filename,source_sha",
     (
         (
+            "before-preparation-diagnostics.json",
+            "a3ef9277b620c254a7e2390a276f71dfd8fa5e17",
+        ),
+        (
             "before-audiobook-title-admission.json",
             "15cca5c071008183ef2013154bef7042433d4772",
         ),

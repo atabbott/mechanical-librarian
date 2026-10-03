@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import re
+import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -91,6 +94,123 @@ def preparation_failure_reference(
         )
     )
     return "prep-" + hashlib.sha256(material.encode("utf-8")).hexdigest()[:16]
+
+
+def _log_unknown_failure(
+    error: Exception, execution_stage: str, owned: PipelineAction
+) -> None:
+    """Project trusted code identities at a directly testable privacy boundary."""
+    try:
+        exceptions: list[dict[str, str]] = []
+        frames: list[dict[str, str | int]] = []
+        seen: set[int] = set()
+        inspected = 0
+        chain_truncated = False
+        frames_truncated = False
+        cycle = False
+        current: BaseException | None = error
+        while current is not None:
+            if id(current) in seen:
+                cycle = True
+                break
+            if len(exceptions) == 4:
+                chain_truncated = True
+                break
+            seen.add(id(current))
+            identity = {
+                "module": type(current).__module__,
+                "type": type(current).__name__,
+            }
+            for key, value in identity.items():
+                limit = 128 if key == "module" else 64
+                pattern = (
+                    r"[A-Za-z_][A-Za-z_0-9]*(?:\.[A-Za-z_][A-Za-z_0-9]*)*"
+                    if key == "module"
+                    else r"[A-Za-z_][A-Za-z_0-9]*"
+                )
+                if (
+                    type(value) is not str
+                    or len(value) > limit
+                    or not re.fullmatch(pattern, value)
+                ):
+                    identity[key] = "unknown"
+            exceptions.append(identity)
+            trace = current.__traceback__
+            while trace is not None:
+                if inspected == 64:
+                    frames_truncated = True
+                    break
+                inspected += 1
+                module = trace.tb_frame.f_globals.get("__name__")
+                if (
+                    type(module) is str
+                    and len(module) <= 128
+                    and re.fullmatch(
+                        r"mechanical_librarian(?:\.[A-Za-z_][A-Za-z_0-9]*)*", module
+                    )
+                ):
+                    function = trace.tb_frame.f_code.co_name
+                    if len(function) > 64 or not re.fullmatch(
+                        r"[A-Za-z_][A-Za-z_0-9]*", function
+                    ):
+                        function = "unknown"
+                    line = trace.tb_lineno
+                    if len(frames) == 8:
+                        frames.pop(0)
+                        frames_truncated = True
+                    frames.append(
+                        {
+                            "module": module,
+                            "function": function,
+                            "line": line if 0 <= line <= 2_147_483_647 else 0,
+                        }
+                    )
+                trace = trace.tb_next
+            current = (
+                current.__cause__
+                if current.__cause__ is not None
+                else None
+                if current.__suppress_context__
+                else current.__context__
+            )
+        payload = json.dumps(
+            {
+                "event": "preparation_unknown_failure",
+                "level": "warning",
+                "code": "unknown",
+                "observation": "before_fail",
+                "reference": preparation_failure_reference(
+                    owned.action_id,
+                    owned.stage,
+                    owned.attempt,
+                    owned.recovery_attempt,
+                    "unknown",
+                ),
+                "restart_reference": preparation_failure_reference(
+                    owned.action_id,
+                    owned.stage,
+                    owned.attempt,
+                    0,
+                    "preparation_restart_required",
+                ),
+                "execution_stage": execution_stage,
+                "owned_stage": owned.stage,
+                "attempt": owned.attempt,
+                "recovery_attempt": owned.recovery_attempt,
+                "exceptions": exceptions,
+                "frames": frames,
+                "chain_truncated": chain_truncated,
+                "frames_truncated": frames_truncated,
+                "cycle": cycle,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        if len((payload + "\n").encode("utf-8")) <= 4096:
+            sys.stderr.write(payload + "\n")
+    except Exception:
+        # Advisory projection and sinks cannot replace settlement or recovery.
+        pass
 
 
 def inspection_failure_code(outcome: EpubInspectionOutcome) -> str:
@@ -230,12 +350,15 @@ class PipelineAction:
     source_fingerprint: str | None = None
     lineage_checkpoint: int | None = None
     policy_generation: int | None = None
+    recovery_attempt: int = 0
 
     def __post_init__(self) -> None:
         if (
             self.stage not in _STAGES
             or type(self.attempt) is not int
             or self.attempt < 1
+            or type(self.recovery_attempt) is not int
+            or not 0 <= self.recovery_attempt <= 3
             or type(self.producer_fingerprint) is not str
             or len(self.producer_fingerprint) != 64
             or any(
@@ -1077,6 +1200,8 @@ class ReviewPreparationPipeline:
             try:
                 if output_transaction and owned == action:
                     repository.rollback_review_pipeline_output()
+                if code == "unknown" and not isinstance(error, TargetConnectionError):
+                    _log_unknown_failure(error, action.stage, owned)
                 if isinstance(error, TargetConnectionError):
                     repository.defer_for_target_connection(
                         owned, error.code, self._clock()

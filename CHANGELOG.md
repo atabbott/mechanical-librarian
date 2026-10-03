@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Unclassified preparation failures emit bounded, value-free service diagnostics
+  correlated with operations references, without changing recovery or retries.
+  Prior derived application stores require a clean rebuild (#1136).
+
 - Qualified audiobook title fills and replacements persist without suspending
   automatic title handling. Existing consent and guarded application remain
   required; prior derived stores require a clean rebuild (#1134).

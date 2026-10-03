@@ -66,6 +66,18 @@ bounded `prep-` reference, stage, primary code and attempt, with optional
 terminal row. Successful fresh startup uses the existing checkpoint recovery.
 Subscriber wake failures do not fail the producer or another subscriber.
 
+Unclassified preparation exceptions emit a bounded structured JSON WARNING through one
+best-effort service stderr write (`preparation_unknown_failure`). Match `reference` to the
+terminal preparation reference in authenticated operations/support evidence when
+settlement commits; if settlement fails, match `restart_reference` to the runtime
+stop instead. `observation: before_fail` records an observed exception, not a
+committed outcome. Execution and owned stages can differ after a committed handoff.
+The record contains only validated code identities and application frame locations,
+never exception text, metadata or paths. Typed failures retain their existing codes.
+Keep service logs under operator-controlled retention: these advisory records are
+not durable audit history and cannot reconstruct a failure from before this change.
+Logging failure does not change settlement, recovery or retry behavior (#1136).
+
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound
 `POST /api/v1/operations/support/export` creates it again and re-runs redaction.
