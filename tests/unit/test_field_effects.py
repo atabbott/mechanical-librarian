@@ -2363,7 +2363,7 @@ def test_every_supported_shape_plans_and_no_ops_do_not_mutate(
 @pytest.mark.parametrize(
     "guard", (None, "backup", "target", "readback", "consent", "authority")
 )
-@pytest.mark.parametrize("destination", ("title", "isbn"))
+@pytest.mark.parametrize("destination", ("title", "isbn", "audiobook_title"))
 def test_isbn_uses_persisted_guarded_effect_authority(
     effects: _EffectEnvironment,
     guard: str | None,
@@ -2372,7 +2372,42 @@ def test_isbn_uses_persisted_guarded_effect_authority(
     from tests.support.audiobook_reports import publish_audiobook_preview
     from tests.support.proposal_evidence import _image_unavailable_isbn_report
 
-    if destination == "isbn":
+    audiobook_title = destination == "audiobook_title"
+    if audiobook_title:
+        from mechanical_librarian.domain.metadata_report import (
+            TargetDestination,
+            TargetField,
+            TargetFieldState,
+        )
+        from tests.support.audiobook_reports import asserted_asin_report
+
+        destination = "title"
+        report = asserted_asin_report(provider_duration="58200.000")
+        report = MetadataReport.create(
+            target=replace(
+                report.target,
+                fields=tuple(
+                    TargetField(
+                        field.destination,
+                        TargetFieldState.VALUE,
+                        "Project Hail Mary (Unabridged)",
+                    )
+                    if field.destination is TargetDestination.TITLE
+                    else field
+                    for field in report.target.fields
+                ),
+            ),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+            audio=report.audio,
+        )
+        case_id, _ = publish_audiobook_preview(
+            effects.repository, report, ("title_layout",)
+        )
+        effects.repository.persist_shadow_outcome(case_id, 4)
+    elif destination == "isbn":
         case_id, _ = publish_audiobook_preview(
             effects.repository,
             _image_unavailable_isbn_report(),
@@ -2472,7 +2507,11 @@ def test_isbn_uses_persisted_guarded_effect_authority(
         (snapshot.connection, snapshot.library, snapshot.work_id, destination)
     }
     assert effects.target._values[next(iter(changed))] == (
-        "9780306406157" if destination == "isbn" else "Example Title"
+        "Project Hail Mary"
+        if audiobook_title
+        else "9780306406157"
+        if destination == "isbn"
+        else "Example Title"
     )
 
 
@@ -5844,6 +5883,14 @@ def test_guarded_audiobook_cover_materiality_boundaries(tmp_path, effects, negat
     "field,category,option,identity,current,expected",
     (
         (
+            "title",
+            "title_layout",
+            "preserve",
+            "audiobook_title_replace",
+            "Project Hail Mary (Unabridged)",
+            "Project Hail Mary",
+        ),
+        (
             "tags",
             "tags",
             "fill_empty",
@@ -5918,7 +5965,12 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             ),
         )
     )
-    report = synthetic_audiobook_product_lookup_report(products)
+    if field == "title":
+        from tests.support.audiobook_reports import asserted_asin_report
+
+        report = asserted_asin_report(provider_duration="58200.000")
+    else:
+        report = synthetic_audiobook_product_lookup_report(products)
     if current is not None:
         report = MetadataReport.create(
             target=replace(
@@ -6082,6 +6134,7 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             )
         )
         kind = {
+            "title": ClaimKind.TITLE,
             "tags": ClaimKind.TAG,
             "narrators": ClaimKind.CONTRIBUTOR,
             "description": ClaimKind.DESCRIPTION,
@@ -6095,6 +6148,12 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             and (field != "narrators" or claim.role == "narrator")
             and (field != "description" or claim.value == expected)
         }
+        if field == "title":
+            expected_refs.update(
+                claim.reference
+                for claim in report.local_claims
+                if claim.kind is ClaimKind.TITLE
+            )
         assert set(selected["citation_ids"]) == expected_refs
         assert expected_refs <= set(projected["provenance"])
         evidence = inspector.evidence(case_id)
@@ -6162,6 +6221,18 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
             candidate_id=selected["candidate_id"],
             source_outcome_id=selected["outcome_id"],
         )
+        if field == "title":
+            from mechanical_librarian.domain.automatic_decision import (
+                audiobook_title_candidate_bundle,
+            )
+
+            arguments["bundle_id"] = audiobook_title_candidate_bundle(
+                next(
+                    member
+                    for member in forged_outcome.outcomes
+                    if member.destination == "title"
+                )
+            )
         forged = AutomaticDecision.create(**arguments)
         forged = AutomaticDecision.from_json(forged.to_json())
         with pytest.raises(FieldEffectError, match="authority_binding"):

@@ -1142,3 +1142,67 @@ def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
         else:
             with pytest.raises(AutomaticDecisionError):
                 AutomaticDecision.from_json(document)
+
+
+@pytest.mark.parametrize(
+    "option",
+    (
+        "preserve:audiobook_title_fill",
+        "preserve:audiobook_title_replace",
+        "title_and_subtitle:audiobook_title_fill",
+        "title_and_subtitle:audiobook_title_replace",
+    ),
+)
+def test_scalar_audiobook_title_witness_is_closed_and_evidence_bound(option):
+    from types import SimpleNamespace
+
+    from mechanical_librarian.domain.automatic_decision import (
+        audiobook_title_candidate_bundle,
+    )
+
+    values = dict(
+        destination="title",
+        policy_category="title_layout",
+        policy_option=option,
+        policy_destination="automatic",
+        disposition="candidate",
+        candidate_id="candidate-one",
+        combination_ids=(),
+        citation_ids=("citation-one",),
+        reason_code="unique_supported_candidate",
+        outcome_id="outcome-one",
+    )
+    bundle = audiobook_title_candidate_bundle(SimpleNamespace(**values))
+    assert bundle == "automatic_bundle_" + _digest(
+        {
+            "kind": "audiobook_title_candidate_v1",
+            "source_outcome_id": "outcome-one",
+            "candidate_id": "candidate-one",
+            "citation_ids": ["citation-one"],
+        }
+    )
+    for change in (
+        {"destination": "subtitle"},
+        {"policy_category": "subtitle"},
+        {"policy_option": "preserve"},
+        {"policy_option": "preserve:audiobook_title_preserve"},
+        {"policy_destination": "ask"},
+        {"disposition": "keep_current"},
+        {"candidate_id": None},
+        {"combination_ids": ("combination",)},
+        {"citation_ids": ()},
+        {"reason_code": "target_only_preservation"},
+    ):
+        assert (
+            audiobook_title_candidate_bundle(SimpleNamespace(**(values | change)))
+            is None
+        )
+    for change in (
+        {"candidate_id": "candidate-two"},
+        {"outcome_id": "outcome-two"},
+        {"citation_ids": ("citation-two",)},
+    ):
+        assert (
+            audiobook_title_candidate_bundle(SimpleNamespace(**(values | change)))
+            != bundle
+        )

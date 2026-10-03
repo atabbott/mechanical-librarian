@@ -1738,3 +1738,15 @@ The public allowlist separates strict parse success from charged failures.
 Reviewer-access-v3 and exact reviewer-table DDL require a clean rebuild, including
 empty predecessor stores. Cover prices remain saved-model-bound; description
 capability, currentness, key confinement and advisory-only authority are unchanged.
+
+
+## Scalar audiobook title admission (#1134)
+
+The scalar title witness binds only the four already-qualified audiobook
+fill/replacement options to their exact outcome, candidate and citations. It
+grants no ebook or paired-title exception. Admission and guarded reconstruction
+share that witness; media, current report evidence, owner-final, policy, consent,
+backup, optimistic concurrency and read-back checks remain mandatory. Compact
+qualification bindings rotate without new permissions; displaced bindings are
+historical only. Prior derived stores require a clean rebuild, with no schema
+shape change, adoption, migration or historical rewrite.

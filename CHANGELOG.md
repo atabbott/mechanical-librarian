@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Qualified audiobook title fills and replacements persist without suspending
+  automatic title handling. Existing consent and guarded application remain
+  required; prior derived stores require a clean rebuild (#1134).
+
 - Conflicting ISBN-linked titles stay available for owner review even when most
   sources support the current title, without disabling automatic title handling.
   Existing installs require a clean rebuild (#1132).

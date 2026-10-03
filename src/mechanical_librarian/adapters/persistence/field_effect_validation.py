@@ -23,6 +23,7 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 )
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
+    audiobook_title_candidate_bundle,
     audiobook_title_subtitle_bundle,
     title_preservation_bundle,
 )
@@ -207,7 +208,10 @@ def _validate_automatic_decision_authority(
                 ).encode("utf-8")
             ).hexdigest()
             if source.combination_ids
-            else title_preservation_bundle(source)
+            else (
+                title_preservation_bundle(source)
+                or audiobook_title_candidate_bundle(source)
+            )
         )
         if expected_bundle is None or decision.bundle_id != expected_bundle:
             raise FieldEffectError("authority_binding")
@@ -452,6 +456,12 @@ def _automatic_decision_value(
         ):
             selected = union.to_data()
     if selected is None:
+        raise FieldEffectError("authority_binding")
+    if audiobook_title_candidate_bundle(
+        source
+    ) is not None and source.citation_ids != tuple(
+        sorted(cast("list[str]", selected["evidence_references"]))
+    ):
         raise FieldEffectError("authority_binding")
     if decision.destination == "description":
         result = next(

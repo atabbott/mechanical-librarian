@@ -49,6 +49,33 @@ def title_preservation_bundle(source: ShadowFieldOutcome) -> str | None:
     })
 
 
+def audiobook_title_candidate_bundle(source: ShadowFieldOutcome) -> str | None:
+    """Bind one qualified scalar audiobook title to its exact elected evidence."""
+    if (
+        source.destination != "title"
+        or source.policy_category != "title_layout"
+        or source.policy_option not in {
+            "preserve:audiobook_title_fill",
+            "preserve:audiobook_title_replace",
+            "title_and_subtitle:audiobook_title_fill",
+            "title_and_subtitle:audiobook_title_replace",
+        }
+        or source.policy_destination != "automatic"
+        or source.disposition != "candidate"
+        or source.candidate_id is None
+        or source.combination_ids
+        or not source.citation_ids
+        or source.reason_code != "unique_supported_candidate"
+    ):
+        return None
+    return "automatic_bundle_" + _digest({
+        "kind": "audiobook_title_candidate_v1",
+        "source_outcome_id": source.outcome_id,
+        "candidate_id": source.candidate_id,
+        "citation_ids": list(source.citation_ids),
+    })
+
+
 def audiobook_title_subtitle_bundle(members: tuple[ShadowFieldOutcome, ...]) -> str | None:
     """Bind exactly two independently owned split outcomes to one joint envelope."""
     ordered = tuple(sorted(members, key=lambda member: member.destination))
@@ -82,7 +109,7 @@ class AutomaticDecisionError(ValueError):
 
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
-F19A_QUALIFICATION_MANIFEST_SHA256 = "d7013f0cc88f2fcd476de73c0f9185c265f30ba8360f2daee08266200b57eff3"
+F19A_QUALIFICATION_MANIFEST_SHA256 = "bd0c20ddfdb7909915ce3ad307b8853381eb8ac254b7cc821864467ef24aa180"
 _PRE_F35_F19A_QUALIFIED_POLICY_OPTIONS = frozenset({
     "title_layout:preserve", "title_layout:title_and_subtitle",
     "date_precision:year", "date_precision:full_date",
@@ -408,6 +435,7 @@ _HISTORICAL_PERMISSIONS_9 = frozenset({
 })
 
 _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
+    ("d7013f0cc88f2fcd476de73c0f9185c265f30ba8360f2daee08266200b57eff3", _HISTORICAL_PERMISSIONS_2),
     ("f7eabaf07b3893babd2bbf4dd45d299b58a37b1d2f427ad663e31fca548474b7", _HISTORICAL_PERMISSIONS_2),
     ("8af85b77852fa7dcb7dcc84458809aec20fc7b8b5e3dfcf95577535eeedf2038", _HISTORICAL_PERMISSIONS_2),
     ("6151378c5ec4c044731eef559736ca9a09144c271644f7bfd8970c7d2fa98337", _HISTORICAL_PERMISSIONS_2),
@@ -478,6 +506,7 @@ _PRIOR_F19A_QUALIFICATION_MANIFESTS = (
 )
 
 _PRIOR_F20_QUALIFICATION_MANIFESTS = (
+    ("0085c6617dc55aaffa65f90931c9055cfd19a2663fcbb3555a11d343b4eeafef", _HISTORICAL_PERMISSIONS_7),
     ("622be5be6e6ac7b8a8506bb0045ef1c0a2ee8aec4958f2550e72e92078a8c805", _HISTORICAL_PERMISSIONS_7),
     ("b2d2ac644ab9bf7f811583c3c63aa5a0ca483ef6f566be2216c1d3dd23f6f656", _HISTORICAL_PERMISSIONS_7),
     ("fb1c3754ef9167a37fe49e27421688632e8ed8871e539289be5385ce483c8520", _HISTORICAL_PERMISSIONS_7),
@@ -571,6 +600,7 @@ _PRIOR_F20_QUALIFICATION_MANIFESTS = (
 )
 
 _PRIOR_F46_QUALIFICATION_MANIFESTS = (
+    ("30765f5822c80b55b4c354578671cf16335f64a3b7d6548a2f7fa84294cf2f33", _HISTORICAL_PERMISSIONS_0),
     ("0fb2395d521fa24ff95ee716c64ff8ee6aa40e95085ef938de50d716e221caac", _HISTORICAL_PERMISSIONS_0),
     ("7674acb44b4f53dc0c91732d67e1d680e51819ac2bcdac7400821a74ef207173", _HISTORICAL_PERMISSIONS_0),
     ("96a1a33494ebf7af4c4cf2146b124fc75f6f489567f8b2281adce25787f5bc59", _HISTORICAL_PERMISSIONS_0),
