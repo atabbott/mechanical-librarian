@@ -1313,3 +1313,66 @@ def test_unknown_diagnostics_retain_distinct_inner_publication_sites(
     assert root._connection.execute(
         "SELECT count(*) FROM metadata_reports"
     ).fetchone() == (0,)
+
+
+def test_output_rollback_releases_writer_before_unknown_diagnostic(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import json
+
+    import mechanical_librarian.application.review_pipeline as module
+
+    path = tmp_path / "application.sqlite3"
+    pipeline = _pipeline(root, path)
+    assert pipeline.run_next(maximum_actions=1)  # extraction
+    assert pipeline.run_next(maximum_actions=1)  # provider
+    before = root._connection.execute(
+        "SELECT updated_at FROM review_preparation_work"
+    ).fetchone()[0]
+
+    def fail(repository, _report_id):
+        repository._connection.execute(
+            "UPDATE review_preparation_work SET updated_at=12345"
+        )
+        raise ValueError("PRIVATE proposal failure")
+
+    pipeline._propose = fail
+    stderr = module.sys.stderr
+    writer_observations: list[tuple[int, str, str]] = []
+
+    class CheckingStream:
+        def write(self, text: str) -> int:
+            writer = sqlite3.connect(path, timeout=0.01)
+            try:
+                writer.execute("BEGIN IMMEDIATE")
+                writer_observations.append(
+                    writer.execute(
+                        "SELECT updated_at,stage,state FROM review_preparation_work"
+                    ).fetchone()
+                )
+                writer.rollback()
+            finally:
+                writer.close()
+            return stderr.write(text)
+
+    with monkeypatch.context() as sink_patch:
+        sink_patch.setattr(module.sys, "stderr", CheckingStream())
+        assert pipeline.run_next()
+    # The sink has really acquired a competing SQLite writer; a swallowed sink
+    # failure cannot satisfy this assertion. Uncommitted output was rolled back.
+    assert writer_observations == [(before, "proposal", "running")]
+    output = capsys.readouterr()
+    assert output.out == "" and len(output.err.splitlines()) == 1
+    assert "PRIVATE" not in output.err and "Traceback" not in output.err
+    diagnostic = json.loads(output.err)
+    assert diagnostic["observation"] == "before_fail"
+    assert diagnostic["owned_stage"] == diagnostic["execution_stage"] == "proposal"
+    assert diagnostic["reference"] in json.dumps(root.operational_snapshot())
+    assert root._connection.execute(
+        "SELECT stage,state,failure_code FROM review_preparation_work"
+    ).fetchone() == ("proposal", "failed", "unknown")
+    assert not pipeline.owned_claims and not pipeline.recovery_required
+    assert not pipeline.run_next()

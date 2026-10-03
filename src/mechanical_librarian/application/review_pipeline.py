@@ -1197,11 +1197,11 @@ class ReviewPreparationPipeline:
                 if isinstance(error, CredentialError)
                 else "unknown"
             )
-            if code == "unknown" and not isinstance(error, TargetConnectionError):
-                _log_unknown_failure(error, action.stage, owned)
             try:
                 if output_transaction and owned == action:
                     repository.rollback_review_pipeline_output()
+                if code == "unknown" and not isinstance(error, TargetConnectionError):
+                    _log_unknown_failure(error, action.stage, owned)
                 if isinstance(error, TargetConnectionError):
                     repository.defer_for_target_connection(
                         owned, error.code, self._clock()
