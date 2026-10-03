@@ -6999,3 +6999,106 @@ def test_ebook_fill_uses_guarded_persisted_effect(effects, guard):
         assert (
             effects.target.read(result.plan).value == "A voyage reveals a hidden city."
         )
+
+
+@pytest.mark.parametrize("option", ("preserve", "title_and_subtitle"))
+def test_scalar_incumbent_title_is_one_durable_no_change(effects, option):
+    from mechanical_librarian.application.review_web import (
+        BrowseReviewLibrary,
+        InspectCurrentReviewCase,
+    )
+    from tests.support.proposal_evidence import (
+        _report,
+        consensus_local_title,
+        consensus_provider_title,
+    )
+
+    report = _report(
+        title="Example Work",
+        local_claims=(consensus_local_title("Example Work"),),
+        providers=(
+            consensus_provider_title("hardcover", "Example Work"),
+            consensus_provider_title("open_library", "Other Work"),
+        ),
+    )
+    decisions = _automatic_decisions(
+        effects, report, "title_layout", option, qualified=True
+    )
+    assert len(decisions) == 1
+    decision = decisions[0]
+    assert decision.destination == "title" and decision.outcome == "keep_current"
+    case_id = decision.review_case_id
+    document = effects.repository.persist_shadow_outcome(case_id, 4)
+    selected = next(
+        item
+        for item in json.loads(document)["outcomes"]
+        if item["destination"] == "title"
+    )
+    assert selected["disposition"] == "keep_current"
+    assert selected["reason_code"] == "unique_supported_preservation"
+    assert effects.repository.automatic_safety_state().permits("title_layout")
+    authority = PersistedFieldEffectAuthority(effects.repository)
+    lane = ContinuousGuardedApplication(
+        effects.repository,
+        {("primary", "ebooks"): effects.service},
+        {("primary", "ebooks"): effects.capabilities},
+        authority,
+        (("primary", "ebooks"),),
+        effects.clock,
+        lambda *_: None,
+    )
+    with (
+        patch.object(
+            authority,
+            "resolve",
+            side_effect=AssertionError("no-change reached effect guards"),
+        ),
+        patch.object(
+            effects.target, "read", side_effect=AssertionError("target read")
+        ) as read,
+        patch.object(
+            effects.target, "apply", side_effect=AssertionError("target write")
+        ) as apply,
+    ):
+        assert lane.schedule() == lane.schedule() == 0
+        read.assert_not_called()
+        apply.assert_not_called()
+    assert effects.target._values == {} and effects.target._effects == {}
+    assert effects.repository.pending_field_effect_decision_documents(100) == ()
+    assert effects.repository._connection.execute(
+        "SELECT COUNT(*) FROM field_effects"
+    ).fetchone() == (0,)
+    events = effects.repository._connection.execute(
+        "SELECT decision_id,destination,event_id FROM field_effect_no_changes"
+    ).fetchall()
+    assert len(events) == 1 and events[0][:2] == (decision.decision_id, "title")
+    effects.repository.close()
+    effects.repository = open_repository(effects.database_path, create=False)
+    assert effects.repository.persist_shadow_outcome(case_id, 4) == document
+    assert effects.repository.get_review_case_decisions(case_id) == (
+        decision.to_json(),
+    )
+    assert (
+        effects.repository._connection.execute(
+            "SELECT decision_id,destination,event_id FROM field_effect_no_changes"
+        ).fetchall()
+        == events
+    )
+    assert effects.repository.automatic_safety_state().permits("title_layout")
+    detail = InspectCurrentReviewCase(effects.repository).run(case_id)
+    title = next(item for item in detail["fields"] if item["destination"] == "title")
+    assert title["current"]["value"] == "Example Work"
+    assert title["automatic_decision"]["outcome"] == "keep_current"
+    assert not title["needs_attention"]
+    library = BrowseReviewLibrary(effects.repository).library(
+        lens="all", search=None, limit=25, cursor=None
+    )
+    assert any(item["review_case_id"] == case_id for item in library["items"])
+    activity = effects.repository.field_effect_activity_page(
+        search=None, event_type="all", occurred_after=0, page=1, page_size=25
+    )
+    unchanged = [
+        event for event in activity["events"] if event["state"] == "no_change_required"
+    ]
+    assert len(unchanged) == 1
+    assert unchanged[0]["destination"] == "title"

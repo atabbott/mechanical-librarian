@@ -126,6 +126,10 @@ def test_revision_three_documents_decode_without_current_authority(family):
     "filename,source_sha",
     (
         (
+            "before-incumbent-title-preservation.json",
+            "148ad97f1d40524014f5aa179ca1590466adabfb",
+        ),
+        (
             "before-preparation-diagnostics.json",
             "a3ef9277b620c254a7e2390a276f71dfd8fa5e17",
         ),

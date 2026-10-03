@@ -845,7 +845,7 @@ def test_the_decoration_tidy_rule_states_its_own_closed_thresholds() -> None:
 
 
 def test_v14_policy_identity_rejects_public_base_v5_replay() -> None:
-    assert "deterministic-shadow-decision-policy-v19" == DECISION_POLICY_VERSION
+    assert "deterministic-shadow-decision-policy-v20" == DECISION_POLICY_VERSION
     packet = _packet()
     document = json.loads(decide_shadow_packet(packet).to_json())
     document["policy_version"] = "deterministic-shadow-decision-policy-v5"
@@ -920,3 +920,54 @@ def test_authors_without_local_need_two_independent_provider_correlations(
     ).decisions[0]
     assert decision.recommendation == "manual"
     assert decision.reason_code == "insufficient_support"
+
+
+@pytest.mark.parametrize(
+    "variant",
+    (
+        "changed",
+        "missing_keep",
+        "citations",
+        "candidate_combination",
+        "keep_combination",
+        "nonunique",
+    ),
+)
+def test_scalar_incumbent_selection_requires_exact_compiled_keep(variant):
+    data = json.loads(
+        _packet(candidate_count=2 if variant == "nonunique" else 1).to_json()
+    )
+    proposal = data["proposals"][0]
+    proposal["current"] = {"state": "value", "value": "Synthetic title"}
+    proposal["candidates"][0]["assessment"] = "preserves_target"
+    if variant == "changed":
+        proposal["current"]["value"] = "Other title"
+    packet = _rebuild(data)
+    catalogue = compile_shadow_review_actions(packet)
+    assert any(
+        action.recommendation == "recommend_keep_current"
+        for action in catalogue.actions
+    )
+    actions = []
+    for action in catalogue.actions:
+        if action.recommendation == "recommend_keep_current":
+            if variant == "missing_keep":
+                continue
+            if variant == "citations":
+                action = replace(action, citation_ids=())
+            if variant == "keep_combination":
+                action = replace(action, combination_ids=("synthetic-combination",))
+        if (
+            action.recommendation == "recommend_candidate"
+            and variant == "candidate_combination"
+        ):
+            action = replace(action, combination_ids=("synthetic-combination",))
+        actions.append(action)
+    catalogue = replace(catalogue, actions=tuple(actions))
+    eligible = shadow_decision_module._eligible_actions(
+        packet, catalogue, packet.proposals[0]
+    )
+    assert len(eligible) == (
+        2 if variant == "nonunique" else 0 if variant == "candidate_combination" else 1
+    )
+    assert all(action.recommendation == "recommend_candidate" for action in eligible)
