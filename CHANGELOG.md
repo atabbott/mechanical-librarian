@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Library and Attention recover from one provider-fetching transition during a
+  read. Repeated changes or changed authority show the existing unavailable
+  state with manual retry. Exact qualification bindings change; prior derived
+  application stores require a clean rebuild (#1140).
+
 - Exact supported incumbent titles remain unchanged without suspending title
   automation or requesting owner attention (#1138). Clean rebuild required.
 

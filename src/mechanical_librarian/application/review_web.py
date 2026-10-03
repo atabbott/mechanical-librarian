@@ -17,7 +17,10 @@ from urllib.parse import urlencode
 from mechanical_librarian.application.cover_consideration import (
     CoverConsiderationService,
 )
-from mechanical_librarian.application.metadata_report import recording_identity_basis
+from mechanical_librarian.application.metadata_report import (
+    MetadataReportError,
+    recording_identity_basis,
+)
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
@@ -103,6 +106,10 @@ _AUTOMATIC_REFUSAL_TEXT = {
 }
 
 CoverReadObservation = tuple[tuple[str, str], frozenset[tuple[str, str, str, str]]]
+
+
+class BrowseFetchingChanged(MetadataReportError):
+    """A complete browse observed fetching drift with unchanged authority."""
 
 
 class BrowseObservationOwner(Protocol):

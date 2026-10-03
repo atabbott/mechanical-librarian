@@ -29,6 +29,7 @@ from mechanical_librarian.application.metadata_policy import (
     PolicyPreview,
     PolicyTransition,
 )
+from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.operation_admission import (
     AdmissionClosedError,
     OperationAdmission,
@@ -46,6 +47,7 @@ from mechanical_librarian.application.review_pipeline import (
     is_first_boot_scan_id,
 )
 from mechanical_librarian.application.review_web import (
+    BrowseFetchingChanged,
     BrowseObservationOwner,
     BrowseReviewLibrary,
     CurrentReviewCaseStore,
@@ -56,6 +58,7 @@ from mechanical_librarian.application.review_web import (
     RecordHumanDecision,
     ReviewLibraryStore,
     ReviewSessionStore,
+    ReviewWebError,
     SessionTokens,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
@@ -858,25 +861,41 @@ class ReviewApplication:
                 raise ReviewApplicationError("unavailable")
             self._active_browses += 1
         try:
-            if check_active is not None:
-                check_active()
             owner = self._browse_observation
-            observation = None if owner is None else owner.capture_browse_observation()
-            try:
-                with self._admission.enter(check_active=check_active), self._gate:
-                    if check_active is not None:
-                        check_active()
-                    with (
-                        nullcontext()
-                        if owner is None
-                        else owner.install_browse_observation(observation)
-                    ):
-                        result = call()
-            except AdmissionClosedError:
-                raise ReviewApplicationError("unavailable") from None
-            if owner is not None:
-                owner.recheck_browse_observation(observation)
-            return result
+            authority = None
+            for attempt in range(2):
+                if check_active is not None:
+                    check_active()
+                observation = (
+                    None if owner is None else owner.capture_browse_observation()
+                )
+                if attempt == 0:
+                    authority = None if observation is None else observation[0]
+                elif observation is None or observation[0] != authority:
+                    raise ReviewWebError("unavailable")
+                try:
+                    with self._admission.enter(check_active=check_active), self._gate:
+                        if check_active is not None:
+                            check_active()
+                        with (
+                            nullcontext()
+                            if owner is None
+                            else owner.install_browse_observation(observation)
+                        ):
+                            result = call()
+                except AdmissionClosedError:
+                    raise ReviewApplicationError("unavailable") from None
+                if owner is not None:
+                    try:
+                        owner.recheck_browse_observation(observation)
+                    except BrowseFetchingChanged:
+                        if attempt == 0:
+                            continue
+                        raise
+                return result
+            raise ReviewWebError("unavailable")
+        except MetadataReportError:
+            raise ReviewWebError("unavailable") from None
         finally:
             with self._browse_lifetime:
                 self._active_browses -= 1

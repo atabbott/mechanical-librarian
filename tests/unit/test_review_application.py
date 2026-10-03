@@ -966,3 +966,14 @@ def test_library_display_rename_preserves_case_and_target_identity(repository):
     assert identity["target"].pop("library_display_name") == "Reading Room"
     assert renamed["target"].pop("library_display_name") == "Renamed Room"
     assert identity == renamed
+
+
+def test_browse_does_not_mask_unrelated_programming_fault(
+    application: ReviewApplication,
+) -> None:
+    def broken_projection():
+        raise ValueError("programming fault")
+
+    with pytest.raises(ValueError, match="^programming fault$"):
+        application._browse_serialized(broken_projection)
+    assert application._active_browses == 0

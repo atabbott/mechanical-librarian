@@ -114,6 +114,7 @@ from mechanical_librarian.application.review_pipeline import (
     is_first_boot_scan_id,
 )
 from mechanical_librarian.application.review_web import (
+    BrowseFetchingChanged,
     CoverReadObservation,
     CurrentReviewCaseSnapshot,
     LibraryLabels,
@@ -611,7 +612,14 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         self, observation: CoverReadObservation | None
     ) -> None:
         """Reject external drift after releasing the local operation and owner."""
-        if self.capture_browse_observation() != observation:
+        current = self.capture_browse_observation()
+        if current != observation:
+            if (
+                observation is not None
+                and current is not None
+                and current[0] == observation[0]
+            ):
+                raise BrowseFetchingChanged("review snapshot is unavailable")
             raise MetadataReportError("review snapshot is unavailable")
 
     @contextmanager
