@@ -9600,3 +9600,82 @@ def test_supported_current_title_conflict_stays_manual_without_suspension(
             assert reopened._connection.execute(
                 "SELECT count(*) FROM field_effects"
             ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("option", ("preserve", "title_and_subtitle"))
+@pytest.mark.parametrize(
+    "current,operation",
+    (
+        (None, "fill"),
+        ("Project Hail Mary (Unabridged)", "replace"),
+        ("Project Hail Mary", "preserve"),
+    ),
+)
+def test_scalar_audiobook_title_persists_without_suspension_and_reopens(
+    tmp_path, option, current, operation
+):
+    from tests.support.audiobook_reports import (
+        asserted_asin_report,
+        publish_audiobook_preview,
+    )
+
+    report = asserted_asin_report(provider_duration="58200.000")
+    report = MetadataReport.create(
+        target=replace(
+            report.target,
+            fields=tuple(
+                TargetField(
+                    field.destination,
+                    TargetFieldState.MISSING
+                    if current is None
+                    else TargetFieldState.VALUE,
+                    current,
+                )
+                if field.destination is TargetDestination.TITLE
+                else field
+                for field in report.target.fields
+            ),
+        ),
+        file=report.file,
+        local_claims=report.local_claims,
+        local_reasons=report.local_reasons,
+        providers=report.providers,
+        audio=report.audio,
+    )
+    path = tmp_path / "report.sqlite"
+    from contextlib import closing
+
+    with closing(open_repository(path)) as repository:
+        case_id, _ = publish_audiobook_preview(
+            repository,
+            report,
+            ("title_layout",),
+            selected_options={"title_layout": option},
+        )
+        document = repository.persist_shadow_outcome(case_id, 4)
+        source = next(
+            field
+            for field in ShadowOutcomeSet.from_json(document).outcomes
+            if field.destination == "title"
+        )
+        assert source.citation_ids and not source.combination_ids
+        assert source.policy_option == f"{option}:audiobook_title_{operation}"
+        documents = repository.get_review_case_decisions(case_id)
+        assert len(documents) == 1
+        decision = AutomaticDecision.from_json(documents[0])
+        assert decision.destination == "title"
+        assert decision.outcome == (
+            "keep_current" if operation == "preserve" else "candidate"
+        )
+        assert repository.automatic_safety_state().permits("title_layout")
+        assert repository.automatic_safety_state().permits("language_rendering")
+        assert repository.persist_shadow_outcome(case_id, 5) == document
+        assert repository.get_review_case_decisions(case_id) == documents
+    with closing(open_repository(path)) as repository:
+        assert repository.persist_shadow_outcome(case_id, 6) == document
+        assert repository.get_review_case_decisions(case_id) == documents
+        assert repository.automatic_safety_state().permits("title_layout")
+        if operation != "preserve":
+            assert repository.field_effect_authority_source(decision)[
+                "decision_value"
+            ] == {"kind": "text", "value": "Project Hail Mary"}

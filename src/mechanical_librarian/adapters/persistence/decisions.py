@@ -44,6 +44,7 @@ from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
     AutomaticSafetyState,
+    audiobook_title_candidate_bundle,
     audiobook_title_subtitle_bundle,
     automatic_safety_category,
     qualification_manifest_sha256,
@@ -185,7 +186,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 and bool(evidence_ids[0])
             )
             witness = (
-                title_preservation_bundle(members[0])
+                (
+                    title_preservation_bundle(members[0])
+                    or audiobook_title_candidate_bundle(members[0])
+                )
                 if category == "title_layout" and len(members) == 1 and all_automatic
                 else None
             )

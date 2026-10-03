@@ -126,6 +126,10 @@ def test_revision_three_documents_decode_without_current_authority(family):
     "filename,source_sha",
     (
         (
+            "before-audiobook-title-admission.json",
+            "15cca5c071008183ef2013154bef7042433d4772",
+        ),
+        (
             "before-cover-cli-confirmation.json",
             "7d9d6f7c1719b101d1cf9dfe0172b1e0a55589df",
         ),
