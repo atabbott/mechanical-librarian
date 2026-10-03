@@ -11768,3 +11768,150 @@ def test_title_recovery_preserves_unrelated_enrollment_and_completion_high_water
     assert running is not None and len(running.active_books) == 1
     assert running.passage == before.passage
     reopened.close()
+
+
+def test_unknown_failure_projection_is_bounded_value_free_and_code_distinct(caplog):
+    from mechanical_librarian.application.review_pipeline import _log_unknown_failure
+
+    action = PipelineAction(
+        "PRIVATE", "PRIVATE", "discovery", 1, "PRIVATE", "PRIVATE", "PRIVATE", _PRODUCER
+    )
+    assert action.recovery_attempt == 0
+    for invalid in (True, -1, 4, "0"):
+        with pytest.raises(ReviewPipelineError, match="state"):
+            replace(action, recovery_attempt=invalid)
+    for kind in (ValueError, RuntimeError):
+        namespace = {"__name__": "mechanical_librarian.synthetic", "kind": kind}
+        exec(
+            compile(
+                "def fail():\n    private_local = 'PRIVATE'\n    raise kind('PRIVATE')\n",
+                "/PRIVATE/path.py",
+                "exec",
+            ),
+            namespace,
+        )
+        try:
+            cast("Callable[[], None]", namespace["fail"])()
+        except Exception as error:
+            error.add_note("PRIVATE")
+            _log_unknown_failure(error, "discovery", action)
+    values = [json.loads(r.message) for r in caplog.records]
+    assert [v["exceptions"][0]["type"] for v in values] == [
+        "ValueError",
+        "RuntimeError",
+    ]
+    assert all(
+        v["frames"]
+        == [{"module": "mechanical_librarian.synthetic", "function": "fail", "line": 3}]
+        for v in values
+    )
+    assert all(
+        "PRIVATE" not in r.message and r.exc_info is None and r.stack_info is None
+        for r in caplog.records
+    )
+    caplog.clear()
+    oversized = type("x" * 65, (Exception,), {"__module__": "x" * 129})
+    errors = [oversized("PRIVATE") for _ in range(6)]
+    for left, right in zip(errors[:-1], errors[1:], strict=True):
+        left.__cause__ = right
+    _log_unknown_failure(errors[0], "discovery", action)
+    data = json.loads(caplog.records[-1].message)
+    assert data["chain_truncated"] and len(data["exceptions"]) == 4
+    assert all(
+        v == {"module": "unknown", "type": "unknown"} for v in data["exceptions"]
+    )
+    errors[0].__cause__ = errors[0]
+    _log_unknown_failure(errors[0], "discovery", action)
+    assert json.loads(caplog.records[-1].message)["cycle"]
+    errors[0].__cause__ = None
+    errors[0].__context__ = ValueError("PRIVATE")
+    errors[0].__suppress_context__ = True
+    _log_unknown_failure(errors[0], "discovery", action)
+    assert len(json.loads(caplog.records[-1].message)["exceptions"]) == 1
+    errors[0].__suppress_context__ = False
+    _log_unknown_failure(errors[0], "discovery", action)
+    assert len(json.loads(caplog.records[-1].message)["exceptions"]) == 2
+    assert all(len(r.message.encode()) <= 4096 for r in caplog.records)
+
+
+def test_unknown_failure_trace_budget_and_sink_isolation(caplog, monkeypatch):
+    import mechanical_librarian.application.review_pipeline as module
+
+    action = PipelineAction(
+        "work", "scan", "discovery", 1, "primary", "fiction", "lib", _PRODUCER
+    )
+    for module_name, expected in (
+        ("mechanical_librarian.synthetic", 8),
+        ("external", 0),
+    ):
+        namespace = {"__name__": module_name}
+        exec(
+            "def recurse(n):\n    if n: return recurse(n-1)\n    raise ValueError('PRIVATE')",
+            namespace,
+        )
+        try:
+            cast("Callable[[int], None]", namespace["recurse"])(80)
+        except ValueError as error:
+            module._log_unknown_failure(error, "discovery", action)
+        payload = json.loads(caplog.records[-1].message)
+        assert len(payload["frames"]) == expected
+        assert payload["frames_truncated"]
+    with patch.object(module._LOGGER, "warning", side_effect=ValueError("PRIVATE")):
+        module._log_unknown_failure(ValueError("PRIVATE"), "discovery", action)
+    with patch.object(module.json, "dumps", side_effect=ValueError("PRIVATE")):
+        module._log_unknown_failure(ValueError("PRIVATE"), "discovery", action)
+    interruption = KeyboardInterrupt()
+    with patch.object(module._LOGGER, "warning", side_effect=interruption):
+        with pytest.raises(KeyboardInterrupt) as caught:
+            module._log_unknown_failure(ValueError(), "discovery", action)
+        assert caught.value is interruption
+
+
+def test_unknown_failure_combined_limits_and_final_encoded_boundary(caplog):
+    from mechanical_librarian.application import review_pipeline as module
+
+    action = PipelineAction(
+        "work", "scan", "discovery", 1, "primary", "fiction", "lib", _PRODUCER
+    )
+    identity = "mechanical_librarian." + "m" * (128 - len("mechanical_librarian."))
+    kind = type("E" * 64, (Exception,), {"__module__": identity})
+    namespace = {"__name__": identity, "kind": kind}
+    function = "f" * 64
+    exec(
+        f"def {function}(n):\n    if n: return {function}(n-1)\n    raise kind('PRIVATE')",
+        namespace,
+    )
+    errors = []
+    for _ in range(4):
+        try:
+            cast("Callable[[int], None]", namespace[function])(10)
+        except Exception as error:
+            errors.append(error)
+    for left, right in zip(errors[:-1], errors[1:], strict=True):
+        left.__cause__ = right
+    errors[0].__context__ = RuntimeError("PRIVATE")
+    module._log_unknown_failure(errors[0], "discovery", action)
+    data = json.loads(caplog.records[-1].message)
+    assert len(data["exceptions"]) == 4 and len(data["frames"]) == 8
+    assert all(e["type"] == "E" * 64 for e in data["exceptions"])
+    assert data["frames_truncated"] and not data["chain_truncated"]
+    assert len(caplog.records[-1].message.encode()) <= 4096
+    # The package frame beyond 64 external frames must never be traversed.
+    external = {"__name__": "external", "target": namespace[function]}
+    exec(
+        "def recurse(n):\n    if n: return recurse(n-1)\n    return target(0)", external
+    )
+    try:
+        cast("Callable[[int], None]", external["recurse"])(70)
+    except Exception as error:
+        module._log_unknown_failure(error, "discovery", action)
+    assert json.loads(caplog.records[-1].message)["frames"] == []
+    before = len(caplog.records)
+    with patch.object(module.json, "dumps", return_value="x" * 4097):
+        module._log_unknown_failure(ValueError(), "discovery", action)
+    assert len(caplog.records) == before
+    invalid = type("non_ascii_é", (Exception,), {"__module__": "private/path"})
+    module._log_unknown_failure(invalid("PRIVATE"), "discovery", action)
+    assert json.loads(caplog.records[-1].message)["exceptions"] == [
+        {"module": "unknown", "type": "unknown"}
+    ]
