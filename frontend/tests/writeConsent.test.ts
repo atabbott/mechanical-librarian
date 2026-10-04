@@ -139,4 +139,11 @@ it('does not offer readiness, a destination or a count from unchecked history', 
   expect(offer.scopes).toEqual([])
   expect(offer.changes).toBe(0)
   expect(offer.blocked).toBe('Open permission review to check current readiness.')
+  const enabled = readWriteConsent({
+    ...unchecked,
+    waiting: { ...unchecked.waiting, awaiting_permission: 0, scheduled: 5 },
+  })
+  expect(enabled.state).toBe('enabled')
+  expect(enabled.blocked).toBeNull()
+  expect(enabled.grants).toEqual([])
 })

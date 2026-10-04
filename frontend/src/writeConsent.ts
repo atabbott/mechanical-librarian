@@ -98,7 +98,9 @@ export const readWriteConsent = (
   const excluded = scopes[0]?.excluded[0]
   const blocked =
     data.backup_ready === null
-      ? 'Open permission review to check current readiness.'
+      ? state === 'off' || state === 'enabling'
+        ? 'Open permission review to check current readiness.'
+        : null
       : !data.backup_ready
         ? 'Backup readiness has not been confirmed, so writes cannot be enabled yet.'
         : grants.length === 0
