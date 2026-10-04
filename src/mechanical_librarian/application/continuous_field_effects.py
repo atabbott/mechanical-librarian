@@ -74,6 +74,10 @@ class ContinuousFieldEffectRepository(Protocol):
     def pending_field_effect_plan_ids(self, limit: int) -> tuple[str, ...]: ...
     def pending_field_effect_action_plan_ids(self, limit: int) -> tuple[str, ...]: ...
     def field_effect_backup_ready(self, *, fresh: bool = False) -> bool: ...
+
+    def field_effect_permission_readiness_snapshot(
+        self, call: Callable[[bool | None], dict[str, object]]
+    ) -> dict[str, object]: ...
     def pending_field_effect_decision_counts(self) -> tuple[dict[str, object], ...]: ...
     def grant_field_effect_consent_matrix(
         self,
@@ -1025,7 +1029,6 @@ class ContinuousGuardedApplication:
         ):
             raise GuardedApplicationError("activity_query")
         with self._activity_reader_lock:
-            backup_ready = self._repository.field_effect_backup_ready()
             return self._activity_snapshot(
                 lambda: self._activity_projection(
                     normalized_search=normalized_search,
@@ -1033,9 +1036,123 @@ class ContinuousGuardedApplication:
                     range_days=range_days,
                     page=page,
                     page_size=page_size,
-                    backup_ready=backup_ready,
                 )
             )
+
+    def activity_permission_readiness(self) -> dict[str, object]:
+        with self._activity_reader_lock:
+            return self._repository.field_effect_permission_readiness_snapshot(
+                self._permission_readiness_projection
+            )
+
+    def _permission_readiness_projection(
+        self, backup_ready: bool | None
+    ) -> dict[str, object]:
+        permission, _ = self._permission_projection(
+            self._repository.field_effect_activity_summary()
+        )
+        permission.pop("enabled_libraries")
+        example_document = (
+            self._repository.pending_field_effect_activity_example_document()
+        )
+        example: dict[str, object] | None = None
+        if example_document is not None:
+            try:
+                snapshot = self._authority.resolve(self._decision(example_document))
+                example = {
+                    "after": project_decision_value(
+                        snapshot.destination, snapshot.decision_value
+                    ),
+                    "before": snapshot.pre_value,
+                    "destination": snapshot.destination,
+                    "library": snapshot.library,
+                    "work_id": snapshot.work_id,
+                }
+            except (FieldEffectError, GuardedApplicationError, ValueError) as error:
+                # A binding race removes the optional illustration. A storage
+                # fault cannot be represented as an absent prepared example.
+                if getattr(error, "code", None) == "persistence":
+                    raise
+        return {**permission, "backup_ready": backup_ready, "example": example}
+
+    def _permission_projection(
+        self, data: dict[str, object]
+    ) -> tuple[dict[str, object], dict[tuple[str, str], int]]:
+        """Share the exact destination and prepared-work gates across both reads."""
+        consented = {
+            (
+                str(value["connection"]),
+                str(value["library"]),
+                str(value["destination"]),
+            )
+            for value in cast(
+                "list[dict[str, object]]",
+                data.pop("consented_destinations", []),
+            )
+        }
+        prepared_rows = self._repository.pending_field_effect_decision_counts()
+        prepared_by_library: dict[str, dict[str, int]] = {
+            library: {"automatic": 0, "human": 0, "total": 0}
+            for _, library in self._libraries
+        }
+        # Prepared work that no destination in the offer can carry is what an
+        # owner is actually looking at when a screen says a number and an
+        # `Enable writes` action beside it. Keeping the two apart is why this is
+        # counted per destination rather than per library (#639).
+        prepared_by_destination: dict[tuple[str, str], int] = {}
+        for item in prepared_rows:
+            library = str(item["library"])
+            origin = str(item["origin"])
+            prepared_destination = str(item["destination"])
+            count = int(cast(int, item["count"]))
+            values = prepared_by_library.setdefault(
+                library, {"automatic": 0, "human": 0, "total": 0}
+            )
+            values[origin] += count
+            values["total"] += count
+            key = (library, prepared_destination)
+            prepared_by_destination[key] = prepared_by_destination.get(key, 0) + count
+        enabled = []
+        for connection, library in self._libraries:
+            if any(
+                candidate_connection == connection and candidate_library == library
+                for candidate_connection, candidate_library, _ in consented
+            ):
+                enabled.append({"connection": connection, "library": library})
+        capabilities = self._capability_readiness(
+            tuple(library for _, library in self._libraries), force=False
+        )
+        for capability in capabilities:
+            connection = str(capability["connection"])
+            library = str(capability["library"])
+            for destination in cast(
+                "list[dict[str, object]]", capability["destinations"]
+            ):
+                name = str(destination["destination"])
+                destination["consented"] = (connection, library, name) in consented
+                destination["prepared"] = prepared_by_destination.get(
+                    (library, name), 0
+                )
+        prepared = {
+            "automatic": sum(
+                value["automatic"] for value in prepared_by_library.values()
+            ),
+            "human": sum(value["human"] for value in prepared_by_library.values()),
+            "total": sum(value["total"] for value in prepared_by_library.values()),
+        }
+        return {
+            "configured_libraries": [
+                {
+                    "connection": connection,
+                    "library": library,
+                    "prepared": prepared_by_library[library],
+                }
+                for connection, library in self._libraries
+            ],
+            "capabilities": capabilities,
+            "enabled_libraries": enabled,
+            "prepared": prepared,
+        }, prepared_by_destination
 
     def _activity_projection(
         self,
@@ -1045,7 +1162,6 @@ class ContinuousGuardedApplication:
         range_days: int,
         page: int,
         page_size: int,
-        backup_ready: bool,
     ) -> dict[str, object]:
         """Project Activity inside the repository's exact read boundary."""
 
@@ -1179,88 +1295,7 @@ class ContinuousGuardedApplication:
             or any(type(value) is not int or value < 0 for value in cleanup.values())
         ):
             raise GuardedApplicationError("activity")
-        consented = {
-            (
-                str(value["connection"]),
-                str(value["library"]),
-                str(value["destination"]),
-            )
-            for value in cast(
-                "list[dict[str, object]]",
-                data.pop("consented_destinations", []),
-            )
-        }
-        example_document = (
-            self._repository.pending_field_effect_activity_example_document()
-        )
-        prepared_rows = self._repository.pending_field_effect_decision_counts()
-        prepared_by_library: dict[str, dict[str, int]] = {
-            library: {"automatic": 0, "human": 0, "total": 0}
-            for _, library in self._libraries
-        }
-        # Prepared work that no destination in the offer can carry is what an
-        # owner is actually looking at when a screen says a number and an
-        # `Enable writes` action beside it. Keeping the two apart is why this is
-        # counted per destination rather than per library (#639).
-        prepared_by_destination: dict[tuple[str, str], int] = {}
-        for item in prepared_rows:
-            library = str(item["library"])
-            origin = str(item["origin"])
-            prepared_destination = str(item["destination"])
-            count = int(cast(int, item["count"]))
-            values = prepared_by_library.setdefault(
-                library, {"automatic": 0, "human": 0, "total": 0}
-            )
-            values[origin] += count
-            values["total"] += count
-            key = (library, prepared_destination)
-            prepared_by_destination[key] = prepared_by_destination.get(key, 0) + count
-        example: dict[str, object] | None = None
-        if example_document is not None:
-            try:
-                snapshot = self._authority.resolve(self._decision(example_document))
-                example = {
-                    "after": project_decision_value(
-                        snapshot.destination, snapshot.decision_value
-                    ),
-                    "before": snapshot.pre_value,
-                    "destination": snapshot.destination,
-                    "library": snapshot.library,
-                    "work_id": snapshot.work_id,
-                }
-            except (FieldEffectError, GuardedApplicationError, ValueError) as error:
-                # A binding race removes the optional illustration. A storage
-                # fault cannot be represented as an absent prepared example.
-                if getattr(error, "code", None) == "persistence":
-                    raise
-        enabled = []
-        for connection, library in self._libraries:
-            if any(
-                candidate_connection == connection and candidate_library == library
-                for candidate_connection, candidate_library, _ in consented
-            ):
-                enabled.append({"connection": connection, "library": library})
-        capabilities = self._capability_readiness(
-            tuple(library for _, library in self._libraries), force=False
-        )
-        for capability in capabilities:
-            connection = str(capability["connection"])
-            library = str(capability["library"])
-            for destination in cast(
-                "list[dict[str, object]]", capability["destinations"]
-            ):
-                name = str(destination["destination"])
-                destination["consented"] = (connection, library, name) in consented
-                destination["prepared"] = prepared_by_destination.get(
-                    (library, name), 0
-                )
-        prepared = {
-            "automatic": sum(
-                value["automatic"] for value in prepared_by_library.values()
-            ),
-            "human": sum(value["human"] for value in prepared_by_library.values()),
-            "total": sum(value["total"] for value in prepared_by_library.values()),
-        }
+        permission, prepared_by_destination = self._permission_projection(data)
         provider_recovery = list(self._provider_recovery_snapshot())
         if len(provider_recovery) > 100 or any(
             type(item) is not dict
@@ -1310,29 +1345,21 @@ class ContinuousGuardedApplication:
             raise GuardedApplicationError("activity")
         return {
             **data,
-            "backup_ready": backup_ready,
+            **permission,
+            "backup_ready": None,
             "waiting": _waiting_reasons(
                 counts=cast("dict[str, int]", data.get("counts", {})),
                 prepared_by_destination=prepared_by_destination,
-                capabilities=capabilities,
+                capabilities=cast(
+                    "list[dict[str, object]]", permission["capabilities"]
+                ),
                 suspensions=cast(
                     "list[dict[str, object]]", data.get("suspensions", [])
                 ),
                 provider_recovery=provider_recovery,
             ),
-            "configured_libraries": [
-                {
-                    "connection": connection,
-                    "library": library,
-                    "prepared": prepared_by_library[library],
-                }
-                for connection, library in self._libraries
-            ],
-            "capabilities": capabilities,
-            "enabled_libraries": enabled,
-            "example": example,
+            "example": None,
             "last_failure": self._last_failure,
-            "prepared": prepared,
             "ledger": {
                 "event_type": event_type,
                 "page": int(cast(int, page_projection["page"])),
@@ -1342,7 +1369,7 @@ class ContinuousGuardedApplication:
                 "range_days": range_days,
                 "total": int(cast(int, page_projection["total"])),
             },
-            "schema_version": "continuous-field-activity-v2",
+            "schema_version": "continuous-field-activity-v3",
             "provider_recovery": provider_recovery,
         }
 

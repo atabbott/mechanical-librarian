@@ -1804,6 +1804,7 @@ def test_openapi_is_deterministic_and_secret_free(
         ("get", "/api/v1/settings"),
         ("patch", "/api/v1/settings"),
         ("get", "/api/v1/activity"),
+        ("get", "/api/v1/activity/permission-readiness"),
         ("get", "/api/v1/activity/{event_id}/transitions"),
         ("post", "/api/v1/activity/consent"),
         ("post", "/api/v1/activity/{connection}/{library}/revoke"),

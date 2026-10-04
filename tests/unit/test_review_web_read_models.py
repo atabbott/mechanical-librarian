@@ -530,6 +530,7 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
         ),
         base_url="https://review.test",
     )
+    assert web.client.get("/api/v1/activity/permission-readiness").status_code == 401
     login = web.login()
     page = web.client.get("/activity")
     assert page.status_code == 200
@@ -537,6 +538,26 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     script = web.client.get("/assets/review-app/assets/index-deadbeef.js")
     assert script.status_code == 200
     assert web.client.get("/api/v1/activity").json()["prepared"]["total"] == 2
+    history = web.client.get("/api/v1/activity").json()
+    assert history["schema_version"] == "continuous-field-activity-v3"
+    assert history["backup_ready"] is None and history["example"] is None
+    readiness = web.client.get("/api/v1/activity/permission-readiness")
+    assert readiness.status_code == 200
+    assert readiness.headers["cache-control"] == "no-store, private"
+    assert readiness.json() == application.activity_permission_readiness()
+    assert set(readiness.json()) == {
+        "backup_ready",
+        "configured_libraries",
+        "capabilities",
+        "prepared",
+        "example",
+    }
+    with patch.object(
+        application, "activity_permission_readiness", side_effect=RuntimeError
+    ):
+        unavailable = web.client.get("/api/v1/activity/permission-readiness")
+    assert unavailable.status_code == 503
+    assert unavailable.json()["error"]["code"] == "unavailable"
     filtered = web.client.get(
         "/api/v1/activity?event_type=all&range_days=30&page=1&page_size=25"
     )

@@ -10,7 +10,7 @@ import stat
 import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import AbstractContextManager, contextmanager, nullcontext
+from contextlib import AbstractContextManager, ExitStack, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
@@ -803,6 +803,27 @@ def open_field_effect_activity_projection(
     except BaseException:
         close()
         raise
+
+
+def open_field_effect_activity_readers(
+    configuration: ApplicationConfiguration,
+    database_path: Path,
+    authority: object,
+    provider_recovery: SQLiteProviderRecoveryStore | None = None,
+) -> tuple[
+    ContinuousGuardedApplication, ContinuousGuardedApplication, Callable[[], None]
+]:
+    """Own both independent readers as one generation resource, including failure."""
+    with ExitStack() as activation:
+        history, close_history = open_field_effect_activity_projection(
+            configuration, database_path, authority, provider_recovery
+        )
+        activation.callback(close_history)
+        permissions, close_permissions = open_field_effect_activity_projection(
+            configuration, database_path, authority
+        )
+        activation.callback(close_permissions)
+        return history, permissions, activation.pop_all().close
 
 
 class _IsolatedEpubInspector:
@@ -3315,16 +3336,8 @@ def compose_store_runtime_generation(
             else None
         )
         activity_projection = None
+        permission_projection = None
         close_activity_projection = None
-        if field_application is not None:
-            activity_projection, close_activity_projection = (
-                open_field_effect_activity_projection(
-                    configuration,
-                    database_path,
-                    repository.authority,
-                    provider_recovery,
-                )
-            )
         support_bundle = SupportBundle(
             (
                 (
@@ -3358,6 +3371,17 @@ def compose_store_runtime_generation(
             provider_recovery,
         )
         try:
+            if field_application is not None:
+                (
+                    activity_projection,
+                    permission_projection,
+                    close_activity_projection,
+                ) = open_field_effect_activity_readers(
+                    configuration,
+                    database_path,
+                    repository.authority,
+                    provider_recovery,
+                )
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(
                 state_owner=repository,
@@ -3388,6 +3412,7 @@ def compose_store_runtime_generation(
                 operational_timer=timing,
                 field_application=field_application,
                 activity_projection=activity_projection,
+                permission_projection=permission_projection,
                 close_activity_projection=close_activity_projection,
                 cover_considerations=cover_considerations,
                 settings=OwnerSettingsOperations(settings_store),
@@ -3815,16 +3840,8 @@ def run_review_server(
                 else None
             )
             activity_projection = None
+            permission_projection = None
             close_activity_projection = None
-            if field_application is not None:
-                activity_projection, close_activity_projection = (
-                    open_field_effect_activity_projection(
-                        configuration,
-                        database_path,
-                        repository.authority,
-                        provider_recovery,
-                    )
-                )
             support_bundle = SupportBundle(
                 (
                     (
@@ -3858,6 +3875,17 @@ def run_review_server(
                 provider_recovery,
             )
             try:
+                if field_application is not None:
+                    (
+                        activity_projection,
+                        permission_projection,
+                        close_activity_projection,
+                    ) = open_field_effect_activity_readers(
+                        configuration,
+                        database_path,
+                        repository.authority,
+                        provider_recovery,
+                    )
                 review_application = compose_review_application(
                     state_owner=repository,
                     session_store=session_store,
@@ -3884,6 +3912,7 @@ def run_review_server(
                     operational_timer=timing,
                     field_application=field_application,
                     activity_projection=activity_projection,
+                    permission_projection=permission_projection,
                     close_activity_projection=close_activity_projection,
                     cover_considerations=cover_considerations,
                     settings=settings,

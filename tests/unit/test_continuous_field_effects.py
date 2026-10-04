@@ -252,6 +252,9 @@ class _PagedRepository:
         del fresh
         return True
 
+    def field_effect_permission_readiness_snapshot(self, call):
+        return call(self.field_effect_backup_ready(fresh=True))
+
     def field_effect_activity_page(self, **_query):
         return {
             "events": [],
@@ -387,7 +390,7 @@ class _Authority:
         )
 
 
-def test_activity_resolves_at_most_one_current_example() -> None:
+def test_permission_readiness_resolves_at_most_one_current_example() -> None:
     decisions = _decisions(3)
 
     class CountingAuthority(_Authority):
@@ -410,7 +413,7 @@ def test_activity_resolves_at_most_one_current_example() -> None:
         activity_only=True,
     )
 
-    activity = service.activity()
+    activity = service.activity_permission_readiness()
 
     assert authority.resolved == [decisions[-1].decision_id]
     assert activity["example"] == {
@@ -455,7 +458,7 @@ def test_activity_projection_runs_inside_the_injected_read_snapshot() -> None:
 
     service.activity()
 
-    assert events == ["backup", "snapshot_enter", "page", "snapshot_exit"]
+    assert events == ["snapshot_enter", "page", "snapshot_exit"]
 
 
 def test_activity_reader_serializes_overlapping_requests() -> None:
@@ -544,9 +547,14 @@ def test_activity_example_binding_race_is_absent_but_storage_fault_propagates() 
         def resolve(self, _decision):
             raise FieldEffectError(self.code)
 
-    assert service(RaisingAuthority("authority_binding")).activity()["example"] is None
+    assert (
+        service(RaisingAuthority("authority_binding")).activity_permission_readiness()[
+            "example"
+        ]
+        is None
+    )
     with pytest.raises(FieldEffectError, match="^persistence$"):
-        service(RaisingAuthority("persistence")).activity()
+        service(RaisingAuthority("persistence")).activity_permission_readiness()
 
 
 class _Planner:
@@ -1041,7 +1049,7 @@ def test_schedule_skips_prior_qualification_before_no_change_authority_or_capabi
     assert authority.calls == 0
     assert capability.calls == 0
     activity = service.activity()
-    assert "continuous-field-activity-v2" == activity["schema_version"]
+    assert "continuous-field-activity-v3" == activity["schema_version"]
     assert 1 == activity["prepared"]["automatic"]
 
 
@@ -1419,7 +1427,7 @@ def test_enable_grants_only_field_locally_eligible_destinations() -> None:
     eligible = tuple(sorted(set(SUPPORTED_DESTINATIONS) - {"subtitle"}))
     service.enable((("alpha", eligible),))
     assert repository.grants is not None
-    assert repository.backup_checks == [True, False]
+    assert repository.backup_checks == [True]
     assert "subtitle" not in repository.grants[1][0][1]
 
 
@@ -2716,3 +2724,63 @@ def test_activity_transient_validated_reports_require_exact_canonical_bindings(
             with pytest.raises(GuardedApplicationError, match="^activity$"):
                 application.activity()
             assert parse.call_count == 0
+
+
+def test_history_defers_backup_and_permission_example() -> None:
+    class Repository(_ActivityPagedRepository):
+        def field_effect_backup_ready(self, *, fresh=False):
+            raise AssertionError("history must not check backup readiness")
+
+        def pending_field_effect_activity_example_document(self):
+            raise AssertionError("history must not read the permission example")
+
+    service = ContinuousGuardedApplication(
+        Repository(_decisions(1)),
+        {},
+        {},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+    )
+    history = service.activity()
+    assert history["backup_ready"] is None
+    assert history["example"] is None
+    assert history["schema_version"] == "continuous-field-activity-v3"
+    assert history["prepared"]["total"] == 1
+
+
+@pytest.mark.parametrize(
+    ("malformed", "backup", "prepared", "code"),
+    (
+        (True, False, False, "consent"),
+        (False, False, False, "backup"),
+        (False, True, False, "not_ready"),
+        (False, True, True, "capability"),
+    ),
+)
+def test_enable_preserves_combined_invalid_rejection_precedence(
+    malformed, backup, prepared, code
+):
+    class Repository(_PagedRepository):
+        def field_effect_backup_ready(self, *, fresh=False):
+            assert fresh
+            return backup
+
+    repository = Repository(_decisions(1) if prepared else [])
+    service = ContinuousGuardedApplication(
+        repository,
+        cast(
+            "dict[tuple[str, str], GuardedFieldApplication]",
+            {("primary", "alpha"): _Planner()},
+        ),
+        {("primary", "alpha"): _DeniedCapability()},
+        _Authority(),
+        (("primary", "alpha"),),
+        lambda: 1,
+        lambda *_: None,
+    )
+    with pytest.raises(GuardedApplicationError) as raised:
+        service.enable((("alpha", ("invalid" if malformed else "title",)),))
+    assert raised.value.code == code

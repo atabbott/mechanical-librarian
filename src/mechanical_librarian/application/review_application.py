@@ -427,6 +427,7 @@ class ReviewApplication:
         gate: RLock,
         updates: LiveUpdateChannel,
         activity_projection: ContinuousGuardedApplication | None = None,
+        permission_projection: ContinuousGuardedApplication | None = None,
         close_activity_projection: Callable[[], None] | None = None,
         browse_observation: BrowseObservationOwner | None = None,
         admission: OperationAdmission | None = None,
@@ -471,6 +472,7 @@ class ReviewApplication:
         self._preparation = preparation
         self._field_application = field_application
         self._activity_projection = activity_projection
+        self._permission_projection = permission_projection
         self._close_activity_projection = close_activity_projection
         self._operations = operations
         self._cover_considerations = cover_considerations
@@ -517,6 +519,9 @@ class ReviewApplication:
                 nullcontext()
                 if self._activity_projection is None
                 else self._activity_projection.classify_request(work_class),
+                nullcontext()
+                if self._permission_projection is None
+                else self._permission_projection.classify_request(work_class),
             ):
                 yield
 
@@ -711,6 +716,11 @@ class ReviewApplication:
                 lambda: self._active_browses == 0,
                 timeout=max(0.0, deadline - time.monotonic()),
             )
+        if browse_drained and self._close_activity_projection is not None:
+            try:
+                self._close_activity_projection()
+            except Exception as error:
+                failures.append(error)
         if self._preparation is not None:
             try:
                 if browse_drained:
@@ -721,11 +731,6 @@ class ReviewApplication:
                 failures.append(error)
         if not browse_drained:
             failures.append(ReviewApplicationError("unavailable"))
-        if browse_drained and self._close_activity_projection is not None:
-            try:
-                self._close_activity_projection()
-            except Exception as error:
-                failures.append(error)
         if browse_drained and self._reviewer_access is not None:
             try:
                 self._reviewer_access.close()
@@ -1177,6 +1182,13 @@ class ReviewApplication:
                 return project(self._activity_projection)
             return project(self._continuous_application())
 
+    def activity_permission_readiness(self) -> dict[str, object]:
+        with self._accepted_read():
+            application = self._permission_projection
+            if application is None:
+                application = self._continuous_application()
+            return application.activity_permission_readiness()
+
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None
     ) -> dict[str, object]:
@@ -1566,6 +1578,7 @@ def compose_review_application(
     | ContinuousGuardedApplication
     | None = None,
     activity_projection: ContinuousGuardedApplication | None = None,
+    permission_projection: ContinuousGuardedApplication | None = None,
     close_activity_projection: Callable[[], None] | None = None,
     browse_observation: BrowseObservationOwner | None = None,
     admission: OperationAdmission | None = None,
@@ -1656,6 +1669,7 @@ def compose_review_application(
         gate=gate,
         updates=updates,
         activity_projection=activity_projection,
+        permission_projection=permission_projection,
         close_activity_projection=close_activity_projection,
         browse_observation=browse_observation,
         admission=admission,

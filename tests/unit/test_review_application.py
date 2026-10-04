@@ -1074,9 +1074,10 @@ def test_real_activity_lifetime_retains_active_and_queued_reads(tmp_path, transi
         root.close()
 
 
+@pytest.mark.parametrize("read_kind", ("history", "permission"))
 @pytest.mark.parametrize("lane_failure", (False, True))
 def test_preparation_dependencies_outlive_all_accepted_reads(
-    tmp_path, monkeypatch, lane_failure
+    tmp_path, monkeypatch, lane_failure, read_kind
 ):
     from mechanical_librarian.adapters.persistence.provider_recovery import (
         SQLiteProviderRecoveryStore,
@@ -1087,7 +1088,11 @@ def test_preparation_dependencies_outlive_all_accepted_reads(
     app = fixture.application
     preparation = fixture.preparation
     assert preparation is not None
-    projection = app._activity_projection
+    projection = (
+        app._activity_projection
+        if read_kind == "history"
+        else app._permission_projection
+    )
     assert projection is not None
     active, queued, rechecking, release = (threading.Event() for _ in range(4))
     errors, results, closed, deadlines = [], [], [], []
@@ -1163,9 +1168,12 @@ def test_preparation_dependencies_outlive_all_accepted_reads(
     )
     if lane_failure:
         app._field_application = FailingGuardedLane.__new__(FailingGuardedLane)
+    callback = (
+        app.activity if read_kind == "history" else app.activity_permission_readiness
+    )
     readers = [
-        threading.Thread(target=lambda: read(app.activity)),
-        threading.Thread(target=lambda: read(app.activity)),
+        threading.Thread(target=lambda: read(callback)),
+        threading.Thread(target=lambda: read(callback)),
         threading.Thread(
             target=lambda: read(
                 lambda: app.library(lens="all", search=None, limit=20, cursor=None)
@@ -1206,13 +1214,14 @@ def test_preparation_dependencies_outlive_all_accepted_reads(
         assert fixture.recovery.snapshot() == ()
         assert not admission._closed
         assert fixture.repository._connection.execute("SELECT 1").fetchone() == (1,)
-        for callback in (
+        for late_read in (
             app.activity,
+            app.activity_permission_readiness,
             lambda: app.activity_transitions("event-1"),
             lambda: app.library(lens="all", search=None, limit=20, cursor=None),
         ):
             with pytest.raises(ReviewApplicationError, match="unavailable"):
-                callback()
+                late_read()
         successor = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
         release.set()
         for reader in readers:
@@ -1229,7 +1238,7 @@ def test_preparation_dependencies_outlive_all_accepted_reads(
         app._field_application = None
         monkeypatch.setattr(preparation, "wait_for_drain", original_wait)
         app.stop()
-        assert closed == ["recovery", "observation", "activity", "reviewer", "owner"]
+        assert closed == ["activity", "recovery", "observation", "reviewer", "owner"]
         assert not preparation._observation_open
         assert preparation._pipeline._observation_repository is None
         assert admission._closed

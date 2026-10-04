@@ -4,7 +4,8 @@ import type { ActivityDisplayView } from '../src/api/http'
 import { readWriteConsent } from '../src/writeConsent'
 import { activity } from './fixtures'
 
-const view = (value: Partial<ActivityDisplayView>): ActivityDisplayView => activity(value)
+const view = (value: Partial<ActivityDisplayView>): ActivityDisplayView =>
+  activity({ backup_ready: true, ...value })
 
 const capability = (
   library: string,
@@ -117,4 +118,25 @@ describe('the write consent offer', () => {
       }).actionable,
     ).toBe(false)
   })
+})
+
+it('does not offer readiness, a destination or a count from unchecked history', () => {
+  const unchecked = activity({
+    configured_libraries: [{ connection: 'primary', library: 'fiction' }],
+    capabilities: [
+      capability('fiction', [{ destination: 'title', state: 'allowed', prepared: 5 }]),
+    ],
+    waiting: {
+      applying: 0,
+      awaiting_permission: 5,
+      held_for_recovery: 0,
+      retrying: 0,
+      scheduled: 0,
+    },
+  })
+  const offer = readWriteConsent(unchecked)
+  expect(offer.grants).toEqual([])
+  expect(offer.scopes).toEqual([])
+  expect(offer.changes).toBe(0)
+  expect(offer.blocked).toBe('Open permission review to check current readiness.')
 })

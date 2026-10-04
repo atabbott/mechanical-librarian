@@ -1213,7 +1213,7 @@ def _activity(query: dict[str, list[str]]) -> dict[str, object]:
         ),
     ]
     return {
-        "schema_version": "continuous-field-activity-v2",
+        "schema_version": "continuous-field-activity-v3",
         "current_waiting": None,
         "backup_ready": True,
         "paused": False,
@@ -1827,8 +1827,20 @@ def rich_payload(target: str, *, review_case_id: str | None = None) -> object:
             "acknowledged": False,
             "origin": "activation",
         }
+    if path == "/api/v1/activity/permission-readiness":
+        value = _activity(query)
+        return {
+            key: value[key]
+            for key in (
+                "backup_ready",
+                "configured_libraries",
+                "capabilities",
+                "prepared",
+                "example",
+            )
+        }
     if path == "/api/v1/activity":
-        return _activity(query)
+        return {**_activity(query), "backup_ready": None, "example": None}
     if path.startswith("/api/v1/activity/") and path.endswith("/transitions"):
         after_sequence = int(query.get("after_sequence", ["0"])[0])
         transitions = [

@@ -964,7 +964,7 @@ class FakeActivityApplication(ContinuousGuardedApplication):
         # unit's coverage at risk to improve this one's.
         projected = _seeded_projection().activity(**query)
         return {
-            "backup_ready": True,
+            "backup_ready": None,
             "configured_libraries": [
                 {
                     "connection": "primary",
@@ -1015,19 +1015,13 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                 for library in sorted(self.enabled_libraries)
             ],
             "events": projected["events"],
-            "example": {
-                "after": "After",
-                "before": "Before",
-                "destination": "title",
-                "library": "fiction",
-                "work_id": "book-1",
-            },
+            "example": None,
             "last_failure": None,
             "paused": self.paused,
             "ledger": projected["ledger"],
             "current_waiting": None,
             "prepared": {"automatic": 1, "human": 1, "total": 2},
-            "schema_version": "continuous-field-activity-v2",
+            "schema_version": "continuous-field-activity-v3",
             "suspensions": [],
             "waiting": {
                 "applying": 0,
@@ -1035,6 +1029,23 @@ class FakeActivityApplication(ContinuousGuardedApplication):
                 "held_for_recovery": 0,
                 "retrying": 0,
                 "scheduled": 3 if self.enabled_libraries else 0,
+            },
+        }
+
+    def activity_permission_readiness(self):
+        history = self.activity()
+        return {
+            **{
+                key: history[key]
+                for key in ("configured_libraries", "capabilities", "prepared")
+            },
+            "backup_ready": True,
+            "example": {
+                "after": "After",
+                "before": "Before",
+                "destination": "title",
+                "library": "fiction",
+                "work_id": "book-1",
             },
         }
 

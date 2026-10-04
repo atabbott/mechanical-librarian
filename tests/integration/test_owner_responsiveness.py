@@ -1530,6 +1530,29 @@ def test_supported_fixture_activity_projects_real_owner_history(tmp_path: Path) 
         assert admission is not None
         assert fixture.repository.operation_admission is not None
         assert admission is not fixture.repository.operation_admission
+        permission = fixture.application._permission_projection
+        assert permission is not None
+        assert permission._operation_admission not in (
+            admission,
+            fixture.repository.operation_admission,
+        )
+        assert (
+            permission._repository._connection
+            is not fixture.application._activity_projection._repository._connection
+        )
+        assert permission._repository._connection.execute(
+            "PRAGMA query_only"
+        ).fetchone() == (1,)
+        assert activity["backup_ready"] is None and activity["example"] is None
+        readiness = fixture.application.activity_permission_readiness()
+        assert readiness["backup_ready"] is True
+        assert set(readiness) == {
+            "backup_ready",
+            "example",
+            "prepared",
+            "configured_libraries",
+            "capabilities",
+        }
     finally:
         fixture.close()
 
