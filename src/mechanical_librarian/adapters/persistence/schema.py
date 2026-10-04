@@ -1576,6 +1576,12 @@ def _validate_metadata_policy_documents(connection: sqlite3.Connection) -> None:
 
 
 def _validate_report_row(row: tuple[object, ...]) -> str:
+    _validated_report_row(row)
+    return cast(str, row[8])
+
+
+def _validated_report_row(row: tuple[object, ...]) -> MetadataReport:
+    """Return the typed report only after the complete persisted-row contract."""
     if len(row) != 9:
         raise MetadataReportError("persisted report is invalid")
     (
@@ -1610,7 +1616,7 @@ def _validate_report_row(row: tuple[object, ...]) -> str:
         report.file.content_digest,
     ) != (report_id, connection, library, item, file_identity, content_digest):
         raise MetadataReportError("persisted report envelope disagrees")
-    return document
+    return report
 
 
 def _validate_review_browse_row(

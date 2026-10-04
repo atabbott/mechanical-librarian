@@ -58,7 +58,10 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _cover_automatic_decision_value,
     _validate_automatic_decision_authority,
 )
-from mechanical_librarian.adapters.persistence.schema import _validate_report_row
+from mechanical_librarian.adapters.persistence.schema import (
+    _validate_report_row,
+    _validated_report_row,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -1475,6 +1478,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         )
         report_documents = {}
+        reports: dict[str, MetadataReport] = {}
         try:
             for report_row in report_rows:
                 if (
@@ -1482,7 +1486,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     or not 2 <= len(report_row[8].encode("utf-8")) <= document_limit
                 ):
                     raise MetadataReportError("persisted report is invalid")
-                report_documents[report_row[0]] = _validate_report_row(report_row)
+                reports[report_row[0]] = _validated_report_row(report_row)
+                report_documents[report_row[0]] = report_row[8]
         except MetadataReportError as error:
             raise FieldEffectError("persistence") from error
         # Every report joined to the selected page participates in the
@@ -1491,15 +1496,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # a bounded poll proportional to unrelated history.
         if set(report_documents) != set(report_ids):
             raise FieldEffectError("persistence")
-        reports: dict[str, MetadataReport] = {}
-        try:
-            for report_id, report_document in report_documents.items():
-                report = MetadataReport.from_json(report_document)
-                if report.report_id != report_id:
-                    raise FieldEffectError("persistence")
-                reports[report_id] = report
-        except ReportValueError as error:
-            raise FieldEffectError("persistence") from error
         # A Policy row's exact From/To comes from the two immutable
         # profiles its own transition names, not from whatever policy is
         # active now. At most two per row on a closed page, each capped at
@@ -2154,7 +2150,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             self._connection,
                             projected_automatic,
                             ReviewCase.from_json(cover_rows[0]),
-                            MetadataReport.from_json(automatic_report_document),
+                            reports[projected_automatic.report_id],
                             ProposalSet.from_json(cover_rows[1]),
                             cover_rows[2],
                         )
@@ -2170,7 +2166,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         if authority is None:
                             raise FieldEffectError("authority_binding")
                         case, proposal, outcome = authority
-                        report = MetadataReport.from_json(automatic_report_document)
+                        report = reports[projected_automatic.report_id]
                         if projected_automatic.outcome in {"candidate", "keep_current"}:
                             selected_value = _automatic_decision_value(
                                 cast(AutomaticDecision, projected_automatic),
@@ -2311,12 +2307,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         )
 
     def configure_activity_page_reader(self) -> None:
-        """Bound only this independently owned Activity reader's busy wait."""
+        """Constrain the independent reader to queries and bounded busy waits."""
 
         try:
             self._connection.execute(
                 f"PRAGMA busy_timeout={_ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS}"
             )
+            self._connection.execute("PRAGMA query_only=ON")
+            if self._connection.execute("PRAGMA query_only").fetchone() != (1,):
+                raise FieldEffectError("persistence")
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
         self._activity_page_busy_retry_seconds = _ACTIVITY_PAGE_BUSY_RETRY_SECONDS
@@ -2456,7 +2455,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     occurred_after,
                     oldest_included,
                     retained_bytes,
-                    deepcopy(result),
+                    deepcopy(
+                        {
+                            key: value
+                            for key, value in result.items()
+                            if key != "validated_reports"
+                        }
+                    ),
                     database_identity,
                 )
                 self._activity_page_cache_bytes += retained_bytes
@@ -2517,7 +2522,22 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # audit store just for presentation.
         # ``events`` is deliberately rebound below from the union SQL text to
         # the projected event list; both shapes are declared here.
-        events: str | list[dict[str, object]] = """
+        # Only the selected non-search ledger page needs guarded report scalars.
+        # Search retains its streaming projection and validate-before-match order.
+        report_scalars = {
+            "connection": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END",
+            "library": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END",
+            "work_id": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END",
+            "title": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END",
+        }
+        isbn_title = "CASE WHEN json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END"
+        scalar = (
+            report_scalars
+            if search is not None
+            else dict.fromkeys(report_scalars, "NULL")
+        )
+        selected_isbn_title = isbn_title if search is not None else "NULL"
+        events: str | list[dict[str, object]] = f"""
             SELECT event.event_id, effect.connection_name, effect.destination,
                    effect.library_name, event.occurred_at,
                    COALESCE(CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END, 'unknown'),
@@ -2528,8 +2548,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='human' THEN 'review'
                         WHEN CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN json_extract(event.document, '$.origin') END='automatic_policy' THEN 'metadata'
                         ELSE 'unknown' END,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
+                   {scalar["title"]}, NULL, 'field_effect', NULL, event.plan_id, event.sequence, effect.decision_id, NULL, NULL,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0
               FROM field_effect_events event
               JOIN field_effects effect ON effect.plan_id=event.plan_id
          LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id
@@ -2543,19 +2563,19 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
          LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id
          LEFT JOIN metadata_reports report ON report.report_id=COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id)
             UNION ALL
-            SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, event.destination,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, event.occurred_at, 'human', review.report_id,
-                   decision.outcome, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, event.document, 'review', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END
+            SELECT event.event_id, {scalar["connection"]}, event.destination,
+                   {scalar["library"]}, event.occurred_at, 'human', review.report_id,
+                   decision.outcome, {scalar["work_id"]}, event.document, 'review', {scalar["title"]}, NULL, 'human_decision', decision.document, event.review_case_id, NULL, event.decision_id, NULL, NULL,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) THEN 1 ELSE 0 END, 0
               FROM human_decision_events event
               JOIN human_decisions decision ON decision.decision_id=event.decision_id
               JOIN review_cases review ON review.review_case_id=event.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
             UNION ALL
-            SELECT decision.decision_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, decision.destination,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END, decision.occurred_at, 'automatic_policy', review.report_id,
-                   'recorded', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END, decision.document, 'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
-                   CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END
+            SELECT decision.decision_id, {scalar["connection"]}, decision.destination,
+                   {scalar["library"]}, decision.occurred_at, 'automatic_policy', review.report_id,
+                   'recorded', {scalar["work_id"]}, decision.document, 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
+                   CASE WHEN typeof(decision.document)='text' AND length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(decision.document) THEN 1 ELSE 0 END, 1
               FROM automatic_decisions decision
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
               JOIN metadata_reports report ON report.report_id=review.report_id
@@ -2565,7 +2585,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    attempt.state, json_extract(report.document,'$.target.item'),
                    json_object('attempt_id',attempt.attempt_id,'engine',attempt.engine,'model',attempt.model,'state',attempt.state,'failure',attempt.failure,'updated_at',attempt.updated_at),
                    'metadata', json_extract(report.document,'$.target.fields[0].value'), NULL,
-                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1
+                   'description_preparation', candidate.document, review.review_case_id, NULL, attempt.attempt_id, NULL, NULL, 1, 0
               FROM description_advice_attempts attempt
               JOIN review_cases review ON review.review_case_id=json_extract(attempt.binding_document,'$.review_case_id')
               JOIN metadata_reports report ON report.report_id=review.report_id
@@ -2576,7 +2596,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    'recorded', json_extract(report.document,'$.target.item'), decision.document,
                    CASE json_extract(decision.document,'$.origin') WHEN 'human' THEN 'review' ELSE 'metadata' END,
                    json_extract(report.document,'$.target.fields[0].value'), NULL, 'description_decision', candidate.document, decision.review_case_id, NULL, decision.decision_id, NULL, NULL,
-                   CASE WHEN length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 16384 AND json_valid(decision.document) THEN 1 ELSE 0 END
+                   CASE WHEN length(CAST(decision.document AS BLOB)) BETWEEN 2 AND 16384 AND json_valid(decision.document) THEN 1 ELSE 0 END, 0
               FROM description_decisions decision
               JOIN description_advice_candidates candidate ON candidate.candidate_id=decision.candidate_id
               JOIN review_cases review ON review.review_case_id=decision.review_case_id
@@ -2584,8 +2604,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             UNION ALL
             SELECT selection.decision_id, selection.connection_name, 'cover',
                    selection.library_name, selection.occurred_at, 'automatic_policy', review.report_id,
-                   'recorded', selection.item_id, json_extract(selection.document,'$.decision_document'), 'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'automatic_decision', NULL, review.review_case_id, NULL, selection.decision_id, NULL, NULL,
-                   CASE WHEN typeof(selection.document)='text' AND length(CAST(selection.document AS BLOB)) BETWEEN 2 AND 131072 AND json_valid(selection.document) AND json_valid(json_extract(selection.document,'$.decision_document')) THEN 1 ELSE 0 END
+                   'recorded', selection.item_id, json_extract(selection.document,'$.decision_document'), 'metadata', {scalar["title"]}, NULL, 'automatic_decision', NULL, review.review_case_id, NULL, selection.decision_id, NULL, NULL,
+                   CASE WHEN typeof(selection.document)='text' AND length(CAST(selection.document AS BLOB)) BETWEEN 2 AND 131072 AND json_valid(selection.document) AND json_valid(json_extract(selection.document,'$.decision_document')) THEN 1 ELSE 0 END, 0
               FROM cover_selection_authorities selection
               JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id
               JOIN review_cases review ON review.review_case_id=consideration.review_case_id
@@ -2594,20 +2614,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             UNION ALL
             SELECT no_change.event_id, no_change.connection_name, no_change.destination,
                    no_change.library_name, no_change.occurred_at, no_change.origin,
-                   no_change.report_id, 'no_change_required', no_change.work_id, '{}',
-                   'metadata', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END,
+                   no_change.report_id, 'no_change_required', no_change.work_id, '{{}}',
+                   'metadata', {scalar["title"]},
                    NULL, 'field_effect_no_change', NULL, no_change.review_case_id,
-                   NULL, no_change.decision_id, NULL, NULL, 1
+                   NULL, no_change.decision_id, NULL, NULL, 1, 0
               FROM field_effect_no_changes no_change
               JOIN metadata_reports report ON report.report_id=no_change.report_id
             UNION ALL
-            SELECT event.event_id, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END, 'cover', CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.library') END,
+            SELECT event.event_id, {scalar["connection"]}, 'cover', {scalar["library"]},
                    event.occurred_at, CASE event.kind WHEN 'automatic_prepared' THEN 'automatic_pipeline' WHEN 'owner_retry_prepared' THEN 'owner_retry' WHEN 'selected' THEN 'human' WHEN 'kept_incumbent' THEN 'human' WHEN 'no_action' THEN 'human' ELSE 'unknown' END, review.report_id,
-                   CASE WHEN event.kind IN ('automatic_prepared','owner_retry_prepared') THEN json_extract(consideration.document, '$.reviewer_status') ELSE event.kind END, CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.item') END,
+                   CASE WHEN event.kind IN ('automatic_prepared','owner_retry_prepared') THEN json_extract(consideration.document, '$.reviewer_status') ELSE event.kind END, {scalar["work_id"]},
                    event.document,
                    CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
-                   CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{}' END, event.review_case_id, NULL, event.consideration_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) THEN 1 ELSE 0 END
+                   {scalar["title"]}, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{{}}' END, event.review_case_id, NULL, event.consideration_id, NULL, NULL,
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) THEN 1 ELSE 0 END, 0
               FROM cover_consideration_events event
               JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
               JOIN review_cases review ON review.review_case_id=event.review_case_id
@@ -2618,8 +2638,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                       AND selection.kind='automatic')
             UNION ALL
             SELECT transition.transition_id, NULL, 'policy', 'Library policy', transition.updated_at,
-                   'policy', NULL, transition.state, 'Library policy', '{}', 'policy',
-                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1
+                   'policy', NULL, transition.state, 'Library policy', '{{}}', 'policy',
+                   'Library policy', 'Policy generation ' || transition.generation, 'policy_transition', NULL, NULL, NULL, NULL, transition.from_policy_id, transition.to_policy_id, 1, 0
               FROM metadata_policy_transitions transition
         """
         where = ["occurred_at>=?"]
@@ -2630,17 +2650,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         predicate = " WHERE " + " AND ".join(where)
         events = (
             cast(str, events)
-            + """
+            + f"""
             UNION ALL
             SELECT outcome.outcome_set_id || ':isbn', report.connection_name, 'isbn',
                    report.library_name, outcome.evaluated_at, 'automatic_policy', outcome.report_id,
                    'unchanged', report.item_id, outcome.document, 'metadata',
-                   CASE WHEN json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END,
+                   {selected_isbn_title},
                    NULL, 'isbn_refusal', NULL, outcome.review_case_id, NULL,
-                   outcome.outcome_set_id, NULL, NULL, 1
+                   outcome.outcome_set_id, NULL, NULL, 1, 0
               FROM shadow_decision_outcomes outcome
               JOIN metadata_reports report ON report.report_id=outcome.report_id
-              JOIN json_each(CASE WHEN json_valid(outcome.document) THEN outcome.document ELSE '{}' END, '$.outcomes') field
+              JOIN json_each(CASE WHEN json_valid(outcome.document) THEN outcome.document ELSE '{{}}' END, '$.outcomes') field
              WHERE json_extract(field.value, '$.destination')='isbn'
                AND json_extract(field.value, '$.reason_code') IN (
                    'source_value_absent','source_unavailable','source_value_malformed_or_incomplete',
@@ -2656,9 +2676,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "CASE WHEN source_kind='field_effect' THEN source_parent_id "
             "ELSE event_id END"
         )
+        ledger_columns = columns + ",report_target"
         projection = (
             "WITH raw_activity_events("
-            + columns
+            + ledger_columns
             + ") AS ("
             + events
             + "), ranked_activity_events AS (SELECT raw_activity_events.*, "
@@ -2670,9 +2691,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             + group_identity
             + ") AS group_valid FROM raw_activity_events), "
             "activity_events("
-            + columns
+            + ledger_columns
             + ") AS (SELECT "
-            + columns.replace(
+            + ledger_columns.replace(
                 "source_valid", "CASE WHEN group_valid=1 THEN source_valid ELSE 0 END"
             )
             + " FROM ranked_activity_events WHERE activity_rank=1) "
@@ -2693,6 +2714,42 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "policy_from,policy_to,source_valid FROM activity_events"
             )
 
+            # Materialization makes guarded report scalar extraction a page-bounded
+            # operation, after grouping, filtering, count and offset selection.
+            restored_columns = []
+            for name in ledger_columns.split(",")[:-1]:
+                if name in report_scalars:
+                    source_condition = (
+                        "event.source_kind IN ('field_effect','human_decision',"
+                        "'automatic_decision','field_effect_no_change','cover_safeguard')"
+                        if name == "title"
+                        else "(event.report_target=1 OR event.source_kind IN "
+                        "('human_decision','cover_safeguard'))"
+                    )
+                    isbn_case = (
+                        " WHEN event.source_kind='isbn_refusal' THEN " + isbn_title
+                        if name == "title"
+                        else ""
+                    )
+                    restored_columns.append(
+                        "CASE WHEN "
+                        + source_condition
+                        + " THEN "
+                        + report_scalars[name]
+                        + isbn_case
+                        + " ELSE event."
+                        + name
+                        + " END AS "
+                        + name
+                    )
+                else:
+                    restored_columns.append("event." + name)
+            selected_projection = ", selected_activity_events AS MATERIALIZED ("
+            restored_projection = (
+                " FROM selected_activity_events event LEFT JOIN metadata_reports report "
+                "ON report.report_id=event.report_id "
+                "ORDER BY event.occurred_at DESC,event.event_id DESC"
+            )
             if search is None:
                 # The page total is a window over the same immutable ledger
                 # projection as the selected rows.  The former count-then-page
@@ -2702,14 +2759,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 # the clamped offset.
                 page_rows = self._connection.execute(
                     projection
+                    + selected_projection
                     + columns.replace(
+                        " FROM activity_events", ",report_target FROM activity_events"
+                    ).replace(
                         " FROM activity_events",
                         ",count(*) OVER () AS activity_total,"
                         "min(occurred_at) OVER () AS oldest_included "
                         "FROM activity_events",
                     )
                     + predicate
-                    + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
+                    + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?) SELECT "
+                    + ",".join(restored_columns)
+                    + ",event.activity_total,event.oldest_included"
+                    + restored_projection,
                     (*parameters, page_size, (page - 1) * page_size),
                 ).fetchall()
                 if page_rows:
@@ -2743,9 +2806,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         if total == 0
                         else self._connection.execute(
                             projection
-                            + columns
+                            + selected_projection
+                            + columns.replace(
+                                " FROM activity_events",
+                                ",report_target FROM activity_events",
+                            )
                             + predicate
-                            + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?",
+                            + " ORDER BY occurred_at DESC,event_id DESC LIMIT ? OFFSET ?) SELECT "
+                            + ",".join(restored_columns)
+                            + restored_projection,
                             (*parameters, page_size, (selected_page - 1) * page_size),
                         ).fetchall()
                     )
@@ -2759,11 +2828,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 selected_page = page
                 oldest_included = None
             if search is None:
-                projected_events, report_documents, _ = self._project_activity_rows(
-                    rows,
-                    document_limit=document_limit,
-                    scalar_limit=scalar_limit,
-                    searched=False,
+                projected_events, report_documents, validated_reports = (
+                    self._project_activity_rows(
+                        rows,
+                        document_limit=document_limit,
+                        scalar_limit=scalar_limit,
+                        searched=False,
+                    )
                 )
             else:
                 matched: list[tuple[dict[str, object], str | None]] = []
@@ -2894,6 +2965,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 },
                 "total": total,
             }
+            if search is None:
+                result["validated_reports"] = validated_reports
             revision = self._activity_projection_revision()
             if database_identity != self._activity_database_identity():
                 raise FieldEffectError("persistence")

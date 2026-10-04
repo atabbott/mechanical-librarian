@@ -20,8 +20,20 @@ admission coordinator per persistent application-database authority. Root settin
 controls and overlapping runtime generations share it explicitly. Main review,
 Library, Attention and report detail use the existing application owner. Activity,
 preparation observation, preparation workers and shadow owners retain their
-existing separately owned connections. They acquire local admission before their
-connection locks; no network or device operation holds it.
+existing separately owned connections. All except Activity acquire shared root
+admission before their connection locks; no network or device operation holds it.
+Activity has a generation-owned coordinator and verified SQLite query-only mode,
+so a Library operation cannot queue an independent Activity read behind itself.
+Its physical connection and request locks still serialize the complete snapshot.
+Request classification reaches both coordinators without acquiring either permit.
+Accepted Activity and transition reads count before waiting for their reader lock;
+generation drain refuses new reads and waits for both executing and queued reads.
+A timeout retains the reader, coordinator, owner and dependencies for a later stop.
+Preparation workers stop within the shared deadline while their observation and
+provider-recovery store remain open for accepted Activity snapshots and Library
+capture/recheck. Those dependencies close only after the accepted reads drain.
+A completed drain closes that reader coordinator and connection before its owner,
+leaving shared root admission and successor generations usable.
 The finite foreground cohort yields to one oldest background waiter before a new
 cohort. Session, catalogue and provider-recovery databases keep their independent
 authority; recovery calls that enter the application repository use its coordinator.

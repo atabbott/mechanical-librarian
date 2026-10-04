@@ -2147,7 +2147,8 @@ const mapDecisionAcknowledgement = (
 
 const preparationProgress = (value: unknown): PreparationProgress => {
   if (!record(value)) throw new ApiError(502, 'invalid_preparation_progress')
-  for (const field of ['scan_id', 'connection', 'library', 'library_id', 'state'])
+  if (value.scan_id !== null) stringValue(value.scan_id, 'preparation_scan_id')
+  for (const field of ['connection', 'library', 'library_id', 'state'])
     stringValue(value[field], `preparation_${field}`)
   for (const field of ['checked', 'total', 'ready', 'blocked', 'recorded'])
     integerValue(value[field], `preparation_${field}`)

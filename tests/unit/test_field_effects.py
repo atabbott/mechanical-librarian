@@ -569,6 +569,10 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
     statements: list[str] = []
     try:
         first = reader.field_effect_activity_page(**query)
+        assert {
+            key: value.to_json()
+            for key, value in first.pop("validated_reports").items()
+        } == first["report_documents"]
         reader._connection.set_trace_callback(statements.append)
         with patch.object(
             reader._field_effect_activity,
@@ -577,6 +581,11 @@ def test_activity_page_cache_keeps_only_an_exact_current_reader_projection(
         ) as identity:
             second = reader.field_effect_activity_page(**query)
         reader._connection.set_trace_callback(None)
+        assert "validated_reports" not in second
+        assert all(
+            "validated_reports" not in entry[4]
+            for entry in reader._field_effect_activity._activity_page_cache.values()
+        )
         assert second == first
         assert statements == ["PRAGMA data_version"]
         assert identity.call_count == 1
@@ -671,6 +680,10 @@ def test_activity_page_cache_ignores_authority_alias_link_churn(
             projection, "_field_effect_activity_page_uncached", counted_page
         ):
             first = reader.field_effect_activity_page(**query)
+            assert {
+                key: value.to_json()
+                for key, value in first.pop("validated_reports").items()
+            } == first["report_documents"]
             revision = projection._activity_projection_revision()
             identity = projection._activity_database_identity()
             before = os.stat(effects.database_path, follow_symlinks=False)
@@ -759,6 +772,10 @@ def test_activity_page_cache_reuses_a_rolling_range_until_an_event_ages_out(
     ):
         try:
             first = reader.field_effect_activity_page(occurred_after=0, **query)
+            assert {
+                key: value.to_json()
+                for key, value in first.pop("validated_reports").items()
+            } == first["report_documents"]
             oldest = min(
                 cast(int, event["occurred_at"])
                 for event in cast("list[dict[str, object]]", first["events"])
@@ -1117,6 +1134,10 @@ def test_activity_page_cache_invalidates_an_in_place_policy_transition_update(
     ):
         try:
             first = reader.field_effect_activity_page(**query)
+            assert {
+                key: value.to_json()
+                for key, value in first.pop("validated_reports").items()
+            } == first["report_documents"]
             assert reader.field_effect_activity_page(**query) == first
             effects.repository._connection.execute(
                 "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
@@ -4568,6 +4589,10 @@ def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_on
                 page=1,
                 page_size=25,
             )
+            assert {
+                key: value.to_json()
+                for key, value in result.pop("validated_reports").items()
+            } == result["report_documents"]
             assert (
                 reader.field_effect_activity_page(
                     search=None,
@@ -4595,6 +4620,10 @@ def test_activity_projection_never_retries_a_nonbusy_error(
         cross_thread=True,
     )
     reader.configure_activity_page_reader()
+    assert reader._connection.execute("PRAGMA query_only").fetchone() == (1,)
+    with pytest.raises(sqlite3.OperationalError) as refused:
+        reader._connection.execute("DELETE FROM field_effect_events WHERE 0")
+    assert refused.value.sqlite_errorcode == sqlite3.SQLITE_READONLY
     attempts = [0]
 
     def unavailable_page(**_query):
@@ -7102,3 +7131,161 @@ def test_scalar_incumbent_title_is_one_durable_no_change(effects, option):
     ]
     assert len(unchanged) == 1
     assert unchanged[0]["destination"] == "title"
+
+
+def test_activity_validates_each_joined_report_once_for_repeated_automatic_events(
+    effects: _EffectEnvironment,
+) -> None:
+    report = _target_work_report(
+        (
+            (
+                "catalogue",
+                "hardcover",
+                (_target_work_candidate("catalogue", "edition-1", "work-1"),),
+                True,
+            ),
+        )
+    )
+    decisions = _automatic_decisions(
+        effects, report, "description_fill", "safe_plain_text", qualified=True
+    )
+    assert decisions
+    with patch.object(
+        MetadataReport, "from_json", wraps=MetadataReport.from_json
+    ) as parse:
+        page = effects.repository.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=25
+        )
+    documents = page["report_documents"]
+    assert documents == {report.report_id: report.to_json()}
+    assert parse.call_args_list == [((report.to_json(),), {})]
+    assert page["validated_reports"] == {report.report_id: report}
+    assert {event["record"]["source_kind"] for event in page["events"]} >= {
+        "automatic_decision",
+        "policy_transition",
+    }
+
+
+def test_activity_report_scalars_are_selected_page_bounded_and_search_still_validates_history(
+    effects: _EffectEnvironment,
+) -> None:
+    from tests.support.audiobook_reports import admitted_audiobook_report
+
+    _automatic_decisions(
+        effects,
+        admitted_audiobook_report(item="item-0"),
+        "title_layout",
+        "title_and_subtitle",
+        qualified=True,
+    )
+    resolved = effects.repository.current_resolved_metadata_policy("audio")
+    assert resolved is not None
+    for index in range(1, 30):
+        report = admitted_audiobook_report(item=f"item-{index}")
+        proposal = evaluate_report(report, resolved.resolved_id)
+        effects.repository.publish(report, lambda: True)
+        effects.repository.publish_proposal(proposal)
+        case_id = json.loads(effects.repository.admit_review_case(proposal))[
+            "review_case_id"
+        ]
+        effects.repository.persist_shadow_outcome(case_id, 4)
+    assert effects.repository._connection.execute(
+        "SELECT count(*) FROM metadata_reports"
+    ).fetchone() == (30,)
+    assert (
+        effects.repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions"
+        ).fetchone()[0]
+        >= 30
+    )
+    query = dict(
+        search=None, event_type="metadata", occurred_after=0, page=1, page_size=25
+    )
+    page = effects.repository.field_effect_activity_page(**query)
+    selected = set(cast("dict[str, str]", page["report_documents"]))
+    documents = dict(
+        effects.repository._connection.execute(
+            "SELECT report_id,document FROM metadata_reports"
+        )
+    )
+    unrelated = next(
+        document for key, document in documents.items() if key not in selected
+    )
+    scalar_calls: list[str] = []
+    unrelated_calls: list[str] = []
+    with sqlite3.connect(":memory:") as native:
+
+        def extract(document: str, path: str):
+            if document == unrelated:
+                unrelated_calls.append(path)
+                raise ValueError("unselected report scalar reached")
+            if document in documents.values():
+                scalar_calls.append(path)
+            return native.execute(
+                "SELECT json_extract(?,?)", (document, path)
+            ).fetchone()[0]
+
+        # Match the builtin variadic arity so SQLite 3.40 also invalidates an
+        # already prepared statement instead of retaining its builtin callback.
+        effects.repository._connection.create_function("json_extract", -1, extract)
+        # This private cache is the optimization boundary under test: force the SQL path.
+        projection = effects.repository._field_effect_activity
+        projection._activity_page_cache.clear()
+        projection._activity_page_cache_bytes = 0
+        repeated = effects.repository.field_effect_activity_page(**query)
+        assert repeated == page
+        assert unrelated_calls == []
+        assert 0 < len(scalar_calls) <= 4 * len(page["events"])
+        with pytest.raises(FieldEffectError, match="^persistence$"):
+            effects.repository.field_effect_activity_page(
+                search="no matching text",
+                event_type="metadata",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+    assert unrelated_calls
+
+
+def test_activity_fresh_and_cached_public_projections_match_with_transient_reports(
+    tmp_path: Path,
+) -> None:
+    from tests.support.activity_seed import seed_activity
+
+    seeded = seed_activity(tmp_path)
+    repository = seeded.repository
+    reader = open_repository(
+        tmp_path / "activity.sqlite",
+        create=False,
+        authority=repository.authority,
+        cross_thread=True,
+    )
+    reader.configure_activity_page_reader()
+    application = ContinuousGuardedApplication(
+        reader,
+        {},
+        {},
+        PersistedFieldEffectAuthority(reader),
+        (("primary", "books"),),
+        seeded.reader_now,
+        lambda *_: None,
+        activity_only=True,
+        activity_snapshot=reader.field_effect_activity_snapshot,
+    )
+    try:
+        first = application.activity(page_size=100)
+        second = application.activity(page_size=100)
+        assert first == second
+        assert len(first["events"]) > 25
+        assert {event["category"] for event in first["events"]} >= {
+            "owner",
+            "automatic",
+            "policy",
+        }
+        assert all(
+            "validated_reports" not in entry[4]
+            for entry in reader._field_effect_activity._activity_page_cache.values()
+        )
+    finally:
+        reader.close()
+        repository.close()

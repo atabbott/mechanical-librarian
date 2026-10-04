@@ -1564,7 +1564,8 @@ class ReviewPreparationSupervisor:
         self._stop.set()
         self._wake.set()
 
-    def stop(self, deadline: float | None = None) -> None:
+    def wait_for_drain(self, deadline: float | None = None) -> None:
+        """Stop workers while retaining dependencies borrowed by accepted reads."""
         self.begin_drain()
         if deadline is None:
             deadline = time.monotonic() + self._graceful_shutdown_seconds
@@ -1574,6 +1575,9 @@ class ReviewPreparationSupervisor:
         self._threads = active
         if active:
             raise ReviewPipelineError("shutdown_timeout")
+
+    def stop(self, deadline: float | None = None) -> None:
+        self.wait_for_drain(deadline)
         try:
             if self._on_stop is not None:
                 self._on_stop()

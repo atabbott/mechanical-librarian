@@ -2294,3 +2294,50 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         open_repository(path, create=False)
     assert path.read_bytes() == before
     assert sorted(p.name for p in tmp_path.iterdir()) == inventory
+
+
+@pytest.mark.parametrize(
+    "mutation, message",
+    [
+        ("none", None),
+        ("length", "persisted report is invalid"),
+        ("digest_and_envelope", "persisted report is invalid"),
+        ("document_and_envelope", "persisted report is invalid"),
+        ("envelope", "persisted report envelope disagrees"),
+    ],
+)
+def test_validated_report_row_preserves_complete_validation_and_error_precedence(
+    mutation: str, message: str | None
+) -> None:
+    report = synthetic_report()
+    document = report.to_json()
+    row = [
+        report.report_id,
+        report.target.connection,
+        report.target.library,
+        report.target.item,
+        report.file.identity,
+        report.file.content_digest,
+        persistence_schema.REPORT_SCHEMA,
+        hashlib.sha256(document.encode()).hexdigest(),
+        document,
+    ]
+    if mutation == "length":
+        row.pop()
+    elif mutation != "none":
+        row[1] = "wrong-connection"
+        if mutation == "digest_and_envelope":
+            row[7] = "0" * 64
+        elif mutation == "document_and_envelope":
+            row[8] = "{}"
+            row[7] = hashlib.sha256(b"{}").hexdigest()
+    if message is None:
+        assert persistence_schema._validated_report_row(tuple(row)) == report
+        assert persistence_schema._validate_report_row(tuple(row)) == document
+    else:
+        for validate in (
+            persistence_schema._validated_report_row,
+            persistence_schema._validate_report_row,
+        ):
+            with pytest.raises(MetadataReportError, match="^" + message + "$"):
+                validate(tuple(row))

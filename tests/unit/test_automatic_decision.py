@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -1206,3 +1207,32 @@ def test_scalar_audiobook_title_witness_is_closed_and_evidence_bound(option):
             audiobook_title_candidate_bundle(SimpleNamespace(**(values | change)))
             != bundle
         )
+
+
+@pytest.mark.parametrize("family", ["f19a", "f20", "f46"])
+def test_activity_read_predecessor_keeps_exact_decode_only_permissions(
+    family: str,
+) -> None:
+    fixture = Path(__file__).parents[1] / "support" / "activity_read_predecessors"
+    provenance = json.loads((fixture / "provenance.json").read_text())
+    record = provenance["records"][family]
+    document = (fixture / (family + ".json")).read_text().rstrip("\n")
+    assert hashlib.sha256(document.encode()).hexdigest() == record["document_sha256"]
+    decision = AutomaticDecision.from_json(document)
+    assert decision.to_json() == document
+    histories = getattr(
+        automatic_decision, "_PRIOR_" + family.upper() + "_QUALIFICATION_MANIFESTS"
+    )
+    assert dict(histories)[record["manifest_sha256"]] == frozenset(
+        record["permissions"]
+    )
+    assert not qualification_manifest_is_current(
+        decision.policy_category,
+        decision.policy_option,
+        decision.qualification_manifest_sha256,
+    )
+    arguments = json.loads(document)
+    for name in ("decision_id", "idempotency_digest", "origin", "schema_version"):
+        arguments.pop(name)
+    with pytest.raises(AutomaticDecisionError):
+        AutomaticDecision.create(**arguments)

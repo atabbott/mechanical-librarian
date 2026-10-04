@@ -1359,6 +1359,9 @@ def test_activity_projects_cover_reviewer_terminal_state_without_private_payload
             for event in review_cover_events
             if event["state"] in {"selected", "kept_incumbent", "no_action"}
         }
+        assert {
+            key: value.to_json() for key, value in page.pop("validated_reports").items()
+        } == page["report_documents"]
         serialized = json.dumps(page)
         for value in (
             "private-candidate",
@@ -1582,6 +1585,9 @@ def test_activity_page_does_not_materialize_repeated_near_limit_cover_documents(
         # document.
         assert 100 == len(cover_events)
         assert {"completed"} == {event["state"] for event in cover_events}
+        assert {
+            key: value.to_json() for key, value in page.pop("validated_reports").items()
+        } == page["report_documents"]
         serialized = json.dumps(page)
         assert len(serialized) < 100_000
         for value in (

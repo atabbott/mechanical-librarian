@@ -13,7 +13,10 @@ from pathlib import Path
 import uvicorn
 from argon2 import PasswordHasher
 
-from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.metadata_reports import (
+    SQLiteMetadataReportRepository,
+    open_repository,
+)
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
 )
@@ -34,6 +37,7 @@ from mechanical_librarian.application.owner_settings import (
     file_settings_projection,
 )
 from mechanical_librarian.application.review_application import (
+    ReviewApplication,
     compose_review_application,
 )
 from mechanical_librarian.application.review_pipeline import (
@@ -245,7 +249,6 @@ class OwnerResponsivenessFixture:
                     self.database,
                     self.repository.authority,
                     self.recovery,
-                    admission=self.repository.operation_admission,
                 )
             )
             activation.callback(close_activity)
@@ -413,7 +416,9 @@ class OwnerResponsivenessFixture:
             admit=admit,
             project=lambda *_: True,
         )
-        return ReviewPreparationSupervisor(pipeline, polling_interval_seconds=None)
+        return ReviewPreparationSupervisor(
+            pipeline, polling_interval_seconds=None, on_stop=self.recovery.close
+        )
 
     @contextmanager
     def hold_external_actors(self) -> Iterator[OwnerExternalActors]:
@@ -430,7 +435,8 @@ class OwnerResponsivenessFixture:
             self._close_external_actors()
         self.application.stop()
         self.sessions.close()
-        self.recovery.close()
+        if self.preparation is None:
+            self.recovery.close()
 
 
 @contextmanager
@@ -859,3 +865,64 @@ class OwnerExternalActors:
                 "target_calls": self._target_calls,
             }
         )
+
+
+@contextmanager
+def activity_generation(
+    root: SQLiteMetadataReportRepository,
+    database: Path,
+    sessions: SQLiteReviewSessionRepository,
+    *,
+    graceful_shutdown_seconds: int = 1,
+) -> Iterator[ReviewApplication]:
+    """Real generation ownership without starting external actors or transport."""
+    configuration = ApplicationConfiguration(
+        (TargetConnectionConfiguration("primary", "http://127.0.0.1:1", None),),
+        (LibraryConfiguration("books", "primary", "Books", "ebook", None, ()),),
+        (),
+        (),
+        review=ReviewWebConfiguration("http://127.0.0.1:1", "/synthetic/owner.hash"),
+    )
+    owner = open_repository(
+        database,
+        create=False,
+        authority=root.authority,
+        cross_thread=True,
+        admission=root.operation_admission,
+    )
+    projection, close = composition.open_field_effect_activity_projection(
+        configuration,
+        database,
+        root.authority,
+    )
+
+    def close_reader() -> None:
+        admission = projection._operation_admission
+        assert admission is not None
+        if not admission._closed:
+            # The actual owner's connection must still be live at reader close.
+            assert owner._connection.execute("SELECT 1").fetchone() == (1,)
+        close()
+
+    application = compose_review_application(
+        state_owner=owner,
+        session_store=sessions,
+        case_store=owner,
+        decision_store=owner,
+        library_store=owner,
+        policy_store=owner,
+        admission=root.operation_admission,
+        operation_lock=owner.operation_lock,
+        verify_password=lambda _: True,
+        session_digest=lambda _: "a" * 64,
+        clock=lambda: 100_000,
+        session_lifetime_seconds=3600,
+        graceful_shutdown_seconds=graceful_shutdown_seconds,
+        activity_projection=projection,
+        close_activity_projection=close_reader,
+        close_state_owner=True,
+    )
+    try:
+        yield application
+    finally:
+        application.stop()

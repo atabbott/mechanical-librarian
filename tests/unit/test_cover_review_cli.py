@@ -753,3 +753,69 @@ def test_read_only_recovery_open_never_initializes_absent_or_empty_state(tmp_pat
     with pytest.raises(ProviderRecoveryStoreError, match="unavailable|incompatible"):
         SQLiteProviderRecoveryStore.open(path, read_only=True)
     assert path.read_bytes() == b""
+
+
+def test_activity_reader_is_query_only_and_owns_its_admission(tmp_path: Path) -> None:
+    import sqlite3
+
+    from mechanical_librarian.application.configuration import (
+        ApplicationConfiguration,
+        LibraryConfiguration,
+        TargetConnectionConfiguration,
+    )
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+
+    root_admission = OperationAdmission()
+    root = open_repository(
+        tmp_path / "application.sqlite3",
+        cross_thread=True,
+        admission=root_admission,
+    )
+    projection, close = open_field_effect_activity_projection(
+        ApplicationConfiguration(
+            (TargetConnectionConfiguration("primary", "http://127.0.0.1:1", None),),
+            (LibraryConfiguration("books", "primary", "Books", "ebook", None, ()),),
+            (),
+            (),
+            review=ReviewWebConfiguration(
+                "http://127.0.0.1:1", "/synthetic/owner.hash"
+            ),
+        ),
+        tmp_path / "application.sqlite3",
+        root.authority,
+    )
+    reader = projection._repository
+    try:
+        assert reader.operation_admission is not root_admission
+        assert reader._connection.execute("PRAGMA query_only").fetchone() == (1,)
+        assert root._connection.execute("PRAGMA query_only").fetchone() == (0,)
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            reader._connection.execute("CREATE TABLE forbidden(value TEXT)")
+        assert projection.activity()["events"] == []
+    finally:
+        close()
+    with root_admission.enter():
+        assert root._connection.execute("SELECT 1").fetchone() == (1,)
+    root.close()
+
+
+@pytest.mark.parametrize("stage", ("open", "configure"))
+def test_activity_reader_construction_failure_releases_created_owners(
+    stage: str,
+) -> None:
+    repository = Mock()
+    failure = RuntimeError("reader unavailable")
+    if stage == "configure":
+        repository.configure_activity_page_reader.side_effect = failure
+    with patch(
+        "mechanical_librarian.bootstrap.composition.open_repository",
+        side_effect=failure if stage == "open" else None,
+        return_value=repository,
+    ) as opened:
+        with pytest.raises(RuntimeError) as raised:
+            open_field_effect_activity_projection(
+                Mock(), Path("/database.sqlite3"), object()
+            )
+    assert raised.value is failure
+    assert opened.call_args.kwargs["admission"]._closed
+    assert repository.close.call_count == (0 if stage == "open" else 1)
