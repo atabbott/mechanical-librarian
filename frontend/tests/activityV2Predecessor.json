@@ -8,101 +8,101 @@
           "consented": false,
           "destination": "asin",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "authors",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "cover",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "description",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "explicit",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "genres",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "isbn",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "language",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "narrators",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "publishedDate",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "publishedYear",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "publisher",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "series",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "subtitle",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "tags",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         },
         {
           "consented": false,
           "destination": "title",
           "prepared": 0,
-          "state": "connection_unavailable"
+          "state": "allowed"
         }
       ],
       "library": "books",
-      "state": "connection_unavailable"
+      "state": "allowed"
     }
   ],
   "configured_libraries": [
@@ -117,995 +117,21 @@
     }
   ],
   "consented_libraries": [],
-  "counts": {
-    "planned": 7,
-    "stale": 3,
-    "verified": 12
-  },
+  "counts": {},
   "enabled_libraries": [],
-  "events": [
-    {
-      "author_label": "Author details are not recorded",
-      "category": "automatic",
-      "change": "Automatic candidate \u2192 A later automatic choice",
-      "change_id": "effect_plan_d7722bbd585a5637199195970905b1207d6b10b70b55f805c20980c59c2fe002",
-      "change_detail": "Set Title from Automatic candidate to A later automatic choice",
-      "destination": "title",
-      "diagnostic": null,
-      "event_id": "effect_event_a4653e01543836408df0807324bf8bbb713f20a8b939f2d86ad38e2c969d3948",
-      "event_type": "metadata",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Automatic candidate"
-        },
-        {
-          "label": "New value",
-          "value": "A later automatic choice"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Automatic policy"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Not confirmed yet"
-        }
-      ],
-      "failure": null,
-      "field_label": "Title",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785743131,
-      "origin": "automatic_policy",
-      "state": "planned",
-      "transition_id": "effect_plan_d7722bbd585a5637199195970905b1207d6b10b70b55f805c20980c59c2fe002",
-      "work_label": "Recorded work",
-      "work_id": "auto-book"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "recovery",
-      "change": "Prepared change closed",
-      "change_id": "effect_plan_e47c34fcd1a1df897e279d2fc0ea57f750b34c13cb967c82b66c51bae8aef904",
-      "change_detail": "Prepared change closed",
-      "destination": "title",
-      "diagnostic": null,
-      "event_id": "effect_event_c2c059c6fe8637cd17d5f0a50fd2514109db482f893b95099ba0747c52371750",
-      "event_type": "safety",
-      "evidence": [
-        {
-          "label": "Prepared value",
-          "value": "Automatic candidate title"
-        },
-        {
-          "label": "Why it stopped",
-          "value": "Audiobookshelf did not offer this field"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Automatic policy"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "The selected change was not confirmed"
-        }
-      ],
-      "failure": "capability",
-      "field_label": "Title",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785743094,
-      "origin": "automatic_policy",
-      "state": "stale",
-      "transition_id": "effect_plan_e47c34fcd1a1df897e279d2fc0ea57f750b34c13cb967c82b66c51bae8aef904",
-      "work_label": "Recorded work",
-      "work_id": "auto-book"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "recovery",
-      "change": "Prepared change closed",
-      "change_id": "effect_plan_eddb88c1d385914826c16e200fbd70f3d72a04b02fcb6af4b0b2fb87b1fdb349",
-      "change_detail": "Prepared change closed",
-      "destination": "asin",
-      "diagnostic": null,
-      "event_id": "effect_event_1c5647134774f8efc8a58eca46d10a99832c9c9b1554f0b0f7ac642f1e000b8d",
-      "event_type": "safety",
-      "evidence": [
-        {
-          "label": "Prepared value",
-          "value": "B0007GZQP2"
-        },
-        {
-          "label": "Why it stopped",
-          "value": "Audiobookshelf did not offer this field"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "The selected change was not confirmed"
-        }
-      ],
-      "failure": "capability",
-      "field_label": "ASIN",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785743020,
-      "origin": "human",
-      "state": "stale",
-      "transition_id": "effect_plan_eddb88c1d385914826c16e200fbd70f3d72a04b02fcb6af4b0b2fb87b1fdb349",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "recovery",
-      "change": "Prepared change closed",
-      "change_id": "effect_plan_59b9c851685d19c1ca5557a6d08934621197f4427425f939b0c57bfd7853ba64",
-      "change_detail": "Prepared change closed",
-      "destination": "genres",
-      "diagnostic": null,
-      "event_id": "effect_event_5161702bbd256ec6a63f70af0606e2e60db3db46783bfb5238bf66a12066e8f2",
-      "event_type": "safety",
-      "evidence": [
-        {
-          "label": "Prepared value",
-          "value": "Reference, Annotated"
-        },
-        {
-          "label": "Why it stopped",
-          "value": "Audiobookshelf did not offer this field"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "The selected change was not confirmed"
-        }
-      ],
-      "failure": "capability",
-      "field_label": "Genres",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742946,
-      "origin": "human",
-      "state": "stale",
-      "transition_id": "effect_plan_59b9c851685d19c1ca5557a6d08934621197f4427425f939b0c57bfd7853ba64",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "A quiet, unhurried account of the lamplighters of Larkspur Station, who kept the orbital approach lit for freighters th\u2026 \u2192 A shorter final catalogue note.",
-      "change_id": "effect_plan_0154ce28a83b23e11ca36cffd272c61f1ce65d71f84d580c69774c003603a39f",
-      "change_detail": "Set Description from A quiet, unhurried account of the lamplighters of Larkspur Station, who kept the orbital approach lit for freighters th\u2026 to A shorter final catalogue note.",
-      "destination": "description",
-      "diagnostic": null,
-      "event_id": "effect_event_ca03722fbefaea59b36c2bfac2964262cef122e9731f5eef8278aeadff948b4b",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "A quiet, unhurried account of the lamplighters of Larkspur Station, who kept the orbital approach lit for freighters that had long since stopped coming, and who went on keeping it lit because no one had told them to stop and because the light was the only thing out there that was theirs. The narrative moves between the maintenance logs, the letters home that were never sent, and the slow accumulation of dust on the mirror array."
-        },
-        {
-          "label": "New value",
-          "value": "A shorter final catalogue note."
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Not confirmed yet"
-        }
-      ],
-      "failure": null,
-      "field_label": "Description",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742835,
-      "origin": "human",
-      "state": "planned",
-      "transition_id": "effect_plan_0154ce28a83b23e11ca36cffd272c61f1ce65d71f84d580c69774c003603a39f",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "annotated, signed \u2192 annotated, signed, archive",
-      "change_id": "effect_plan_5c6e1d82c0176c2746a19abde8406bea918937686e1edeaca6a49ea87dfb1492",
-      "change_detail": "Set Tags from annotated, signed to annotated, signed, archive",
-      "destination": "tags",
-      "diagnostic": null,
-      "event_id": "effect_event_c40b428842907006c1cbb2327d2336a5efa871e4817090774f75778026c40232",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "annotated, signed"
-        },
-        {
-          "label": "New value",
-          "value": "annotated, signed, archive"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as annotated, signed, archive"
-        }
-      ],
-      "failure": null,
-      "field_label": "Tags",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742798,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_5c6e1d82c0176c2746a19abde8406bea918937686e1edeaca6a49ea87dfb1492",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Ursula K. Le Guin, \u96e8\u306e\u5730\u56f3 \u2192 \u96e8\u306e\u5730\u56f3",
-      "change_id": "effect_plan_f409d4f8610552ea7bf74bf558a5451345455678056f19c99238d62877bba95c",
-      "change_detail": "Set Authors from Ursula K. Le Guin, \u96e8\u306e\u5730\u56f3 to \u96e8\u306e\u5730\u56f3",
-      "destination": "authors",
-      "diagnostic": null,
-      "event_id": "effect_event_2e205cb16462cd0a8e8726d1da0cbfd829bd8bb9cf54c714131ff31a975717bf",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Ursula K. Le Guin, \u96e8\u306e\u5730\u56f3"
-        },
-        {
-          "label": "New value",
-          "value": "\u96e8\u306e\u5730\u56f3"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as \u96e8\u306e\u5730\u56f3"
-        }
-      ],
-      "failure": null,
-      "field_label": "Authors",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742650,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_f409d4f8610552ea7bf74bf558a5451345455678056f19c99238d62877bba95c",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Paper Moons over Larkspur Station \u2192 Paper Moons: Revised",
-      "change_id": "effect_plan_531e039abf987396d6ae22c15b3c21ba2d2f16d3c78257c266033c5b99a1feb9",
-      "change_detail": "Set Title from Paper Moons over Larkspur Station to Paper Moons: Revised",
-      "destination": "title",
-      "diagnostic": null,
-      "event_id": "effect_event_6d91e46340d1e6c2072bff954ef2b70cfab413226745c9059cabfb220d7de91f",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Paper Moons over Larkspur Station"
-        },
-        {
-          "label": "New value",
-          "value": "Paper Moons: Revised"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Not confirmed yet"
-        }
-      ],
-      "failure": null,
-      "field_label": "Title",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742502,
-      "origin": "human",
-      "state": "planned",
-      "transition_id": "effect_plan_531e039abf987396d6ae22c15b3c21ba2d2f16d3c78257c266033c5b99a1feb9",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Not set \u2192 9780060512750",
-      "change_id": "effect_plan_d3633c67d6966d3452cde3706b9c3c2443cb2a76f31627fedb5d65f920458b18",
-      "change_detail": "Set ISBN from Not set to 9780060512750",
-      "destination": "isbn",
-      "diagnostic": null,
-      "event_id": "effect_event_171527e489a972913e0374d47ed79ac7ce6296fb7359e51f60fb755afad57b12",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Not set"
-        },
-        {
-          "label": "New value",
-          "value": "9780060512750"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as 9780060512750"
-        }
-      ],
-      "failure": null,
-      "field_label": "ISBN",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742465,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_d3633c67d6966d3452cde3706b9c3c2443cb2a76f31627fedb5d65f920458b18",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "A Novel \u2192 A Novel of the Outer Approach",
-      "change_id": "effect_plan_57b01c99237932ce26e2ba2251ee640a8f35307e5e06e89db2690acaff69cc1e",
-      "change_detail": "Set Subtitle from A Novel to A Novel of the Outer Approach",
-      "destination": "subtitle",
-      "diagnostic": null,
-      "event_id": "effect_event_98026b52d2675f43d7c60827b08df947c2ae1ecb27b65b9e41ae0d3a9652a0b6",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "A Novel"
-        },
-        {
-          "label": "New value",
-          "value": "A Novel of the Outer Approach"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as A Novel of the Outer Approach"
-        }
-      ],
-      "failure": null,
-      "field_label": "Subtitle",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742317,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_57b01c99237932ce26e2ba2251ee640a8f35307e5e06e89db2690acaff69cc1e",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "en \u2192 en-GB",
-      "change_id": "effect_plan_ce48035e8a951583c69518cc5925371267d944f4541ff5cd11a8365edbb26966",
-      "change_detail": "Set Language from en to en-GB",
-      "destination": "language",
-      "diagnostic": null,
-      "event_id": "effect_event_e84dbb8a81f80c514ef6f950555053dbcd33a6719ce9580415ba6ad44772aa6c",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "en"
-        },
-        {
-          "label": "New value",
-          "value": "en-GB"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Not confirmed yet"
-        }
-      ],
-      "failure": null,
-      "field_label": "Language",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742169,
-      "origin": "human",
-      "state": "planned",
-      "transition_id": "effect_plan_ce48035e8a951583c69518cc5925371267d944f4541ff5cd11a8365edbb26966",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Current cover \u2192 selected cover",
-      "change_id": "effect_plan_a0d2be478515b68f4c5874980289fcc5ca0023ab23b6cf69604dfe63fed53e57",
-      "change_detail": "Set Cover from the current image to the selected image",
-      "destination": "cover",
-      "diagnostic": null,
-      "event_id": "effect_event_6fc33b1dd854b2f4e032efb80c5ff0addac5ab636bcbb7eb4baa574b088289ec",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "A recorded cover image"
-        },
-        {
-          "label": "New value",
-          "value": "A recorded cover image"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as A recorded cover image"
-        }
-      ],
-      "failure": null,
-      "field_label": "Cover",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785742095,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_a0d2be478515b68f4c5874980289fcc5ca0023ab23b6cf69604dfe63fed53e57",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "A short note. \u2192 A quiet, unhurried account of the lamplighters of Larkspur Station, who kept the orbital approach lit for freighters th\u2026",
-      "change_id": "effect_plan_2097ad8fd80cd24f36b1c6812d6d24cb4b7858c2af68eac2f70db0bc0478528d",
-      "change_detail": "Set Description from A short note. to A quiet, unhurried account of the lamplighters of Larkspur Station, who kept the orbital approach lit for freighters th\u2026",
-      "destination": "description",
-      "diagnostic": null,
-      "event_id": "effect_event_fc3cdc62a3f7d96b63ab2577bcdc98831996ffc445e6ee4e11ab97714e57e38a",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "A short note."
-        },
-        {
-          "label": "New value",
-          "value": "A quiet, unhurried account of the lamplighters of Larkspur Station, who kept the orbital approach lit for freighters that had long since stopped coming, and who went on keeping it lit because no one had told them to stop and because the light was the only thing out there that was theirs. The narrative moves between the maintenance logs, the letters home that were never sent, and the slow accumulation of dust on the mirror array."
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as A quiet, unhurried account of the lamplighters of Larkspur Station, who kept the orbital approach lit for freighters that had long since stopped coming, and who went on keeping it lit because no one had told them to stop and because the light was the only thing out there that was theirs. The narrative moves between the maintenance logs, the letters home that were never sent, and the slow accumulation of dust on the mirror array."
-        }
-      ],
-      "failure": null,
-      "field_label": "Description",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741947,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_2097ad8fd80cd24f36b1c6812d6d24cb4b7858c2af68eac2f70db0bc0478528d",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "1974 \u2192 1975",
-      "change_id": "effect_plan_57c785d55262a3df5729b35cb892bbb03b2ff090a31331b4c2430c13735d287b",
-      "change_detail": "Set Published year from 1974 to 1975",
-      "destination": "publishedYear",
-      "diagnostic": null,
-      "event_id": "effect_event_55a51bb24b585e6b1a79553dd716659969e52662d7b910f7816befe25b0f1c9f",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "1974"
-        },
-        {
-          "label": "New value",
-          "value": "1975"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Not confirmed yet"
-        }
-      ],
-      "failure": null,
-      "field_label": "Published year",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741799,
-      "origin": "human",
-      "state": "planned",
-      "transition_id": "effect_plan_57c785d55262a3df5729b35cb892bbb03b2ff090a31331b4c2430c13735d287b",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Not set \u2192 Harper & Row",
-      "change_id": "effect_plan_44823a4c20f2fff210577e6241b475155849357ca450c954b5336ba3a07c2f3e",
-      "change_detail": "Set Publisher from Not set to Harper & Row",
-      "destination": "publisher",
-      "diagnostic": null,
-      "event_id": "effect_event_3a727c9b06271e889cc937b638e4e6a3d867b05dcc8ac97ac5313ab81dbf2b07",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Not set"
-        },
-        {
-          "label": "New value",
-          "value": "Harper & Row"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as Harper & Row"
-        }
-      ],
-      "failure": null,
-      "field_label": "Publisher",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741762,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_44823a4c20f2fff210577e6241b475155849357ca450c954b5336ba3a07c2f3e",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "1974-01-01 \u2192 1974-05-13",
-      "change_id": "effect_plan_f926fa6979e66efc446532c852cce192b40a32a56c891ff73af0df21f5499b14",
-      "change_detail": "Set Published date from 1974-01-01 to 1974-05-13",
-      "destination": "publishedDate",
-      "diagnostic": null,
-      "event_id": "effect_event_d71d364a5f4acff89a4783101dcaa7acf404fa8166516455fe1cb6bc7e3f1d6e",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "1974-01-01"
-        },
-        {
-          "label": "New value",
-          "value": "1974-05-13"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as 1974-05-13"
-        }
-      ],
-      "failure": null,
-      "field_label": "Published date",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741614,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_f926fa6979e66efc446532c852cce192b40a32a56c891ff73af0df21f5499b14",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Science Fiction \u2192 Science Fiction, Literary",
-      "change_id": "effect_plan_54b47a79f698793e9784fcd176f5c9600e8fa241c0ccd0f653b1a324fffcb017",
-      "change_detail": "Set Genres from Science Fiction to Science Fiction, Literary",
-      "destination": "genres",
-      "diagnostic": null,
-      "event_id": "effect_event_5cd161f4125722b32141fcdafbc7548ac999c27537b7f595050b831d8a96d980",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Science Fiction"
-        },
-        {
-          "label": "New value",
-          "value": "Science Fiction, Literary"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Not confirmed yet"
-        }
-      ],
-      "failure": null,
-      "field_label": "Genres",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741466,
-      "origin": "human",
-      "state": "planned",
-      "transition_id": "effect_plan_54b47a79f698793e9784fcd176f5c9600e8fa241c0ccd0f653b1a324fffcb017",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "The Larkspur Cycle (2) \u2192 Outer Approach Stories",
-      "change_id": "effect_plan_ed33f9176e969c0a73181ecdd7c2914f12510fdf61aae37a6e568315e732899c",
-      "change_detail": "Set Series from The Larkspur Cycle (2) to Outer Approach Stories",
-      "destination": "series",
-      "diagnostic": null,
-      "event_id": "effect_event_627db91c46f02bbcf2855b3686a79438c108ead3ce175abdf006e1bd7c04f035",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "The Larkspur Cycle (2)"
-        },
-        {
-          "label": "New value",
-          "value": "Outer Approach Stories"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as Outer Approach Stories"
-        }
-      ],
-      "failure": null,
-      "field_label": "Series",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741429,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_ed33f9176e969c0a73181ecdd7c2914f12510fdf61aae37a6e568315e732899c",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Not set \u2192 The Larkspur Cycle (2)",
-      "change_id": "effect_plan_98689eeabd342fa0d065e295103b13077631a2c3ef73973bf9fa1ea33240f005",
-      "change_detail": "Set Series from Not set to The Larkspur Cycle (2)",
-      "destination": "series",
-      "diagnostic": null,
-      "event_id": "effect_event_88a0dbbdd9e02e494b801f472ce3f4388591b34bcdec08fd8687c61e8fcae425",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Not set"
-        },
-        {
-          "label": "New value",
-          "value": "The Larkspur Cycle (2)"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as The Larkspur Cycle (2)"
-        }
-      ],
-      "failure": null,
-      "field_label": "Series",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741281,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_98689eeabd342fa0d065e295103b13077631a2c3ef73973bf9fa1ea33240f005",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Not set \u2192 annotated, signed",
-      "change_id": "effect_plan_8d9a51f44e53f4c8455b039e0bb5f1639ba63a0571031d27c831197f49dceaee",
-      "change_detail": "Set Tags from Not set to annotated, signed",
-      "destination": "tags",
-      "diagnostic": null,
-      "event_id": "effect_event_2e0451818e5e43071442298cdf7bc612d94247ba08580855fcab134a2ca11723",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Not set"
-        },
-        {
-          "label": "New value",
-          "value": "annotated, signed"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Not confirmed yet"
-        }
-      ],
-      "failure": null,
-      "field_label": "Tags",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741133,
-      "origin": "human",
-      "state": "planned",
-      "transition_id": "effect_plan_8d9a51f44e53f4c8455b039e0bb5f1639ba63a0571031d27c831197f49dceaee",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Ursula K. Le Guin \u2192 Ursula K. Le Guin, \u96e8\u306e\u5730\u56f3",
-      "change_id": "effect_plan_3c598c1ea73bcd8e58514e381e88eafbf179612f7df12c01a57abbdd0eb5a7d9",
-      "change_detail": "Set Authors from Ursula K. Le Guin to Ursula K. Le Guin, \u96e8\u306e\u5730\u56f3",
-      "destination": "authors",
-      "diagnostic": null,
-      "event_id": "effect_event_ccc2e97ce179e8d9e4dfd7ee38e08626ecbcca312dd004cfb123933cb0ede702",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Ursula K. Le Guin"
-        },
-        {
-          "label": "New value",
-          "value": "Ursula K. Le Guin, \u96e8\u306e\u5730\u56f3"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as Ursula K. Le Guin, \u96e8\u306e\u5730\u56f3"
-        }
-      ],
-      "failure": null,
-      "field_label": "Authors",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785741096,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_3c598c1ea73bcd8e58514e381e88eafbf179612f7df12c01a57abbdd0eb5a7d9",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Paper Moons: Larkspur \u2192 Paper Moons over Larkspur Station",
-      "change_id": "effect_plan_cd5826678b7d74abf582f32e4e86ad830c30125924815f174c8119d9bd72e61e",
-      "change_detail": "Set Title from Paper Moons: Larkspur to Paper Moons over Larkspur Station",
-      "destination": "title",
-      "diagnostic": null,
-      "event_id": "effect_event_185e8004a300bd068d5e354dd1505286f18476681c84ad1c30845b837f0ec745",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Paper Moons: Larkspur"
-        },
-        {
-          "label": "New value",
-          "value": "Paper Moons over Larkspur Station"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Confirmed in Audiobookshelf",
-          "value": "Confirmed as Paper Moons over Larkspur Station"
-        }
-      ],
-      "failure": null,
-      "field_label": "Title",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785740948,
-      "origin": "human",
-      "state": "verified",
-      "transition_id": "effect_plan_cd5826678b7d74abf582f32e4e86ad830c30125924815f174c8119d9bd72e61e",
-      "work_label": "Recorded work",
-      "work_id": "book-1"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Left unchanged",
-      "change_id": "human_decision_event_92e4d09cb1dd32c4cc1f5239886fea6bd7d1f7bfd4559e4751c47c69e5c8e7e8",
-      "change_detail": "Left Title unchanged",
-      "destination": "title",
-      "diagnostic": null,
-      "event_id": "human_decision_event_92e4d09cb1dd32c4cc1f5239886fea6bd7d1f7bfd4559e4751c47c69e5c8e7e8",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Current value",
-          "value": "Old title"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Outcome",
-          "value": "No change was prepared"
-        }
-      ],
-      "failure": null,
-      "field_label": "Title",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785136180,
-      "origin": "human",
-      "state": "reject",
-      "transition_id": null,
-      "work_label": "Old title",
-      "work_id": "case-book"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Kept Old title",
-      "change_id": "human_decision_event_ed1ee5c89562bdc9e4a8aba1f6f87dd81a16fe6cbbe2a12c71dfa3889b99e000",
-      "change_detail": "Kept Title as Old title",
-      "destination": "title",
-      "diagnostic": null,
-      "event_id": "human_decision_event_ed1ee5c89562bdc9e4a8aba1f6f87dd81a16fe6cbbe2a12c71dfa3889b99e000",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Current value",
-          "value": "Old title"
-        },
-        {
-          "label": "Selected value",
-          "value": "Old title"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        }
-      ],
-      "failure": null,
-      "field_label": "Title",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785136090,
-      "origin": "human",
-      "state": "keep_current",
-      "transition_id": null,
-      "work_label": "Old title",
-      "work_id": "case-book"
-    },
-    {
-      "author_label": "Author details are not recorded",
-      "category": "owner",
-      "change": "Old title \u2192 Exact evaluator candidate",
-      "change_id": "human_decision_event_8b28633670d261aeeeb320306b869c89ad21b95465fdf201eeabd460d422f9b7",
-      "change_detail": "Set Title from Old title to Exact evaluator candidate",
-      "destination": "title",
-      "diagnostic": null,
-      "event_id": "human_decision_event_8b28633670d261aeeeb320306b869c89ad21b95465fdf201eeabd460d422f9b7",
-      "event_type": "review",
-      "evidence": [
-        {
-          "label": "Previous value",
-          "value": "Old title"
-        },
-        {
-          "label": "New value",
-          "value": "Exact evaluator candidate"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        }
-      ],
-      "failure": null,
-      "field_label": "Title",
-      "policy_changes": [],
-      "library": "books",
-      "occurred_at": 1785136000,
-      "origin": "human",
-      "state": "accept",
-      "transition_id": null,
-      "work_label": "Old title",
-      "work_id": "case-book"
-    }
-  ],
+  "events": [],
   "example": null,
   "last_failure": null,
   "ledger": {
     "event_type": "all",
     "page": 1,
-    "page_count": 2,
+    "page_count": 1,
     "page_size": 25,
     "query": null,
     "range_days": 30,
-    "total": 26
+    "total": 0
   },
-  "current_waiting": {
-    "destination": "title",
-    "library": "books",
-    "state": "planned",
-    "work_id": "auto-book",
-    "work_label": "Recorded work"
-  },
+  "current_waiting": null,
   "paused": false,
   "prepared": {
     "automatic": 0,
@@ -1114,20 +140,12 @@
   },
   "provider_recovery": [],
   "schema_version": "continuous-field-activity-v2",
-  "suspensions": [
-    {
-      "connection": "primary",
-      "destination": null,
-      "reason": "connection_unavailable",
-      "scope": "connection",
-      "updated_at": 1785742909
-    }
-  ],
+  "suspensions": [],
   "waiting": {
     "applying": 0,
     "awaiting_permission": 0,
-    "held_for_recovery": 1,
+    "held_for_recovery": 0,
     "retrying": 0,
-    "scheduled": 7
+    "scheduled": 0
   }
 }
