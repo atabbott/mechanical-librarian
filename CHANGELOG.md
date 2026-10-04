@@ -10,7 +10,8 @@
 
 - Activity reads select the requested page before inspecting report labels and
   reuse fully validated reports during each fresh read, keeping preparation
-  responsive without changing history or write permissions (#1142).
+  responsive without changing history or write permissions. Preparation progress
+  stays visible when another configured library has never been scanned (#1142).
 
 - Library and Attention recover from one provider-fetching transition during a
   read. Repeated changes or changed authority show the existing unavailable

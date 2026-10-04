@@ -2881,3 +2881,58 @@ it.each([null, '0', '0.000001'])(
     ).toThrow()
   },
 )
+
+describe('preparation scan identity', () => {
+  const active = {
+    scan_id: 'scan-1',
+    connection: 'primary',
+    library: 'books',
+    library_id: 'books',
+    state: 'discovering',
+    checked: 0,
+    total: 0,
+    ready: 0,
+    blocked: 0,
+    recorded: 0,
+    rescan_requested: false,
+    stages: [],
+  }
+  const idle = {
+    ...active,
+    scan_id: null,
+    library: 'new-books',
+    library_id: 'new-books',
+    state: 'idle',
+  }
+  const envelope = {
+    schema_version: 'review-preparation-v2',
+    recovery_required: false,
+    active: true,
+    actionable: false,
+    paused: false,
+    connections: [],
+    libraries: [active, idle],
+  }
+
+  it('retains an active scan beside a library that has never been requested', () => {
+    expect(mapPreparation(envelope).libraries).toEqual([active, idle])
+  })
+
+  it.each([
+    ['missing', {}],
+    ['undefined', { scan_id: undefined }],
+    ['number', { scan_id: 1 }],
+    ['boolean', { scan_id: false }],
+    ['object', { scan_id: {} }],
+    ['array', { scan_id: [] }],
+  ])('refuses a %s scan identity with the existing error', (_name, identity) => {
+    const withoutIdentity: Record<string, unknown> = { ...idle }
+    delete withoutIdentity.scan_id
+    expect(() =>
+      mapPreparation({
+        ...envelope,
+        libraries: [active, { ...withoutIdentity, ...identity }],
+      }),
+    ).toThrow(new ApiError(502, 'invalid_preparation_scan_id'))
+  })
+})
