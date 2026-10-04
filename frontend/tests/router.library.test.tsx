@@ -8203,7 +8203,7 @@ describe('Library route', () => {
     await user.click(screen.getByRole('link', { name: 'Review write permissions' }))
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('checkbox', { name: /fiction/u }))
+    await user.click(await screen.findByRole('checkbox', { name: /fiction/u }))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
 
     // Every eligible destination, and only those, after explicit review.

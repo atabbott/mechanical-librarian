@@ -387,10 +387,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     () => router.state.location.hash === 'activity-consent',
   )
   const consentTrigger = useRef<HTMLElement | null>(null)
-  const nextPermissionRequest = useRef(1)
-  const [permissionRequest, setPermissionRequest] = useState<number | null>(() =>
-    router.state.location.hash === 'activity-consent' ? 1 : null,
-  )
+  const openingPermissionCheck = useRef(consentOpen)
+  const nextPermissionRequest = useRef(0)
+  const [permissionRequest, setPermissionRequest] = useState<number | null>(null)
   const previousConnectionState = useRef(connectionState)
   useEffect(() => {
     if (previousConnectionState.current !== connectionState) setPermissionRequest(null)
@@ -410,7 +409,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const permission = permissionRequest === null ? undefined : permissions.data
   const discardPermissions = () => setPermissionRequest(null)
   useEffect(() => {
-    const discard = () => setPermissionRequest(null)
+    const discard = () => {
+      openingPermissionCheck.current = false
+      setPermissionRequest(null)
+    }
     const unsubscribe = updates?.subscribe(discard)
     const unobserve = updates?.observeState(discard)
     const unwatch = queryClient.getQueryCache().subscribe((event) => {
@@ -421,7 +423,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         queryKey[0] === 'activity' &&
         ['fetch', 'invalidate', 'success', 'error'].includes(event.action.type)
       )
-        discard()
+        setPermissionRequest(null)
     })
     document.addEventListener('visibilitychange', discard)
     window.addEventListener('offline', discard)
@@ -433,7 +435,21 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
       window.removeEventListener('offline', discard)
     }
   }, [queryClient, updates])
-  const checkPermissions = () => setPermissionRequest(++nextPermissionRequest.current)
+  useEffect(() => {
+    if (!openingPermissionCheck.current || query.isFetching) return
+    // Let the entering history query publish its final cache event before the
+    // hash handoff starts a check. Later history events still discard proof.
+    const frame = requestAnimationFrame(() => {
+      if (!openingPermissionCheck.current) return
+      openingPermissionCheck.current = false
+      setPermissionRequest(++nextPermissionRequest.current)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [query.isFetching])
+  const checkPermissions = () => {
+    openingPermissionCheck.current = false
+    setPermissionRequest(++nextPermissionRequest.current)
+  }
   const openConsentReview = () => {
     consentTrigger.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -441,10 +457,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     checkPermissions()
   }
   useEffect(() => {
-    if (consentOpen)
-      document.getElementById('activity-consent')?.scrollIntoView({ block: 'nearest' })
+    if (!consentOpen) return
+    const section = document.getElementById('activity-consent')
+    section?.focus({ preventScroll: true })
+    section?.scrollIntoView({ block: 'nearest' })
   }, [consentOpen])
   const closeConsentReview = () => {
+    openingPermissionCheck.current = false
     setConsentOpen(false)
     discardPermissions()
     const trigger =
@@ -1061,10 +1080,15 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         </section>
       ) : null}
       {consentOpen ? (
-        <section className="activity-consent-ledger" id="activity-consent">
+        <section
+          className="activity-consent-ledger"
+          id="activity-consent"
+          tabIndex={-1}
+          aria-labelledby="activity-consent-title"
+        >
           <div>
             <p className="eyebrow">Prepared, read-only work</p>
-            <h2>Enable guarded writes</h2>
+            <h2 id="activity-consent-title">Enable guarded writes</h2>
             <p>
               Each write is checked before it starts, verified afterwards, and recorded durably.
             </p>

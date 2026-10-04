@@ -2534,3 +2534,59 @@ it.each([
     expect(http.activityCommand).not.toHaveBeenCalled()
   },
 )
+
+it.each([false, true])(
+  'checks the Library handoff after entering history settles (empty=%s)',
+  async (empty) => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const history = {
+      ...permissionHistory,
+      waiting: { ...permissionHistory.waiting, awaiting_permission: 1 },
+      events: empty ? [] : permissionHistory.events,
+    }
+    let finishHistory!: (value: ActivityView) => void
+    let finishPermissions!: (value: ReturnType<typeof permissionReadiness>) => void
+    let signal: AbortSignal | undefined
+    vi.mocked(http.getActivity)
+      .mockResolvedValueOnce(history)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishHistory = resolve
+          }),
+      )
+      .mockResolvedValue(history)
+    vi.mocked(http.getActivityPermissionReadiness).mockImplementation((requestSignal) => {
+      signal = requestSignal
+      return new Promise((resolve) => {
+        finishPermissions = resolve
+      })
+    })
+    const { queryClient } = renderRoute('/library', http)
+    await user.click(await screen.findByRole('link', { name: 'Review write permissions' }))
+    await waitFor(() => expect(http.getActivity).toHaveBeenCalledTimes(2))
+    expect(http.getActivityPermissionReadiness).not.toHaveBeenCalled()
+    await act(async () => finishHistory(history))
+    const review = await screen.findByRole('region', { name: 'Enable guarded writes' })
+    await waitFor(() => expect(review).toHaveFocus())
+    await screen.findByText('Checking backup readiness and write permissions…')
+    expect(http.getActivityPermissionReadiness).toHaveBeenCalledOnce()
+    expect(signal?.aborted).toBe(false)
+    await user.tab()
+    expect(within(review).getByRole('button', { name: 'Cancel permission review' })).toHaveFocus()
+    await act(async () => finishPermissions(permissionReadiness(history)))
+    expect(await screen.findByRole('checkbox')).toBeEnabled()
+    expect(screen.getByRole('checkbox')).not.toBeChecked()
+    expect(http.getActivityPermissionReadiness).toHaveBeenCalledOnce()
+    await user.click(within(review).getByRole('button', { name: 'Retry permission check' }))
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: ['activity'] })
+    })
+    expect(signal?.aborted).toBe(true)
+    await act(async () => finishPermissions(permissionReadiness(history)))
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(within(review).getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
+    expect(http.activityCommand).not.toHaveBeenCalled()
+  },
+)
