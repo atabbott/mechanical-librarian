@@ -545,6 +545,16 @@ def test_activity_is_permanent_and_consent_is_csrf_bound(
     assert readiness.status_code == 200
     assert readiness.headers["cache-control"] == "no-store, private"
     assert readiness.json() == application.activity_permission_readiness()
+    for invalid in (
+        {"backup_ready": True},
+        {"backup_ready": False},
+        {"example": readiness.json()["example"]},
+    ):
+        with (
+            patch.object(application, "activity", return_value={**history, **invalid}),
+            pytest.raises(ValidationError),
+        ):
+            web.client.get("/api/v1/activity")
     assert set(readiness.json()) == {
         "backup_ready",
         "configured_libraries",
@@ -3312,3 +3322,30 @@ def test_unknown_choice_authority_is_observation_not_corroboration(
         "role": "external_observation",
         "source": "Retained observation (provider name unavailable)",
     }
+
+
+@pytest.mark.parametrize("backup_ready", [True, False, None])
+def test_activity_history_defers_permission_fields(backup_ready: bool | None) -> None:
+    from mechanical_librarian.interfaces.web.app import (
+        _ActivityPermissionReadiness,
+        _ActivityResponse,
+    )
+
+    application = FakeActivityApplication()
+    history = application.activity()
+    assert _ActivityResponse.model_validate(history).backup_ready is None
+    permission = application.activity_permission_readiness()
+    permission["backup_ready"] = backup_ready
+    checked = _ActivityPermissionReadiness.model_validate(permission)
+    assert checked.backup_ready is backup_ready
+    assert checked.example is not None
+    if backup_ready is not None:
+        with pytest.raises(ValidationError):
+            _ActivityResponse.model_validate({**history, "backup_ready": backup_ready})
+    with pytest.raises(ValidationError):
+        _ActivityResponse.model_validate({**history, "example": permission["example"]})
+    for field in ("backup_ready", "example"):
+        with pytest.raises(ValidationError):
+            _ActivityResponse.model_validate(
+                {key: value for key, value in history.items() if key != field}
+            )

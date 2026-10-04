@@ -2389,15 +2389,8 @@
         "additionalProperties": false,
         "properties": {
           "backup_ready": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Backup Ready"
+            "title": "Backup Ready",
+            "type": "null"
           },
           "capabilities": {
             "items": {
@@ -2452,14 +2445,8 @@
             "type": "array"
           },
           "example": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/_ActivityExample"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "title": "Example",
+            "type": "null"
           },
           "last_failure": {
             "anyOf": [

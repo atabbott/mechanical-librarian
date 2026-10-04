@@ -1,6 +1,7 @@
 import type {
   ActivityDestinationView,
   ActivityDisplayView,
+  ActivityPermissionReadinessView,
   ActivityWaitingReasonsView,
 } from './api/http'
 
@@ -58,7 +59,8 @@ export const destinationReason = (state: string) =>
   })[state] ?? 'it is not ready yet'
 
 export const readWriteConsent = (
-  data: ActivityDisplayView,
+  data: Pick<ActivityDisplayView, 'waiting'> &
+    Pick<ActivityPermissionReadinessView, 'backup_ready' | 'capabilities' | 'configured_libraries'>,
   options: { readonly enabling?: boolean; readonly connectionUnavailable?: boolean } = {},
 ): WriteConsentOffer => {
   const reasons = data.waiting

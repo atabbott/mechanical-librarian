@@ -451,7 +451,6 @@ describe('Activity route', () => {
       ...createHttp(),
       getActivity: vi.fn(async () =>
         activity({
-          backup_ready: true,
           configured_libraries: [],
           enabled_libraries: [],
           capabilities: [],
@@ -814,7 +813,6 @@ describe('Activity route', () => {
   it('retains backup-disabled consent beside existing history', async () => {
     const user = userEvent.setup()
     const initial = activity({
-      backup_ready: false,
       prepared: { automatic: 1, human: 0, total: 1 },
       configured_libraries: [
         {
@@ -1205,7 +1203,6 @@ describe('Activity route', () => {
   it('never says no action is required while its own prepared work awaits consent', async () => {
     const user = userEvent.setup()
     const initial = activity({
-      backup_ready: true,
       configured_libraries: [
         {
           connection: 'primary',

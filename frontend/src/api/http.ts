@@ -711,14 +711,14 @@ export interface ProviderRecoveryActivityView {
   state: 'waiting' | 'checking' | 'dormant' | 'recovered' | 'fanout' | 'exhausted'
 }
 export interface ActivityDisplayView {
-  backup_ready: boolean | null
+  backup_ready: null
   capabilities: readonly ActivityCapabilityView[]
   configured_libraries: readonly ActivityLibraryView[]
   consented_libraries: readonly ActivityLibraryView[]
   counts: Readonly<Record<string, number>>
   enabled_libraries: readonly ActivityLibraryView[]
   events: readonly ActivityEventView[]
-  example: ActivityExampleView | null
+  example: null
   last_failure: string | null
   ledger: ActivityLedgerView
   current_waiting: ActivityWaitingView | null
@@ -732,8 +732,8 @@ export interface ActivityDisplayView {
 
 export type ActivityPermissionReadinessView = Pick<
   ActivityDisplayView,
-  'backup_ready' | 'capabilities' | 'configured_libraries' | 'prepared' | 'example'
->
+  'capabilities' | 'configured_libraries' | 'prepared'
+> & { backup_ready: boolean | null; example: ActivityExampleView | null }
 
 export type ActivityView = ActivityDisplayView
 
@@ -1960,6 +1960,11 @@ const statedStringArray = (value: unknown, field: string) => {
   if (values.length === 0) throw new ApiError(502, `invalid_${field}`)
   return values
 }
+const nullValue = (value: unknown, field: string): null => {
+  if (value !== null) throw new ApiError(502, `invalid_${field}`)
+  return value
+}
+
 const booleanValue = (value: unknown, field: string) => {
   if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`)
   return value
@@ -2515,7 +2520,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
     }
   })
   return {
-    backup_ready: activityBackupReady(value.backup_ready),
+    backup_ready: nullValue(value.backup_ready, 'activity_backup_ready'),
     capabilities: activityCapabilities(value.capabilities),
     waiting,
     configured_libraries: activityLibraries(
@@ -2620,7 +2625,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         failure,
       }
     }),
-    example: activityExample(value.example),
+    example: nullValue(value.example, 'activity_example'),
     last_failure:
       value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'),
     ledger: (() => {

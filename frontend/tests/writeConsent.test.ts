@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ActivityDisplayView } from '../src/api/http'
 import { readWriteConsent } from '../src/writeConsent'
 import { activity } from './fixtures'
 
-const view = (value: Partial<ActivityDisplayView>): ActivityDisplayView =>
-  activity({ backup_ready: true, ...value })
+const view = (value: Partial<Parameters<typeof readWriteConsent>[0]>) => ({
+  ...activity(),
+  backup_ready: true,
+  ...value,
+})
 
 const capability = (
   library: string,

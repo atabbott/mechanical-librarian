@@ -1096,14 +1096,14 @@ class _ActivityPermissionReadiness(_ClosedModel):
 
 
 class _ActivityResponse(_ClosedModel):
-    backup_ready: bool | None
+    backup_ready: None
     capabilities: list[_ActivityCapability]
     configured_libraries: list[_ActivityLibrary]
     consented_libraries: list[_ActivityLibrary]
     counts: dict[str, int]
     enabled_libraries: list[_ActivityLibrary]
     events: list[_ActivityEvent]
-    example: _ActivityExample | None
+    example: None
     last_failure: str | None
     ledger: _ActivityLedger
     current_waiting: _ActivityWaiting | None
