@@ -4620,6 +4620,10 @@ def test_activity_projection_never_retries_a_nonbusy_error(
         cross_thread=True,
     )
     reader.configure_activity_page_reader()
+    assert reader._connection.execute("PRAGMA query_only").fetchone() == (1,)
+    with pytest.raises(sqlite3.OperationalError) as refused:
+        reader._connection.execute("DELETE FROM field_effect_events WHERE 0")
+    assert refused.value.sqlite_errorcode == sqlite3.SQLITE_READONLY
     attempts = [0]
 
     def unavailable_page(**_query):

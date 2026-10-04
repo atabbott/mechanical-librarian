@@ -40,6 +40,24 @@ original classification. Waiting foreground work forms a finite cohort, followed
 by the oldest waiting background operation; later arrivals cannot extend that
 cohort or steal a reserved turn. Scheduling grants no domain authority.
 
+Activity is the narrow query-only exception to shared root admission (#1142).
+Its existing reader owns a local coordinator and verified SQLite `query_only`
+mode; description-authority binding installs passive callbacks only. The same
+request classification reaches both coordinators without taking a permit. Other
+operations retain root fairness, including preparation transactions through commit.
+Each generation counts Activity pages and transition reads before their reader
+lock, alongside accepted browses. Drain refuses new reads, waits for active and
+queued reads, and retains all dependencies on timeout for a later stop. It closes
+the reader and its coordinator before the owner, never the shared root coordinator.
+
+A retained-copy HTTP diagnostic found an Activity request spending 1.43 seconds
+behind Library in root admission. A paired production-admitted actor comparison
+measured Activity p95 at 2.310 seconds shared and 0.966 seconds independent.
+The latter has little margin and is not a capacity guarantee. A separate trial
+with external writers bypassing admission produced unavailable reads and a
+3.333-second Library request; it does not establish the supported actor envelope.
+This exception adds no schema, journal-mode, or authority change.
+
 Classification is separate from admission. Background worker entry includes
 dormant startup, recovery and scheduling; explicit owner operations retain
 foreground classification. Artifact-recovery borrowers share root admission for

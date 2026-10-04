@@ -773,26 +773,35 @@ def open_field_effect_activity_projection(
     database_path: Path,
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
-    admission: OperationAdmission | None = None,
 ) -> tuple[ContinuousGuardedApplication, Callable[[], None]]:
-    """Open the Activity reader independently of the state-owner connection."""
-    repository = open_repository(
-        database_path,
-        create=False,
-        authority=authority,
-        cross_thread=True,
-        admission=admission,
-    )
+    """Open a generation-owned, independently admitted Activity reader."""
+    admission = OperationAdmission()
+    try:
+        repository = open_repository(
+            database_path,
+            create=False,
+            authority=authority,
+            cross_thread=True,
+            admission=admission,
+        )
+    except BaseException:
+        admission.close()
+        raise
+
+    def close() -> None:
+        admission.close()
+        repository.close()
+
     try:
         repository.configure_activity_page_reader()
         return (
             compose_field_effect_activity_projection(
                 configuration, repository, provider_recovery
             ),
-            repository.close,
+            close,
         )
     except BaseException:
-        repository.close()
+        close()
         raise
 
 
@@ -3314,7 +3323,6 @@ def compose_store_runtime_generation(
                     database_path,
                     repository.authority,
                     provider_recovery,
-                    admission=repository.operation_admission,
                 )
             )
         support_bundle = SupportBundle(
@@ -3815,7 +3823,6 @@ def run_review_server(
                         database_path,
                         repository.authority,
                         provider_recovery,
-                        admission=repository.operation_admission,
                     )
                 )
             support_bundle = SupportBundle(

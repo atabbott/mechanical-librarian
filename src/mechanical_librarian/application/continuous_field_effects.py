@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from contextlib import nullcontext
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from typing import Callable, Protocol, cast
 
@@ -15,7 +15,10 @@ from mechanical_librarian.application.field_effects import (
     GuardedApplicationError,
     GuardedFieldApplication,
 )
-from mechanical_librarian.application.operation_admission import OperationAdmission
+from mechanical_librarian.application.operation_admission import (
+    OperationAdmission,
+    WorkClass,
+)
 from mechanical_librarian.application.operations import StageTimer
 from mechanical_librarian.domain.activity_records import readable_activity_event
 from mechanical_librarian.domain.automatic_decision import (
@@ -989,6 +992,14 @@ class ContinuousGuardedApplication:
         self.apply(plan_id)
         self._last_library = library
         return True
+
+    def classify_request(self, work_class: WorkClass) -> AbstractContextManager[None]:
+        """Carry purpose to this reader without entering its admission queue."""
+        return (
+            nullcontext()
+            if self._operation_admission is None
+            else self._operation_admission.classify(work_class)
+        )
 
     def activity(
         self,

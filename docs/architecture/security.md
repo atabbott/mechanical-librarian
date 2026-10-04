@@ -466,10 +466,15 @@ requests outer-server termination rather than serving mismatched authority.
 The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
 guarded effects, recovery, and support execute as named application operations
-behind the owner-operation serialization gate. Library and Attention share one
-separately owned browse connection and request gate, borrowed from the existing
-root database authority. Activity retains its dedicated reader connection and
-reader-local request gate; SQLite remains the sole transaction owner. FastAPI retains only
+behind the owner-operation serialization gate. Library and Attention use the existing application owner and root admission.
+Activity retains its dedicated query-only reader connection, reader-local request
+gate and generation-owned admission. The query-only PRAGMA is verified before
+use; description-authority binding only installs passive callbacks. Classification
+propagates to root and reader without granting a permit or authority. SQLite
+remains the sole transaction owner. Accepted Activity pages and transition reads
+count before waiting for the reader lock. Drain refuses new reads and retains all
+dependencies on timeout; a later successful drain closes the local coordinator
+and reader before the owner, never another generation's shared root coordinator. FastAPI retains only
 request bounds, exact Host/Origin enforcement, session/CSRF dependencies,
 response translation, and lifecycle delegation.
 

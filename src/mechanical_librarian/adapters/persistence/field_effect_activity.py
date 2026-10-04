@@ -2307,12 +2307,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         )
 
     def configure_activity_page_reader(self) -> None:
-        """Bound only this independently owned Activity reader's busy wait."""
+        """Constrain the independent reader to queries and bounded busy waits."""
 
         try:
             self._connection.execute(
                 f"PRAGMA busy_timeout={_ACTIVITY_PAGE_BUSY_TIMEOUT_MILLISECONDS}"
             )
+            self._connection.execute("PRAGMA query_only=ON")
+            if self._connection.execute("PRAGMA query_only").fetchone() != (1,):
+                raise FieldEffectError("persistence")
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
         self._activity_page_busy_retry_seconds = _ACTIVITY_PAGE_BUSY_RETRY_SECONDS

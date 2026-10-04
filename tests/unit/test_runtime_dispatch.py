@@ -313,3 +313,76 @@ def test_captured_predecessor_closes_only_after_request_release() -> None:
 
     asyncio.run(exercise())
     assert events == ["first.start", "drain", "second", "first.finish", "close"]
+
+
+def test_real_activity_generations_keep_root_and_successor_usable(tmp_path):
+    import threading
+
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.adapters.persistence.review_sessions import (
+        SQLiteReviewSessionRepository,
+    )
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+    from tests.support.owner_responsiveness import activity_generation
+
+    root_admission = OperationAdmission()
+    root = open_repository(
+        tmp_path / "application.sqlite3",
+        cross_thread=True,
+        admission=root_admission,
+    )
+    sessions = SQLiteReviewSessionRepository.open(tmp_path / "sessions.sqlite3")
+    try:
+        with (
+            activity_generation(
+                root, tmp_path / "application.sqlite3", sessions
+            ) as old,
+            activity_generation(
+                root, tmp_path / "application.sqlite3", sessions
+            ) as successor,
+        ):
+            projection = old._activity_projection
+            assert projection is not None
+            local = projection._operation_admission
+            assert local is not None
+            with old.classify_request("background"):
+                assert not root_admission.held and not local.held
+                with root_admission.enter(), local.enter():
+                    root_ticket = root_admission._active
+                    local_ticket = local._active
+                    assert root_ticket is not None and local_ticket is not None
+                    assert root_ticket.work_class == "background"
+                    assert local_ticket.work_class == "background"
+                    with old.classify_request("foreground"):
+                        assert root_ticket.work_class == "background"
+                        assert local_ticket.work_class == "background"
+            with old.classify_request("foreground"), local.enter():
+                foreground_ticket = local._active
+                assert foreground_ticket is not None
+                assert foreground_ticket.work_class == "foreground"
+            results = []
+            errors = []
+
+            def read():
+                try:
+                    results.append(old.activity())
+                except BaseException as error:
+                    errors.append(error)
+
+            with root_admission.enter():
+                reader = threading.Thread(target=read)
+                reader.start()
+                reader.join(3)
+                assert not reader.is_alive()
+            assert not errors and results[0]["events"] == []
+            old.begin_drain()
+            old.stop()
+            assert successor.activity()["events"] == []
+            assert successor.activity_transitions("event-1")["events"] == []
+            assert not root_admission._closed
+            assert root._connection.execute("SELECT 1").fetchone() == (1,)
+    finally:
+        sessions.close()
+        root.close()

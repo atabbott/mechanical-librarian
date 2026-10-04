@@ -977,3 +977,98 @@ def test_browse_does_not_mask_unrelated_programming_fault(
     with pytest.raises(ValueError, match="^programming fault$"):
         application._browse_serialized(broken_projection)
     assert application._active_browses == 0
+
+
+@pytest.mark.parametrize("transition", (False, True), ids=("page", "transitions"))
+def test_real_activity_lifetime_retains_active_and_queued_reads(tmp_path, transition):
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+    from mechanical_librarian.adapters.persistence.review_sessions import (
+        SQLiteReviewSessionRepository,
+    )
+    from mechanical_librarian.application.operation_admission import OperationAdmission
+    from tests.support.owner_responsiveness import activity_generation
+
+    root_admission = OperationAdmission()
+    root = open_repository(
+        tmp_path / "application.sqlite3",
+        cross_thread=True,
+        admission=root_admission,
+    )
+    sessions = SQLiteReviewSessionRepository.open(tmp_path / "sessions.sqlite3")
+    errors = []
+    results = []
+    active = threading.Event()
+    queued = threading.Event()
+    release = threading.Event()
+    try:
+        with activity_generation(
+            root, tmp_path / "application.sqlite3", sessions
+        ) as app:
+            projection = app._activity_projection
+            assert projection is not None
+            assert projection._operation_admission is not None
+            original_lock = projection._activity_reader_lock
+
+            class HeldReader:
+                # This private lock is the complete-request ownership contract.
+                # Both accepted callers announce arrival before waiting on it.
+                def __enter__(self):
+                    if active.is_set():
+                        queued.set()
+                    original_lock.acquire()
+                    active.set()
+                    assert release.wait(5)
+
+                def __exit__(self, *_):
+                    original_lock.release()
+
+            projection._activity_reader_lock = cast("threading.Lock", HeldReader())
+
+            def read():
+                try:
+                    results.append(
+                        app.activity_transitions("event-1")
+                        if transition
+                        else app.activity()
+                    )
+                except BaseException as error:
+                    errors.append(error)
+
+            readers = [threading.Thread(target=read) for _ in range(2)]
+            try:
+                readers[0].start()
+                assert active.wait(3)
+                readers[1].start()
+                assert queued.wait(3)
+                assert app._active_browses == 2
+                # Real independent admission proceeds while the root is owned.
+                with root_admission.enter():
+                    assert root._connection.execute("SELECT 1").fetchone() == (1,)
+                app.begin_drain()
+                with pytest.raises(ReviewApplicationError, match="unavailable"):
+                    app.activity()
+                with pytest.raises(ReviewApplicationError, match="unavailable"):
+                    app.activity_transitions("event-1")
+                with pytest.raises(ReviewApplicationError, match="unavailable"):
+                    app.stop()
+                assert not projection._operation_admission._closed
+                assert app._state_owner._connection.execute("SELECT 1").fetchone() == (
+                    1,
+                )
+                release.set()
+                for reader in readers:
+                    reader.join(3)
+                    assert not reader.is_alive()
+                assert not errors and len(results) == 2
+                app.stop()
+                assert projection._operation_admission._closed
+                assert not root_admission._closed
+            finally:
+                release.set()
+                for reader in readers:
+                    reader.join(3)
+    finally:
+        sessions.close()
+        root.close()

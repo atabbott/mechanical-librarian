@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 from _thread import RLock
-from collections.abc import Callable
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import Callable, Iterator
+from contextlib import AbstractContextManager, contextmanager, nullcontext
 from dataclasses import dataclass
 from threading import Condition
 from typing import TYPE_CHECKING, Literal, Protocol, TypeVar, cast
@@ -509,7 +509,18 @@ class ReviewApplication:
 
     def classify_request(self, work_class: WorkClass) -> AbstractContextManager[None]:
         """Carry request purpose to local operations without granting authority."""
-        return self._admission.classify(work_class)
+
+        @contextmanager
+        def classified() -> Iterator[None]:
+            with (
+                self._admission.classify(work_class),
+                nullcontext()
+                if self._activity_projection is None
+                else self._activity_projection.classify_request(work_class),
+            ):
+                yield
+
+        return classified()
 
     def serialized(self, call: Callable[[], _Result]) -> _Result:
         try:
@@ -851,55 +862,64 @@ class ReviewApplication:
     def history(self, review_case_id: str) -> dict[str, object]:
         return self.serialized(lambda: self._cases.history(review_case_id))
 
-    def _browse_serialized(
-        self,
-        call: Callable[[], _Result],
-        check_active: Callable[[], None] | None = None,
-    ) -> _Result:
+    @contextmanager
+    def _accepted_read(self) -> Iterator[None]:
         with self._browse_lifetime:
             if self._browse_closed:
                 raise ReviewApplicationError("unavailable")
             self._active_browses += 1
         try:
-            owner = self._browse_observation
-            authority = None
-            for attempt in range(2):
-                if check_active is not None:
-                    check_active()
-                observation = (
-                    None if owner is None else owner.capture_browse_observation()
-                )
-                if attempt == 0:
-                    authority = None if observation is None else observation[0]
-                elif observation is None or observation[0] != authority:
-                    raise ReviewWebError("unavailable")
-                try:
-                    with self._admission.enter(check_active=check_active), self._gate:
-                        if check_active is not None:
-                            check_active()
-                        with (
-                            nullcontext()
-                            if owner is None
-                            else owner.install_browse_observation(observation)
-                        ):
-                            result = call()
-                except AdmissionClosedError:
-                    raise ReviewApplicationError("unavailable") from None
-                if owner is not None:
-                    try:
-                        owner.recheck_browse_observation(observation)
-                    except BrowseFetchingChanged:
-                        if attempt == 0:
-                            continue
-                        raise
-                return result
-            raise ReviewWebError("unavailable")
-        except MetadataReportError:
-            raise ReviewWebError("unavailable") from None
+            yield
         finally:
             with self._browse_lifetime:
                 self._active_browses -= 1
                 self._browse_lifetime.notify_all()
+
+    def _browse_serialized(
+        self,
+        call: Callable[[], _Result],
+        check_active: Callable[[], None] | None = None,
+    ) -> _Result:
+        with self._accepted_read():
+            try:
+                owner = self._browse_observation
+                authority = None
+                for attempt in range(2):
+                    if check_active is not None:
+                        check_active()
+                    observation = (
+                        None if owner is None else owner.capture_browse_observation()
+                    )
+                    if attempt == 0:
+                        authority = None if observation is None else observation[0]
+                    elif observation is None or observation[0] != authority:
+                        raise ReviewWebError("unavailable")
+                    try:
+                        with (
+                            self._admission.enter(check_active=check_active),
+                            self._gate,
+                        ):
+                            if check_active is not None:
+                                check_active()
+                            with (
+                                nullcontext()
+                                if owner is None
+                                else owner.install_browse_observation(observation)
+                            ):
+                                result = call()
+                    except AdmissionClosedError:
+                        raise ReviewApplicationError("unavailable") from None
+                    if owner is not None:
+                        try:
+                            owner.recheck_browse_observation(observation)
+                        except BrowseFetchingChanged:
+                            if attempt == 0:
+                                continue
+                            raise
+                    return result
+                raise ReviewWebError("unavailable")
+            except MetadataReportError:
+                raise ReviewWebError("unavailable") from None
 
     def library(
         self,
@@ -1149,20 +1169,22 @@ class ReviewApplication:
                 page_size=page_size,
             )
 
-        if self._activity_projection is not None:
-            return project(self._activity_projection)
-        return project(self._continuous_application())
+        with self._accepted_read():
+            if self._activity_projection is not None:
+                return project(self._activity_projection)
+            return project(self._continuous_application())
 
     def activity_transitions(
         self, event_id: str, after_sequence: int | None = None
     ) -> dict[str, object]:
-        if self._activity_projection is not None:
-            return self._activity_projection.activity_transitions(
+        with self._accepted_read():
+            if self._activity_projection is not None:
+                return self._activity_projection.activity_transitions(
+                    event_id, after_sequence
+                )
+            return self._continuous_application().activity_transitions(
                 event_id, after_sequence
             )
-        return self._continuous_application().activity_transitions(
-            event_id, after_sequence
-        )
 
     def enable_activity(
         self, grants: tuple[tuple[str, tuple[str, ...]], ...]
