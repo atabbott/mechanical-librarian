@@ -447,7 +447,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     discardPermissions()
     const trigger =
       consentTrigger.current ?? document.querySelector<HTMLElement>('[data-route-focus]')
-    trigger?.focus({ preventScroll: true })
+    requestAnimationFrame(() => trigger?.focus({ preventScroll: true }))
     if (router.state.location.hash === 'activity-consent')
       void navigate({ search: (current) => current, hash: '', replace: true })
   }
@@ -1075,7 +1075,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 : permissions.isError
                   ? 'Permission readiness is unavailable. No permission was granted. Try again.'
                   : permission?.backup_ready === null
-                    ? 'The library changed during the check. Check again before enabling writes.'
+                    ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
                     : permission?.backup_ready === false
                       ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
                       : 'Backup readiness checked. Review the included and excluded destinations.'}
@@ -1108,7 +1108,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   />
                   <strong>{name}</strong>
                   <small>
-                    {preparedCount(library)} prepared · {capabilityLabel(state)}
+                    {preparedCount(library)} prepared ·{' '}
+                    {permission?.backup_ready === true
+                      ? capabilityLabel(state)
+                      : 'Readiness unconfirmed'}
                   </small>
                 </label>
                 <ul aria-label={`${name} included and excluded destinations`}>

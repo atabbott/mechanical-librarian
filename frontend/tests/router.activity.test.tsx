@@ -2418,7 +2418,7 @@ it.each([false, null, 'error'] as const)(
         outcome === false
           ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
           : outcome === null
-            ? 'The library changed during the check. Check again before enabling writes.'
+            ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
             : 'Permission readiness is unavailable. No permission was granted. Try again.',
       ),
     ).toBeVisible()
@@ -2433,7 +2433,10 @@ it.each([false, null, 'error'] as const)(
 it('keeps history usable during checking and discards a late result after close and reopen', async () => {
   const user = userEvent.setup()
   const http = createHttp()
-  vi.mocked(http.getActivity).mockResolvedValue(permissionHistory)
+  vi.mocked(http.getActivity).mockResolvedValue({
+    ...permissionHistory,
+    waiting: { ...permissionHistory.waiting, awaiting_permission: 1 },
+  })
   let finish!: (value: ReturnType<typeof permissionReadiness>) => void
   let signal: AbortSignal | undefined
   vi.mocked(http.getActivityPermissionReadiness)
@@ -2445,15 +2448,17 @@ it('keeps history usable during checking and discards a late result after close 
     })
     .mockResolvedValue(permissionReadiness(permissionHistory, false))
   renderRoute('/activity', http)
-  await openActivityAuthority(user)
-  const trigger = screen.getByRole('button', { name: 'Review write permissions' })
+  const summary = await screen.findByRole('region', {
+    name: 'Writes are off. Review permissions when you are ready.',
+  })
+  const trigger = within(summary).getByRole('button', { name: 'Review write permissions' })
   await user.click(trigger)
   expect(await screen.findByText('Checking backup readiness and write permissions…')).toBeVisible()
   expect(screen.getByRole('searchbox', { name: 'Search activity' })).toBeEnabled()
   expect(screen.getByRole('button', { name: 'Confirm write permissions' })).toBeDisabled()
   expect(http.getActivity).toHaveBeenCalledOnce()
   await user.click(screen.getByRole('button', { name: 'Cancel permission review' }))
-  expect(trigger).toHaveFocus()
+  await waitFor(() => expect(trigger).toHaveFocus())
   expect(signal?.aborted).toBe(true)
   await user.click(trigger)
   await screen.findByText('Backup readiness could not be confirmed. Writes cannot be enabled.')
