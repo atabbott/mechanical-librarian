@@ -1526,10 +1526,10 @@ def test_supported_fixture_activity_projects_real_owner_history(tmp_path: Path) 
         assert activity["ledger"]["total"] > 0
         assert any(event["category"] == "owner" for event in activity["events"])
         assert fixture.application._activity_projection is not None
-        assert (
-            fixture.application._activity_projection._operation_admission
-            is fixture.repository.operation_admission
-        )
+        admission = fixture.application._activity_projection._operation_admission
+        assert admission is not None
+        assert fixture.repository.operation_admission is not None
+        assert admission is not fixture.repository.operation_admission
     finally:
         fixture.close()
 
