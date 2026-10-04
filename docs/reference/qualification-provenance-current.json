@@ -658,7 +658,7 @@
     "tests/unit/test_epub_opening.py": "bc40e938ff6037b2aaff600f6459669d51e862cc4553d3dcc109135e69309376",
     "tests/unit/test_evidence_led_titles.py": "e44e31bb7ed9340fe8fae687c7c38051306655c0f29c7ea77ef05a7d06aff713",
     "tests/unit/test_exact_artifact_qualification.py": "f75b9827326f58be06b12c12f204b5fb19549d082098e18bec99edfc52c7a3c1",
-    "tests/unit/test_field_effects.py": "68bb637f7732ed78deb12c71f2af5a6659cfb637eb2174de2ee265b0e3cb79ed",
+    "tests/unit/test_field_effects.py": "2071cc3e1c3b63e5d9a9a436d82fdc59ef558004098d2d45c6eec591a0fdd23e",
     "tests/unit/test_field_value_comparison.py": "b8a78e5b59ff0a635f5108ee0ecb1c65ce4a703ceb6202ad70c79110717bfe82",
     "tests/unit/test_first_boot.py": "33eef50f90264e80cc93bd53579e07903cf0fc3096c46b0bbd221cf99eea8011",
     "tests/unit/test_genre_authority.py": "0a78453fd82e3b4911334864f17824609c9e762d8c337752247d9a1c8b20e155",

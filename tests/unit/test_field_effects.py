@@ -7221,7 +7221,9 @@ def test_activity_report_scalars_are_selected_page_bounded_and_search_still_vali
                 "SELECT json_extract(?,?)", (document, path)
             ).fetchone()[0]
 
-        effects.repository._connection.create_function("json_extract", 2, extract)
+        # Match the builtin variadic arity so SQLite 3.40 also invalidates an
+        # already prepared statement instead of retaining its builtin callback.
+        effects.repository._connection.create_function("json_extract", -1, extract)
         # This private cache is the optimization boundary under test: force the SQL path.
         projection = effects.repository._field_effect_activity
         projection._activity_page_cache.clear()
