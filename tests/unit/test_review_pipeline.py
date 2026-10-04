@@ -11934,3 +11934,29 @@ def test_unknown_failure_combined_limits_and_final_encoded_boundary(capsys):
     assert json.loads(capsys.readouterr().err)["exceptions"] == [
         {"module": "unknown", "type": "unknown"}
     ]
+
+
+@pytest.mark.parametrize("timeout", (False, True))
+def test_supervisor_wait_for_drain_retains_borrowed_dependencies(timeout: bool) -> None:
+    pipeline = _LifecyclePipeline(hold_run=timeout)
+    supervisor = ReviewPreparationSupervisor(
+        pipeline, on_stop=lambda: pipeline.events.append("on_stop")
+    )
+    supervisor.start()
+    assert pipeline.run_started.wait(1)
+    try:
+        if timeout:
+            with pytest.raises(ReviewPipelineError, match="shutdown_timeout"):
+                supervisor.wait_for_drain(deadline=time.monotonic())
+            assert supervisor._threads
+        else:
+            supervisor.wait_for_drain()
+            assert supervisor._threads == ()
+        assert "on_stop" not in pipeline.events and "close" not in pipeline.events
+        assert supervisor._observation_open
+    finally:
+        pipeline.release_run.set()
+        supervisor.stop()
+    assert pipeline.events[-2:] == ["on_stop", "close"]
+    supervisor.stop()
+    assert pipeline.events.count("on_stop") == pipeline.events.count("close") == 1

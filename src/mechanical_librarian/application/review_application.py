@@ -706,16 +706,19 @@ class ReviewApplication:
                     self._field_application.begin_drain()
             except Exception as error:
                 failures.append(error)
-        if self._preparation is not None:
-            try:
-                self._preparation.stop(deadline)
-            except Exception as error:
-                failures.append(error)
         with self._browse_lifetime:
             browse_drained = self._browse_lifetime.wait_for(
                 lambda: self._active_browses == 0,
                 timeout=max(0.0, deadline - time.monotonic()),
             )
+        if self._preparation is not None:
+            try:
+                if browse_drained:
+                    self._preparation.stop(deadline)
+                else:
+                    self._preparation.wait_for_drain(deadline)
+            except Exception as error:
+                failures.append(error)
         if not browse_drained:
             failures.append(ReviewApplicationError("unavailable"))
         if browse_drained and self._close_activity_projection is not None:

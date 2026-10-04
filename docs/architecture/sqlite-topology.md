@@ -29,6 +29,9 @@ Request classification reaches both coordinators without acquiring either permit
 Accepted Activity and transition reads count before waiting for their reader lock;
 generation drain refuses new reads and waits for both executing and queued reads.
 A timeout retains the reader, coordinator, owner and dependencies for a later stop.
+Preparation workers stop within the shared deadline while their observation and
+provider-recovery store remain open for accepted Activity snapshots and Library
+capture/recheck. Those dependencies close only after the accepted reads drain.
 A completed drain closes that reader coordinator and connection before its owner,
 leaving shared root admission and successor generations usable.
 The finite foreground cohort yields to one oldest background waiter before a new

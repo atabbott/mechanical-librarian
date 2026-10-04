@@ -1072,3 +1072,179 @@ def test_real_activity_lifetime_retains_active_and_queued_reads(tmp_path, transi
     finally:
         sessions.close()
         root.close()
+
+
+@pytest.mark.parametrize("lane_failure", (False, True))
+def test_preparation_dependencies_outlive_all_accepted_reads(
+    tmp_path, monkeypatch, lane_failure
+):
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+    from tests.support.owner_responsiveness import OwnerResponsivenessFixture
+
+    fixture = OwnerResponsivenessFixture(tmp_path, works=1, prepare=True)
+    app = fixture.application
+    preparation = fixture.preparation
+    assert preparation is not None
+    projection = app._activity_projection
+    assert projection is not None
+    active, queued, rechecking, release = (threading.Event() for _ in range(4))
+    errors, results, closed, deadlines = [], [], [], []
+    admission = projection._operation_admission
+    assert admission is not None
+    original_lock = projection._activity_reader_lock
+    original_recheck = fixture.browse.recheck_browse_observation
+    original_wait = preparation.wait_for_drain
+    first_error = RuntimeError("guarded lane failed")
+    preparation_error = RuntimeError("preparation wait failed")
+
+    class HeldReader:
+        def __enter__(self):
+            if active.is_set():
+                queued.set()
+            original_lock.acquire()
+            active.set()
+            assert release.wait(10)
+
+        def __exit__(self, *_):
+            original_lock.release()
+
+    def recheck(observation):
+        rechecking.set()
+        assert release.wait(10)
+        return original_recheck(observation)
+
+    def wait(deadline=None):
+        deadlines.append(deadline)
+        original_wait(deadline)
+        if lane_failure:
+            raise preparation_error
+
+    class FailingGuardedLane(ContinuousGuardedApplication):
+        def close_admission(self):
+            return None
+
+        def wait_for_drain(self, deadline=None):
+            deadlines.append(deadline)
+            raise first_error
+
+    def tracked(name, callback):
+        def close():
+            closed.append(name)
+            callback()
+
+        return close
+
+    def read(callback):
+        try:
+            results.append(callback())
+        except BaseException as error:
+            errors.append(error)
+
+    monkeypatch.setattr(projection, "_activity_reader_lock", HeldReader())
+    monkeypatch.setattr(fixture.browse, "recheck_browse_observation", recheck)
+    monkeypatch.setattr(preparation, "wait_for_drain", wait)
+    # The real fixture callback owns the same recovery store borrowed by both reads.
+    preparation._on_stop = tracked("recovery", preparation._on_stop)
+    monkeypatch.setattr(
+        preparation._pipeline,
+        "close_observation",
+        tracked("observation", preparation._pipeline.close_observation),
+    )
+    app._close_activity_projection = tracked("activity", app._close_activity_projection)
+    monkeypatch.setattr(
+        fixture.reviewer_access,
+        "close",
+        tracked("reviewer", fixture.reviewer_access.close),
+    )
+    monkeypatch.setattr(
+        fixture.repository, "close", tracked("owner", fixture.repository.close)
+    )
+    if lane_failure:
+        app._field_application = FailingGuardedLane.__new__(FailingGuardedLane)
+    readers = [
+        threading.Thread(target=lambda: read(app.activity)),
+        threading.Thread(target=lambda: read(app.activity)),
+        threading.Thread(
+            target=lambda: read(
+                lambda: app.library(lens="all", search=None, limit=20, cursor=None)
+            )
+        ),
+    ]
+    successor = None
+    try:
+        preparation.start_dormant()
+        workers = preparation._threads
+        assert len(workers) == 2 and all(worker.is_alive() for worker in workers)
+        readers[0].start()
+        assert active.wait(3)
+        readers[1].start()
+        assert queued.wait(3)
+        readers[2].start()
+        assert rechecking.wait(3)
+        assert app._active_browses == 3
+        with pytest.raises(
+            RuntimeError if lane_failure else ReviewApplicationError
+        ) as raised:
+            app.stop()
+        if lane_failure:
+            assert raised.value is first_error
+            assert raised.value.__notes__ == [
+                "further shutdown failure: RuntimeError('preparation wait failed')",
+                "further shutdown failure: ReviewApplicationError('unavailable')",
+            ]
+            assert len(deadlines) == 2 and deadlines[0] == deadlines[1]
+        else:
+            assert str(raised.value) == "unavailable"
+        assert closed == []
+        assert all(not worker.is_alive() for worker in workers)
+        assert preparation._threads == ()
+        assert preparation._observation_open
+        assert preparation._pipeline._observation_repository is not None
+        assert preparation.status() == ((None,) * 5, False)
+        assert fixture.recovery.snapshot() == ()
+        assert not admission._closed
+        assert fixture.repository._connection.execute("SELECT 1").fetchone() == (1,)
+        for callback in (
+            app.activity,
+            lambda: app.activity_transitions("event-1"),
+            lambda: app.library(lens="all", search=None, limit=20, cursor=None),
+        ):
+            with pytest.raises(ReviewApplicationError, match="unavailable"):
+                callback()
+        successor = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+        release.set()
+        for reader in readers:
+            reader.join(3)
+            assert not reader.is_alive()
+        assert errors == [] and len(results) == 3
+        activity_pages = [result for result in results if isinstance(result, dict)]
+        assert len(activity_pages) == 2 and activity_pages[0] == activity_pages[1]
+        library_page = next(
+            result for result in results if not isinstance(result, dict)
+        )
+        assert len(library_page.to_data()["items"]) == 1
+        assert app._active_browses == 0
+        app._field_application = None
+        monkeypatch.setattr(preparation, "wait_for_drain", original_wait)
+        app.stop()
+        assert closed == ["recovery", "observation", "activity", "reviewer", "owner"]
+        assert not preparation._observation_open
+        assert preparation._pipeline._observation_repository is None
+        assert admission._closed
+        with pytest.raises(sqlite3.ProgrammingError):
+            fixture.recovery._connection.execute("SELECT 1")
+        assert successor.snapshot() == ()
+        preparation.stop()
+        assert closed.count("recovery") == closed.count("observation") == 1
+    finally:
+        release.set()
+        for reader in readers:
+            if reader.ident is not None:
+                reader.join(3)
+        app._field_application = None
+        monkeypatch.setattr(preparation, "wait_for_drain", original_wait)
+        fixture.close()
+        if successor is not None:
+            successor.close()

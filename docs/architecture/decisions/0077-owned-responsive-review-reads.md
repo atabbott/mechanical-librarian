@@ -49,6 +49,9 @@ Each generation counts Activity pages and transition reads before their reader
 lock, alongside accepted browses. Drain refuses new reads, waits for active and
 queued reads, and retains all dependencies on timeout for a later stop. It closes
 the reader and its coordinator before the owner, never the shared root coordinator.
+Preparation workers drain within the same deadline, but their provider-recovery
+store and observation remain open until all accepted Activity and Library reads
+finish. A timed-out stop retains these dependencies for the later drain retry.
 
 A retained-copy HTTP diagnostic found an Activity request spending 1.43 seconds
 behind Library in root admission. A paired production-admitted actor comparison

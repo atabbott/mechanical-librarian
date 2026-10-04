@@ -416,7 +416,9 @@ class OwnerResponsivenessFixture:
             admit=admit,
             project=lambda *_: True,
         )
-        return ReviewPreparationSupervisor(pipeline, polling_interval_seconds=None)
+        return ReviewPreparationSupervisor(
+            pipeline, polling_interval_seconds=None, on_stop=self.recovery.close
+        )
 
     @contextmanager
     def hold_external_actors(self) -> Iterator[OwnerExternalActors]:
@@ -433,7 +435,8 @@ class OwnerResponsivenessFixture:
             self._close_external_actors()
         self.application.stop()
         self.sessions.close()
-        self.recovery.close()
+        if self.preparation is None:
+            self.recovery.close()
 
 
 @contextmanager

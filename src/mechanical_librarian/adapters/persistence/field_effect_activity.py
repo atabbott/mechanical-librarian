@@ -2522,7 +2522,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         # audit store just for presentation.
         # ``events`` is deliberately rebound below from the union SQL text to
         # the projected event list; both shapes are declared here.
-        # Only the selected non-search ledger page needs report-derived scalars.
+        # Only the selected non-search ledger page needs guarded report scalars.
         # Search retains its streaming projection and validate-before-match order.
         report_scalars = {
             "connection": "CASE WHEN typeof(report.document)='text' AND length(CAST(report.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(report.document) THEN json_extract(report.document, '$.target.connection') END",
@@ -2714,7 +2714,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "policy_from,policy_to,source_valid FROM activity_events"
             )
 
-            # Materialization makes the expensive JSON extraction a page-bounded
+            # Materialization makes guarded report scalar extraction a page-bounded
             # operation, after grouping, filtering, count and offset selection.
             restored_columns = []
             for name in ledger_columns.split(",")[:-1]:
