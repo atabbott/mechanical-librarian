@@ -2946,8 +2946,9 @@ describe('deferred Activity permission contract', () => {
     expect(mapActivity(currentActivity).backup_ready).toBeNull()
     expect(mapActivity(currentActivity).example).toBeNull()
     for (const field of ['backup_ready', 'example']) {
-      const missing: Record<string, unknown> = { ...currentActivity }
-      delete missing[field]
+      const missing = Object.fromEntries(
+        Object.entries(currentActivity).filter(([key]) => key !== field),
+      )
       expect(() => mapActivity(missing)).toThrow(ApiError)
     }
   })

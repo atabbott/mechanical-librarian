@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { AmbiguousMutationError, ApiError, BuildMismatchError, mapActivity } from '../src/api/http'
 import type { ActivitySearch, ActivityView, ReviewHttp } from '../src/api/http'
+import type { LiveUpdate, LiveStreamState, LiveUpdateStream } from '../src/liveUpdates'
 import descriptionAdviceActivityFixture from './descriptionAdviceActivityFixture.json'
 import { activityRoute } from '../src/router'
 import {
@@ -1259,7 +1260,13 @@ describe('Activity route', () => {
     ])
       expect(screen.queryByText(calm)).toBeNull()
     expect(screen.getByText('Action needed')).toBeVisible()
-    await user.click(screen.getAllByRole('button', { name: 'Review write permissions' })[0]!)
+    await user.click(
+      within(
+        screen.getByRole('region', {
+          name: 'Writes are off. Review permissions when you are ready.',
+        }),
+      ).getByRole('button', { name: 'Review write permissions' }),
+    )
     expect(screen.getByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
     await user.click(screen.getByRole('checkbox', { name: /fiction/ }))
@@ -1268,7 +1275,13 @@ describe('Activity route', () => {
     expect(screen.getAllByText('Awaiting permission')).toHaveLength(1)
     expect(screen.queryByText('Prepared work needs your permission')).toBeNull()
     expect(http.activityCommand).not.toHaveBeenCalled()
-    await user.click(screen.getAllByRole('button', { name: 'Review write permissions' })[0]!)
+    await user.click(
+      within(
+        screen.getByRole('region', {
+          name: 'Writes are off. Review permissions when you are ready.',
+        }),
+      ).getByRole('button', { name: 'Review write permissions' }),
+    )
     await user.click(await screen.findByRole('checkbox', { name: /fiction/ }))
     vi.mocked(http.activityCommand).mockRejectedValueOnce(new ApiError(409, 'capability'))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
@@ -2485,9 +2498,9 @@ it.each([
     vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue(
       permissionReadiness(permissionHistory),
     )
-    const listeners = new Set<(value: import('../src/liveUpdates').LiveUpdate) => void>()
-    const states = new Set<(value: import('../src/liveUpdates').LiveStreamState) => void>()
-    const updates: import('../src/liveUpdates').LiveUpdateStream = {
+    const listeners = new Set<(value: LiveUpdate) => void>()
+    const states = new Set<(value: LiveStreamState) => void>()
+    const updates: LiveUpdateStream = {
       state: 'live',
       hasBeenLive: true,
       subscribe: (listener) => {

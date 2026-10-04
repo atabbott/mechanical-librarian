@@ -382,11 +382,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const connectionConditions = preparation?.connections ?? []
   const connection = connectionConditions.find((item) => item.state !== 'recovered')
   const connectionState = JSON.stringify(connectionConditions)
-  const previousConnectionState = useRef(connectionState)
-  useEffect(() => {
-    if (previousConnectionState.current !== connectionState) setPermissionRequest(null)
-    previousConnectionState.current = connectionState
-  }, [connectionState])
   const ledger = data.ledger
   const [consentOpen, setConsentOpen] = useState(
     () => router.state.location.hash === 'activity-consent',
@@ -396,6 +391,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const [permissionRequest, setPermissionRequest] = useState<number | null>(() =>
     router.state.location.hash === 'activity-consent' ? 1 : null,
   )
+  const previousConnectionState = useRef(connectionState)
+  useEffect(() => {
+    if (previousConnectionState.current !== connectionState) setPermissionRequest(null)
+    previousConnectionState.current = connectionState
+  }, [connectionState])
   const permissions = useQuery({
     queryKey: ['activity-permissions', permissionRequest],
     queryFn: (context) =>
@@ -414,9 +414,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     const unsubscribe = updates?.subscribe(discard)
     const unobserve = updates?.observeState(discard)
     const unwatch = queryClient.getQueryCache().subscribe((event) => {
+      const queryKey: unknown = event.query.queryKey
       if (
         event.type === 'updated' &&
-        event.query.queryKey[0] === 'activity' &&
+        Array.isArray(queryKey) &&
+        queryKey[0] === 'activity' &&
         ['fetch', 'invalidate', 'success', 'error'].includes(event.action.type)
       )
         discard()
