@@ -8151,8 +8151,25 @@ def test_fetching_transition_browse_and_manual_recovery(
                     page = browser.new_page(viewport={"width": 1440, "height": 1000})
                     page.goto(origin + "/login")
                     page.get_by_label("Password").fill("synthetic-owner")
-                    page.get_by_role("button", name="Sign in").click()
-                    page.get_by_role("heading", name="Works", exact=True).wait_for()
+                    # Works renders before its collection requests finish. Both
+                    # initial reads must settle before they can consume churn.
+                    with (
+                        page.expect_response(
+                            lambda response: (
+                                urlparse(response.url).path == "/api/v1/library"
+                            )
+                        ) as initial_library,
+                        page.expect_response(
+                            lambda response: (
+                                urlparse(response.url).path == "/api/v1/attention"
+                            )
+                        ) as initial_attention,
+                    ):
+                        page.get_by_role("button", name="Sign in").click()
+                        page.get_by_role("heading", name="Works", exact=True).wait_for()
+                    for initial in (initial_library, initial_attention):
+                        initial.value.finished()
+                        assert initial.value.status == 200
                     armed = True
                     route = "/library?attention=open" if attention else "/library"
                     with page.expect_response(
