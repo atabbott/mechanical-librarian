@@ -31,12 +31,14 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
+    MAX_REPORT_BYTES,
     MetadataReport,
     ReportValueError,
 )
 from mechanical_librarian.domain.rich_metadata_qualification import (
     F20_QUALIFICATION_CANDIDATE_SHA256,
 )
+from tests.support.metadata_report_schemas import synthetic_report
 
 if TYPE_CHECKING:
     # Imported for the `cast` calls below only. The doubles in this module
@@ -2586,3 +2588,131 @@ def test_dormant_worker_recovery_uses_background_admission(monkeypatch) -> None:
     assert (repository.plans, repository.actions, application.cleanups) == ([], [], 0)
     assert service._recover_startup() == (0, 0, 0)
     assert observed == ["background", "foreground"]
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "valid",
+        "absent",
+        "null",
+        "list",
+        "dict_subclass",
+        "missing",
+        "extra",
+        "key_subclass",
+        "wrong_value",
+        "value_subclass",
+        "bytes",
+        "empty",
+        "noncanonical",
+        "wrong_id",
+        "target",
+        "oversized",
+        "surrogate",
+    ],
+)
+def test_activity_transient_validated_reports_require_exact_canonical_bindings(
+    mode: str,
+) -> None:
+    report = synthetic_report()
+    document = report.to_json()
+    documents: dict[str, object] = {report.report_id: document}
+    validated: object = {report.report_id: report}
+
+    class ReportSubclass(MetadataReport):
+        pass
+
+    class StringSubclass(str):
+        pass
+
+    class DictSubclass(dict):
+        pass
+
+    if mode == "null":
+        validated = None
+    elif mode == "list":
+        validated = []
+    elif mode == "dict_subclass":
+        validated = DictSubclass({report.report_id: report})
+    elif mode == "missing":
+        validated = {}
+    elif mode == "extra":
+        validated = {report.report_id: report, "extra": report}
+    elif mode == "key_subclass":
+        validated = {StringSubclass(report.report_id): report}
+    elif mode == "wrong_value":
+        validated = {report.report_id: {}}
+    elif mode == "value_subclass":
+        validated = {report.report_id: object.__new__(ReportSubclass)}
+    elif mode == "bytes":
+        documents[report.report_id] = document.encode()
+    elif mode == "empty":
+        documents[report.report_id] = ""
+    elif mode == "noncanonical":
+        documents[report.report_id] = document + " "
+    elif mode == "wrong_id":
+        documents = {"wrong": document}
+        validated = {"wrong": report}
+    elif mode == "oversized":
+        documents[report.report_id] = "x" * (MAX_REPORT_BYTES + 1)
+    elif mode == "surrogate":
+        documents[report.report_id] = "\ud800"
+
+    class Repository(_PagedRepository):
+        def field_effect_activity_data(self, limit):
+            return {
+                "consented_destinations": [],
+                "consented_libraries": [],
+                "counts": {},
+                "paused": False,
+                "suspensions": [],
+            }
+
+        def field_effect_activity_page(self, **query):
+            result = super().field_effect_activity_page(**query)
+            event = {
+                "connection": report.target.connection,
+                "destination": "title",
+                "failure": None,
+                "library": report.target.library,
+                "occurred_at": 1,
+                "origin": "human",
+                "report_id": report.report_id,
+                "state": "verified",
+                "work_id": report.target.item,
+            }
+            if mode == "target":
+                event["work_id"] = "wrong-target"
+            result.update(
+                events=[event, dict(event)], report_documents=documents, total=2
+            )
+            if mode != "absent":
+                result["validated_reports"] = validated
+            return result
+
+    application = ContinuousGuardedApplication(
+        Repository([]),
+        {},
+        {},
+        _Authority(),
+        ((report.target.connection, report.target.library),),
+        lambda: 1,
+        lambda *_: None,
+        activity_only=True,
+    )
+    with patch.object(
+        MetadataReport, "from_json", wraps=MetadataReport.from_json
+    ) as parse:
+        if mode in {"valid", "absent"}:
+            result = application.activity()
+            assert parse.call_count == (1 if mode == "absent" else 0)
+            assert [event["work_label"] for event in result["events"]] == [
+                report.target.current_title
+            ] * 2
+            assert "validated_reports" not in result
+            assert "report_documents" not in result
+        else:
+            with pytest.raises(GuardedApplicationError, match="^activity$"):
+                application.activity()
+            assert parse.call_count == 0

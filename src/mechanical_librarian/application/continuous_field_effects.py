@@ -36,6 +36,7 @@ from mechanical_librarian.domain.field_effect import (
 )
 from mechanical_librarian.domain.human_decision import HumanDecision
 from mechanical_librarian.domain.metadata_report import (
+    MAX_REPORT_BYTES,
     MetadataReport,
     ReportValueError,
     TargetDestination,
@@ -1063,6 +1064,25 @@ class ContinuousGuardedApplication:
             )
         ):
             raise GuardedApplicationError("activity")
+        validated_reports = page_projection.get("validated_reports")
+        if "validated_reports" in page_projection:
+            try:
+                if (
+                    type(validated_reports) is not dict
+                    or set(validated_reports) != set(report_documents)
+                    or any(
+                        type(key) is not str
+                        or type(value) is not MetadataReport
+                        or not report_documents[key]
+                        or len(report_documents[key].encode("utf-8")) > MAX_REPORT_BYTES
+                        or value.report_id != key
+                        or value.to_json() != report_documents[key]
+                        for key, value in validated_reports.items()
+                    )
+                ):
+                    raise GuardedApplicationError("activity")
+            except (ReportValueError, UnicodeError) as error:
+                raise GuardedApplicationError("activity") from error
         reports: dict[str, MetadataReport] = {}
         current_waiting = data.get("current_waiting")
         if current_waiting is not None and (
@@ -1100,7 +1120,11 @@ class ContinuousGuardedApplication:
                 if type(report_document) is not str:
                     raise GuardedApplicationError("activity")
                 try:
-                    report = MetadataReport.from_json(report_document)
+                    report = (
+                        cast("dict[str, MetadataReport]", validated_reports)[report_id]
+                        if validated_reports is not None
+                        else MetadataReport.from_json(report_document)
+                    )
                 except ReportValueError as error:
                     # ``from_json`` now funnels every malformed-document
                     # outcome, the length guard's codec failure included, into
