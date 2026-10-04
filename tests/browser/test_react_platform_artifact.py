@@ -1234,6 +1234,17 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     "future_provider_origin"
                     not in page.locator(".cm-activity-ledger").inner_text()
                 )
+                # The history controls above invalidate the earlier permission
+                # snapshot. Selection requires a new explicit current check.
+                expect(page.locator(".activity-consent-library")).to_have_count(0)
+                expect(
+                    page.get_by_role("button", name="Confirm write permissions")
+                ).to_be_disabled()
+                page.get_by_role("button", name="Check write permissions").click()
+                page.get_by_text(
+                    "Backup readiness checked. Review the included and excluded destinations.",
+                    exact=True,
+                ).wait_for()
                 page.locator(".activity-consent-library").filter(
                     has_text="Spoken stories"
                 ).get_by_role("checkbox").check()

@@ -2366,14 +2366,33 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 # intervention needed" directly above its own
                 # `3 Awaiting permission`, which is the claim #639 forbids.
                 page.get_by_role(
+                    "heading",
+                    name="Writes are off. Review permissions when you are ready.",
+                ).wait_for()
+                expect(
+                    page.get_by_text("Ready for permission", exact=True)
+                ).to_have_count(0)
+                expect(
+                    page.get_by_text("Awaiting permission", exact=True)
+                ).to_have_count(1)
+                expect(page.locator(".activity-consent-library")).to_have_count(0)
+                page.get_by_role("button", name="Review write permissions").click()
+                page.get_by_text(
+                    "Backup readiness checked. Review the included and excluded destinations.",
+                    exact=True,
+                ).wait_for()
+                page.get_by_role(
                     "heading", name="3 prepared changes are ready. Writes are off."
                 ).wait_for()
                 expect(
                     page.get_by_text("Ready for permission", exact=True)
-                ).to_have_count(1)
+                ).to_have_count(0)
                 expect(
                     page.get_by_text("Awaiting permission", exact=True)
-                ).to_have_count(0)
+                ).to_have_count(1)
+                expect(
+                    page.get_by_role("button", name="Confirm write permissions")
+                ).to_be_disabled()
                 expect(
                     page.get_by_role(
                         "heading", name="Prepared work needs your permission"
