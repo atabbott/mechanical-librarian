@@ -99,6 +99,11 @@ class CoverAutomaticDecision:
         occurred_at: int,
         qualification_identity: str | None = None,
     ) -> "CoverAutomaticDecision":
+        if qualification_identity is not None and (
+            qualification_identity not in F46_IDENTITIES_BY_DESTINATION["cover"]
+            or policy_option != qualification_identity.split(":", 1)[1]
+        ):
+            raise AutomaticDecisionError("invalid")
         core: dict[str, object] = {
             "policy_option": policy_option,
             "qualification_identity": qualification_identity,

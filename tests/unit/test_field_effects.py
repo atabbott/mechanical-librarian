@@ -7386,12 +7386,35 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
     operation = FieldEffectOperation.from_json(
         json.dumps(fixture["operation"], sort_keys=True, separators=(",", ":"))
     )
-    with audiobook_cover_environment(
-        tmp_path / "cover", [(80, 120), (640, 960)]
-    ) as state:
-        assert state.report.to_json() == fixture["report"]
-        assert state.decisions[0].decision_id == operation.plan.authority.decision_id
-        connection = state.repo._connection
+    path = tmp_path / "state.sqlite"
+    with closing(open_repository(path)) as source:
+        report = MetadataReport.from_json(fixture["report"])
+        assert report.to_json() == fixture["report"]
+        case_id, _ = publish_audiobook_preview(
+            source,
+            report,
+            ("cover_order",),
+            selected_options={"cover_order": "replace_if_strictly_better"},
+        )
+        consideration = fixture["consideration"]
+        assert case_id == consideration["review_case_id"]
+        document = json.dumps(consideration, sort_keys=True, separators=(",", ":"))
+        assert (
+            source.record_cover_consideration(
+                document,
+                review_case_id=case_id,
+                report_id=report.report_id,
+                replay_digest=consideration["replay_digest"],
+                supersedes_id=consideration["supersedes_id"],
+                occurred_at=10,
+            )
+            == document
+        )
+        assert (
+            json.loads(source.get_review_case_decisions(case_id)[0])["decision_id"]
+            == operation.plan.authority.decision_id
+        )
+        connection = source._connection
         # Restore genuinely produced predecessor rows in this synthetic fixture;
         # the exact append-only trigger is restored before reopening the store.
         trigger = connection.execute(
@@ -7410,9 +7433,9 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
             fixture["current_selection_rows"],
         )
         connection.commit()
-        state.repo.record_field_effect(operation)
-        state.repo.close()
-        repository = open_repository(tmp_path / "cover/state.sqlite", create=False)
+        source.record_field_effect(operation)
+        source.close()
+        repository = open_repository(path, create=False)
         try:
             repository.bind_current_cover_policy(
                 fixture["consideration"]["policy_reference"]
