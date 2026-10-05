@@ -468,7 +468,7 @@ def _traced_selects(
     return tuple(
         statement
         for statement in statements
-        if statement.lstrip().upper().startswith("SELECT")
+        if statement.lstrip().upper().startswith(("SELECT", "WITH"))
     )
 
 
