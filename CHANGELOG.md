@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Library and Attention reuse each browse query's filtered population for its
+  page and totals, reducing repeated work on populated libraries while preserving
+  current decisions, search, ordering, and unavailable-state checks (#1148).
+
 - Activity history remains available while preparation continues. Write-permission
   review checks readiness on demand and requires a fresh review after known changes,
   without changing consent or guarded-write checks. The Activity API is v3 (#1144).

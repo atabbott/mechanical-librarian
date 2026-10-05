@@ -30,6 +30,7 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
 )
+from mechanical_librarian.adapters.persistence.review_cases import ReviewLibraryPage
 from mechanical_librarian.adapters.persistence.review_preparation import _FAILURE_CODES
 from mechanical_librarian.application.continuous_field_effects import (
     ContinuousGuardedApplication,
@@ -1002,6 +1003,32 @@ def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
         repository.admit_review_case(automatic_proposal)
 
         assert repository.count_current_review_cases(None) == (2, 1)
+        for search in (
+            None,
+            "ångström",
+            "STRASSE",
+            "NOVELS",
+            "ada hostile",
+            "EPUB",
+            "%",
+            "_",
+            "\\",
+        ):
+            totals = repository.count_current_review_cases(search)
+            attention_total = repository.count_current_attention_fields(search)
+            for lens in (None, True, False):
+                complete = repository.read_current_library_page(search, 50, 0, lens)
+                assert (complete.total, complete.attention_total) == totals
+                for offset in (0, 1, 50):
+                    page = repository.read_current_library_page(search, 1, offset, lens)
+                    assert page.rows == complete.rows[offset : offset + 1]
+                    assert (page.total, page.attention_total) == totals
+            complete_attention = repository.read_current_attention_page(search, 50, 0)
+            assert complete_attention.total == attention_total
+            for offset in (0, 1, 50):
+                fields = repository.read_current_attention_page(search, 1, offset)
+                assert fields.rows == complete_attention.rows[offset : offset + 1]
+                assert fields.total == attention_total
         attention_rows = repository.list_current_review_case_documents(
             None, 10, 0, True
         )
@@ -3289,19 +3316,20 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
         with (
             patch.object(
                 repository,
-                "count_current_review_cases",
-                side_effect=sqlite3.OperationalError("injected count failure"),
-            ),
+                "read_current_library_page",
+                side_effect=sqlite3.OperationalError("injected combined page failure"),
+            ) as failed_page,
             pytest.raises(MetadataReportError, match="review snapshot is unavailable"),
         ):
             repository.read_review_library(None, 10, 0, None)
+        failed_page.assert_called_once()
         assert not repository._connection.in_transaction
         assert "retained_catalogue" not in {
             row[1] for row in repository._connection.execute("PRAGMA database_list")
         }
         assert repository.read_review_library(None, 10, 0, None).total == 3
-        # Refresh between page and count must not split this request's catalogue snapshot.
-        original_list = repository.list_current_review_case_documents
+        # Refresh after the combined query must not split this request's snapshot.
+        original_list = repository.read_current_library_page
         refreshed = tuple(replace(entry, title="Refreshed") for entry in entries)
 
         def publish_after_page(
@@ -3310,7 +3338,7 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
             offset: int,
             attention: bool | None,
             library_labels=(),
-        ) -> tuple[tuple[str | None, str], ...]:
+        ) -> ReviewLibraryPage:
             rows = original_list(search, limit, offset, attention, library_labels)
             catalogue.acquire_refresh()
             catalogue.publish("a" * 64, refreshed)
@@ -3318,10 +3346,11 @@ def test_terminal_catalogue_identity_uses_current_full_key_before_page_and_count
 
         with patch.object(
             repository,
-            "list_current_review_case_documents",
+            "read_current_library_page",
             side_effect=publish_after_page,
-        ):
+        ) as interleaved:
             snapshot = repository.read_review_library("100%_", 10, 0, None)
+        interleaved.assert_called_once()
         assert len(snapshot.rows) == snapshot.total == 3
         assert repository.read_review_library("100%_", 10, 0, None).total == 0
         assert repository.read_review_library("Refreshed", 10, 0, None).total == 3
@@ -3556,4 +3585,59 @@ def test_active_labels_filter_current_and_terminal_before_count_and_page(
         )
     finally:
         sessions.close()
+        repository.close()
+
+
+@pytest.mark.parametrize("surface", ("library", "attention"))
+@pytest.mark.parametrize(
+    "corruption",
+    (
+        "marker_type",
+        "marker_value",
+        "negative_total",
+        "boolean_total",
+        "present_null",
+        "absent_document",
+    ),
+)
+def test_combined_browse_validates_empty_marker_and_totals(
+    tmp_path, surface, corruption
+):
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+
+    repository = open_repository(tmp_path / "review.sqlite")
+    marker = 7 if surface == "library" else 8
+    reached = False
+
+    def corrupt_row(cursor, row):
+        nonlocal reached
+        if len(cursor.description) != 10:
+            return row
+        reached = True
+        values = list(row)
+        if corruption == "marker_type":
+            values[marker] = "0"
+        elif corruption == "marker_value":
+            values[marker] = 2
+        elif corruption == "negative_total":
+            values[marker + 1] = -1
+        elif corruption == "boolean_total":
+            values[marker + 1] = False
+        elif corruption == "present_null":
+            values[marker] = 1
+        else:
+            values[1] = "{}"
+        return tuple(values)
+
+    repository._connection.row_factory = corrupt_row
+    try:
+        with pytest.raises(
+            MetadataReportError, match=f"review {surface} is unavailable"
+        ):
+            if surface == "library":
+                repository.read_current_library_page(None, 10, 0, None)
+            else:
+                repository.read_current_attention_page(None, 10, 0)
+        assert reached
+    finally:
         repository.close()

@@ -1066,3 +1066,29 @@ def test_restart_rejects_projection_that_disagrees_with_canonical_state(
         MetadataReportError, match="database is unavailable or incompatible"
     ):
         open_repository(database, create=False)
+
+
+@pytest.mark.parametrize("surface", ("library", "attention"))
+def test_combined_browse_preserves_package_and_case_report_disagreement(
+    tmp_path: Path, surface: str
+) -> None:
+    connection = _representative_database(tmp_path / "application.sqlite3", works=8)
+    original, other = connection.execute(
+        "SELECT report_id FROM current_review_packages ORDER BY item_id LIMIT 2"
+    ).fetchall()
+    connection.execute(
+        "UPDATE current_review_packages SET report_id=? WHERE report_id=?",
+        (other[0], original[0]),
+    )
+    connection.commit()
+    repository = SQLiteMetadataReportRepository(connection)
+    try:
+        with pytest.raises(
+            MetadataReportError, match=f"review {surface} is unavailable"
+        ):
+            if surface == "library":
+                repository.read_current_library_page(None, 50, 0, None)
+            else:
+                repository.read_current_attention_page(None, 50, 0)
+    finally:
+        repository.close()

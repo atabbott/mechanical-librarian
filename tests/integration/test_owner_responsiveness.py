@@ -6,8 +6,10 @@ import hashlib
 import json
 import sqlite3
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+import httpx
 import pytest
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -16,7 +18,10 @@ from mechanical_librarian.application.review_web import (
     ReviewWebError,
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
-from tests.support.owner_responsiveness import OwnerResponsivenessFixture
+from tests.support.owner_responsiveness import (
+    OwnerResponsivenessFixture,
+    running_owner_fixture,
+)
 
 
 def test_complete_cover_browse_avoids_full_report_validation_in_counts(
@@ -2212,3 +2217,47 @@ def test_missing_browse_observation_is_not_fetching_drift(
         assert type(raised.value) is MetadataReportError
     finally:
         fixture.close()
+
+
+def test_concurrent_initial_library_and_attention_use_real_http(tmp_path: Path) -> None:
+    with running_owner_fixture(tmp_path, 10) as (fixture, origin):
+        expected = fixture.repository.count_current_review_cases(None)
+        fields = fixture.repository.count_current_attention_fields(None)
+        with httpx.Client(base_url=origin, headers={"Origin": origin}) as client:
+            assert (
+                client.post(
+                    "/api/v1/session/login", json={"password": "synthetic-owner"}
+                ).status_code
+                == 200
+            )
+            start = threading.Barrier(2)
+
+            def read(path: str) -> httpx.Response:
+                start.wait(timeout=5)
+                return client.get(path)
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                library = executor.submit(read, "/api/v1/library?lens=all&limit=5")
+                attention = executor.submit(read, "/api/v1/attention?limit=5")
+                library_response, attention_response = (
+                    library.result(),
+                    attention.result(),
+                )
+            assert library_response.status_code == attention_response.status_code == 200
+            assert library_response.json()["counts"] == {
+                "all": expected[0],
+                "needs_attention": expected[1],
+                "no_attention_needed": expected[0] - expected[1],
+            }
+            assert len(library_response.json()["items"]) == 5
+            assert attention_response.json()["total"] == fields
+            assert len(attention_response.json()["items"]) == min(5, fields)
+            for path in ("/api/v1/library", "/api/v1/attention"):
+                empty = client.get(path, params={"q": "no-synthetic-work-matches"})
+                assert empty.status_code == 200 and empty.json()["items"] == []
+                assert (
+                    client.get(path, params={"cursor": "malformed"}).status_code == 400
+                )
+        assert not fixture.repository._connection.in_transaction
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        fixture.repository._connection.execute("SELECT 1")

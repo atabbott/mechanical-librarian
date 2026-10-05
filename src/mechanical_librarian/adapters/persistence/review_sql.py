@@ -252,3 +252,10 @@ def _terminal_library_sql(catalogue_attached: bool) -> str:
         "SELECT 1 FROM current_review_packages p WHERE p.connection_name=w.connection_name "
         "AND p.library_name=w.library_name AND p.item_id=w.item_id))"
     )
+
+
+def _browse_scalar_sql(sql: str) -> str:
+    """Use the browse query's once-per-report scalars without changing predicates."""
+    return sql.replace(
+        "json_extract(mr.document,'$.file.format')", "scalars.format"
+    ).replace("json_extract(mr.document,'$.target.fields[0].value')", "scalars.title")

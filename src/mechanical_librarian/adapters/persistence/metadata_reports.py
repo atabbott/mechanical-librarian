@@ -63,6 +63,8 @@ from mechanical_librarian.adapters.persistence.reports import (
     SQLiteReportRepository,
 )
 from mechanical_librarian.adapters.persistence.review_cases import (
+    ReviewAttentionPage,
+    ReviewLibraryPage,
     SQLiteReviewCaseRepository,
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
@@ -473,28 +475,18 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     review_case_id, limit
                 )
             ),
-            list_current_review_case_documents=(
+            read_current_library_page=(
                 lambda search, limit, offset, attention, library_labels: (
-                    self.list_current_review_case_documents(
+                    self.read_current_library_page(
                         search, limit, offset, attention, library_labels
                     )
                 )
             ),
-            count_current_review_cases=(
-                lambda search, library_labels: self.count_current_review_cases(
-                    search, library_labels
-                )
-            ),
-            list_current_attention_documents=(
+            read_current_attention_page=(
                 lambda search, limit, offset, library_labels: (
-                    self.list_current_attention_documents(
+                    self.read_current_attention_page(
                         search, limit, offset, library_labels
                     )
-                )
-            ),
-            count_current_attention_fields=(
-                lambda search, library_labels: self.count_current_attention_fields(
-                    search, library_labels
                 )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
@@ -1531,6 +1523,31 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         return self._review_projections.read_current_report_document(
             connection, library, item
         )
+
+    def read_current_library_page(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        attention: bool | None,
+        library_labels: LibraryLabels = (),
+    ) -> ReviewLibraryPage:
+        with self.browse_observation():
+            return self._review_cases.read_current_library_page(
+                search, limit, offset, attention, library_labels
+            )
+
+    def read_current_attention_page(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
+    ) -> ReviewAttentionPage:
+        with self.browse_observation():
+            return self._review_cases.read_current_attention_page(
+                search, limit, offset, library_labels
+            )
 
     def list_current_review_case_documents(
         self,

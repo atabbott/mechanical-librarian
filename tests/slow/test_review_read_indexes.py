@@ -301,5 +301,15 @@ def test_deep_browse_pages_sort_thin_keys_before_loading_documents() -> None:
                 assert "rc.document" not in sorter
                 assert "mr.document AS" not in sorter
                 assert documents.startswith(",")
+                assert "report_scalars AS MATERIALIZED" in sorter
+                plan = support._plan(connection, statement, ())
+                assert any("MATERIALIZE report_scalars" in step for step in plan)
+                assert sum("MATERIALIZE candidates" in step for step in plan) == 1
+                if surface == "attention":
+                    assert "AS disposition" not in sorter
+                    assert "AS disposition" in documents
+                    assert "count(*) AS total FROM attentive" in sorter
+                else:
+                    assert "COALESCE(sum(attention),0)" in sorter
         finally:
             repository.close()

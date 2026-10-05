@@ -13,7 +13,7 @@ handing the whole repository to the application layer.
 Every seam crosses the boundary as a callable resolved
 through the composing repository at call time. That is load-bearing rather than
 stylistic: five review-web tests substitute `get_review_case`,
-`list_current_review_case_documents` and `list_current_attention_documents` on
+`read_current_library_page` and `read_current_attention_page` on
 the composing repository *instance* -- to interleave a competing writer at an
 exact statement, or to force a snapshot rollback -- and then drive
 `read_current_review_case`, `read_review_library` and `read_review_attention`.
@@ -40,6 +40,10 @@ from mechanical_librarian.adapters.persistence.decisions import (
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
+)
+from mechanical_librarian.adapters.persistence.review_cases import (
+    ReviewAttentionPage,
+    ReviewLibraryPage,
 )
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
@@ -100,21 +104,12 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         cover_consideration_history: Callable[
             [str, int], tuple[dict[str, object], ...]
         ],
-        list_current_review_case_documents: Callable[
-            [str | None, int, int, bool | None, LibraryLabels],
-            tuple[tuple[str | None, str], ...],
+        read_current_library_page: Callable[
+            [str | None, int, int, bool | None, LibraryLabels], ReviewLibraryPage
         ],
-        count_current_review_cases: Callable[
-            [str | None, LibraryLabels], tuple[int, int]
+        read_current_attention_page: Callable[
+            [str | None, int, int, LibraryLabels], ReviewAttentionPage
         ],
-        list_current_attention_documents: Callable[
-            [str | None, int, int, LibraryLabels],
-            tuple[
-                tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool],
-                ...,
-            ],
-        ],
-        count_current_attention_fields: Callable[[str | None, LibraryLabels], int],
         current_cover_authority: Callable[[], tuple[str | None, str | None]],
         current_resolved_metadata_policy: Callable[
             [str], ResolvedMetadataPolicy | None
@@ -131,10 +126,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         self.get_review_case_history = get_review_case_history
         self.current_cover_consideration_document = current_cover_consideration_document
         self.cover_consideration_history = cover_consideration_history
-        self.list_current_review_case_documents = list_current_review_case_documents
-        self.count_current_review_cases = count_current_review_cases
-        self.list_current_attention_documents = list_current_attention_documents
-        self.count_current_attention_fields = count_current_attention_fields
+        self.read_current_library_page = read_current_library_page
+        self.read_current_attention_page = read_current_attention_page
         self._current_cover_authority = current_cover_authority
         self.current_resolved_metadata_policy = current_resolved_metadata_policy
 
@@ -437,7 +430,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         library_labels: LibraryLabels = (),
     ) -> ReviewLibrarySnapshot:
         with self._consistent_review_read():
-            rows = self.list_current_review_case_documents(
+            page = self.read_current_library_page(
                 search, limit, offset, attention, library_labels
             )
             projected_rows: list[
@@ -452,7 +445,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     int,
                 ]
             ] = []
-            for case_document, report_document in rows:
+            for case_document, report_document in page.rows:
                 if (
                     case_document is None
                     and '"schema_version":"review-terminal-work-v1"' in report_document
@@ -529,13 +522,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     )
                 )
             projected = tuple(projected_rows)
-            total, attention_total = self.count_current_review_cases(
-                search, library_labels
-            )
             snapshot = ReviewLibrarySnapshot(
                 rows=projected,
-                total=total,
-                attention_total=attention_total,
+                total=page.total,
+                attention_total=page.attention_total,
             )
         return snapshot
 
@@ -757,10 +747,8 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         library_labels: LibraryLabels = (),
     ) -> ReviewAttentionSnapshot:
         with self._consistent_review_read():
-            snapshot = ReviewAttentionSnapshot(
-                rows=self.list_current_attention_documents(
-                    search, limit, offset, library_labels
-                ),
-                total=self.count_current_attention_fields(search, library_labels),
+            page = self.read_current_attention_page(
+                search, limit, offset, library_labels
             )
+            snapshot = ReviewAttentionSnapshot(rows=page.rows, total=page.total)
         return snapshot
