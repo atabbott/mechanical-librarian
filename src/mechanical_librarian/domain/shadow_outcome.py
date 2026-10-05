@@ -408,6 +408,23 @@ def _audiobook_destination(identity: str | None, policy_destination: str) -> str
     return "automatic" if identity is not None and identity in passing else "ask"
 
 
+def _rich_action_id(
+    preview: RichFieldPreview, destination: str, proposal_id: str, manifest_sha256: str
+) -> str:
+    return "action_" + _digest(
+        {
+            "candidate_id": preview.source_candidate_id
+            if preview.outcome == "projected"
+            else None,
+            "destination": destination,
+            "manifest_sha256": manifest_sha256,
+            "option": preview.option,
+            "outcome": preview.outcome,
+            "proposal_id": proposal_id,
+        }
+    )
+
+
 def _rich_field_outcome(
     preview: RichFieldPreview,
     *,
@@ -455,15 +472,8 @@ def _rich_field_outcome(
         reason_code = preview.reason
     elif requested_destination == "automatic" and policy_destination == "ask":
         reason_code = "automatic_unqualified"
-    action_id = "action_" + _digest(
-        {
-            "candidate_id": candidate_id,
-            "destination": destination,
-            "manifest_sha256": F20_QUALIFICATION_CANDIDATE_SHA256,
-            "option": preview.option,
-            "outcome": preview.outcome,
-            "proposal_id": proposal_id,
-        }
+    action_id = _rich_action_id(
+        preview, destination, proposal_id, F20_QUALIFICATION_CANDIDATE_SHA256
     )
     rule_id = "shadow_rule_" + _digest(
         {
@@ -542,7 +552,12 @@ def matches_historical_rich_outcome(
             if value.policy_category is not None
             else None
         )
-        if preview is not None:
+        if preview is not None and value.action_id == _rich_action_id(
+            preview,
+            value.destination,
+            value.proposal_id,
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+        ):
             old = old_fields.get(value.destination)
             if old is None:
                 return False
@@ -550,18 +565,8 @@ def matches_historical_rich_outcome(
                 digest
                 for digest in historical
                 if old.action_id
-                == "action_"
-                + _digest(
-                    {
-                        "candidate_id": preview.source_candidate_id
-                        if preview.outcome == "projected"
-                        else None,
-                        "destination": value.destination,
-                        "manifest_sha256": digest,
-                        "option": preview.option,
-                        "outcome": preview.outcome,
-                        "proposal_id": value.proposal_id,
-                    }
+                == _rich_action_id(
+                    preview, value.destination, value.proposal_id, digest
                 )
             }
             if not historical:

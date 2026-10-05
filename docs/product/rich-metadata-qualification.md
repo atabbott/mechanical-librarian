@@ -76,7 +76,9 @@ description authority, policy elections, report and proposal versions are unchan
 
 Current-schema Preview outcomes remain readable after a qualification binding
 rotation only when reconstruction from current inputs matches every field and
-canonical identity under one known historical F20 digest. Their authority remains
+canonical identity under one known historical F20 digest. Only actions matching
+the current F20 identity formula participate; ordinary ebook ASIN actions remain
+unchanged and exact. Their authority remains
 `none`; this does not adopt an older schema or change historical rebuild decisions.
 Audiobook cover decisions retain their recorded F46 digest and exact frozen option
 permissions. Newly created decisions bind current qualification internally.

@@ -9700,7 +9700,7 @@ def retained_rich_predecessor(tmp_path, request):
     proposal = ProposalSet.from_json(frozen["proposal"])
     profile = MetadataPolicyProfile.from_data(json.loads(frozen["profile"]))
     policy = ResolvedMetadataPolicy.from_data(json.loads(frozen["policy"]))
-    repository = open_repository(tmp_path / "retained.sqlite")
+    repository = open_repository(tmp_path / "retained.sqlite", cross_thread=True)
     try:
         repository.enter_shadow_preview(1)
         _activate_profile(repository, profile, policy, report.target.library)
@@ -9711,7 +9711,9 @@ def retained_rich_predecessor(tmp_path, request):
         repository.close()
 
 
-@pytest.mark.parametrize("retained_rich_predecessor", ("rich", "isbn"), indirect=True)
+@pytest.mark.parametrize(
+    "retained_rich_predecessor", ("rich", "isbn", "ebook-asin"), indirect=True
+)
 def test_retained_rich_outcome_reaches_policy_and_isbn_activity(
     retained_rich_predecessor,
 ):
@@ -9722,7 +9724,7 @@ def test_retained_rich_outcome_reaches_policy_and_isbn_activity(
         "INSERT INTO shadow_decision_outcomes VALUES(?,?,?,?,?,?,?,?)", row
     )
     repository._connection.commit()
-    sample = PolicyNotebook(repository, (report.target.library,), {}).shadow_sample(1)
+    sample = PolicyNotebook(repository, (report.target.library,), {}).shadow_sample(10)
     retained = ShadowOutcomeSet.from_json(row[-1])
     assert sample["items"] == [{**retained.to_data(), "evaluated_at": row[-2]}]
     activity = repository.field_effect_activity_page(
@@ -9746,8 +9748,18 @@ def test_retained_rich_outcome_reaches_policy_and_isbn_activity(
     assert repository._validate_shadow_outcome_row(row)[0] == retained.to_json()
 
 
+@pytest.mark.parametrize("retained_rich_predecessor", ("ebook-asin",), indirect=True)
 @pytest.mark.parametrize(
-    "corruption", ("unknown", "mixed", "reason", "canonical", "malformed")
+    "corruption",
+    (
+        "unknown",
+        "mixed",
+        "current_mixed",
+        "reason",
+        "ordinary_reason",
+        "canonical",
+        "malformed",
+    ),
 )
 def test_retained_rich_outcome_refuses_changed_semantics(
     retained_rich_predecessor, corruption
@@ -9769,12 +9781,22 @@ def test_retained_rich_outcome_refuses_changed_semantics(
     field = next(
         value for value in data["outcomes"] if value["policy_category"] == "isbn_form"
     )
-    if corruption in {"unknown", "mixed"}:
+    if corruption == "ordinary_reason":
+        field = next(
+            value for value in data["outcomes"] if value["destination"] == "asin"
+        )
+    if corruption in {"unknown", "mixed", "current_mixed"}:
+        from mechanical_librarian.domain.rich_metadata_qualification import (
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+        )
+
         preview = rich[field["policy_category"]]
         digest = (
             "0" * 64
             if corruption == "unknown"
-            else _PRIOR_F20_QUALIFICATION_MANIFESTS[1][0]
+            else F20_QUALIFICATION_CANDIDATE_SHA256
+            if corruption == "current_mixed"
+            else _PRIOR_F20_QUALIFICATION_MANIFESTS[-1][0]
         )
         field["action_id"] = "action_" + _digest(
             {
@@ -9788,11 +9810,11 @@ def test_retained_rich_outcome_refuses_changed_semantics(
                 "proposal_id": field["proposal_id"],
             }
         )
-    elif corruption == "reason":
+    elif corruption in {"reason", "ordinary_reason"}:
         field["reason_code"] = "source_value_absent"
     elif corruption == "canonical":
         field["outcome_id"] = "shadow_outcome_" + "0" * 64
-    if corruption in {"unknown", "mixed", "reason"}:
+    if corruption in {"unknown", "mixed", "current_mixed", "reason", "ordinary_reason"}:
         field["qualification_candidate_id"] = "qualification_candidate_" + _digest(
             {
                 "action_id": field["action_id"],
@@ -9819,3 +9841,28 @@ def test_retained_rich_outcome_refuses_changed_semantics(
 
     with pytest.raises((MetadataReportError, ShadowOutcomeError)):
         repository._validate_shadow_outcome_row(tuple(row))
+
+
+@pytest.mark.parametrize("retained_rich_predecessor", ("ebook-asin",), indirect=True)
+def test_policy_default_sample_route_reads_retained_ordinary_asin(
+    retained_rich_predecessor,
+):
+    from tests.support.review_web_doubles import review_web_context
+
+    repository, frozen, *_ = retained_rich_predecessor
+    row = tuple(frozen["outcome_row"])
+    repository._connection.execute(
+        "INSERT INTO shadow_decision_outcomes VALUES(?,?,?,?,?,?,?,?)", row
+    )
+    repository._connection.commit()
+    context = review_web_context(lambda *_: repository)
+    web = next(context)
+    try:
+        web.login()
+        response = web.client.get("/api/v1/metadata-policy/shadow/outcomes?limit=10")
+        assert response.status_code == 200
+        assert response.json()["items"] == [
+            {**json.loads(row[-1]), "evaluated_at": row[-2]}
+        ]
+    finally:
+        next(context, None)
