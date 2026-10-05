@@ -655,9 +655,7 @@ def test_the_attention_lens_lists_the_field_the_library_row_counted() -> None:
     assert type(result) is dict
     assert "propose_change" == result["outcome"]
 
-    item = _attention_item(
-        case.to_json(), report.to_json(), TargetDestination.ASIN.value, 2
-    )
+    item = _attention_item(case, report, TargetDestination.ASIN.value, 2)
 
     assert item is not None
     assert TargetDestination.ASIN.value == item["destination"]
@@ -680,7 +678,7 @@ def test_a_shadow_disposition_never_drops_a_recording_from_the_attention_lens() 
     case = _case(report)
     destination = TargetDestination.ASIN.value
 
-    assert _attention_item(case.to_json(), report.to_json(), destination, 2) is not None
+    assert _attention_item(case, report, destination, 2) is not None
     for disposition in (
         "abstention",
         "candidate",
@@ -691,8 +689,8 @@ def test_a_shadow_disposition_never_drops_a_recording_from_the_attention_lens() 
     ):
         assert (
             _attention_item(
-                case.to_json(),
-                report.to_json(),
+                case,
+                report,
                 destination,
                 2,
                 automatic_outcome=disposition,

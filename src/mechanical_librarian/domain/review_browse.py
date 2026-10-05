@@ -2,8 +2,9 @@
 
 Canonical write boundaries perform complete semantic validation. Repository
 browse queries use these bounded facts to avoid rebuilding the domain graph
-several times, while the application still performs one complete parse of each
-visible row before returning its DTO.
+several times, while the application completely parses visible documents before
+returning DTOs. Consecutive Attention fields with exactly equal canonical document
+strings share that parse within one repository page only.
 """
 
 from __future__ import annotations

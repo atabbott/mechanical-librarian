@@ -11,9 +11,19 @@ from mechanical_librarian.application.review_web import (
     ReviewAttentionSnapshot,
     ReviewWebError,
 )
+from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
     classify_review_field,
 )
+from tests.support.review_cases import _report
+
+
+@pytest.fixture
+def attention_documents():
+    report = _report()
+    case = ReviewCase.create(evaluate_report(report), report)
+    return case.to_json(), report.to_json()
 
 
 @pytest.mark.parametrize(
@@ -203,7 +213,9 @@ def test_advanced_automatic_effect_is_inspect_only() -> None:
     assert "cannot be overridden yet" in value.reason
 
 
-def test_attention_continues_after_two_contradictory_batches() -> None:
+def test_attention_continues_after_two_contradictory_batches(
+    attention_documents,
+) -> None:
     class Repository:
         def __init__(self) -> None:
             self.offsets: list[int] = []
@@ -212,7 +224,7 @@ def test_attention_continues_after_two_contradictory_batches() -> None:
             del library_labels  # These fixtures isolate pagination and read failure.
             self.offsets.append(offset)
             rows = tuple(
-                ("case", "report", f"invalid-{index}", 1, None, None, False)
+                (*attention_documents, f"invalid-{index}", 1, None, None, False)
                 for index in range(offset, offset + limit)
             )
             return ReviewAttentionSnapshot(rows, 99)
@@ -245,11 +257,13 @@ def test_attention_fetch_failure_remains_unavailable() -> None:
     assert str(failure.value.__cause__) == "offline"
 
 
-def test_attention_backfills_a_valid_successor_and_ends_honestly() -> None:
+def test_attention_backfills_a_valid_successor_and_ends_honestly(
+    attention_documents,
+) -> None:
     rows = (
-        ("case", "report", "invalid", 1, None, None, False),
-        ("case", "report", "also-invalid", 1, None, None, False),
-        ("case", "report", "valid", 1, None, None, False),
+        (*attention_documents, "invalid", 1, None, None, False),
+        (*attention_documents, "also-invalid", 1, None, None, False),
+        (*attention_documents, "valid", 1, None, None, False),
     )
 
     class Repository:
@@ -269,10 +283,12 @@ def test_attention_backfills_a_valid_successor_and_ends_honestly() -> None:
     assert page["next_cursor"] is None
 
 
-def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total() -> None:
+def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total(
+    attention_documents,
+) -> None:
     rows = (
-        ("case", "report", "stale", 1, None, None, False),
-        ("case", "report", "valid", 1, None, None, False),
+        (*attention_documents, "stale", 1, None, None, False),
+        (*attention_documents, "valid", 1, None, None, False),
     )
 
     class Repository:
@@ -294,12 +310,14 @@ def test_attention_last_valid_raw_row_has_no_cursor_and_stable_raw_total() -> No
     assert page["total"] == 2
 
 
-def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion() -> None:
+def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion(
+    attention_documents,
+) -> None:
     rows = (
-        ("case", "report", "stale-1", 1, None, None, False),
-        ("case", "report", "stale-2", 1, None, None, False),
-        ("case", "report", "stale-3", 1, None, None, False),
-        ("case", "report", "stale-4", 1, None, None, False),
+        (*attention_documents, "stale-1", 1, None, None, False),
+        (*attention_documents, "stale-2", 1, None, None, False),
+        (*attention_documents, "stale-3", 1, None, None, False),
+        (*attention_documents, "stale-4", 1, None, None, False),
     )
 
     class Repository:
@@ -324,10 +342,12 @@ def test_attention_exact_boundary_all_contradictory_rows_proves_exhaustion() -> 
     assert [0, 2] == repository.offsets
 
 
-def test_attention_terminal_contradictory_lookahead_has_no_empty_successor() -> None:
+def test_attention_terminal_contradictory_lookahead_has_no_empty_successor(
+    attention_documents,
+) -> None:
     rows = (
-        ("case", "report", "valid", 1, None, None, False),
-        ("case", "report", "invalid", 1, None, None, False),
+        (*attention_documents, "valid", 1, None, None, False),
+        (*attention_documents, "invalid", 1, None, None, False),
     )
 
     class Repository:
@@ -349,11 +369,13 @@ def test_attention_terminal_contradictory_lookahead_has_no_empty_successor() -> 
     assert 2 == page["total"]
 
 
-def test_attention_visible_successor_remains_at_next_cursor() -> None:
+def test_attention_visible_successor_remains_at_next_cursor(
+    attention_documents,
+) -> None:
     rows = (
-        ("case", "report", "valid-1", 1, None, None, False),
-        ("case", "report", "invalid", 1, None, None, False),
-        ("case", "report", "valid-2", 1, None, None, False),
+        (*attention_documents, "valid-1", 1, None, None, False),
+        (*attention_documents, "invalid", 1, None, None, False),
+        (*attention_documents, "valid-2", 1, None, None, False),
     )
 
     class Repository:
