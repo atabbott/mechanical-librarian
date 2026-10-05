@@ -296,7 +296,11 @@ def authority_from_decision(
             None,
             None,
         )
-    if type(decision) is AutomaticDecision and not qualification_manifest_is_current(
+    if (
+        type(decision) is AutomaticDecision
+        or type(decision) is CoverAutomaticDecision
+        and decision.qualification_identity is not None
+    ) and not qualification_manifest_is_current(
         decision.policy_category,
         decision.policy_option,
         decision.qualification_manifest_sha256,

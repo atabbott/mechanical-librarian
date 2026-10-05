@@ -9685,3 +9685,137 @@ def test_scalar_audiobook_title_persists_without_suspension_and_reopens(
             assert repository.field_effect_authority_source(decision)[
                 "decision_value"
             ] == {"kind": "text", "value": "Project Hail Mary"}
+
+
+@pytest.fixture
+def retained_rich_predecessor(tmp_path, request):
+    frozen = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/retained_qualification_predecessors"
+            / (getattr(request, "param", "rich") + ".json")
+        ).read_text()
+    )
+    report = MetadataReport.from_json(frozen["report"])
+    proposal = ProposalSet.from_json(frozen["proposal"])
+    profile = MetadataPolicyProfile.from_data(json.loads(frozen["profile"]))
+    policy = ResolvedMetadataPolicy.from_data(json.loads(frozen["policy"]))
+    repository = open_repository(tmp_path / "retained.sqlite")
+    try:
+        repository.enter_shadow_preview(1)
+        _activate_profile(repository, profile, policy, report.target.library)
+        case = _publish_case(repository, report, proposal)
+        assert case["review_case_id"] == frozen["outcome_row"][1]
+        yield repository, frozen, policy, report, proposal
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize("retained_rich_predecessor", ("rich", "isbn"), indirect=True)
+def test_retained_rich_outcome_reaches_policy_and_isbn_activity(
+    retained_rich_predecessor,
+):
+    repository, frozen, policy, report, proposal = retained_rich_predecessor
+    row = tuple(frozen["outcome_row"])
+    assert repository._validate_shadow_outcome_row(row) == (row[-1], row[-2])
+    repository._connection.execute(
+        "INSERT INTO shadow_decision_outcomes VALUES(?,?,?,?,?,?,?,?)", row
+    )
+    repository._connection.commit()
+    sample = PolicyNotebook(repository, (report.target.library,), {}).shadow_sample(1)
+    retained = ShadowOutcomeSet.from_json(row[-1])
+    assert sample["items"] == [{**retained.to_data(), "evaluated_at": row[-2]}]
+    activity = repository.field_effect_activity_page(
+        search=None, event_type="metadata", occurred_after=0, page=1, page_size=50
+    )
+    if proposal.media_kind == "audiobook":
+        (refusal,) = activity["events"]
+        assert refusal["event_id"] == retained.outcome_set_id + ":isbn"
+        assert refusal["record"]["source_kind"] == "isbn_refusal"
+        assert refusal["record"]["reason_code"] == "source_value_absent"
+    assert repository._validate_shadow_outcome_row(row)[0] == row[-1]
+    current = ShadowOutcomeSet.from_json(repository.persist_shadow_outcome(row[1], 4))
+    retained = ShadowOutcomeSet.from_json(row[-1])
+    assert current.to_json() != retained.to_json()
+    assert retained.authority == current.authority == "none"
+    if proposal.media_kind != "audiobook":
+        assert {field.disposition for field in retained.outcomes} >= {
+            "manual",
+            "ignore",
+        }
+    assert repository._validate_shadow_outcome_row(row)[0] == retained.to_json()
+
+
+@pytest.mark.parametrize(
+    "corruption", ("unknown", "mixed", "reason", "canonical", "malformed")
+)
+def test_retained_rich_outcome_refuses_changed_semantics(
+    retained_rich_predecessor, corruption
+):
+    from mechanical_librarian.domain.automatic_decision import (
+        _PRIOR_F20_QUALIFICATION_MANIFESTS,
+    )
+    from mechanical_librarian.domain.rich_metadata_preview import (
+        compile_rich_metadata_preview,
+    )
+
+    repository, frozen, policy, report, proposal = retained_rich_predecessor
+    row = list(frozen["outcome_row"])
+    data = json.loads(row[-1])
+    rich = {
+        value.field: value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+    }
+    field = next(
+        value for value in data["outcomes"] if value["policy_category"] == "isbn_form"
+    )
+    if corruption in {"unknown", "mixed"}:
+        preview = rich[field["policy_category"]]
+        digest = (
+            "0" * 64
+            if corruption == "unknown"
+            else _PRIOR_F20_QUALIFICATION_MANIFESTS[1][0]
+        )
+        field["action_id"] = "action_" + _digest(
+            {
+                "candidate_id": preview.source_candidate_id
+                if preview.outcome == "projected"
+                else None,
+                "destination": field["destination"],
+                "manifest_sha256": digest,
+                "option": preview.option,
+                "outcome": preview.outcome,
+                "proposal_id": field["proposal_id"],
+            }
+        )
+    elif corruption == "reason":
+        field["reason_code"] = "source_value_absent"
+    elif corruption == "canonical":
+        field["outcome_id"] = "shadow_outcome_" + "0" * 64
+    if corruption in {"unknown", "mixed", "reason"}:
+        field["qualification_candidate_id"] = "qualification_candidate_" + _digest(
+            {
+                "action_id": field["action_id"],
+                "candidate_id": field["candidate_id"],
+                "catalogue_sha256": data["catalogue_sha256"],
+                "citation_ids": field["citation_ids"],
+                "combination_ids": field["combination_ids"],
+                "rule_id": field["rule_id"],
+            }
+        )
+        field["outcome_id"] = "shadow_outcome_" + _digest(
+            {key: value for key, value in field.items() if key != "outcome_id"}
+        )
+        data["outcome_set_id"] = "shadow_outcome_set_" + _digest(
+            {key: value for key, value in data.items() if key != "outcome_set_id"}
+        )
+    row[0] = data["outcome_set_id"]
+    row[-1] = json.dumps(
+        data, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    if corruption == "malformed":
+        row[-1] = row[-1][:-1]
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeError
+
+    with pytest.raises((MetadataReportError, ShadowOutcomeError)):
+        repository._validate_shadow_outcome_row(tuple(row))

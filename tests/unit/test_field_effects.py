@@ -7374,3 +7374,65 @@ def test_permission_readiness_never_reuses_a_previous_success(
         assert not reader._connection.in_transaction
     finally:
         reader.close()
+
+
+def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effects):
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/retained_qualification_predecessors/cover.json"
+        ).read_text()
+    )
+    operation = FieldEffectOperation.from_json(
+        json.dumps(fixture["operation"], sort_keys=True, separators=(",", ":"))
+    )
+    with audiobook_cover_environment(
+        tmp_path / "cover", [(80, 120), (640, 960)]
+    ) as state:
+        assert state.report.to_json() == fixture["report"]
+        assert state.decisions[0].decision_id == operation.plan.authority.decision_id
+        connection = state.repo._connection
+        # Restore genuinely produced predecessor rows in this synthetic fixture;
+        # the exact append-only trigger is restored before reopening the store.
+        trigger = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name='cover_selection_authorities_no_delete'"
+        ).fetchone()[0]
+        connection.execute("DELETE FROM current_cover_selection_authorities")
+        connection.execute("DROP TRIGGER cover_selection_authorities_no_delete")
+        connection.execute("DELETE FROM cover_selection_authorities")
+        connection.execute(trigger)
+        connection.executemany(
+            "INSERT INTO cover_selection_authorities VALUES(?,?,?,?,?,?,?,?,?,?)",
+            fixture["selection_rows"],
+        )
+        connection.executemany(
+            "INSERT INTO current_cover_selection_authorities VALUES(?,?,?,?)",
+            fixture["current_selection_rows"],
+        )
+        connection.commit()
+        state.repo.record_field_effect(operation)
+        state.repo.close()
+        repository = open_repository(tmp_path / "cover/state.sqlite", create=False)
+        try:
+            repository.bind_current_cover_policy(
+                fixture["consideration"]["policy_reference"]
+            )
+            repository.bind_current_cover_replay(
+                fixture["consideration"]["replay_reference"]
+            )
+            assert repository.get_field_effect(operation.plan.plan_id) == operation
+            assert fixture["decision"] in repository.get_review_case_decisions(
+                operation.plan.authority.review_case_id
+            )
+            assert not repository.field_effect_authority_is_current(
+                operation.plan.authority
+            )
+            effects.target.seed(operation.plan)
+            guarded = effects.persisted_service(
+                repository, effects.target, PersistedFieldEffectAuthority(repository)
+            )
+            result = guarded.apply(operation.plan.plan_id)
+            assert result.state == "stale" and result.failure == "authority"
+            assert not effects.target._effects
+        finally:
+            repository.close()

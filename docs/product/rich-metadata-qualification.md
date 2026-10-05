@@ -67,10 +67,22 @@ permission sets. F38 and separately consumed cover records retain their own scop
 **Clean rebuild required:** outcome `shadow-outcome-set-v9`, its exact SQL
 constraint and API literal refuse predecessor stores before writable use, even
 when no outcomes exist. There is no adoption or migration. F20 contributes to
-persisted action/outcome identities; F46 cover decisions resolve a live rule
-identity, so document decoding alone cannot establish safe startup. The historical
+persisted action/outcome identities; at that boundary F46 cover decisions resolved a live rule
+identity, so document decoding alone could not establish safe startup. The historical
 qualification-state bridge target remains intentionally unchanged. Authored
 description authority, policy elections, report and proposal versions are unchanged.
+
+## Same-schema retained qualification decoding (#1148)
+
+Current-schema Preview outcomes remain readable after a qualification binding
+rotation only when reconstruction from current inputs matches every field and
+canonical identity under one known historical F20 digest. Their authority remains
+`none`; this does not adopt an older schema or change historical rebuild decisions.
+Audiobook cover decisions retain their recorded F46 digest and exact frozen option
+permissions. Newly created decisions bind current qualification internally.
+Historical decisions remain readable but are refused by authority resolution,
+scheduling and persisted-plan currentness checks before any effect. Ebook cover
+qualification is unchanged.
 
 ## Historical ebook synopsis successor (#1076)
 

@@ -270,3 +270,90 @@ def test_exact_predicate_negatives(tmp_path, change):
         else:
             candidate["reference"] = "cover_ref_000"
     assert material_audiobook_cover_reference(rows, artifact) is None
+
+
+def test_retained_qualification_predecessor_bytes_are_frozen():
+    root = Path(__file__).parents[1] / "support/retained_qualification_predecessors"
+    provenance = json.loads((root / "provenance.json").read_text())
+    assert provenance["source_sha"] == "48781428ac0358ad573f2400821758596585418a"
+    for name, digest in provenance["documents"].items():
+        assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    (None, "unknown", "ebook", "null", "bool", "identity", "unqualified_fill"),
+)
+def test_retained_audiobook_cover_binds_recorded_exact_permissions(invalid):
+    from mechanical_librarian.application.field_effects import authority_from_decision
+    from mechanical_librarian.domain.automatic_decision import (
+        F19A_QUALIFICATION_MANIFEST_SHA256,
+        AutomaticDecisionError,
+    )
+    from mechanical_librarian.domain.cover_automatic_decision import (
+        CoverAutomaticDecision,
+    )
+
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/retained_qualification_predecessors/cover.json"
+        ).read_text()
+    )
+    document = fixture["decision"]
+    decision = CoverAutomaticDecision.from_json(document)
+    assert decision.to_json() == document
+    assert authority_from_decision(decision) is None
+    if invalid is None:
+        import inspect
+
+        current = CoverAutomaticDecision.create(
+            **{
+                key: getattr(decision, key)
+                for key in inspect.signature(CoverAutomaticDecision.create).parameters
+            }
+        )
+        assert (
+            current.qualification_manifest_sha256
+            != decision.qualification_manifest_sha256
+        )
+        assert current.decision_id == decision.decision_id
+        assert authority_from_decision(current) is not None
+        assert CoverAutomaticDecision.from_json(current.to_json()) == current
+        assert (
+            "qualification_manifest_sha256"
+            not in inspect.signature(CoverAutomaticDecision.create).parameters
+        )
+        return
+    data = json.loads(document)
+    if invalid == "identity":
+        data["idempotency_digest"] = "0" * 64
+    elif invalid == "unqualified_fill":
+        data["qualification_identity"] = (
+            "cover_order:fixed_source_order:audiobook_cover_fill"
+        )
+        data["policy_option"] = "fixed_source_order:audiobook_cover_fill"
+        core = {key: data[key] for key in decision._core()}
+
+        def digest(value):
+            return hashlib.sha256(
+                json.dumps(
+                    value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+                ).encode()
+            ).hexdigest()
+
+        data["idempotency_digest"] = digest(core)
+        data["decision_id"] = "automatic_decision_" + digest(
+            {**core, "occurred_at": data["occurred_at"]}
+        )
+    else:
+        data["qualification_manifest_sha256"] = {
+            "unknown": "0" * 64,
+            "ebook": F19A_QUALIFICATION_MANIFEST_SHA256,
+            "null": None,
+            "bool": True,
+        }[invalid]
+    with pytest.raises(AutomaticDecisionError):
+        CoverAutomaticDecision.from_json(
+            json.dumps(data, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        )

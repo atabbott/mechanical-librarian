@@ -768,12 +768,26 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             (authority.decision_id,),
         ).fetchone()
         cover_history = self._connection.execute(
-            "SELECT 1 FROM cover_selection_authorities WHERE decision_id=? "
+            "SELECT json_extract(document,'$.decision_document') FROM cover_selection_authorities WHERE decision_id=? "
             "AND kind='automatic'",
             (authority.decision_id,),
         ).fetchone()
         if cover_history is not None and cover_selection != (authority.decision_id,):
             return False
+        if cover_history is not None:
+            try:
+                cover = CoverAutomaticDecision.from_json(cover_history[0])
+            except AutomaticDecisionError:
+                return False
+            if (
+                cover.qualification_identity is not None
+                and not qualification_manifest_is_current(
+                    cover.policy_category,
+                    cover.policy_option,
+                    authority.qualification_identity,
+                )
+            ):
+                return False
         if cover_history is None:
             automatic_row = self._connection.execute(
                 "SELECT document FROM automatic_decisions WHERE decision_id=?",

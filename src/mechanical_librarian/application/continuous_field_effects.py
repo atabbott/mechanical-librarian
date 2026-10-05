@@ -797,9 +797,11 @@ class ContinuousGuardedApplication:
                 # receive (#968).
                 self._advance_schedule_cursor(decision, generation)
                 continue
-            if type(
-                decision
-            ) is AutomaticDecision and not qualification_manifest_is_current(
+            if (
+                type(decision) is AutomaticDecision
+                or type(decision) is CoverAutomaticDecision
+                and decision.qualification_identity is not None
+            ) and not qualification_manifest_is_current(
                 decision.policy_category,
                 decision.policy_option,
                 decision.qualification_manifest_sha256,
