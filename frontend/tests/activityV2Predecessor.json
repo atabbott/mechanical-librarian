@@ -1,0 +1,151 @@
+{
+  "backup_ready": true,
+  "capabilities": [
+    {
+      "connection": "primary",
+      "destinations": [
+        {
+          "consented": false,
+          "destination": "asin",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "authors",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "cover",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "description",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "explicit",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "genres",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "isbn",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "language",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "narrators",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "publishedDate",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "publishedYear",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "publisher",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "series",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "subtitle",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "tags",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "title",
+          "prepared": 0,
+          "state": "allowed"
+        }
+      ],
+      "library": "books",
+      "state": "allowed"
+    }
+  ],
+  "configured_libraries": [
+    {
+      "connection": "primary",
+      "library": "books",
+      "prepared": {
+        "automatic": 0,
+        "human": 0,
+        "total": 0
+      }
+    }
+  ],
+  "consented_libraries": [],
+  "counts": {},
+  "enabled_libraries": [],
+  "events": [],
+  "example": null,
+  "last_failure": null,
+  "ledger": {
+    "event_type": "all",
+    "page": 1,
+    "page_count": 1,
+    "page_size": 25,
+    "query": null,
+    "range_days": 30,
+    "total": 0
+  },
+  "current_waiting": null,
+  "paused": false,
+  "prepared": {
+    "automatic": 0,
+    "human": 0,
+    "total": 0
+  },
+  "provider_recovery": [],
+  "schema_version": "continuous-field-activity-v2",
+  "suspensions": [],
+  "waiting": {
+    "applying": 0,
+    "awaiting_permission": 0,
+    "held_for_recovery": 0,
+    "retrying": 0,
+    "scheduled": 0
+  }
+}

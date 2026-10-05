@@ -8182,6 +8182,15 @@ describe('Library route', () => {
         }),
       ),
     }
+    const ready = await http.getActivity()
+    vi.mocked(http.getActivity).mockClear()
+    vi.mocked(http.getActivityPermissionReadiness).mockResolvedValue({
+      backup_ready: true,
+      configured_libraries: ready.configured_libraries,
+      capabilities: ready.capabilities,
+      prepared: ready.prepared,
+      example: ready.example,
+    })
     renderRoute('/library?lens=all', http)
 
     // One compact notice inside the existing Library flow: what is ready, what
@@ -8190,11 +8199,11 @@ describe('Library route', () => {
       await screen.findByRole('heading', { name: '9 works are ready to browse. Writes are off.' }),
     ).toBeVisible()
     // Preparation still running does not withdraw the action.
-    expect(screen.getByText(/preparation is still running/u)).toBeVisible()
-    await user.click(screen.getByRole('link', { name: 'Enable writes' }))
+    expect(screen.getByText(/while preparation continues/u)).toBeVisible()
+    await user.click(screen.getByRole('link', { name: 'Review write permissions' }))
     expect(await screen.findByRole('heading', { name: 'Enable guarded writes' })).toBeVisible()
     expect(http.activityCommand).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('checkbox', { name: /fiction/u }))
+    await user.click(await screen.findByRole('checkbox', { name: /fiction/u }))
     await user.click(screen.getByRole('button', { name: 'Confirm write permissions' }))
 
     // Every eligible destination, and only those, after explicit review.

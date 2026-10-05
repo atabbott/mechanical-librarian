@@ -683,17 +683,19 @@ unavailable initial read keeps navigation and an explicit retry available;
 pending filter changes preserve the mounted page and its editing focus. Once durable
 activity exists, its current guarded state, shared recovery, and recent outcomes
 lead the page; write-permission inventory remains reachable from that state and
-collapses to a concise summary for returning owners. Before any activity or
-consent it opens that disclosure to show prepared human/automatic counts, all
-16 destinations with exact included/excluded readiness, one mutation slot, a
-representative before/after example and backup readiness. Every Enable writes
-action opens the same normal-flow library/destination permission review, with
-explicit confirmation and cancellation; opening it grants nothing. A
-partially consented library returns to the same disclosure when a newly eligible
-destination can be added; the action binds the exact visible subset and fails
-safely if it changes. Its collapsed ready count uses the same backup,
-capability, unconsented-destination, and prepared-work gates as the enabled
-checkbox and command; unavailable action is never summarized as readiness.
+collapses to a concise summary for returning owners. Collapsed history makes no readiness claim. Opening or retrying permission
+review checks backup readiness, prepared work, destination capabilities and one
+representative before/after example without blocking the mounted history.
+Unchecked, loading, checked-ready, checked-not-ready, drift and unavailable
+states remain distinct. No destination can be selected or confirmed before that
+coherent permission response. Every entry point, including Library, opens the
+same normal-flow disclosure; opening grants nothing. Cancellation, navigation,
+history refresh, live invalidation, visibility changes, connection loss and
+command refusal discard the response and selection; late results cannot restore
+them. A partially consented library returns to the same disclosure when a newly
+eligible destination can be added. Confirmation binds the exact visible subset
+and fails safely if it changes. Collapsed history offers review without a ready
+count; Library likewise describes prepared work without implying write readiness.
 Qualified automatic outcomes are named clearly, unknown
 origins remain neutral bounded text, and pause/resume/revoke remain the only
 prominent controls. Activity does not expose internal jobs or rates, add a

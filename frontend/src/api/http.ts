@@ -711,24 +711,29 @@ export interface ProviderRecoveryActivityView {
   state: 'waiting' | 'checking' | 'dormant' | 'recovered' | 'fanout' | 'exhausted'
 }
 export interface ActivityDisplayView {
-  backup_ready: boolean
+  backup_ready: null
   capabilities: readonly ActivityCapabilityView[]
   configured_libraries: readonly ActivityLibraryView[]
   consented_libraries: readonly ActivityLibraryView[]
   counts: Readonly<Record<string, number>>
   enabled_libraries: readonly ActivityLibraryView[]
   events: readonly ActivityEventView[]
-  example: ActivityExampleView | null
+  example: null
   last_failure: string | null
   ledger: ActivityLedgerView
   current_waiting: ActivityWaitingView | null
   paused: boolean
   prepared: ActivityPreparedView
   provider_recovery?: readonly ProviderRecoveryActivityView[]
-  schema_version: 'continuous-field-activity-v2'
+  schema_version: 'continuous-field-activity-v3'
   suspensions: readonly ActivitySuspensionView[]
   waiting: ActivityWaitingReasonsView
 }
+
+export type ActivityPermissionReadinessView = Pick<
+  ActivityDisplayView,
+  'capabilities' | 'configured_libraries' | 'prepared'
+> & { backup_ready: boolean | null; example: ActivityExampleView | null }
 
 export type ActivityView = ActivityDisplayView
 
@@ -913,6 +918,10 @@ export interface ReviewHttp {
     signal?: AbortSignal,
     workClass?: ReadWorkClass,
   ): Promise<ActivityView>
+  getActivityPermissionReadiness(
+    signal?: AbortSignal,
+    workClass?: ReadWorkClass,
+  ): Promise<ActivityPermissionReadinessView>
   getActivityTransitions(
     eventId: string,
     afterSequence?: number,
@@ -1343,6 +1352,15 @@ export class ReviewApiClient implements ReviewHttp {
     }
     return mapActivity(
       await this.read(`/api/v1/activity${p.size ? `?${p}` : ''}`, signal, workClass),
+    )
+  }
+
+  async getActivityPermissionReadiness(
+    signal?: AbortSignal,
+    workClass: ReadWorkClass = 'foreground',
+  ): Promise<ActivityPermissionReadinessView> {
+    return mapActivityPermissionReadiness(
+      await this.read('/api/v1/activity/permission-readiness', signal, workClass),
     )
   }
 
@@ -1942,6 +1960,11 @@ const statedStringArray = (value: unknown, field: string) => {
   if (values.length === 0) throw new ApiError(502, `invalid_${field}`)
   return values
 }
+const nullValue = (value: unknown, field: string): null => {
+  if (value !== null) throw new ApiError(502, `invalid_${field}`)
+  return value
+}
+
 const booleanValue = (value: unknown, field: string) => {
   if (typeof value !== 'boolean') throw new ApiError(502, `invalid_${field}`)
   return value
@@ -2352,31 +2375,83 @@ const activitySuspensions = (value: unknown): ActivitySuspensionView[] => {
     }
   })
 }
+const activityLibraries = (raw: unknown, field: string): ActivityLibraryView[] => {
+  if (!Array.isArray(raw)) throw new ApiError(502, `invalid_${field}`)
+  return raw.map((item, index) => {
+    if (!record(item)) throw new ApiError(502, `invalid_${field}_${String(index)}`)
+    return {
+      connection: stringValue(item.connection, `${field}_connection`),
+      library: stringValue(item.library, `${field}_library`),
+      ...(item.prepared === undefined
+        ? {}
+        : {
+            prepared:
+              item.prepared === null ? null : activityPrepared(item.prepared, `${field}_prepared`),
+          }),
+    }
+  })
+}
+
+const activityCapabilities = (raw: unknown): ActivityCapabilityView[] => {
+  if (!Array.isArray(raw)) throw new ApiError(502, 'invalid_activity_capabilities')
+  return raw.map((item, index) => {
+    if (!record(item) || !Array.isArray(item.destinations))
+      throw new ApiError(502, `invalid_activity_capability_${String(index)}`)
+    return {
+      connection: stringValue(item.connection, 'activity_connection'),
+      library: stringValue(item.library, 'activity_library'),
+      state: stringValue(item.state, 'activity_state'),
+      destinations: item.destinations.map((destination, destinationIndex) => {
+        if (!record(destination) || typeof destination.consented !== 'boolean')
+          throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`)
+        return {
+          destination: stringValue(destination.destination, 'activity_destination'),
+          state: stringValue(destination.state, 'activity_destination_state'),
+          consented: destination.consented,
+          prepared: integerValue(destination.prepared, 'activity_destination_prepared'),
+        }
+      }),
+    }
+  })
+}
+
+const activityBackupReady = (value: unknown): boolean | null => {
+  if (value !== null && typeof value !== 'boolean')
+    throw new ApiError(502, 'invalid_activity_backup_ready')
+  return value
+}
+
+export const mapActivityPermissionReadiness = (value: unknown): ActivityPermissionReadinessView => {
+  if (
+    !record(value) ||
+    !exactKeys(value, [
+      'backup_ready',
+      'capabilities',
+      'configured_libraries',
+      'prepared',
+      'example',
+    ])
+  )
+    throw new ApiError(502, 'invalid_activity_permission_readiness')
+  return {
+    backup_ready: activityBackupReady(value.backup_ready),
+    capabilities: activityCapabilities(value.capabilities),
+    configured_libraries: activityLibraries(
+      value.configured_libraries,
+      'activity_configured_libraries',
+    ),
+    prepared: activityPrepared(value.prepared, 'activity_prepared'),
+    example: activityExample(value.example),
+  }
+}
+
 export const mapActivity = (value: unknown): ActivityDisplayView => {
   if (
     !record(value) ||
-    value.schema_version !== 'continuous-field-activity-v2' ||
+    value.schema_version !== 'continuous-field-activity-v3' ||
     !record(value.ledger)
   )
     throw new ApiError(502, 'invalid_activity_response')
-  const libraries = (raw: unknown, field: string): ActivityLibraryView[] => {
-    if (!Array.isArray(raw)) throw new ApiError(502, `invalid_${field}`)
-    return raw.map((item, index) => {
-      if (!record(item)) throw new ApiError(502, `invalid_${field}_${String(index)}`)
-      return {
-        connection: stringValue(item.connection, `${field}_connection`),
-        library: stringValue(item.library, `${field}_library`),
-        ...(item.prepared === undefined
-          ? {}
-          : {
-              prepared:
-                item.prepared === null
-                  ? null
-                  : activityPrepared(item.prepared, `${field}_prepared`),
-            }),
-      }
-    })
-  }
   const capabilities = value.capabilities
   const events = value.events
   if (!Array.isArray(capabilities) || !Array.isArray(events) || !record(value.counts))
@@ -2445,36 +2520,19 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
     }
   })
   return {
-    backup_ready:
-      typeof value.backup_ready === 'boolean'
-        ? value.backup_ready
-        : (() => {
-            throw new ApiError(502, 'invalid_activity_backup_ready')
-          })(),
-    capabilities: capabilities.map((item, index) => {
-      if (!record(item) || !Array.isArray(item.destinations))
-        throw new ApiError(502, `invalid_activity_capability_${String(index)}`)
-      return {
-        connection: stringValue(item.connection, 'activity_connection'),
-        library: stringValue(item.library, 'activity_library'),
-        state: stringValue(item.state, 'activity_state'),
-        destinations: item.destinations.map((destination, destinationIndex) => {
-          if (!record(destination) || typeof destination.consented !== 'boolean')
-            throw new ApiError(502, `invalid_activity_destination_${String(destinationIndex)}`)
-          return {
-            destination: stringValue(destination.destination, 'activity_destination'),
-            state: stringValue(destination.state, 'activity_destination_state'),
-            consented: destination.consented,
-            prepared: integerValue(destination.prepared, 'activity_destination_prepared'),
-          }
-        }),
-      }
-    }),
+    backup_ready: nullValue(value.backup_ready, 'activity_backup_ready'),
+    capabilities: activityCapabilities(value.capabilities),
     waiting,
-    configured_libraries: libraries(value.configured_libraries, 'activity_configured_libraries'),
-    consented_libraries: libraries(value.consented_libraries, 'activity_consented_libraries'),
+    configured_libraries: activityLibraries(
+      value.configured_libraries,
+      'activity_configured_libraries',
+    ),
+    consented_libraries: activityLibraries(
+      value.consented_libraries,
+      'activity_consented_libraries',
+    ),
     counts,
-    enabled_libraries: libraries(value.enabled_libraries, 'activity_enabled_libraries'),
+    enabled_libraries: activityLibraries(value.enabled_libraries, 'activity_enabled_libraries'),
     provider_recovery: recovery,
     events: events.map((event, index) => {
       if (!record(event) || !Array.isArray(event.evidence))
@@ -2567,7 +2625,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         failure,
       }
     }),
-    example: activityExample(value.example),
+    example: nullValue(value.example, 'activity_example'),
     last_failure:
       value.last_failure === null ? null : stringValue(value.last_failure, 'activity_last_failure'),
     ledger: (() => {
@@ -2617,7 +2675,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
             throw new ApiError(502, 'invalid_activity_paused')
           })(),
     prepared: activityPrepared(value.prepared, 'activity_prepared'),
-    schema_version: 'continuous-field-activity-v2',
+    schema_version: 'continuous-field-activity-v3',
     suspensions: activitySuspensions(value.suspensions),
   }
 }

@@ -119,8 +119,8 @@ export const activity = (
 ): ActivityView => {
   const { events = [], ...rest } = value
   return {
-    schema_version: 'continuous-field-activity-v2',
-    backup_ready: true,
+    schema_version: 'continuous-field-activity-v3',
+    backup_ready: null,
     paused: false,
     configured_libraries: [],
     consented_libraries: [],
@@ -218,6 +218,14 @@ export const inertAudiobookQualification: PolicyStateView['audiobook_qualificati
     record_sha256: null,
   },
 ]
+
+export const permissionReadiness = (data: ActivityView, backupReady: boolean | null = true) => ({
+  backup_ready: backupReady,
+  configured_libraries: data.configured_libraries,
+  capabilities: data.capabilities,
+  prepared: data.prepared,
+  example: data.example,
+})
 
 export const createHttp = (): ReviewHttp => ({
   getReportDetail: vi.fn(async () => {
@@ -358,6 +366,16 @@ export const createHttp = (): ReviewHttp => ({
   getPolicyTransition: vi.fn(async () => null),
   policyCommand: async <T,>() => ({}) as T,
   getActivity: vi.fn(async () => activity()),
+  getActivityPermissionReadiness: vi.fn(async () => {
+    const data = activity()
+    return {
+      backup_ready: true,
+      configured_libraries: data.configured_libraries,
+      capabilities: data.capabilities,
+      prepared: data.prepared,
+      example: data.example,
+    }
+  }),
   getActivityTransitions: vi.fn(async () => ({ events: [], has_more: false })),
   activityCommand: vi.fn(async () => undefined),
   logout: vi.fn(async () => undefined),

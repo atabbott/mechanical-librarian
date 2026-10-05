@@ -243,8 +243,8 @@ class OwnerResponsivenessFixture:
                 review=review,
             )
             self.configuration = configuration
-            activity, close_activity = (
-                composition.open_field_effect_activity_projection(
+            activity, permissions, close_activity = (
+                composition.open_field_effect_activity_readers(
                     configuration,
                     self.database,
                     self.repository.authority,
@@ -275,6 +275,7 @@ class OwnerResponsivenessFixture:
                 cover_considerations=self.covers,
                 reviewer_access=self.reviewer_access,
                 activity_projection=activity,
+                permission_projection=permissions,
                 close_activity_projection=close_activity,
                 preparation=self.preparation,
                 settings=OwnerSettingsOperations(
@@ -890,7 +891,7 @@ def activity_generation(
         cross_thread=True,
         admission=root.operation_admission,
     )
-    projection, close = composition.open_field_effect_activity_projection(
+    projection, permissions, close = composition.open_field_effect_activity_readers(
         configuration,
         database,
         root.authority,
@@ -919,6 +920,7 @@ def activity_generation(
         session_lifetime_seconds=3600,
         graceful_shutdown_seconds=graceful_shutdown_seconds,
         activity_projection=projection,
+        permission_projection=permissions,
         close_activity_projection=close_reader,
         close_state_owner=True,
     )

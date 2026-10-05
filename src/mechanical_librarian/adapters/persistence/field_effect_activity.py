@@ -2343,6 +2343,23 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 ):
                     raise
 
+    def field_effect_permission_readiness_snapshot(
+        self, call: Callable[[bool | None], dict[str, object]]
+    ) -> dict[str, object]:
+        """Bind one fresh consistency check to the permission read's revision."""
+        with self._activity_page_cache_lock:
+            self._backup_ready_cache = None
+            ready = self.field_effect_backup_ready(fresh=True)
+            checked = self._backup_ready_cache
+
+            def project() -> dict[str, object]:
+                current = self._activity_projection_revision()
+                return call(
+                    ready if checked is not None and checked[0] == current else None
+                )
+
+            return self.field_effect_activity_snapshot(project)
+
     def field_effect_activity_snapshot(
         self, call: Callable[[], dict[str, object]]
     ) -> dict[str, object]:

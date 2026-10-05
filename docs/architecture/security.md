@@ -467,14 +467,15 @@ The server receives a composed application boundary rather than a database or
 broad repository. Authentication, currentness, decisions, policy, preparation,
 guarded effects, recovery, and support execute as named application operations
 behind the owner-operation serialization gate. Library and Attention use the existing application owner and root admission.
-Activity retains its dedicated query-only reader connection, reader-local request
-gate and generation-owned admission. The query-only PRAGMA is verified before
+Activity history and explicit permission readiness each retain a dedicated
+query-only reader connection, reader-local request gate and generation-owned
+admission. The query-only PRAGMA is verified before
 use; description-authority binding only installs passive callbacks. Classification
 propagates to root and reader without granting a permit or authority. SQLite
-remains the sole transaction owner. Accepted Activity pages and transition reads
-count before waiting for the reader lock. Drain refuses new reads and retains all
-dependencies on timeout; a later successful drain closes the local coordinator
-and reader before the owner, never another generation's shared root coordinator. FastAPI retains only
+remains the sole transaction owner. Accepted Activity pages, transition and permission reads count before waiting
+for their reader lock. Drain refuses new reads and retains all
+dependencies on timeout; a later successful drain closes both local coordinators
+and readers before recovery dependencies and the owner, never another generation's shared root coordinator. FastAPI retains only
 request bounds, exact Host/Origin enforcement, session/CSRF dependencies,
 response translation, and lifecycle delegation.
 
@@ -1282,6 +1283,14 @@ are snapshot-consistent only for the individual read transaction; concurrent
 append-only activity can change a later request. Focused repository,
 application, API, and browser tests cover bounds, redaction, malformed rows,
 current-state recovery, and private-cache headers.
+
+Ordinary history returns required null backup-readiness and example fields. The
+separate authenticated permission-readiness endpoint checks the existing database
+consistency boundary freshly, then compares that checked revision inside its own
+read snapshot. Only equality permits a true or false result; drift or an unavailable
+check is null. One response supplies all consent-display gates and no ledger.
+The browser discards known-stale permission responses; command and preclaim
+checks remain authoritative, with no TTL or cross-system atomicity claim.
 
 Guarded field effects add the first persisted mutation boundary. The installed
 product composes the API-key Audiobookshelf target only after authenticated,

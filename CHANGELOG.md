@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Activity history remains available while preparation continues. Write-permission
+  review checks readiness on demand and requires a fresh review after known changes,
+  without changing consent or guarded-write checks. The Activity API is v3 (#1144).
+
 - Activity reads select the requested page before inspecting report labels and
   reuse fully validated reports during each fresh read, keeping preparation
   responsive without changing history or write permissions. Preparation progress

@@ -7289,3 +7289,88 @@ def test_activity_fresh_and_cached_public_projections_match_with_transient_repor
     finally:
         reader.close()
         repository.close()
+
+
+@pytest.mark.parametrize("intervening_commit", [False, True])
+def test_permission_readiness_binds_fresh_check_to_its_snapshot(
+    effects: _EffectEnvironment,
+    intervening_commit: bool,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    reader.configure_activity_page_reader()
+    observed = []
+
+    def before_snapshot(statement):
+        if statement == "BEGIN" and intervening_commit:
+            effects.repository.set_field_effect_paused(True, effects.clock())
+
+    reader._connection.set_trace_callback(before_snapshot)
+    try:
+
+        def project(ready):
+            assert reader._connection.in_transaction
+            observed.append(ready)
+            return {"backup_ready": ready}
+
+        assert reader.field_effect_permission_readiness_snapshot(project) == {
+            "backup_ready": None if intervening_commit else True,
+        }
+        assert observed == [None if intervening_commit else True]
+        assert not reader._connection.in_transaction
+        reader._connection.set_trace_callback(None)
+        assert reader.field_effect_permission_readiness_snapshot(project) == {
+            "backup_ready": True,
+        }
+        with pytest.raises(RuntimeError, match="projection"):
+            reader.field_effect_permission_readiness_snapshot(
+                lambda _: (_ for _ in ()).throw(RuntimeError("projection"))
+            )
+        assert not reader._connection.in_transaction
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("failed_check", [False, True])
+def test_permission_readiness_never_reuses_a_previous_success(
+    effects: _EffectEnvironment,
+    monkeypatch,
+    failed_check: bool,
+) -> None:
+    reader = open_repository(
+        effects.database_path,
+        create=False,
+        authority=effects.repository.authority,
+        cross_thread=True,
+    )
+    try:
+        assert reader.field_effect_permission_readiness_snapshot(
+            lambda ready: {"ready": ready}
+        ) == {"ready": True}
+        closed = []
+
+        class Verifier:
+            def execute(self, statement):
+                assert statement == "PRAGMA quick_check"
+                if failed_check:
+                    raise sqlite3.DatabaseError("synthetic unavailable check")
+                return self
+
+            def fetchone(self):
+                return ("synthetic inconsistency",)
+
+            def close(self):
+                closed.append(True)
+
+        monkeypatch.setattr(sqlite3, "connect", lambda *args, **kwargs: Verifier())
+        assert reader.field_effect_permission_readiness_snapshot(
+            lambda ready: {"ready": ready}
+        ) == {"ready": None if failed_check else False}
+        assert closed == [True]
+        assert not reader._connection.in_transaction
+    finally:
+        reader.close()

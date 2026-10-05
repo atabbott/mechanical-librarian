@@ -59,10 +59,17 @@ readiness means the exact-current SQLite store passes its consistency check and
 is outside a transaction so the documented stopped-volume backup can be made;
 it is not a claim that an external backup copy exists.
 
-Add Activity as the only new permanent navigation destination. Before consent
-it presents bounded per-destination readiness, representative before/after context, safety constraints,
-and one enable action. Afterwards it presents a quiet summary and chronological
-ledger with pause, resume, revoke, and grouped recovery. Library, Attention,
+Add Activity as the only new permanent navigation destination. Its ordinary
+history read makes no backup-readiness claim and does not select a permission
+example. Opening the write-permission disclosure explicitly checks readiness
+and presents bounded per-destination scope, representative before/after context,
+safety constraints, and confirmation. The fresh consistency check and permission
+snapshot must name the same database revision; drift is unavailable and requires
+an explicit retry. A separate generation-owned query-only reader keeps this
+check independent of history and root owner admission. Both readers drain before
+their dependencies close. The response is a point-in-time disclosure, not perpetual
+atomicity: confirmation and preclaim retain their fresh checks and authority.
+Library, Attention,
 Policy, and Detail retain their accepted hierarchy and language. Capability
 failure removes only the affected field from actionable Library and Attention
 projections while Detail retains its visible read-only evidence and explanation;

@@ -1209,11 +1209,15 @@ def test_scalar_audiobook_title_witness_is_closed_and_evidence_bound(option):
         )
 
 
+@pytest.mark.parametrize(
+    "fixture_name", ["activity_read_predecessors", "activity_permission_predecessors"]
+)
 @pytest.mark.parametrize("family", ["f19a", "f20", "f46"])
 def test_activity_read_predecessor_keeps_exact_decode_only_permissions(
     family: str,
+    fixture_name: str,
 ) -> None:
-    fixture = Path(__file__).parents[1] / "support" / "activity_read_predecessors"
+    fixture = Path(__file__).parents[1] / "support" / fixture_name
     provenance = json.loads((fixture / "provenance.json").read_text())
     record = provenance["records"][family]
     document = (fixture / (family + ".json")).read_text().rstrip("\n")

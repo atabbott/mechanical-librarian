@@ -1,3 +1,5 @@
+import activityV2Predecessor from './activityV2Predecessor.json'
+import currentActivity from './descriptionAdviceActivityFixture.json'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
@@ -8,6 +10,7 @@ import {
   ReviewApiClient,
   mapCaseDetail,
   mapActivity,
+  mapActivityPermissionReadiness,
   mapAttention,
   derivePolicyDraftDisplay,
   policyAutomaticQualification,
@@ -1570,8 +1573,8 @@ describe('ReviewApiClient', () => {
 
   it('maps bounded activity labels and grouped state into the display seam', () => {
     const activity = mapActivity({
-      schema_version: 'continuous-field-activity-v2',
-      backup_ready: true,
+      schema_version: 'continuous-field-activity-v3',
+      backup_ready: null,
       paused: false,
       configured_libraries: [
         {
@@ -1637,13 +1640,7 @@ describe('ReviewApiClient', () => {
         range_days: 30,
         total: 1,
       },
-      example: {
-        after: 'After',
-        before: 'Before',
-        destination: 'title',
-        library: 'Fiction',
-        work_id: 'work-1',
-      },
+      example: null,
       last_failure: null,
       prepared: { automatic: 1, human: 2, total: 3 },
       suspensions: [
@@ -2935,4 +2932,61 @@ describe('preparation scan identity', () => {
       }),
     ).toThrow(new ApiError(502, 'invalid_preparation_scan_id'))
   })
+})
+
+describe('deferred Activity permission contract', () => {
+  it('refuses a genuine earlier producer and requires both nullable fields', () => {
+    expect(() => mapActivity(activityV2Predecessor)).toThrow(ApiError)
+    expect(mapActivity(currentActivity).backup_ready).toBeNull()
+    expect(mapActivity(currentActivity).example).toBeNull()
+    for (const field of ['backup_ready', 'example']) {
+      const missing = Object.fromEntries(
+        Object.entries(currentActivity).filter(([key]) => key !== field),
+      )
+      expect(() => mapActivity(missing)).toThrow(ApiError)
+    }
+  })
+  it.each([
+    ['backup_ready', true],
+    ['backup_ready', false],
+    [
+      'example',
+      {
+        after: 'After',
+        before: 'Before',
+        destination: 'title',
+        library: 'Fiction',
+        work_id: 'work-1',
+      },
+    ],
+  ])('rejects non-null history %s', (field, value) => {
+    expect(() => mapActivity({ ...currentActivity, [field]: value })).toThrow(ApiError)
+  })
+  it.each([true, false, null])(
+    'reads only the narrow permission response with readiness %s',
+    async (backup_ready) => {
+      const response = {
+        backup_ready,
+        capabilities: [],
+        configured_libraries: [],
+        prepared: { automatic: 0, human: 0, total: 0 },
+        example: {
+          after: 'After',
+          before: 'Before',
+          destination: 'title',
+          library: 'Fiction',
+          work_id: 'work-1',
+        },
+      }
+      expect(mapActivityPermissionReadiness(response)).toEqual({
+        ...response,
+        example: { ...response.example, work_label: 'Work details unavailable' },
+      })
+      expect(mapActivityPermissionReadiness({ ...response, example: null }).example).toBeNull()
+      expect(() => mapActivityPermissionReadiness({ ...response, events: [] })).toThrow(ApiError)
+      expect(() =>
+        mapActivityPermissionReadiness({ ...response, backup_ready: undefined }),
+      ).toThrow(ApiError)
+    },
+  )
 })

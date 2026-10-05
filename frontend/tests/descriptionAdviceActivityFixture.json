@@ -1,24 +1,135 @@
 {
+  "backup_ready": null,
+  "capabilities": [
+    {
+      "connection": "primary",
+      "destinations": [
+        {
+          "consented": false,
+          "destination": "asin",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "authors",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "cover",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "description",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "explicit",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "genres",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "isbn",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "language",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "narrators",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "publishedDate",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "publishedYear",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "publisher",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "series",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "subtitle",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "tags",
+          "prepared": 0,
+          "state": "allowed"
+        },
+        {
+          "consented": false,
+          "destination": "title",
+          "prepared": 0,
+          "state": "allowed"
+        }
+      ],
+      "library": "ebooks",
+      "state": "allowed"
+    }
+  ],
+  "configured_libraries": [
+    {
+      "connection": "primary",
+      "library": "ebooks",
+      "prepared": {
+        "automatic": 0,
+        "human": 0,
+        "total": 0
+      }
+    }
+  ],
   "consented_libraries": [],
   "counts": {},
+  "enabled_libraries": [],
   "events": [
     {
-      "change_id": "description_attempt_31f745f40a274491a79d6a893898f288",
-      "destination": "description",
-      "event_id": "description_attempt_31f745f40a274491a79d6a893898f288",
-      "event_type": "metadata",
-      "failure": "unavailable",
-      "library": "ebooks",
-      "occurred_at": 1002,
-      "origin": "adviser",
-      "state": "failed",
-      "work_id": "item-1",
-      "work_label": "Real Tigers",
       "author_label": "Mick Herron",
       "category": "automatic",
-      "field_label": "Description",
       "change": "Description advice could not be prepared",
+      "change_id": "description_attempt_c5399632f8ac4d3698a9d47199c7e65a",
       "change_detail": "Description advice could not be prepared",
+      "destination": "description",
+      "diagnostic": null,
+      "event_id": "description_attempt_c5399632f8ac4d3698a9d47199c7e65a",
+      "event_type": "metadata",
       "evidence": [
         {
           "label": "Application",
@@ -34,67 +145,30 @@
         },
         {
           "label": "Adviser",
-          "value": "codex \u00b7 synthetic-contained-model"
+          "value": "codex \u00b7 gpt-5.6-sol"
         }
-      ]
-    },
-    {
-      "change_id": "human_decision_61aceaca7e61b64c6b6c3b5cd9ac425e863a3947c8f90e30e383afbb5301d059",
-      "destination": "description",
-      "event_id": "human_decision_61aceaca7e61b64c6b6c3b5cd9ac425e863a3947c8f90e30e383afbb5301d059",
-      "event_type": "review",
-      "failure": null,
-      "library": "ebooks",
-      "occurred_at": 1001,
-      "origin": "human",
-      "state": "recorded",
-      "work_id": "item-1",
-      "work_label": "Real Tigers",
-      "author_label": "Mick Herron",
-      "category": "owner",
+      ],
+      "failure": "unavailable",
       "field_label": "Description",
-      "change": "Advised description selected",
-      "change_detail": "Advised description queued under existing write requirements",
-      "evidence": [
-        {
-          "label": "Selected description",
-          "value": "A synthetic reader explores an old library. Its stories bring distant communities together. <strong>Authored text stays text.</strong>"
-        },
-        {
-          "label": "Chosen by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Application",
-          "value": "Queued under existing write requirements; no write is implied by this selection"
-        },
-        {
-          "label": "Provenance",
-          "value": "Advised \u00b7 Authored content"
-        },
-        {
-          "label": "Adviser",
-          "value": "codex \u00b7 synthetic-contained-model"
-        }
-      ]
+      "policy_changes": [],
+      "library": "ebooks",
+      "occurred_at": 1002,
+      "origin": "adviser",
+      "state": "failed",
+      "transition_id": null,
+      "work_label": "Real Tigers",
+      "work_id": "item-1"
     },
     {
-      "change_id": "description_attempt_6754c66371db48208c8ba23b28ebbebc",
-      "destination": "description",
-      "event_id": "description_attempt_6754c66371db48208c8ba23b28ebbebc",
-      "event_type": "metadata",
-      "failure": null,
-      "library": "ebooks",
-      "occurred_at": 1000,
-      "origin": "adviser",
-      "state": "succeeded",
-      "work_id": "item-1",
-      "work_label": "Real Tigers",
       "author_label": "Mick Herron",
       "category": "automatic",
-      "field_label": "Description",
       "change": "Description advice prepared for review",
+      "change_id": "description_attempt_ce23335f0eae49df97ecd5a32995fc7c",
       "change_detail": "Description advice prepared for review",
+      "destination": "description",
+      "diagnostic": null,
+      "event_id": "description_attempt_ce23335f0eae49df97ecd5a32995fc7c",
+      "event_type": "metadata",
       "evidence": [
         {
           "label": "Application",
@@ -106,27 +180,30 @@
         },
         {
           "label": "Adviser",
-          "value": "codex \u00b7 synthetic-contained-model"
+          "value": "codex \u00b7 gpt-5.6-sol"
         }
-      ]
+      ],
+      "failure": null,
+      "field_label": "Description",
+      "policy_changes": [],
+      "library": "ebooks",
+      "occurred_at": 10,
+      "origin": "adviser",
+      "state": "succeeded",
+      "transition_id": null,
+      "work_label": "Real Tigers",
+      "work_id": "item-1"
     },
     {
-      "change_id": "automatic_decision_637cd0d45282184996d9386cf1173646ee40585d73df78b2a75ea3e9dcfb2347",
-      "destination": "description",
-      "event_id": "automatic_decision_637cd0d45282184996d9386cf1173646ee40585d73df78b2a75ea3e9dcfb2347",
-      "event_type": "metadata",
-      "failure": null,
-      "library": "ebooks",
-      "occurred_at": 4,
-      "origin": "automatic_policy",
-      "state": "recorded",
-      "work_id": "item-1",
-      "work_label": "Real Tigers",
       "author_label": "Mick Herron",
       "category": "automatic",
-      "field_label": "Description",
-      "change": "Chose a description value automatically",
-      "change_detail": "Chose a Description value automatically",
+      "change": "Kept Existing description.",
+      "change_id": "automatic_decision_020b5a5805919220c99d5a8dbe131bde5b533eb70d7f02f24733613ca47a8a41",
+      "change_detail": "Kept Description as Existing description.",
+      "destination": "description",
+      "diagnostic": null,
+      "event_id": "automatic_decision_020b5a5805919220c99d5a8dbe131bde5b533eb70d7f02f24733613ca47a8a41",
+      "event_type": "metadata",
       "evidence": [
         {
           "label": "Previous value",
@@ -148,24 +225,53 @@
           "label": "Policy generation",
           "value": "2"
         }
-      ]
+      ],
+      "failure": null,
+      "field_label": "Description",
+      "policy_changes": [],
+      "library": "ebooks",
+      "occurred_at": 4,
+      "origin": "automatic_policy",
+      "state": "recorded",
+      "transition_id": null,
+      "work_label": "Real Tigers",
+      "work_id": "item-1"
     },
     {
-      "change_id": "policy_transition_b433d4e48cd4056fe59cca73bdf1f158b7b015e668d203e6df4880bb27c2a500",
-      "destination": "policy",
-      "event_id": "policy_transition_b433d4e48cd4056fe59cca73bdf1f158b7b015e668d203e6df4880bb27c2a500",
-      "event_type": "policy",
-      "failure": null,
-      "library": "Library policy",
-      "occurred_at": 2,
-      "origin": "policy",
-      "state": "completed",
-      "work_id": "Library policy",
-      "work_label": "Library policy",
       "author_label": "Author details are not recorded",
+      "category": "policy",
+      "change": "10 changes activated",
+      "change_id": "policy_transition_8fb80737b8d3d29c9ac74b4819c2de4156f36839490f97da6d5a3ea54462da5c",
+      "change_detail": "10 changes activated",
+      "destination": "policy",
+      "diagnostic": null,
+      "event_id": "policy_transition_8fb80737b8d3d29c9ac74b4819c2de4156f36839490f97da6d5a3ea54462da5c",
+      "event_type": "policy",
+      "evidence": [
+        {
+          "label": "Changed by",
+          "value": "Library owner"
+        },
+        {
+          "label": "Policy generation",
+          "value": "Policy generation 2"
+        },
+        {
+          "label": "Active policy",
+          "value": "Updated with all 10 changes"
+        }
+      ],
+      "failure": null,
+      "field_label": "Policy",
       "policy_changes": [
         {
           "field": "Contributor names",
+          "setting": "Review mode",
+          "previous": "Automatic",
+          "next": "Ask me"
+        },
+        {
+          "field": "Cover order",
           "setting": "Review mode",
           "previous": "Automatic",
           "next": "Ask me"
@@ -219,43 +325,24 @@
           "next": "Ask me"
         }
       ],
-      "category": "policy",
-      "field_label": "Policy",
-      "change": "9 changes activated",
-      "change_detail": "9 changes activated",
-      "evidence": [
-        {
-          "label": "Changed by",
-          "value": "Library owner"
-        },
-        {
-          "label": "Policy generation",
-          "value": "Policy generation 2"
-        },
-        {
-          "label": "Active policy",
-          "value": "Updated with all 9 changes"
-        }
-      ]
-    },
-    {
-      "change_id": "policy_transition_6d4335d81d767e61e19a7613f30ef2621c3e51e57687916e0f676a79b0bc446e",
-      "destination": "policy",
-      "event_id": "policy_transition_6d4335d81d767e61e19a7613f30ef2621c3e51e57687916e0f676a79b0bc446e",
-      "event_type": "policy",
-      "failure": null,
       "library": "Library policy",
-      "occurred_at": 0,
+      "occurred_at": 2,
       "origin": "policy",
       "state": "completed",
-      "work_id": "Library policy",
+      "transition_id": null,
       "work_label": "Library policy",
+      "work_id": "Library policy"
+    },
+    {
       "author_label": "Author details are not recorded",
-      "policy_changes": [],
       "category": "policy",
-      "field_label": "Policy",
       "change": "0 changes activated",
+      "change_id": "policy_transition_45a1fe63849ae68024cfad271ae6af31d922a7869de6e05c137124e24bb6e087",
       "change_detail": "0 changes activated",
+      "destination": "policy",
+      "diagnostic": null,
+      "event_id": "policy_transition_45a1fe63849ae68024cfad271ae6af31d922a7869de6e05c137124e24bb6e087",
+      "event_type": "policy",
       "evidence": [
         {
           "label": "Changed by",
@@ -269,144 +356,21 @@
           "label": "Active policy",
           "value": "Updated with all 0 changes"
         }
-      ]
+      ],
+      "failure": null,
+      "field_label": "Policy",
+      "policy_changes": [],
+      "library": "Library policy",
+      "occurred_at": 0,
+      "origin": "policy",
+      "state": "completed",
+      "transition_id": null,
+      "work_label": "Library policy",
+      "work_id": "Library policy"
     }
   ],
-  "paused": false,
-  "suspensions": [],
-  "current_waiting": null,
-  "backup_ready": true,
-  "waiting": {
-    "awaiting_permission": 1,
-    "scheduled": 0,
-    "retrying": 0,
-    "held_for_recovery": 0,
-    "applying": 0
-  },
-  "configured_libraries": [
-    {
-      "connection": "primary",
-      "library": "ebooks",
-      "prepared": {
-        "automatic": 0,
-        "human": 1,
-        "total": 1
-      }
-    }
-  ],
-  "capabilities": [
-    {
-      "connection": "primary",
-      "library": "ebooks",
-      "state": "allowed",
-      "destinations": [
-        {
-          "destination": "asin",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "authors",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "cover",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "description",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 1
-        },
-        {
-          "destination": "genres",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "isbn",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "language",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "narrators",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "publishedDate",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "publishedYear",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "publisher",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "series",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "subtitle",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "tags",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        },
-        {
-          "destination": "title",
-          "state": "allowed",
-          "consented": false,
-          "prepared": 0
-        }
-      ]
-    }
-  ],
-  "enabled_libraries": [],
-  "example": {
-    "after": "A synthetic reader explores an old library.\nIts stories bring distant communities together. <strong>Authored text stays text.</strong>",
-    "before": "Existing description.",
-    "destination": "description",
-    "library": "ebooks",
-    "work_id": "item-1"
-  },
+  "example": null,
   "last_failure": null,
-  "prepared": {
-    "automatic": 0,
-    "human": 1,
-    "total": 1
-  },
   "ledger": {
     "event_type": "all",
     "page": 1,
@@ -414,8 +378,23 @@
     "page_size": 25,
     "query": null,
     "range_days": 30,
-    "total": 6
+    "total": 5
   },
-  "schema_version": "continuous-field-activity-v2",
-  "provider_recovery": []
+  "current_waiting": null,
+  "paused": false,
+  "prepared": {
+    "automatic": 0,
+    "human": 0,
+    "total": 0
+  },
+  "provider_recovery": [],
+  "schema_version": "continuous-field-activity-v3",
+  "suspensions": [],
+  "waiting": {
+    "applying": 0,
+    "awaiting_permission": 0,
+    "held_for_recovery": 0,
+    "retrying": 0,
+    "scheduled": 0
+  }
 }

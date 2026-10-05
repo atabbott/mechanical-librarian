@@ -1,12 +1,13 @@
 import type {
   ActivityDestinationView,
   ActivityDisplayView,
+  ActivityPermissionReadinessView,
   ActivityWaitingReasonsView,
 } from './api/http'
 
 /**
  * What one `Enable writes` action would cover, read off the authoritative
- * activity projection and nowhere else.
+ * explicit permission projection. Unchecked history supplies no grant offer.
  *
  * Activity states this at length and Library states it compactly, and #639 asks
  * for both. They read the same function so the two surfaces cannot come to
@@ -58,13 +59,14 @@ export const destinationReason = (state: string) =>
   })[state] ?? 'it is not ready yet'
 
 export const readWriteConsent = (
-  data: ActivityDisplayView,
+  data: Pick<ActivityDisplayView, 'waiting'> &
+    Pick<ActivityPermissionReadinessView, 'backup_ready' | 'capabilities' | 'configured_libraries'>,
   options: { readonly enabling?: boolean; readonly connectionUnavailable?: boolean } = {},
 ): WriteConsentOffer => {
   const reasons = data.waiting
   const capability = (library: string) => data.capabilities.find((item) => item.library === library)
   const scopes: WriteConsentScope[] = []
-  for (const item of data.configured_libraries) {
+  for (const item of data.backup_ready === null ? [] : data.configured_libraries) {
     const destinations = capability(item.library)?.destinations ?? []
     const eligible = destinations.filter((entry) => entry.state === 'allowed' && !entry.consented)
     if (!eligible.length) continue
@@ -96,13 +98,18 @@ export const readWriteConsent = (
           ? 'enabled'
           : 'complete'
   const excluded = scopes[0]?.excluded[0]
-  const blocked = !data.backup_ready
-    ? 'Backup readiness has not been confirmed, so writes cannot be enabled yet.'
-    : grants.length === 0
-      ? scopes.length === 0
-        ? 'No selected destination is eligible for writes right now.'
-        : `No destination is eligible yet: ${excluded ? destinationReason(excluded.state) : 'nothing is ready yet'}.`
-      : null
+  const blocked =
+    data.backup_ready === null
+      ? state === 'off' || state === 'enabling'
+        ? 'Open permission review to check current readiness.'
+        : null
+      : !data.backup_ready
+        ? 'Backup readiness has not been confirmed, so writes cannot be enabled yet.'
+        : grants.length === 0
+          ? scopes.length === 0
+            ? 'No selected destination is eligible for writes right now.'
+            : `No destination is eligible yet: ${excluded ? destinationReason(excluded.state) : 'nothing is ready yet'}.`
+          : null
   return {
     state,
     scopes,
@@ -112,7 +119,7 @@ export const readWriteConsent = (
     actionable:
       state !== 'complete' &&
       !options.connectionUnavailable &&
-      (scopes.length > 0 || reasons.scheduled > 0),
+      (data.configured_libraries.length > 0 || reasons.scheduled > 0),
     reasons,
   }
 }

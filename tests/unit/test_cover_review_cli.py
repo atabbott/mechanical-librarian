@@ -16,6 +16,7 @@ from mechanical_librarian.application.configuration import (
 )
 from mechanical_librarian.bootstrap.composition import (
     open_field_effect_activity_projection,
+    open_field_effect_activity_readers,
     run_cover_review,
     run_provider_recovery_once,
     run_review_activity,
@@ -121,7 +122,7 @@ def test_activity_composition_does_not_change_installed_state() -> None:
                 database,
             )
 
-        assert "continuous-field-activity-v2" == activity["schema_version"]
+        assert "continuous-field-activity-v3" == activity["schema_version"]
         assert before_bytes == database.read_bytes()
         assert before_entries == {path.name for path in root.iterdir()}
         assert not (root / "private").exists()
@@ -819,3 +820,18 @@ def test_activity_reader_construction_failure_releases_created_owners(
     assert raised.value is failure
     assert opened.call_args.kwargs["admission"]._closed
     assert repository.close.call_count == (0 if stage == "open" else 1)
+
+
+def test_permission_reader_partial_construction_closes_history() -> None:
+    close = Mock()
+    failure = RuntimeError("permission reader unavailable")
+    with patch(
+        "mechanical_librarian.bootstrap.composition.open_field_effect_activity_projection",
+        side_effect=[(Mock(), close), failure],
+    ):
+        with pytest.raises(RuntimeError) as raised:
+            open_field_effect_activity_readers(
+                Mock(), Path("/database.sqlite3"), object()
+            )
+    assert raised.value is failure
+    close.assert_called_once_with()

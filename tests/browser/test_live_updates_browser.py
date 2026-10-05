@@ -562,7 +562,10 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 page.goto(f"{origin}/activity")
                 page.get_by_role("heading", name="Activity and recovery").wait_for()
                 page.locator(".cm-write-consent").wait_for(timeout=8_000)
-                page.get_by_role("button", name="Enable writes").wait_for(timeout=8_000)
+                page.get_by_role("button", name="Review write permissions").wait_for(
+                    timeout=8_000
+                )
+                expect(page.locator(".activity-consent-library")).to_have_count(0)
                 consent_semantic = [
                     "cm-page-heading",
                     "cm-activity-ledger",
@@ -597,6 +600,16 @@ def test_the_write_surfaces_reflow_rather_than_depend_on_how_wide_their_text_ren
                 page.set_viewport_size({"width": 1440, "height": 900})
                 _fits_every_width(page, ".cm-write-consent")
                 _fits_every_width(page, ".cm-activity-status")
+                page.get_by_role("button", name="Review write permissions").click()
+                page.get_by_text(
+                    "Backup readiness checked. Review the included and excluded destinations.",
+                    exact=True,
+                ).wait_for()
+                expect(
+                    page.get_by_role("button", name="Confirm write permissions")
+                ).to_be_disabled()
+                _fits_every_width(page, ".activity-consent-ledger")
+                page.get_by_role("button", name="Cancel permission review").click()
                 # The Activity row gained two flexible columns and a policy
                 # table, and every one of them is sized by its own text: an
                 # exact change, a category pill, a setting name and two policy

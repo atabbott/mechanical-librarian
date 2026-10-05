@@ -1087,15 +1087,23 @@ class _ProviderRecoveryActivity(_ClosedModel):
     state: Literal["waiting", "checking", "dormant", "recovered", "fanout", "exhausted"]
 
 
+class _ActivityPermissionReadiness(_ClosedModel):
+    backup_ready: bool | None
+    capabilities: list[_ActivityCapability]
+    configured_libraries: list[_ActivityLibrary]
+    prepared: _ActivityPrepared
+    example: _ActivityExample | None
+
+
 class _ActivityResponse(_ClosedModel):
-    backup_ready: bool
+    backup_ready: None
     capabilities: list[_ActivityCapability]
     configured_libraries: list[_ActivityLibrary]
     consented_libraries: list[_ActivityLibrary]
     counts: dict[str, int]
     enabled_libraries: list[_ActivityLibrary]
     events: list[_ActivityEvent]
-    example: _ActivityExample | None
+    example: None
     last_failure: str | None
     ledger: _ActivityLedger
     current_waiting: _ActivityWaiting | None
@@ -1104,7 +1112,7 @@ class _ActivityResponse(_ClosedModel):
     provider_recovery: list[_ProviderRecoveryActivity] = Field(
         default_factory=list, max_length=100
     )
-    schema_version: Literal["continuous-field-activity-v2"]
+    schema_version: Literal["continuous-field-activity-v3"]
     suspensions: list[_ActivitySuspension]
     waiting: _ActivityWaitingReasons
 
@@ -3360,6 +3368,19 @@ def _register_case_and_effect_routes(
                     page_size=page_size,
                 )
             )
+        )
+
+    @app.get(
+        "/api/v1/activity/permission-readiness",
+        response_model=_ActivityPermissionReadiness,
+        responses={status: {"model": _ErrorResponse} for status in (401, 503)},
+    )
+    def activity_permission_readiness(
+        ml_session: str = Depends(authenticated_session_cookie),
+    ) -> _ActivityPermissionReadiness:
+        _require_session(sessions, ml_session)
+        return _ActivityPermissionReadiness.model_validate(
+            field_effect_call(application.activity_permission_readiness)
         )
 
     @app.get(

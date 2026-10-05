@@ -55,7 +55,7 @@ export const WriteReadyNotice = () => {
           : `${String(ready)} ${ready === 1 ? 'work is' : 'works are'} ready to browse. Writes are enabled.`
   const copy =
     consent.state === 'off'
-      ? `${String(consent.changes)} prepared ${consent.changes === 1 ? 'change is' : 'changes are'} waiting for permission${preparing ? ', and preparation is still running — permission given now covers the work it is still finding' : ''}.`
+      ? `Review current write permissions in Activity${preparing ? ' while preparation continues' : ''}. Readiness is checked when you open the review.`
       : consent.state === 'enabling'
         ? 'Confirming permission with the authoritative server. No change is sent twice.'
         : consent.state === 'applying'
@@ -72,22 +72,18 @@ export const WriteReadyNotice = () => {
         <p>{copy}</p>
       </div>
       <div className="cm-library-handoff-action">
-        {consent.state === 'off' && consent.blocked === null ? (
+        {consent.state === 'off' ? (
           <Link
             className="cm-primary"
             to="/activity"
             search={{ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }}
             hash="activity-consent"
           >
-            Enable writes
+            Review write permissions
           </Link>
         ) : (
           <button className="cm-primary" type="button" disabled>
-            {consent.state === 'off'
-              ? 'Enable writes'
-              : consent.state === 'applying'
-                ? 'Applying changes…'
-                : 'Writes enabled'}
+            {consent.state === 'applying' ? 'Applying changes…' : 'Writes enabled'}
           </button>
         )}
         <Link to="/activity" search={{ eventType: 'all', rangeDays: 30, page: 1, pageSize: 25 }}>

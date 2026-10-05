@@ -2276,6 +2276,58 @@
         "title": "_ActivityLibrary",
         "type": "object"
       },
+      "_ActivityPermissionReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "backup_ready": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Backup Ready"
+          },
+          "capabilities": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityCapability"
+            },
+            "title": "Capabilities",
+            "type": "array"
+          },
+          "configured_libraries": {
+            "items": {
+              "$ref": "#/components/schemas/_ActivityLibrary"
+            },
+            "title": "Configured Libraries",
+            "type": "array"
+          },
+          "example": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/_ActivityExample"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "prepared": {
+            "$ref": "#/components/schemas/_ActivityPrepared"
+          }
+        },
+        "required": [
+          "backup_ready",
+          "capabilities",
+          "configured_libraries",
+          "prepared",
+          "example"
+        ],
+        "title": "_ActivityPermissionReadiness",
+        "type": "object"
+      },
       "_ActivityPolicyChange": {
         "additionalProperties": false,
         "properties": {
@@ -2338,7 +2390,7 @@
         "properties": {
           "backup_ready": {
             "title": "Backup Ready",
-            "type": "boolean"
+            "type": "null"
           },
           "capabilities": {
             "items": {
@@ -2393,14 +2445,8 @@
             "type": "array"
           },
           "example": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/_ActivityExample"
-              },
-              {
-                "type": "null"
-              }
-            ]
+            "title": "Example",
+            "type": "null"
           },
           "last_failure": {
             "anyOf": [
@@ -2432,7 +2478,7 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "continuous-field-activity-v2",
+            "const": "continuous-field-activity-v3",
             "title": "Schema Version",
             "type": "string"
           },
@@ -10029,6 +10075,49 @@
           }
         ],
         "summary": "Enable Guarded Activity"
+      }
+    },
+    "/api/v1/activity/permission-readiness": {
+      "get": {
+        "operationId": "activity_permission_readiness_api_v1_activity_permission_readiness_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ActivityPermissionReadiness"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "OwnerSession": []
+          }
+        ],
+        "summary": "Activity Permission Readiness"
       }
     },
     "/api/v1/activity/{connection}/{library}/revoke": {

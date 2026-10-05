@@ -3,7 +3,7 @@ import { queryWorkClass, useRequiredQuery as useQuery } from '../queryWork'
 import { useMutation } from '@tanstack/react-query'
 import { useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { useEffect, useRef, useState } from 'react'
-import { AmbiguousMutationError, ApiError, BuildMismatchError } from '../api/http'
+import { AmbiguousMutationError, ApiError, BuildMismatchError, displayValue } from '../api/http'
 import type {
   ActivityCategory,
   ActivityLibraryView,
@@ -239,7 +239,7 @@ function ActivityTransitions({ eventId }: { eventId: string }) {
   )
 }
 export default function ActivityPage({ initial }: { initial: ActivityView }) {
-  const { http, queryClient } = useReviewContext()
+  const { http, queryClient, updates } = useReviewContext()
   const router = useRouter()
   const navigate = useNavigate({ from: activityRoute.fullPath })
   const search = activityRoute.useSearch()
@@ -381,10 +381,101 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const preparation = usePreparation().data
   const connectionConditions = preparation?.connections ?? []
   const connection = connectionConditions.find((item) => item.state !== 'recovered')
+  const connectionState = JSON.stringify(connectionConditions)
   const ledger = data.ledger
-  const configured = data.configured_libraries
+  const [consentOpen, setConsentOpen] = useState(
+    () => router.state.location.hash === 'activity-consent',
+  )
+  const consentTrigger = useRef<HTMLElement | null>(null)
+  const openingPermissionCheck = useRef(consentOpen)
+  const nextPermissionRequest = useRef(0)
+  const [permissionRequest, setPermissionRequest] = useState<number | null>(null)
+  const previousConnectionState = useRef(connectionState)
+  useEffect(() => {
+    if (previousConnectionState.current !== connectionState) setPermissionRequest(null)
+    previousConnectionState.current = connectionState
+  }, [connectionState])
+  const permissions = useQuery({
+    queryKey: ['activity-permissions', permissionRequest],
+    queryFn: (context) =>
+      http.getActivityPermissionReadiness(context.signal, queryWorkClass(context)),
+    enabled: consentOpen && permissionRequest !== null,
+    retry: false,
+    staleTime: Infinity,
+    gcTime: 0,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  })
+  const permission = permissionRequest === null ? undefined : permissions.data
+  const discardPermissions = () => setPermissionRequest(null)
+  useEffect(() => {
+    const discard = () => {
+      openingPermissionCheck.current = false
+      setPermissionRequest(null)
+    }
+    const unsubscribe = updates?.subscribe(discard)
+    const unobserve = updates?.observeState(discard)
+    const unwatch = queryClient.getQueryCache().subscribe((event) => {
+      const queryKey: unknown = event.query.queryKey
+      if (
+        event.type === 'updated' &&
+        Array.isArray(queryKey) &&
+        queryKey[0] === 'activity' &&
+        ['fetch', 'invalidate', 'success', 'error'].includes(event.action.type)
+      )
+        setPermissionRequest(null)
+    })
+    document.addEventListener('visibilitychange', discard)
+    window.addEventListener('offline', discard)
+    return () => {
+      unsubscribe?.()
+      unobserve?.()
+      unwatch()
+      document.removeEventListener('visibilitychange', discard)
+      window.removeEventListener('offline', discard)
+    }
+  }, [queryClient, updates])
+  useEffect(() => {
+    if (!openingPermissionCheck.current || query.isFetching) return
+    // Let the entering history query publish its final cache event before the
+    // hash handoff starts a check. Later history events still discard proof.
+    const frame = requestAnimationFrame(() => {
+      if (!openingPermissionCheck.current) return
+      openingPermissionCheck.current = false
+      setPermissionRequest(++nextPermissionRequest.current)
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [query.isFetching])
+  const checkPermissions = () => {
+    openingPermissionCheck.current = false
+    setPermissionRequest(++nextPermissionRequest.current)
+  }
+  const openConsentReview = () => {
+    consentTrigger.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    setConsentOpen(true)
+    checkPermissions()
+  }
+  useEffect(() => {
+    if (!consentOpen) return
+    const section = document.getElementById('activity-consent')
+    section?.focus({ preventScroll: true })
+    section?.scrollIntoView({ block: 'nearest' })
+  }, [consentOpen])
+  const closeConsentReview = () => {
+    openingPermissionCheck.current = false
+    setConsentOpen(false)
+    discardPermissions()
+    const trigger =
+      consentTrigger.current ?? document.querySelector<HTMLElement>('[data-route-focus]')
+    requestAnimationFrame(() => trigger?.focus({ preventScroll: true }))
+    if (router.state.location.hash === 'activity-consent')
+      void navigate({ search: (current) => current, hash: '', replace: true })
+  }
+  const configured = permission?.configured_libraries ?? []
   const enabled = data.enabled_libraries
-  const capability = (library: string) => data.capabilities.find((item) => item.library === library)
+  const capability = (library: string) =>
+    permission?.capabilities.find((item) => item.library === library)
   const preparedCount = (library: ActivityLibraryView) => library.prepared?.total ?? 0
   const consentCandidates = configured.filter((item) =>
     (capability(item.library)?.destinations ?? []).some(
@@ -394,47 +485,33 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const selectable = consentCandidates.filter((item) => {
     const state = capability(item.library)?.state ?? 'not_ready'
     return (
-      data.backup_ready &&
+      permission?.backup_ready === true &&
+      !connection &&
       ['allowed', 'partially_allowed'].includes(state) &&
       preparedCount(item) > 0
     )
   })
   const selectableNames = new Set(selectable.map((item) => item.library))
-  const [selection, setSelection] = useState(() => ({ source: data, names: new Set<string>() }))
-  if (selection.source !== data)
-    setSelection({
-      source: data,
-      names: new Set([...selection.names].filter((name) => selectableNames.has(name))),
-    })
-  const selected =
-    selection.source === data
-      ? selection.names
-      : new Set([...selection.names].filter((name) => selectableNames.has(name)))
+  const [selection, setSelection] = useState(() => ({
+    source: permission,
+    names: new Set<string>(),
+  }))
+  if (selection.source !== permission) setSelection({ source: permission, names: new Set() })
+  const selected = selection.source === permission ? selection.names : new Set<string>()
   const [status, setStatus] = useState('')
   const [expandedId, setExpandedId] = useState<string | null>(null)
-  const [consentOpen, setConsentOpen] = useState(
-    () => router.state.location.hash === 'activity-consent',
-  )
-  useEffect(() => {
-    if (consentOpen)
-      document.getElementById('activity-consent')?.scrollIntoView({ block: 'nearest' })
-  }, [consentOpen])
-  const closeConsentReview = () => {
-    setConsentOpen(false)
-    if (router.state.location.hash === 'activity-consent')
-      void navigate({ search: (current) => current, hash: '', replace: true })
-  }
   const mutation = useMutation({
     mutationFn: ({ path, body }: { path: string; body?: unknown }) =>
       http.activityCommand(path, body),
     retry: false,
     onSuccess: async () => {
       closeConsentReview()
-      setSelection({ source: data, names: new Set() })
+      setSelection({ source: permission, names: new Set() })
       setStatus('Activity state refreshed from the authoritative server.')
       await invalidateForegroundQueries(queryClient, { queryKey: ['activity'] })
     },
     onError: async (error, command) => {
+      discardPermissions()
       if (
         error instanceof AmbiguousMutationError ||
         error instanceof BuildMismatchError ||
@@ -490,7 +567,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     const next = new Set(selected)
     if (next.has(library)) next.delete(library)
     else next.add(library)
-    setSelection({ source: data, names: next })
+    setSelection({ source: permission, names: next })
   }
   const restoreFocus = (key: string, version: number) => {
     if (focusVersion.current !== version) return
@@ -582,11 +659,11 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   const recoveryCount = suspensions.length + dormantRecovery + connectionRecovery
   const reasons = data.waiting
   const waitingEvent = data.current_waiting
-  const needsConsent = consentCandidates.length > 0 || (!enabled.length && configured.length > 0)
+  const needsConsent = data.configured_libraries.length > 0
   const enabling = mutation.isPending && mutation.variables.path === 'activity/consent'
   // Library states the same offer compactly, from this same reading, so the two
   // routes into the decision can never disagree about it (#639).
-  const consent = readWriteConsent(data, {
+  const consent = readWriteConsent(permission ? { ...data, ...permission } : data, {
     enabling,
     // A connection that needs an owner check is the one condition that makes
     // enabling writes the wrong next step. Preparation still running is not:
@@ -594,7 +671,6 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     connectionUnavailable: Boolean(connection),
   })
   const offer = consent.scopes
-  const offeredGrants = consent.grants
   const offeredChanges = consent.changes
   const consentState = consent.state
   const consentBlocked = consent.blocked
@@ -604,7 +680,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
   // that no screen say no action is required while its own displayed prepared
   // work requires consent, and three cascades each deciding that separately is
   // how one of them came to say it directly above the count that refutes it.
-  const permissionNeeded = consentState === 'off' && offeredGrants.length > 0
+  const permissionNeeded = consentState === 'off' && reasons.awaiting_permission > 0
   const hasAuthority = enabled.length > 0 || suspensions.length > 0 || needsConsent
   const showOperationalSummary =
     !permissionNeeded || Boolean(connection) || recoveryCount > 0 || data.paused
@@ -909,7 +985,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <div>
               <h2 id="write-consent-title">
                 {consentState === 'off'
-                  ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready. Writes are off.`
+                  ? permission?.backup_ready === true
+                    ? `${String(offeredChanges)} prepared ${offeredChanges === 1 ? 'change is' : 'changes are'} ready. Writes are off.`
+                    : 'Writes are off. Review permissions when you are ready.'
                   : consentState === 'enabling'
                     ? 'Enabling writes…'
                     : consentState === 'enabled'
@@ -918,7 +996,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               </h2>
               <p>
                 {consentState === 'off'
-                  ? `Enable writes for ${offer.map((item) => item.library).join(', ')} to apply these prepared changes.`
+                  ? 'Open permission review to check backup readiness and the destinations available for writes.'
                   : consentState === 'enabling'
                     ? 'Confirming permission with the authoritative server. No change is sent twice.'
                     : consentState === 'enabled'
@@ -928,7 +1006,7 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             </div>
             <dl>
               <div>
-                <dt>Ready for permission</dt>
+                <dt>Awaiting permission</dt>
                 <dd>{reasons.awaiting_permission}</dd>
               </div>
               <div>
@@ -984,15 +1062,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
             <button
               className="cm-primary"
               type="button"
-              disabled={consentState !== 'off' || consentBlocked !== null}
+              disabled={consentState !== 'off' || consentOpen}
               aria-expanded={consentOpen}
               aria-controls="activity-consent"
-              onClick={() => {
-                setConsentOpen(true)
-              }}
+              onClick={openConsentReview}
             >
               {consentState === 'off'
-                ? 'Enable writes'
+                ? 'Review write permissions'
                 : consentState === 'enabling'
                   ? 'Enabling writes…'
                   : consentState === 'applying'
@@ -1004,14 +1080,45 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
         </section>
       ) : null}
       {consentOpen ? (
-        <section className="activity-consent-ledger" id="activity-consent">
+        <section
+          className="activity-consent-ledger"
+          id="activity-consent"
+          tabIndex={-1}
+          aria-labelledby="activity-consent-title"
+        >
           <div>
             <p className="eyebrow">Prepared, read-only work</p>
-            <h2>Enable guarded writes</h2>
+            <h2 id="activity-consent-title">Enable guarded writes</h2>
             <p>
               Each write is checked before it starts, verified afterwards, and recorded durably.
             </p>
           </div>
+          <p role="status">
+            {permissionRequest === null
+              ? 'Permission readiness has not been checked, or the library changed. Check again before selecting destinations.'
+              : permissions.isFetching
+                ? 'Checking backup readiness and write permissions…'
+                : permissions.isError
+                  ? 'Permission readiness is unavailable. No permission was granted. Try again.'
+                  : permission?.backup_ready === null
+                    ? 'Readiness could not be confirmed for the current library state. Check again before enabling writes.'
+                    : permission?.backup_ready === false
+                      ? 'Backup readiness could not be confirmed. Writes cannot be enabled.'
+                      : 'Backup readiness checked. Review the included and excluded destinations.'}
+          </p>
+          <button
+            type="button"
+            onClick={checkPermissions}
+            disabled={permissions.isFetching && permissionRequest !== null}
+          >
+            {permissionRequest === null ? 'Check write permissions' : 'Retry permission check'}
+          </button>
+          {permission?.example ? (
+            <p>
+              Example: {fieldLabel(permission.example.destination)} for {permission.example.library}{' '}
+              — {displayValue(permission.example.before)} → {displayValue(permission.example.after)}
+            </p>
+          ) : null}
           {configured.map((library) => {
             const name = library.library
             const state = capability(name)?.state ?? 'not_ready'
@@ -1027,7 +1134,10 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                   />
                   <strong>{name}</strong>
                   <small>
-                    {preparedCount(library)} prepared · {capabilityLabel(state)}
+                    {preparedCount(library)} prepared ·{' '}
+                    {permission?.backup_ready === true
+                      ? capabilityLabel(state)
+                      : 'Readiness unconfirmed'}
                   </small>
                 </label>
                 <ul aria-label={`${name} included and excluded destinations`}>
@@ -1055,7 +1165,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
           </button>
           <button
             className="primary-action"
-            disabled={mutation.isPending || !data.backup_ready || selectedGrants.length === 0}
+            disabled={
+              mutation.isPending || permission?.backup_ready !== true || selectedGrants.length === 0
+            }
             onClick={() =>
               mutation.mutate({
                 path: 'activity/consent',
@@ -1228,7 +1340,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
               ))}
               {needsConsent ? (
                 <button
-                  onClick={() => (consentOpen ? closeConsentReview() : setConsentOpen(true))}
+                  id="review-write-permissions"
+                  onClick={() => (consentOpen ? closeConsentReview() : openConsentReview())}
                   aria-expanded={consentOpen}
                   aria-controls="activity-consent"
                 >
