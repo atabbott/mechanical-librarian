@@ -708,7 +708,7 @@
     "tests/unit/test_review_web_transport.py": "7698a26b85c51ad25764f657329662e35c16f729c00fbb638cbae0837099fe00",
     "tests/unit/test_reviewer_access_application.py": "db933bc2bae2b400cdb630d202d862bbf7b8ac3ade87a73c2eacb30941a1dc04",
     "tests/unit/test_rich_metadata_preview.py": "3509aa4c095a205900503f1f9f723b18f35b273468457d2406e219ccef6c28dc",
-    "tests/unit/test_rich_metadata_qualification_manifest.py": "e779335dd81fb1de6d3f5655ff9394edfd6939bbb403de26cf4de62e39d39ac7",
+    "tests/unit/test_rich_metadata_qualification_manifest.py": "713db1141cfa63de6ae1aa3f3d6414846f3eff755bae78e81ddb267664f1b7b9",
     "tests/unit/test_runtime_dispatch.py": "a3e6e7c10d9116bb5dd82508d21732f6d5c07567069e98191ccf019ee6e357dc",
     "tests/unit/test_same_name_series_authority.py": "b518f13201de55e9e3cddfdef1d9e0422728a3c3e7ceb83894aa76dc939ffeab",
     "tests/unit/test_security_scanning_contract.py": "15cdc7cbc61ca9975c04f610cdd9ade28febdb57f715765adc5f5bfa589e1c1e",
