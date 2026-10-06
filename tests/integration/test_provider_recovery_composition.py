@@ -1571,21 +1571,6 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
                             "SELECT count(*) FROM provider_recovery_jobs WHERE source_report_id=?",
                             (staged.report_id,),
                         ).fetchone() == (4,)
-                        for job in jobs:
-                            assert activation._admit(job) == (False, None)
-                            activation.retry_member(
-                                ProviderRecovery(
-                                    job.connection,
-                                    job.adapter,
-                                    job.scope,
-                                    1,
-                                    "checking",
-                                    1,
-                                    None,
-                                ),
-                                job,
-                                lambda: None,
-                            )
                     else:
                         assert len(inspections) == 4
                         assert calls == [(lane.identity,)]
@@ -1601,5 +1586,21 @@ def test_composed_audio_recovery_currentness_and_staged_cutover(
                         assert successor.providers[0].status is ProviderStatus.NO_MATCH
             finally:
                 repository.close()
+            if staged is not None:
+                for job in jobs:
+                    assert activation._admit(job) == (False, None)
+                    activation.retry_member(
+                        ProviderRecovery(
+                            job.connection,
+                            job.adapter,
+                            job.scope,
+                            1,
+                            "checking",
+                            1,
+                            None,
+                        ),
+                        job,
+                        lambda: None,
+                    )
         finally:
             supervisor.stop()
