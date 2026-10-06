@@ -173,6 +173,7 @@ from mechanical_librarian.application.metadata_policy import (
 from mechanical_librarian.application.metadata_report import (
     ArtifactAuthorityError,
     AudioInspectionResult,
+    AudioInspector,
     AudioItemInspectionError,
     CoverReadError,
     CoverSourceChangedError,
@@ -2513,7 +2514,7 @@ def create_review_pipeline(
         connection: TargetConnectionConfiguration,
         library: LibraryConfiguration,
         mount: MediaMountConfiguration,
-    ) -> tuple[TargetReader, EpubInspector]:
+    ) -> tuple[TargetReader, EpubInspector, AudioInspector]:
         """Build one successor observation's adapters from validated selections."""
         artifacts = CoverArtifactStore(artifact_store_path, create=False)
         target = AudiobookshelfItemReader(
@@ -2536,7 +2537,7 @@ def create_review_pipeline(
             maximum_bytes=configuration.limits.target_response_bytes,
             timeout_seconds=configuration.limits.timeout_seconds,
         )
-        return target, _IsolatedEpubInspector(artifacts)
+        return target, _IsolatedEpubInspector(artifacts), _IsolatedAudioInspector()
 
     runner_holder: dict[str, ScopedProviderRecoveryRunner] = {}
     activation = ProviderRecoveryActivation(
