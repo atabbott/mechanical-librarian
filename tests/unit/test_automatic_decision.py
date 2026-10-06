@@ -1240,3 +1240,56 @@ def test_activity_read_predecessor_keeps_exact_decode_only_permissions(
         arguments.pop(name)
     with pytest.raises(AutomaticDecisionError):
         AutomaticDecision.create(**arguments)
+
+
+@pytest.mark.parametrize(
+    "family,digest,permissions",
+    [
+        (
+            "F19A",
+            "b0987ca2be0c2171545da8942b1646a99197e1315714e985b07049b637ca63b3",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+        ),
+        (
+            "F20",
+            "013fd7173f7b748d900e9088a0955c857f1aeb3543fc630d1f2f792d6d8e1a59",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+        ),
+        (
+            "F46",
+            "c242735d3aa59e823ed9db00968828acd6a3a6a536c5b72d2ca4fbe644ddfd06",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+        ),
+    ],
+)
+def test_connection_startup_predecessors_are_readable_but_never_current(
+    family, digest, permissions
+):
+    bindings = dict(
+        getattr(automatic_decision, "_PRIOR_" + family + "_QUALIFICATION_MANIFESTS")
+    )
+    assert bindings[digest] == permissions
+    fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support"
+            / "retained_qualification_predecessors"
+            / "connection_startup_decisions.json"
+        ).read_text()
+    )
+    case = next(case for case in fixture["cases"] if case["family"] == family)
+    assert case["decisions"]
+    for document in case["decisions"]:
+        decision = AutomaticDecision.from_json(document)
+        assert decision.qualification_manifest_sha256 == digest
+        assert decision.to_json() == document
+        assert not qualification_manifest_is_current(
+            decision.policy_category, decision.policy_option, digest
+        )
+    for identity in permissions:
+        category, option = identity.split(":", 1)
+        assert not qualification_manifest_is_current(category, option, digest)
+    if family == "F46":
+        assert (
+            audiobook_decision_qualification.F46_COVER_FILL_IDENTITY not in permissions
+        )

@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Connection checks refuse promptly while startup recovery is incomplete or has
+  failed. After recovery, an explicit retry preserves the connection result and
+  existing review history (#1153).
+
 - Audiobook provider recovery now checks unchanged audio with the isolated
   inspector and completes ordinary review preparation; changed audio stops
   before provider dispatch (#1151).
