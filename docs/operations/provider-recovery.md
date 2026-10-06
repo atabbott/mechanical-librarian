@@ -31,7 +31,7 @@ grammar or its exact legacy remaining/reset pair. A depleted
 burst bucket waits at most 60 seconds; a depleted daily bucket resumes at the
 next UTC midnight. Header values themselves are never persisted. A deferred
 burst or daily-quota result consumes neither a recovery-health attempt nor the
-job's three-attempt execution allowance.
+provider job's five-attempt execution allowance.
 
 After correcting a dormant condition, increment the positive
 `provider_recovery_generation` in the `config-v9` file and restart the
@@ -56,7 +56,10 @@ that cutover. A no-match is a successful terminal result. A shared
 provider failure creates no successor and no sibling fanout; it waits under
 the same closed recovery rule as the initial report. Stale package,
 request, deadline, cancellation, and target/media checks close safely without
-replaying a sibling. Recovery never writes target metadata.
+replaying a sibling. For audiobooks, the existing isolated audio inspector rechecks the retained
+audio set before provider dispatch and publication, just as the EPUB inspector
+checks ebooks. Changed audio refuses recovery before contacting a provider.
+Recovery never writes target metadata.
 One stale member is retired without retiring current siblings. A restart after
 an exact successor package cutover resumes from its persisted lineage, so the
 completed canary is not sent to the provider again.

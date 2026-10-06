@@ -73,8 +73,12 @@ def test_report_currentness_effect_and_capability_callbacks_use_http(
         return construct
 
     def recovery(**kwargs):
-        target, inspector = kwargs["observers"](connection, library, mount)
-        assert target is not None and inspector is not None
+        target, inspector, audio_inspector = kwargs["observers"](
+            connection, library, mount
+        )
+        assert target is not None
+        assert isinstance(inspector, composition._IsolatedEpubInspector)
+        assert isinstance(audio_inspector, composition._IsolatedAudioInspector)
         activation = Mock()
         activation.drain_outbox.return_value = ()
         return activation

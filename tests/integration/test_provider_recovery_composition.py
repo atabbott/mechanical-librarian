@@ -1293,3 +1293,313 @@ def test_trusted_google_hold_preserves_failure_precedence(
         )
         == expected
     )
+
+
+@pytest.mark.parametrize("scenario", ("unchanged", "changed", "staged"))
+def test_composed_audio_recovery_currentness_and_staged_cutover(
+    tmp_path: Path, scenario: str
+) -> None:
+    from mechanical_librarian.application.provider_recovery_activation import (
+        ProviderRecoveryActivation,
+    )
+    from mechanical_librarian.domain.provider_recovery import ProviderRecovery
+    from tests.unit.test_provider_retry_successor import _RETAINED_AUDIO
+
+    database = tmp_path / "application.sqlite"
+    recovery = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    composition.CoverArtifactStore(tmp_path / "artifacts", create=True)
+    asin = LocalClaim.create(
+        kind=ClaimKind.ASIN,
+        observed="B08G9PRS1K",
+        canonical="B08G9PRS1K",
+        excerpt="B08G9PRS1K",
+        applicability="not_applicable",
+        basis="embedded_tag",
+        checksum="not_applicable",
+        applicability_basis="not_applicable",
+        occurrence=1,
+    )
+    snapshot = TargetSnapshot(
+        "audiobook", None, (TargetFile("b" * 64, "book.m4b", "m4b"),)
+    )
+    lane = audiobook_discovery_plan(snapshot, (asin,)).lanes[0]
+    names = (
+        ("source-a", "source-b", "source-c", "source-d", "source-e")
+        if scenario == "staged"
+        else ("source-a", "source-b")
+    )
+    observations = tuple(
+        provider_observation(
+            name,
+            (
+                ProviderLaneResult(
+                    lane,
+                    ProviderStatus.NO_MATCH
+                    if scenario != "staged" and name == names[-1]
+                    else ProviderStatus.UNAVAILABLE,
+                ),
+            ),
+            authority="audnexus",
+        )
+        for name in names
+    )
+    report = MetadataReport.create(
+        target=TargetFacts("primary", "audio", "item", snapshot.fields),
+        file=FileFacts(0, "b" * 64, "c" * 64, "m4b"),
+        local_claims=(asin,),
+        local_reasons=("embedded_tag_asin",),
+        providers=observations,
+        audio=_RETAINED_AUDIO,
+    )
+    repository = open_repository(database)
+    repository.enter_shadow_preview(1)
+    repository.publish(report, lambda: True)
+    package = repository.current_review_package("primary", "audio", "item")
+    assert package is not None
+    scan = "review_scan_" + "1" * 64
+    repository._connection.execute(
+        "INSERT INTO review_preparation_scans("
+        "scan_id,connection_name,library_name,library_id,producer_fingerprint,"
+        "state,requested_at,updated_at,catalogue_generation,catalogue_fingerprint,"
+        "total) VALUES(?,?,?,?,?,'completed',1,1,1,?,1)",
+        (scan, "primary", "audio", "library-1", "2" * 64, "3" * 64),
+    )
+    repository._connection.execute(
+        "INSERT INTO review_preparation_work("
+        "work_id,scan_id,ordinal,connection_name,library_name,library_id,item_id,"
+        "file_identity,source_revision,source_fingerprint,producer_fingerprint,"
+        "catalogue_generation,catalogue_fingerprint,stage,state,attempt,"
+        "recovery_attempt,retry_not_before,report_id,outcome,updated_at) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'complete','complete',0,0,0,?,"
+        "'evidence_only',2)",
+        (
+            "review_work_" + "4" * 64,
+            scan,
+            0,
+            "primary",
+            "audio",
+            "library-1",
+            "item",
+            "b" * 64,
+            1,
+            "4" * 64,
+            "2" * 64,
+            1,
+            "3" * 64,
+            report.report_id,
+        ),
+    )
+    repository._connection.commit()
+    repository.close()
+    configuration = ApplicationConfiguration(
+        (
+            TargetConnectionConfiguration(
+                "primary", "https://example.invalid", "/run/target-token"
+            ),
+        ),
+        (
+            LibraryConfiguration(
+                "audio", "primary", "library-1", "audiobook", "books", names
+            ),
+        ),
+        (MediaMountConfiguration("books", "/container", "/service", True),),
+        tuple(
+            ProviderConnectionConfiguration(name, True, False, None, "audnexus")
+            for name in names
+        ),
+        provider_recovery_generation=1,
+        review=ReviewWebConfiguration(
+            "https://review.example.invalid",
+            "/run/owner-password",
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+        ),
+    )
+    for name in names[:-1]:
+        recovery.observe_failure(
+            connection=name,
+            adapter="audnexus",
+            scope="audio",
+            generation=1,
+            failure="transient",
+            now=0,
+        )
+    jobs = tuple(
+        job
+        for job in composition._provider_recovery_jobs(
+            report, package=package, configuration=configuration, scope="audio"
+        )
+        if job.connection != names[-1]
+    )
+    assert len(jobs) == (4 if scenario == "staged" else 1)
+    assert recovery.enqueue_jobs(jobs, enqueued_at=0) == len(jobs)
+
+    def unreachable(*_args, **_kwargs):
+        raise AssertionError("completed or staged recovery replayed observation")
+
+    activation = ProviderRecoveryActivation(
+        configuration=configuration,
+        repository_factory=lambda: open_repository(database),
+        observers=unreachable,
+        provider_resolver=unreachable,
+        pipeline=lambda: None,
+        enqueue=unreachable,
+        clock=lambda: 7200,
+    )
+    staged = None
+    if scenario == "staged":
+        staged = MetadataReport.create(
+            target=report.target,
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=(
+                *observations[:-1],
+                provider_observation(
+                    names[-1],
+                    (ProviderLaneResult(lane, ProviderStatus.NO_MATCH),),
+                    authority="audnexus",
+                ),
+            ),
+            audio=report.audio,
+        )
+        repository = open_repository(database)
+        repository.publish(
+            staged,
+            lambda: True,
+            expected_current=report.report_id,
+            after_publication=lambda bound, value: bound.stage_provider_retry_successor(
+                report.report_id, value, 3
+            ),
+        )
+        assert repository.current_review_package("primary", "audio", "item") == package
+        repository.close()
+        assert all(activation._admit(job) == (True, staged.report_id) for job in jobs)
+
+    calls = []
+    inspections = []
+
+    class Provider:
+        def observe(self, plan, *, deadline=None):
+            calls.append(tuple(value.identity for value in plan.lanes))
+            return ProviderResult(
+                provider_observation(
+                    names[0],
+                    tuple(
+                        ProviderLaneResult(value, ProviderStatus.NO_MATCH)
+                        for value in plan.lanes
+                    ),
+                    authority="audnexus",
+                )
+            )
+
+    def unchanged(inspector, *_args):
+        assert isinstance(inspector, composition._IsolatedAudioInspector)
+        inspections.append(inspector)
+        return scenario != "changed"
+
+    def provider(name, *_args, **_kwargs):
+        assert scenario == "unchanged"
+        assert name == names[0]  # The successful sibling is never reconstructed.
+        return Provider()
+
+    _TargetReader.snapshots = {"item": snapshot}
+    with (
+        patch.object(composition.time, "time", return_value=7200),
+        patch.object(composition, "AudiobookshelfItemReader", _TargetReader),
+        patch.object(composition, "_IsolatedEpubInspector", _Inspector),
+        patch.object(composition, "audnexus_client", return_value=object()) as client,
+        patch.object(
+            composition, "AudnexusMetadataProvider", side_effect=provider
+        ) as factory,
+        patch.object(composition._IsolatedAudioInspector, "unchanged", unchanged),
+    ):
+        supervisor = composition.create_review_pipeline(
+            configuration,
+            database,
+            tmp_path / "catalogue.sqlite",
+            tmp_path / "artifacts",
+            _reviewer_access(database, configuration),
+            provider_recovery=recovery,
+        )
+        try:
+            supervisor.recover_provider_once()
+            repository = open_repository(database)
+            try:
+                current = repository.current_review_package("primary", "audio", "item")
+                documents = repository._connection.execute(
+                    "SELECT document FROM metadata_reports"
+                ).fetchall()
+                assert report.to_json() in [row[0] for row in documents]
+                if scenario == "changed":
+                    assert current == package
+                    assert len(documents) == 1
+                    assert len(inspections) == 1
+                    assert calls == []
+                    client.assert_not_called()
+                    factory.assert_not_called()
+                    assert (
+                        repository.completed_provider_retry_successor(report.report_id)
+                        is None
+                    )
+                    assert recovery._connection.execute(
+                        "SELECT state FROM provider_recovery_jobs"
+                    ).fetchall() == [("stale",)]
+                else:
+                    assert current is not None and current != package
+                    assert len(documents) == 2
+                    successor_id = repository.completed_provider_retry_successor(
+                        report.report_id
+                    )
+                    assert successor_id == current[1]
+                    assert repository._connection.execute(
+                        "SELECT stage,state FROM review_preparation_work WHERE recovery_source_report_id=?",
+                        (report.report_id,),
+                    ).fetchall() == [("complete", "complete")]
+                    if staged is not None:
+                        assert successor_id == staged.report_id
+                        assert calls == []
+                        # F22 still validates audio for proposal and admission.
+                        assert inspections
+                        client.assert_not_called()
+                        factory.assert_not_called()
+                        assert recovery._connection.execute(
+                            "SELECT state,count(*) FROM provider_recovery_jobs WHERE source_report_id=? GROUP BY state",
+                            (report.report_id,),
+                        ).fetchall() == [("complete", 1), ("queued", 3)]
+                        assert recovery._connection.execute(
+                            "SELECT count(*) FROM provider_recovery_jobs WHERE source_report_id=?",
+                            (staged.report_id,),
+                        ).fetchone() == (4,)
+                        for job in jobs:
+                            assert activation._admit(job) == (False, None)
+                            activation.retry_member(
+                                ProviderRecovery(
+                                    job.connection,
+                                    job.adapter,
+                                    job.scope,
+                                    1,
+                                    "checking",
+                                    1,
+                                    None,
+                                ),
+                                job,
+                                lambda: None,
+                            )
+                    else:
+                        assert len(inspections) == 4
+                        assert calls == [(lane.identity,)]
+                        factory.assert_called_once()
+                        successor = MetadataReport.from_json(
+                            next(
+                                row[0]
+                                for row in documents
+                                if row[0] != report.to_json()
+                            )
+                        )
+                        assert successor.providers[1] == observations[1]
+                        assert successor.providers[0].status is ProviderStatus.NO_MATCH
+            finally:
+                repository.close()
+        finally:
+            supervisor.stop()

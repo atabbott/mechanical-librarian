@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Protocol, cast
 from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import ApplicationConfiguration
 from mechanical_librarian.application.metadata_report import (
+    AudioInspector,
     CurrentnessError,
     EpubInspector,
     MetadataReportError,
@@ -94,7 +95,7 @@ class RetrySuccessorObservers(Protocol):
         connection: TargetConnectionConfiguration,
         library: LibraryConfiguration,
         mount: MediaMountConfiguration,
-    ) -> tuple[TargetReader, EpubInspector]: ...
+    ) -> tuple[TargetReader, EpubInspector, AudioInspector]: ...
 
 
 class ProviderRecoveryActivation:
@@ -194,11 +195,12 @@ class ProviderRecoveryActivation:
         )
         if mount is None:
             raise CurrentnessError("target or media changed")
-        target, inspector = self._observers(connection, library, mount)
+        target, inspector, audio_inspector = self._observers(connection, library, mount)
         try:
             serialized = GenerateProviderRetrySuccessor(
                 target=target,
                 inspector=inspector,
+                audio_inspector=audio_inspector,
                 repository_factory=cast(
                     "Callable[[], ReportRepository]", self._repository_factory
                 ),

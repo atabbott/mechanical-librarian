@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Audiobook provider recovery now checks unchanged audio with the isolated
+  inspector and completes ordinary review preparation; changed audio stops
+  before provider dispatch (#1151).
+
 - Library and Attention reuse each browse query's filtered population for its
   page and totals, reducing repeated work on populated libraries while preserving
   current decisions, search, ordering, and unavailable-state checks (#1148).
