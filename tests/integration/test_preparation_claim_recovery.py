@@ -871,6 +871,18 @@ def test_actual_supervisor_startup_failure_latches_closed_admission(
             with pytest.raises((ReviewPipelineError, RuntimeError)):
                 (supervisor.start_dormant if dormant else supervisor.start)()
         assert supervisor.recovery_required
+        if dormant and boundary == "recovery":
+            assert supervisor._startup_ready.wait(5)
+
+        def no_check(*_args):
+            pytest.fail(
+                "failed startup must refuse before opening a repository or probing"
+            )
+
+        pipeline._repository_factory = no_check
+        pipeline._check_connection = no_check
+        with pytest.raises(ReviewPipelineError, match="^unavailable$"):
+            supervisor.check_connection("primary")
         supervisor.resume_admission()
         assert not pipeline.run_next()
         assert pipeline.owned_claims == ()
@@ -1376,3 +1388,82 @@ def test_output_rollback_releases_writer_before_unknown_diagnostic(
     ).fetchone() == ("proposal", "failed", "unknown")
     assert not pipeline.owned_claims and not pipeline.recovery_required
     assert not pipeline.run_next()
+
+
+@pytest.mark.parametrize("status", [200, 401])
+def test_dormant_recovery_refuses_connection_check_before_explicit_retry(
+    root: SQLiteMetadataReportRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+) -> None:
+    import threading
+
+    import httpx
+
+    from mechanical_librarian.adapters.library_services.audiobookshelf_catalogue import (
+        AudiobookshelfCatalogueReader,
+    )
+    from mechanical_librarian.application.configuration import LibraryConfiguration
+    from mechanical_librarian.application.review_pipeline import (
+        ReviewPreparationSupervisor,
+    )
+
+    entered = threading.Event()
+    release = threading.Event()
+    recover = SQLiteMetadataReportRepository.recover_review_pipeline
+
+    def held_recovery(repository, producers):
+        entered.set()
+        assert release.wait(5)
+        return recover(repository, producers)
+
+    monkeypatch.setattr(
+        SQLiteMetadataReportRepository, "recover_review_pipeline", held_recovery
+    )
+    root.hold_target_connection("primary", "authentication", 1)
+    root.set_review_pipeline_paused(True, 1)
+    pipeline = _pipeline(root, tmp_path / "application.sqlite3")
+    calls: list[tuple[str, str]] = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        calls.append((request.method, request.url.path))
+        return httpx.Response(
+            status, json={"libraries": [{"id": "lib-1", "mediaType": "book"}]}
+        )
+
+    reader = AudiobookshelfCatalogueReader(
+        client_factory=lambda _: httpx.Client(
+            transport=httpx.MockTransport(response), base_url="https://abs.invalid"
+        ),
+        mounts={},
+        maximum_bytes=65536,
+        timeout_seconds=1,
+    )
+    pipeline._check_connection = lambda connection: reader.probe_connection(
+        connection,
+        (LibraryConfiguration("fiction", "primary", "lib-1", "book", None, ()),),
+    )
+    supervisor = ReviewPreparationSupervisor(pipeline)
+    try:
+        supervisor.start_dormant()
+        supervisor.admit()
+        assert entered.wait(5)
+        before = root.target_connection_conditions()
+        with pytest.raises(ReviewPipelineError, match="^unavailable$"):
+            supervisor.check_connection("primary")
+        assert root.target_connection_conditions() == before
+        assert calls == []
+        assert not release.is_set()
+        release.set()
+        assert supervisor._startup_ready.wait(5)
+        assert not supervisor.recovery_required
+        assert supervisor.check_connection("primary")
+        (condition,) = root.target_connection_conditions()
+        assert condition.state == ("recovered" if status == 200 else "paused")
+        assert condition.code == "authentication"
+        assert condition.epoch == before[0].epoch + 1
+        assert calls == [("GET", "/api/libraries")]
+    finally:
+        release.set()
+        supervisor.stop()

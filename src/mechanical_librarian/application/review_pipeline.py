@@ -1647,6 +1647,8 @@ class ReviewPreparationSupervisor:
         return self._pipeline.connection_conditions()
 
     def check_connection(self, connection: str) -> bool:
+        if self._dormant_start or self.recovery_required:
+            raise ReviewPipelineError("unavailable")
         changed = self._pipeline.check_connection(connection)
         if changed:
             self._wake.set()

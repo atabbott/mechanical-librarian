@@ -5674,8 +5674,10 @@ def test_unexpected_owner_probe_durably_returns_to_paused(
     assert (condition.code, condition.state) == ("unavailable", "paused")
 
 
+@pytest.mark.parametrize("newer_hold", [False, True])
 def test_owner_probe_releases_its_repository_before_network_and_refreshes_affected(
     application_path: Path,
+    newer_hold: bool,
 ) -> None:
     repository = open_repository(application_path)
     repository.request_review_scan("primary", "fiction", "lib-1", _PRODUCER, 1)
@@ -5687,6 +5689,7 @@ def test_owner_probe_releases_its_repository_before_network_and_refreshes_affect
     repository.close()
 
     opened: list[object] = []
+    probes: list[str] = []
 
     def factory():
         value = open_repository(application_path)
@@ -5694,11 +5697,18 @@ def test_owner_probe_releases_its_repository_before_network_and_refreshes_affect
         return value
 
     def probe(_connection: str) -> None:
+        probes.append(_connection)
         # Begin committed before the external observation: an unrelated
         # repository read can proceed while this probe is deliberately slow.
         observer = open_repository(application_path)
         try:
-            assert observer.target_connection_conditions()[0].state == "checking"
+            checking = observer.target_connection_conditions()[0]
+            assert checking.state == "checking"
+            assert not pipeline.check_connection("primary")
+            assert observer.target_connection_conditions()[0] == checking
+            if newer_hold:
+                observer.hold_target_connection("primary", "authentication", 6)
+                assert observer.target_connection_conditions()[0].epoch > checking.epoch
         finally:
             observer.close()
 
@@ -5715,7 +5725,11 @@ def test_owner_probe_releases_its_repository_before_network_and_refreshes_affect
         clock=lambda: 5,
     )
     assert pipeline.check_connection("primary")
-    assert pipeline.connection_conditions()[0].state == "recovered"
+    condition = pipeline.connection_conditions()[0]
+    assert condition.state == ("paused" if newer_hold else "recovered")
+    if newer_hold:
+        assert condition.code == "authentication"
+    assert probes == ["primary"]
 
 
 def test_unreadable_connection_conditions_reach_the_caller_as_pipeline_error() -> None:

@@ -704,6 +704,23 @@ def test_review_preparation_is_authenticated_csrf_bound_and_bounded(
     )
     assert checked.status_code == 200
     assert checked.json()["connections"] == []
+    with patch.object(
+        preparation, "check_connection", side_effect=ReviewPipelineError("unavailable")
+    ):
+        unavailable = web.client.post(
+            "/api/v1/review-preparation/primary/check-connection",
+            headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+        )
+    assert unavailable.status_code == 503
+    assert unavailable.json() == {
+        "error": {"code": "unavailable"},
+        "schema_version": "review-error-v1",
+    }
+    retried = web.client.post(
+        "/api/v1/review-preparation/primary/check-connection",
+        headers={**web.origin, "x-csrf-token": session["csrf_token"]},
+    )
+    assert retried.status_code == 200
     missing_csrf = web.client.post(
         "/api/v1/review-preparation/primary/fiction/scan",
         headers=web.origin,
