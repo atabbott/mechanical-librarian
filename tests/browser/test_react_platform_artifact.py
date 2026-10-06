@@ -222,16 +222,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 route.fulfill(status=204, body="")
                 return
             if path == "/api/v1/updates":
-                # The artifact cohort measures the shell against stubbed reads;
-                # a stream would never complete and there is nothing here to
-                # announce. It is answered with a stream that ends immediately,
-                # which leaves the surfaces on their polling fallback -- the
-                # state every assertion in this module was written against.
-                route.fulfill(
-                    status=200,
-                    content_type="text/event-stream",
-                    body="retry: 3000\n\n",
-                )
+                # This stubbed cohort uses the unavailable-stream fallback.
+                # A successful stream that immediately closes repeatedly changes
+                # live state and correctly invalidates permission readiness.
+                route.fulfill(status=503, body="")
                 return
             if path == "/api/v1/session/logout":
                 route.fulfill(
