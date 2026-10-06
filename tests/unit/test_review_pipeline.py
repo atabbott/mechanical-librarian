@@ -5704,7 +5704,11 @@ def test_owner_probe_releases_its_repository_before_network_and_refreshes_affect
         try:
             checking = observer.target_connection_conditions()[0]
             assert checking.state == "checking"
-            assert not pipeline.check_connection("primary")
+        finally:
+            observer.close()
+        assert not pipeline.check_connection("primary")
+        observer = open_repository(application_path)
+        try:
             assert observer.target_connection_conditions()[0] == checking
             if newer_hold:
                 observer.hold_target_connection("primary", "authentication", 6)
