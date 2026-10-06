@@ -27,8 +27,8 @@ Four review projections stay on the composing repository deliberately.
 fan out across the decision, cover and field-effect aggregates and hold one
 snapshot open over `_consistent_review_read`; `read_staged_cover_preparation`
 and `get_review_case_history` read the shadow projection the same way. They
-also call `get_review_case`, `list_current_review_case_documents` and
-`list_current_attention_documents` through this repository's own attributes,
+also call `get_review_case`, `read_current_library_page` and
+`read_current_attention_page` through this repository's own attributes,
 and `test_review_reads_are_isolated_from_a_concurrent_decision` substitutes
 exactly those three attributes to interleave a competing write. Calling the
 delegating stub keeps the substitution reachable; reaching past it into this
@@ -41,6 +41,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -60,6 +61,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
     _TERMINAL_LIBRARY_SEARCH_SQL,
+    _browse_scalar_sql,
     _terminal_library_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import _validate_report_row
@@ -102,6 +104,25 @@ from mechanical_librarian.domain.review_field_classification import ReviewFieldC
 # by _validated_review_pointer.  Nullability follows the schema below:
 # review_case_id is the only nullable column of the six.
 _ReviewPointer = tuple[str, str, str | None, str, int, str]
+
+
+@dataclass(frozen=True)
+class ReviewLibraryPage:
+    """Validated Library rows and totals from one filtered population."""
+
+    rows: tuple[tuple[str | None, str], ...]
+    total: int
+    attention_total: int
+
+
+@dataclass(frozen=True)
+class ReviewAttentionPage:
+    """Validated Attention fields and their total from one filtered population."""
+
+    rows: tuple[
+        tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
+    ]
+    total: int
 
 
 class SQLiteReviewCaseRepository(ConnectionScoped):
@@ -521,6 +542,19 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         attention: bool | None,
         library_labels: LibraryLabels = (),
     ) -> tuple[tuple[str | None, str], ...]:
+        return self.read_current_library_page(
+            search, limit, offset, attention, library_labels
+        ).rows
+
+    @local_operation
+    def read_current_library_page(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        attention: bool | None,
+        library_labels: LibraryLabels = (),
+    ) -> ReviewLibraryPage:
         try:
             query, pattern = _review_search_pattern(search)
             cover_authority = self._current_cover_authority()
@@ -532,7 +566,6 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             elif attention is None:
                 condition = "1"
             attached = self.catalogue is not None and self.catalogue.active
-            terminal_union = ""
             parameters: list[object] = [
                 *(
                     [self.catalogue.fingerprint]
@@ -549,31 +582,35 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 json.dumps(library_labels),
                 pattern,
             ]
-            if attention is not True:
-                terminal_union = (
-                    " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
-                    "item_id,NULL,1,0,ml_casefold(display_title),'',work_id,attempt,"
-                    "stage,failure_root,recovery_attempt,failure_code,"
-                    "display_title,display_authors,display_format FROM terminal"
-                    + _TERMINAL_LIBRARY_SEARCH_SQL
+            terminal_union = (
+                " UNION ALL SELECT NULL,NULL,NULL,connection_name,library_name,"
+                "item_id,NULL,0,0,ml_casefold(display_title),'',work_id,attempt,"
+                "stage,failure_root,recovery_attempt,failure_code,"
+                "display_title,display_authors,display_format FROM terminal"
+                + _TERMINAL_LIBRARY_SEARCH_SQL
+            )
+            parameters.extend(
+                (
+                    query,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    pattern,
+                    json.dumps(library_labels),
+                    pattern,
                 )
-                parameters.extend(
-                    (
-                        query,
-                        pattern,
-                        pattern,
-                        pattern,
-                        pattern,
-                        pattern,
-                        json.dumps(library_labels),
-                        pattern,
-                    )
-                )
+            )
             parameters.extend((limit, offset))
             rows = self._connection.execute(
                 "WITH "
                 + _terminal_library_sql(attached)
-                + ", candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
+                + ", report_scalars AS MATERIALIZED (SELECT mr.report_id,"
+                "json_extract(mr.document,'$.target.fields[0].value') AS title,"
+                "json_extract(mr.document,'$.file.format') AS format "
+                "FROM metadata_reports mr JOIN (SELECT DISTINCT report_id "
+                "FROM current_review_packages) participating USING(report_id)),"
+                "candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
                 "mr.report_id,"
                 "CASE WHEN "
                 "rc.proposal_set_id=ml.proposal_set_id AND rc.report_id=ml.report_id "
@@ -581,7 +618,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "ml.connection_name AS connection_name,ml.library_name AS library_name,"
                 "ml.item_id AS item_id,c.outcome AS outcome,"
                 "CASE WHEN "
-                + _REVIEW_ATTENTION_SQL
+                + _browse_scalar_sql(_REVIEW_ATTENTION_SQL)
                 + " THEN 1 ELSE 0 END AS attention,"
                 # A report's provider lanes are current evidence, not a
                 # second workflow state. Aggregate-only observations have no
@@ -595,40 +632,66 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "'authentication','authorization','rate_limited','unavailable',"
                 "'incomplete','malformed','oversized','candidate_limit_exceeded',"
                 "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_limited,"
-                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) AS title_order,"
+                "ml_casefold(COALESCE(scalars.title,'')) AS title_order,"
                 "COALESCE(rc.review_case_id,'') AS case_order,"
                 "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
                 "NULL AS recovery_attempt,NULL AS failure_code, NULL AS display_title,"
                 "NULL AS display_authors,NULL AS display_format "
                 + _CURRENT_LIBRARY_FROM_SQL
-                + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
-                + _REVIEW_SEARCH_SQL
-                + "),page AS MATERIALIZED (SELECT case_id,report_id,proposal_set_id,"
+                + " JOIN report_scalars scalars ON scalars.report_id=mr.report_id "
+                " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
+                + _browse_scalar_sql(_REVIEW_SEARCH_SQL)
+                + terminal_union
+                + "),totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
+                "AS attention_total FROM candidates),page AS MATERIALIZED (SELECT "
+                "1 AS present,case_id,report_id,proposal_set_id,"
                 "connection_name,library_name,item_id,outcome,"
                 "CASE WHEN attention=1 THEN 0 ELSE 1 END AS attention_order,"
                 "CASE WHEN attention=1 AND provider_limited=1 THEN 1 ELSE 0 END "
                 "AS provider_order,title_order,case_order,work_id,attempt,stage,"
                 "failure_root,recovery_attempt,failure_code,display_title,display_authors,display_format FROM candidates WHERE "
                 + condition
-                + terminal_union
                 + " ORDER BY attention_order,provider_order,title_order,library_name,item_id,"
                 "connection_name,case_order LIMIT ? OFFSET ?) "
-                "SELECT rc.document,CASE WHEN page.report_id IS NULL THEN json_object("
+                "SELECT rc.document,CASE WHEN page.present=1 AND page.report_id IS NULL THEN json_object("
                 "'attempt',page.attempt,'connection',page.connection_name,"
                 "'failure_root',page.failure_root,'item',page.item_id,'lane',page.stage,"
                 "'library',page.library_name,'recovery_attempt',page.recovery_attempt,"
                 "'schema_version','review-terminal-work-v1','status',page.failure_code,"
                 "'work_id',page.work_id,'title',page.display_title,'authors',json(page.display_authors),"
                 "'media_kind',page.display_format) ELSE mr.document END,page.proposal_set_id,"
-                "page.connection_name,page.library_name,page.item_id,page.outcome "
-                "FROM page LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
+                "page.connection_name,page.library_name,page.item_id,page.outcome, "
+                "COALESCE(page.present,0),totals.total,totals.attention_total "
+                "FROM totals LEFT JOIN page ON 1 LEFT JOIN review_cases rc ON rc.review_case_id=page.case_id "
                 "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
                 "ORDER BY page.attention_order,page.provider_order,page.title_order,"
                 "page.library_name,page.item_id,page.connection_name,page.case_order",
                 tuple(parameters),
             ).fetchall()
+            if not rows:
+                raise MetadataReportError("review library count is invalid")
+            total, attention_total = rows[0][-2:]
+            if (
+                type(total) is not int
+                or total < 0
+                or type(attention_total) is not int
+                or not 0 <= attention_total <= total
+            ):
+                raise MetadataReportError("review library count is invalid")
             values: list[tuple[str | None, str]] = []
             for row in rows:
+                if (
+                    len(row) != 10
+                    or type(row[7]) is not int
+                    or row[7] not in (0, 1)
+                    or row[8:] != (total, attention_total)
+                ):
+                    raise MetadataReportError("review browse row is invalid")
+                if row[7] == 0:
+                    if len(rows) != 1 or any(value is not None for value in row[:7]):
+                        raise MetadataReportError("review browse row is invalid")
+                    continue
+                row = row[:7]
                 if (
                     len(row) != 7
                     or type(row[1]) is not str
@@ -672,7 +735,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     continue
                 browse_case_and_report(row[0], row[1], row[2])
                 values.append((row[0], row[1]))
-            return tuple(values)
+            return ReviewLibraryPage(tuple(values), total, attention_total)
         except (
             sqlite3.Error,
             MetadataReportError,
@@ -756,6 +819,18 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
     ) -> tuple[
         tuple[str, str, str, int, str | None, ReviewFieldCause | None, bool], ...
     ]:
+        return self.read_current_attention_page(
+            search, limit, offset, library_labels
+        ).rows
+
+    @local_operation
+    def read_current_attention_page(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
+    ) -> ReviewAttentionPage:
         # The cause column is a `CASE` expression over
         # `_AUTOMATIC_SAFETY_ATTENTION_SQL` whose only non-null result is the
         # literal `'automatic_safety_suspended'`, so the cause is narrower than
@@ -764,15 +839,38 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             query, pattern = _review_search_pattern(search)
             cover_authority = self._current_cover_authority()
             rows = self._connection.execute(
-                "WITH candidates AS MATERIALIZED (SELECT rc.review_case_id AS review_case_id,"
+                "WITH report_scalars AS MATERIALIZED (SELECT mr.report_id,"
+                "json_extract(mr.document,'$.target.fields[0].value') AS title,"
+                "json_extract(mr.document,'$.file.format') AS format "
+                "FROM metadata_reports mr JOIN (SELECT DISTINCT rc.report_id "
+                "FROM current_review_packages c JOIN review_cases rc "
+                "ON rc.review_case_id=c.review_case_id) participating USING(report_id)),"
+                "candidates AS MATERIALIZED (SELECT rc.review_case_id AS review_case_id,"
                 "mr.report_id AS report_id,CASE WHEN "
                 "rc.proposal_set_id=c.proposal_set_id AND rc.report_id=c.report_id "
                 "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
                 "result.destination AS destination,"
                 "CASE WHEN "
-                + _REVIEW_FIELD_ATTENTION_SQL
-                + _EPUB_INAPPLICABLE_ATTENTION_SQL
+                + _browse_scalar_sql(_REVIEW_FIELD_ATTENTION_SQL)
+                + _browse_scalar_sql(_EPUB_INAPPLICABLE_ATTENTION_SQL)
                 + " THEN 1 ELSE 0 END AS attention,"
+                "ml_casefold(COALESCE(scalars.title,'')) "
+                "AS title_order,c.library_name AS library_name,c.item_id AS item_id "
+                + _CURRENT_REVIEW_FROM_SQL
+                + " JOIN report_scalars scalars ON scalars.report_id=mr.report_id "
+                " JOIN review_case_field_facts result "
+                "ON result.review_case_id=rc.review_case_id WHERE 1"
+                + _browse_scalar_sql(_REVIEW_SEARCH_SQL)
+                + "),attentive AS MATERIALIZED (SELECT review_case_id,report_id,"
+                "proposal_set_id,destination,count(*) OVER (PARTITION BY review_case_id) "
+                "AS attention_count,title_order,library_name,item_id "
+                "FROM candidates WHERE attention=1),totals AS (SELECT count(*) AS total "
+                "FROM attentive),page AS MATERIALIZED (SELECT 1 AS present,* "
+                "FROM attentive" + " ORDER BY "
+                "title_order,library_name,item_id,destination,review_case_id "
+                "LIMIT ? OFFSET ?) "
+                "SELECT rc.document,mr.document,page.proposal_set_id,page.destination,"
+                "page.attention_count,"
                 "(SELECT outcome.disposition FROM shadow_decision_outcomes shadow "
                 "JOIN shadow_outcome_field_facts outcome "
                 "ON outcome.outcome_set_id=shadow.outcome_set_id "
@@ -786,23 +884,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "CASE WHEN "
                 + _POLICY_ASK_ATTENTION_SQL
                 + " THEN 1 ELSE 0 END AS policy_attention,"
-                "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
-                "AS title_order,c.library_name AS library_name,c.item_id AS item_id "
-                + _CURRENT_REVIEW_FROM_SQL
-                + " JOIN review_case_field_facts result "
-                "ON result.review_case_id=rc.review_case_id WHERE 1"
-                + _REVIEW_SEARCH_SQL
-                + "),attentive AS MATERIALIZED (SELECT review_case_id,report_id,"
-                "proposal_set_id,destination,count(*) OVER (PARTITION BY review_case_id) "
-                "AS attention_count,disposition,cause,policy_attention,title_order,library_name,item_id "
-                "FROM candidates WHERE attention=1),page AS MATERIALIZED (SELECT * "
-                "FROM attentive" + " ORDER BY "
-                "title_order,library_name,item_id,destination,review_case_id "
-                "LIMIT ? OFFSET ?) "
-                "SELECT rc.document,mr.document,page.proposal_set_id,page.destination,"
-                "page.attention_count,page.disposition,page.cause,page.policy_attention FROM page "
-                "JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
-                "JOIN metadata_reports mr ON mr.report_id=page.report_id "
+                "COALESCE(page.present,0),totals.total FROM totals LEFT JOIN page ON 1 "
+                "LEFT JOIN review_cases rc ON rc.review_case_id=page.review_case_id "
+                "LEFT JOIN metadata_reports mr ON mr.report_id=page.report_id "
+                "LEFT JOIN review_case_field_facts result "
+                "ON result.review_case_id=page.review_case_id AND result.destination=page.destination "
                 "ORDER BY page.title_order,page.library_name,page.item_id,"
                 "page.destination,page.review_case_id",
                 (
@@ -819,8 +905,28 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     offset,
                 ),
             ).fetchall()
+            if not rows:
+                raise MetadataReportError("review attention count is invalid")
+            total = rows[0][-1]
+            if type(total) is not int or total < 0:
+                raise MetadataReportError("review attention count is invalid")
             values = []
             for row in rows:
+                if (
+                    len(row) != 10
+                    or type(row[8]) is not int
+                    or row[8] not in (0, 1)
+                    or row[9] != total
+                ):
+                    raise MetadataReportError("review attention field is invalid")
+                if row[8] == 0:
+                    if (
+                        len(rows) != 1
+                        or any(value is not None for value in row[:6])
+                        or row[6:8] != (None, 0)
+                    ):
+                        raise MetadataReportError("review attention field is invalid")
+                    continue
                 if type(row[0]) is not str or type(row[1]) is not str:
                     raise MetadataReportError("review attention field is invalid")
                 browse_case_and_report(row[0], row[1], row[2])
@@ -847,7 +953,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         bool(row[7]),
                     )
                 )
-            return tuple(values)
+            return ReviewAttentionPage(tuple(values), total)
         except (
             sqlite3.Error,
             MetadataReportError,

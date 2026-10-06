@@ -28,7 +28,9 @@ from mechanical_librarian.application.review_pipeline import (
     ReviewPipelineError,
 )
 from mechanical_librarian.application.review_web import (
+    BrowseReviewLibrary,
     InspectCurrentReviewCase,
+    ReviewAttentionSnapshot,
     ReviewWebError,
     _attention_item,
     _case_and_report,
@@ -85,7 +87,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
 from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.domain.review_case import ReviewCase
+from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
 from mechanical_librarian.interfaces.web.app import (
     _CaseDetailResponse,
     _CoverOmission,
@@ -2030,7 +2032,7 @@ def test_epub_inventory_and_attention_omit_narrator_and_explicit() -> None:
         for destination in ("narrators", "explicit")
     } == {"narrators": "omitted", "explicit": "omitted"}
     assert all(
-        _attention_item(case.to_json(), report.to_json(), destination, 1) is None
+        _attention_item(case, report, destination, 1) is None
         for destination in ("narrators", "explicit")
     )
 
@@ -3086,7 +3088,9 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
             fixture = json.loads(
                 Path("frontend/tests/identifierEvidenceFixture.json").read_text()
             )
-            from mechanical_librarian.domain.review_case import ReviewCase
+            from mechanical_librarian.domain.review_case import (
+                ReviewCase,
+            )
 
             case = ReviewCase.from_json(
                 repository._connection.execute(
@@ -3349,3 +3353,184 @@ def test_activity_history_defers_permission_fields(backup_ready: bool | None) ->
             _ActivityResponse.model_validate(
                 {key: value for key, value in history.items() if key != field}
             )
+
+
+@pytest.fixture
+def canonical_attention_pair():
+    report = _report()
+    case = ReviewCase.create(evaluate_report(report), report)
+    return case, report
+
+
+def test_attention_consecutive_documents_keep_row_specific_classification():
+    from tests.support.proposal_evidence import retained_decoration_report
+
+    report = retained_decoration_report("subtitle")
+    case = ReviewCase.create(evaluate_report(report), report)
+    flags = (
+        (1, None, None, False),
+        (2, None, None, True),
+        (3, "abstention", None, True),
+        (4, None, "automatic_safety_suspended", False),
+    )
+    rows = tuple((case.to_json(), report.to_json(), "title", *flag) for flag in flags)
+    expected = [
+        item
+        for count, outcome, cause, policy in flags
+        if (
+            item := _attention_item(
+                case, report, "title", count, outcome, cause, policy
+            )
+        )
+        is not None
+    ]
+    repository = Mock()
+    repository.read_review_attention.return_value = ReviewAttentionSnapshot(
+        rows, len(rows)
+    )
+    with patch(
+        "mechanical_librarian.application.review_web._case_and_report",
+        wraps=_case_and_report,
+    ) as parse:
+        page = BrowseReviewLibrary(repository).attention(
+            search=None, limit=10, cursor=None
+        )
+    parse.assert_called_once_with(case.to_json(), report.to_json())
+    assert page["items"] == expected
+    assert [item["work_attention_count"] for item in expected] == [2, 3, 4]
+    assert len({item["classification_reason"] for item in expected}) == 3
+    assert page["total"] == 4 and page["next_cursor"] is None
+
+
+@pytest.mark.parametrize(
+    "changed", ("case", "report", "both", "case_subclass", "report_subclass")
+)
+def test_attention_equal_ids_never_replace_exact_document_validation(
+    canonical_attention_pair, changed
+):
+    case, report = canonical_attention_pair
+    original = (case.to_json(), report.to_json())
+    documents = list(original)
+
+    class Document(str):
+        pass
+
+    if changed.endswith("subclass"):
+        index = 0 if changed == "case_subclass" else 1
+        documents[index] = Document(documents[index])
+    else:
+        for index in (
+            (0, 1) if changed == "both" else (0,) if changed == "case" else (1,)
+        ):
+            value = json.loads(documents[index])
+            value["unexpected"] = (
+                True  # The claimed case/report identities are unchanged.
+            )
+            documents[index] = json.dumps(value)
+    rows = tuple(
+        (*pair, "title", 1, None, None, False) for pair in (original, documents)
+    )
+    repository = Mock()
+    repository.read_review_attention.return_value = ReviewAttentionSnapshot(rows, 2)
+    with (
+        patch(
+            "mechanical_librarian.application.review_web._case_and_report",
+            wraps=_case_and_report,
+        ) as parse,
+        pytest.raises(ReviewWebError, match="unavailable") as failure,
+    ):
+        BrowseReviewLibrary(repository).attention(search=None, limit=1, cursor=None)
+    assert parse.call_count == 2  # Even the lookahead row must validate.
+    assert isinstance(failure.value.__cause__, ReviewWebError)
+    expected = (
+        ReviewCaseValueError
+        if changed in ("case", "both", "case_subclass")
+        else ReportValueError
+    )
+    assert type(failure.value.__cause__.__cause__) is expected
+
+
+def test_attention_revalidates_each_raw_page_and_fresh_request(
+    canonical_attention_pair,
+):
+    case, report = canonical_attention_pair
+    documents = (case.to_json(), report.to_json())
+    rows = tuple(
+        (*documents, destination, 1, None, None, False)
+        for destination in ("authors", "authors", "title")
+    )
+    repository = Mock()
+    repository.read_review_attention.side_effect = (
+        lambda search, limit, offset, labels: ReviewAttentionSnapshot(
+            rows[offset : offset + limit], len(rows)
+        )
+    )
+    browse = BrowseReviewLibrary(repository)
+    with patch(
+        "mechanical_librarian.application.review_web._case_and_report",
+        wraps=_case_and_report,
+    ) as parse:
+        first = browse.attention(search=None, limit=1, cursor=None)
+        assert parse.call_count == 2
+        second = browse.attention(search=None, limit=1, cursor=None)
+        assert parse.call_count == 4
+    assert first == second
+    assert [item["destination"] for item in first["items"]] == ["title"]
+    assert first["total"] == 3 and first["next_cursor"] is None
+    assert [
+        call.args[2] for call in repository.read_review_attention.call_args_list
+    ] == [0, 2, 0, 2]
+
+
+def test_library_item_projects_canonical_proposals_once(canonical_attention_pair):
+    case, report = canonical_attention_pair
+    original = ReviewCase.proposals.fget
+    calls = []
+
+    def proposals(value):
+        calls.append(value.review_case_id)
+        return original(value)
+
+    with patch.object(ReviewCase, "proposals", property(proposals)):
+        item = _library_item(case.to_json(), report.to_json(), ())
+    assert calls == [case.review_case_id]
+    assert item["title"] == "Title"
+    assert item["attention_count"] == 1
+    assert item["attention_state"] == "needs_attention"
+    assert item["detail_url"] == f"/review/{case.review_case_id}"
+    dispositions = item["dispositions"]
+    assert type(dispositions) is list
+    assert "unresolved_choice" in dispositions
+
+
+def test_attention_nonconsecutive_pair_is_parsed_again(canonical_attention_pair):
+    case, report = canonical_attention_pair
+    other_report = _report(title="Other")
+    other_case = ReviewCase.create(evaluate_report(other_report), other_report)
+    rows = tuple(
+        (
+            selected_case.to_json(),
+            selected_report.to_json(),
+            "title",
+            1,
+            None,
+            None,
+            False,
+        )
+        for selected_case, selected_report in (
+            (case, report),
+            (other_case, other_report),
+            (case, report),
+        )
+    )
+    repository = Mock()
+    repository.read_review_attention.return_value = ReviewAttentionSnapshot(rows, 3)
+    with patch(
+        "mechanical_librarian.application.review_web._case_and_report",
+        wraps=_case_and_report,
+    ) as parse:
+        page = BrowseReviewLibrary(repository).attention(
+            search=None, limit=10, cursor=None
+        )
+    assert parse.call_count == 3
+    assert [item["title"] for item in page["items"]] == ["Title", "Other", "Title"]

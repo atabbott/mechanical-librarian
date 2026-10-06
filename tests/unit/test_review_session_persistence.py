@@ -341,21 +341,21 @@ def test_review_reads_hold_one_snapshot_across_concurrent_decision(
                 side_effect=lambda *args: interleave(original, *args),
             )
         elif surface == "library":
-            original = reader.list_current_review_case_documents
+            original = reader.read_current_library_page
             patched = patch.object(
                 reader,
-                "list_current_review_case_documents",
+                "read_current_library_page",
                 side_effect=lambda *args: interleave(original, *args),
             )
         else:
-            original = reader.list_current_attention_documents
+            original = reader.read_current_attention_page
             patched = patch.object(
                 reader,
-                "list_current_attention_documents",
+                "read_current_attention_page",
                 side_effect=lambda *args: interleave(original, *args),
             )
 
-        with patched:
+        with patched as invoked:
             if surface == "case":
                 before = reader.read_current_review_case(case_id, 50)
                 assert before.decision_documents == ()
@@ -372,6 +372,11 @@ def test_review_reads_hold_one_snapshot_across_concurrent_decision(
                 assert before.total == 1
                 assert len(before.rows) == 1
 
+        if surface == "case":
+            invoked.assert_called()
+        else:
+            invoked.assert_called_once()
+        assert started
         assert finished.wait(5)
         assert writer_errors == []
         if surface == "case":
@@ -396,11 +401,12 @@ def test_review_snapshot_failure_rolls_back_without_partial_state() -> None:
         repository = open_repository(Path(directory) / "application.sqlite3")
         with patch.object(
             repository,
-            "list_current_review_case_documents",
+            "read_current_library_page",
             side_effect=RuntimeError("synthetic"),
-        ):
+        ) as invoked:
             with pytest.raises(MetadataReportError):
                 repository.read_review_library(None, 10, 0, None)
+        invoked.assert_called_once()
         assert not repository._connection.in_transaction
         repository.close()
 

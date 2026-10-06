@@ -1433,6 +1433,8 @@ class BrowseReviewLibrary:
                 raw_rows = snapshot.rows
                 if raw_total is None:
                     raw_total = snapshot.total
+                previous_documents: tuple[str, str] | None = None
+                parsed: tuple[ReviewCase, MetadataReport] | None = None
                 for row in raw_rows:
                     (
                         case_document,
@@ -1443,9 +1445,16 @@ class BrowseReviewLibrary:
                         cause,
                         policy_attention,
                     ) = row
+                    if (
+                        parsed is None
+                        or type(case_document) is not str
+                        or type(report_document) is not str
+                        or previous_documents != (case_document, report_document)
+                    ):
+                        parsed = _case_and_report(case_document, report_document)
+                        previous_documents = (case_document, report_document)
                     item = _attention_item(
-                        case_document,
-                        report_document,
+                        *parsed,
                         destination,
                         work_attention_count,
                         automatic_outcome=automatic_outcome,
@@ -2760,12 +2769,13 @@ def _library_item(
             automatic_outcomes[destination] = str(automatic["outcome"])
             if automatic["outcome"] != "abstention":
                 decisions.add(destination)
+    proposals = () if case is None else case.proposals
     attention = (
         []
         if case is None
         else [
             value
-            for value in case.proposals
+            for value in proposals
             if (
                 not _omitted_for_epub(
                     cast(str, value["destination"]), report.file.format
@@ -2801,7 +2811,7 @@ def _library_item(
         else sorted(
             {
                 value["result"]["outcome"]  # type: ignore[index]
-                for value in case.proposals
+                for value in proposals
             }
         )
     )
@@ -2881,15 +2891,14 @@ def _omitted_for_epub(destination: str, media_kind: str) -> bool:
 
 
 def _attention_item(
-    case_document: str,
-    report_document: str,
+    case: ReviewCase,
+    report: MetadataReport,
     destination: str,
     work_attention_count: int,
     automatic_outcome: str | None = None,
     cause: ReviewFieldCause | None = None,
     policy_attention: bool = False,
 ) -> dict[str, object] | None:
-    case, report = _case_and_report(case_document, report_document)
     if _omitted_for_epub(destination, report.file.format):
         return None
     if destination == "publishedYear" and any(

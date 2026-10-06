@@ -63,6 +63,8 @@ from mechanical_librarian.adapters.persistence.reports import (
     SQLiteReportRepository,
 )
 from mechanical_librarian.adapters.persistence.review_cases import (
+    ReviewAttentionPage,
+    ReviewLibraryPage,
     SQLiteReviewCaseRepository,
 )
 from mechanical_librarian.adapters.persistence.review_preparation import (
@@ -168,6 +170,7 @@ from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
 from mechanical_librarian.domain.shadow_outcome import (
     ShadowOutcomeError,
     ShadowOutcomeSet,
+    matches_historical_rich_outcome,
 )
 from mechanical_librarian.domain.shadow_review import (
     ShadowReviewPacket,
@@ -473,28 +476,18 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
                     review_case_id, limit
                 )
             ),
-            list_current_review_case_documents=(
+            read_current_library_page=(
                 lambda search, limit, offset, attention, library_labels: (
-                    self.list_current_review_case_documents(
+                    self.read_current_library_page(
                         search, limit, offset, attention, library_labels
                     )
                 )
             ),
-            count_current_review_cases=(
-                lambda search, library_labels: self.count_current_review_cases(
-                    search, library_labels
-                )
-            ),
-            list_current_attention_documents=(
+            read_current_attention_page=(
                 lambda search, limit, offset, library_labels: (
-                    self.list_current_attention_documents(
+                    self.read_current_attention_page(
                         search, limit, offset, library_labels
                     )
-                )
-            ),
-            count_current_attention_fields=(
-                lambda search, library_labels: self.count_current_attention_fields(
-                    search, library_labels
                 )
             ),
             current_cover_authority=(lambda: self._cover_read_authority()),
@@ -1532,6 +1525,31 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             connection, library, item
         )
 
+    def read_current_library_page(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        attention: bool | None,
+        library_labels: LibraryLabels = (),
+    ) -> ReviewLibraryPage:
+        with self.browse_observation():
+            return self._review_cases.read_current_library_page(
+                search, limit, offset, attention, library_labels
+            )
+
+    def read_current_attention_page(
+        self,
+        search: str | None,
+        limit: int,
+        offset: int,
+        library_labels: LibraryLabels = (),
+    ) -> ReviewAttentionPage:
+        with self.browse_observation():
+            return self._review_cases.read_current_attention_page(
+                search, limit, offset, library_labels
+            )
+
     def list_current_review_case_documents(
         self,
         search: str | None,
@@ -1704,9 +1722,11 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             proposal,
             media_kind=case.media_kind,
         )
-        if expected.to_json() != row[7]:
+        if expected.to_json() != row[7] and not matches_historical_rich_outcome(
+            expected, outcome, policy, report, proposal
+        ):
             raise MetadataReportError("shadow outcome persistence is invalid")
-        return expected.to_json(), row[6]
+        return outcome.to_json(), row[6]
 
     @local_operation
     def persist_shadow_outcome(

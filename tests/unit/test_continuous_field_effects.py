@@ -982,13 +982,31 @@ def test_unbindable_decision_is_named_and_stepped_over_not_left_to_starve(
         "7f0bfa050ec5956f9d21fcb521f5c06f3a9310cbee42fd7e206a4ec2d71be1e6",
         "a813cba313a99597d2669a34ce98ed7454ae85064386a0596d7c7f81854999cd",
         "62e8db714fe9a35065bb700e6eac58f1611ec3acca5a90e29965fa2e5c5e6014",
+        "retained-cover",
     ),
 )
 def test_schedule_skips_prior_qualification_before_no_change_authority_or_capability(
     prior_digest: str,
 ) -> None:
-    decision = _prior_qualification_decision(prior_digest)
-    assert AutomaticDecision.from_json(decision.to_json()) == decision
+    from mechanical_librarian.domain.cover_automatic_decision import (
+        CoverAutomaticDecision,
+    )
+
+    decision: AutomaticDecision | CoverAutomaticDecision
+    if prior_digest == "retained-cover":
+        from pathlib import Path
+
+        fixture = json.loads(
+            (
+                Path(__file__).parents[1]
+                / "support/retained_qualification_predecessors/cover.json"
+            ).read_text()
+        )
+        decision = CoverAutomaticDecision.from_json(fixture["decision"])
+        assert decision.to_json() == fixture["decision"]
+    else:
+        decision = _prior_qualification_decision(prior_digest)
+        assert AutomaticDecision.from_json(decision.to_json()) == decision
 
     class Repository(_PagedRepository):
         def record_current_field_effect_no_change(self, *_arguments):

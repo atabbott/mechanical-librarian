@@ -222,16 +222,10 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 route.fulfill(status=204, body="")
                 return
             if path == "/api/v1/updates":
-                # The artifact cohort measures the shell against stubbed reads;
-                # a stream would never complete and there is nothing here to
-                # announce. It is answered with a stream that ends immediately,
-                # which leaves the surfaces on their polling fallback -- the
-                # state every assertion in this module was written against.
-                route.fulfill(
-                    status=200,
-                    content_type="text/event-stream",
-                    body="retry: 3000\n\n",
-                )
+                # No stream is available in this stubbed cohort. A 204 closes
+                # EventSource without successful opens or resource-error noise;
+                # the client retains its degraded fallback and explicit retries.
+                route.fulfill(status=204, body="")
                 return
             if path == "/api/v1/session/logout":
                 route.fulfill(
@@ -936,7 +930,6 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                     assert_compact_activity_priority("recovered")
                 finally:
                     page.set_viewport_size(prior_viewport)
-                connection_state = "paused"
                 for work, label in (
                     ("Equal automatic title", "No change required"),
                     ("Synthetic completed cover advice", "Cover advice completed"),
@@ -1254,6 +1247,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                 page.get_by_text(
                     "Activity state refreshed from the authoritative server."
                 ).wait_for()
+                connection_state = "paused"
             stage[0] = f"direct-route:{path}:document-count"
             assert documents == (before_entry + (4 if path == "/activity" else 1))
 

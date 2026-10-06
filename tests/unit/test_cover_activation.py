@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import tempfile
@@ -747,8 +748,7 @@ def test_cover_decision_v3_binds_option_and_rejects_v2_and_tampering():
     raw = json.loads(prior)
     arguments = {
         name: raw[name]
-        for name in CoverAutomaticDecision.__dataclass_fields__
-        if name not in {"decision_id", "idempotency_digest"}
+        for name in inspect.signature(CoverAutomaticDecision.create).parameters
     }
     arguments.update(
         rank_key=tuple(raw["rank_key"]),
@@ -756,6 +756,15 @@ def test_cover_decision_v3_binds_option_and_rejects_v2_and_tampering():
         policy_option="replace_if_strictly_better",
     )
     current = CoverAutomaticDecision.create(**arguments)
+    assert "qualification_manifest_sha256" not in arguments
+    from mechanical_librarian.domain.cover_qualification_policy import (
+        COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
+    )
+
+    assert (
+        current.qualification_manifest_sha256
+        == COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
+    )
     assert parse_automatic_authority(current.to_json()) == current
     for bad in (None, "unknown", "replace_if_strictly_better:audiobook_cover_fill"):
         with pytest.raises(AutomaticDecisionError):

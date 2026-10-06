@@ -56,6 +56,15 @@ It reduces repeated collection parsing without replacing selection/effect checks
 This exact schema requires a clean rebuild; historical audit figures below are
 unchanged and do not describe the new column's measured extent.
 
+Library and Attention each return an immutable persistence page containing rows
+and totals from one materialized filtered relation. Only these population browse
+queries project title and format once per participating report; per-case policy
+and effect predicates retain their bounded reads. Attention decorates the selected
+page after sorting. The package-bound Library and case-bound Attention report
+joins, canonical visible-row validation, catalogue attachment and deferred snapshot
+remain authoritative. Empty and out-of-range pages carry validated totals through
+an explicit presence marker; independent count APIs remain available (#1148).
+
 ## Audit boundary and evidence
 
 The map was checked against the exact-current schema, production persistence

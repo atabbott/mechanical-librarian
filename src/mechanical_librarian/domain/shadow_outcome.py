@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from typing import cast
 
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.automatic_decision import (
+    _PRIOR_F20_QUALIFICATION_MANIFESTS,
+)
 from mechanical_librarian.domain.contributor_display_qualification import (
     F38_CONTRIBUTOR_DISPLAY_POLICY_CATEGORY,
     F38_CONTRIBUTOR_DISPLAY_POLICY_OPTION,
@@ -405,6 +408,23 @@ def _audiobook_destination(identity: str | None, policy_destination: str) -> str
     return "automatic" if identity is not None and identity in passing else "ask"
 
 
+def _rich_action_id(
+    preview: RichFieldPreview, destination: str, proposal_id: str, manifest_sha256: str
+) -> str:
+    return "action_" + _digest(
+        {
+            "candidate_id": preview.source_candidate_id
+            if preview.outcome == "projected"
+            else None,
+            "destination": destination,
+            "manifest_sha256": manifest_sha256,
+            "option": preview.option,
+            "outcome": preview.outcome,
+            "proposal_id": proposal_id,
+        }
+    )
+
+
 def _rich_field_outcome(
     preview: RichFieldPreview,
     *,
@@ -452,15 +472,8 @@ def _rich_field_outcome(
         reason_code = preview.reason
     elif requested_destination == "automatic" and policy_destination == "ask":
         reason_code = "automatic_unqualified"
-    action_id = "action_" + _digest(
-        {
-            "candidate_id": candidate_id,
-            "destination": destination,
-            "manifest_sha256": F20_QUALIFICATION_CANDIDATE_SHA256,
-            "option": preview.option,
-            "outcome": preview.outcome,
-            "proposal_id": proposal_id,
-        }
+    action_id = _rich_action_id(
+        preview, destination, proposal_id, F20_QUALIFICATION_CANDIDATE_SHA256
     )
     rule_id = "shadow_rule_" + _digest(
         {
@@ -514,6 +527,72 @@ def _rich_field_outcome(
         rule_id,
         qualification_candidate_id,
     )
+
+
+def matches_historical_rich_outcome(
+    current: ShadowOutcomeSet,
+    retained: ShadowOutcomeSet,
+    policy: ResolvedMetadataPolicy,
+    report: MetadataReport,
+    proposal: ProposalSet,
+) -> bool:
+    """Recognize one frozen F20 binding without changing any preview semantics."""
+    previews = {
+        value.field: value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+    }
+    historical = {digest for digest, _ in _PRIOR_F20_QUALIFICATION_MANIFESTS}
+    old_fields = {value.destination: value for value in retained.outcomes}
+    fields: list[dict[str, object]] = []
+    compared = False
+    for value in current.outcomes:
+        field = value.to_data()
+        preview = (
+            previews.get(value.policy_category)
+            if value.policy_category is not None
+            else None
+        )
+        if preview is not None and value.action_id == _rich_action_id(
+            preview,
+            value.destination,
+            value.proposal_id,
+            F20_QUALIFICATION_CANDIDATE_SHA256,
+        ):
+            old = old_fields.get(value.destination)
+            if old is None:
+                return False
+            historical = {
+                digest
+                for digest in historical
+                if old.action_id
+                == _rich_action_id(
+                    preview, value.destination, value.proposal_id, digest
+                )
+            }
+            if not historical:
+                return False
+            compared = True
+            field["action_id"] = old.action_id
+            field["qualification_candidate_id"] = "qualification_candidate_" + _digest(
+                {
+                    "action_id": old.action_id,
+                    "candidate_id": value.candidate_id,
+                    "catalogue_sha256": current.catalogue_sha256,
+                    "citation_ids": list(value.citation_ids),
+                    "combination_ids": list(value.combination_ids),
+                    "rule_id": value.rule_id,
+                }
+            )
+            field["outcome_id"] = "shadow_outcome_" + _digest(
+                {key: item for key, item in field.items() if key != "outcome_id"}
+            )
+        fields.append(field)
+    data = current.to_data()
+    data["outcomes"] = fields
+    data["outcome_set_id"] = "shadow_outcome_set_" + _digest(
+        {key: item for key, item in data.items() if key != "outcome_set_id"}
+    )
+    return compared and len(historical) == 1 and data == retained.to_data()
 
 
 @dataclass(frozen=True, slots=True)

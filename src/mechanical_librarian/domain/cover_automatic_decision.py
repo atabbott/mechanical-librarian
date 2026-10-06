@@ -14,6 +14,7 @@ from mechanical_librarian.domain.audiobook_decision_qualification import (
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
+    _qualification_manifest_is_valid,
 )
 from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
@@ -51,19 +52,12 @@ class CoverAutomaticDecision:
     supersedes_decision_id: str | None
     idempotency_digest: str
     occurred_at: int
+    qualification_manifest_sha256: str
     qualification_identity: str | None = None
 
     destination = "cover"
     outcome = "candidate"
     policy_category = "cover_order"
-
-    @property
-    def qualification_manifest_sha256(self) -> str:
-        return (
-            COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
-            if self.qualification_identity is None
-            else qualification_manifest_sha256(self.qualification_identity)
-        )
 
     bundle_id = None
 
@@ -105,6 +99,11 @@ class CoverAutomaticDecision:
         occurred_at: int,
         qualification_identity: str | None = None,
     ) -> "CoverAutomaticDecision":
+        if qualification_identity is not None and (
+            qualification_identity not in F46_IDENTITIES_BY_DESTINATION["cover"]
+            or policy_option != qualification_identity.split(":", 1)[1]
+        ):
+            raise AutomaticDecisionError("invalid")
         core: dict[str, object] = {
             "policy_option": policy_option,
             "qualification_identity": qualification_identity,
@@ -149,6 +148,11 @@ class CoverAutomaticDecision:
             supersedes_decision_id=supersedes_decision_id,
             idempotency_digest=_digest(core),
             occurred_at=occurred_at,
+            qualification_manifest_sha256=(
+                COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
+                if qualification_identity is None
+                else qualification_manifest_sha256(qualification_identity)
+            ),
             qualification_identity=qualification_identity,
         )
 
@@ -196,11 +200,18 @@ class CoverAutomaticDecision:
             raise AutomaticDecisionError("invalid")
         if type(self.policy_option) is not str:
             raise AutomaticDecisionError("invalid")
+        if type(self.qualification_manifest_sha256) is not str:
+            raise AutomaticDecisionError("invalid")
         if self.qualification_identity is None:
-            if self.policy_option not in {
-                "fixed_source_order",
-                "replace_if_strictly_better",
-            }:
+            if (
+                self.qualification_manifest_sha256
+                != COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256
+                or self.policy_option
+                not in {
+                    "fixed_source_order",
+                    "replace_if_strictly_better",
+                }
+            ):
                 raise AutomaticDecisionError("invalid")
         else:
             if (
@@ -209,7 +220,12 @@ class CoverAutomaticDecision:
                 or self.policy_option != self.qualification_identity.split(":", 1)[1]
             ):
                 raise AutomaticDecisionError("invalid")
-            qualification_manifest_sha256(self.qualification_identity)
+            if not _qualification_manifest_is_valid(
+                self.policy_category,
+                self.policy_option,
+                self.qualification_manifest_sha256,
+            ):
+                raise AutomaticDecisionError("invalid")
         core = self._core()
         if self.idempotency_digest != _digest(core) or self.decision_id != (
             "automatic_decision_" + _digest({**core, "occurred_at": self.occurred_at})
