@@ -1007,9 +1007,17 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
     from mechanical_librarian.adapters.persistence.activity_facts import (
         ActivityFactStore,
     )
-    from tests.support.activity_seed import seed_activity
+    from tests.support import activity_seed
+    from tests.support.activity_seed import DAY, seed_activity
 
+    original_report = activity_seed._report
+    monkeypatch.setattr(
+        activity_seed,
+        "_report",
+        lambda title, *args: original_report("Café Straße 100%_done " + title, *args),
+    )
     seeded = seed_activity(tmp_path)
+    now = [seeded.reader_now()]
     root = seeded.repository
     facts = ActivityFactStore()
     reader = open_repository(
@@ -1023,7 +1031,7 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
             {},
             PersistedFieldEffectAuthority(repository),
             (("primary", "books"),),
-            seeded.reader_now,
+            lambda: now[0],
             lambda *_: None,
             activity_only=True,
         )
@@ -1036,6 +1044,9 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
             ("title", "all", 90, 1, 25),
             ("no readable match", "all", 30, 1, 100),
             ("%_", "all", 7, 1, 50),
+            ("CAFÉ", "all", 90, 1, 25),
+            ("STRASSE", "all", 90, 1, 25),
+            ("100%_done", "all", 90, 1, 25),
             (None, "review", 7, 100, 25),
             (None, "policy", 30, 1, 50),
             (None, "metadata", 90, 1, 100),
@@ -1051,6 +1062,8 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
                 page_size=size,
             )
             assert admitted.activity(**query) == canonical.activity(**query)
+        for term in ("CAFÉ", "STRASSE", "100%_done"):
+            assert admitted.activity(search=term, range_days=90)["ledger"]["total"] > 0
         snapshot = facts.snapshot()
         assert snapshot is not None and len(snapshot.facts) == 27
         assert 0 < snapshot.accounted_bytes < facts.max_bytes
@@ -1065,6 +1078,12 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
         monkeypatch.setattr(
             reader._field_effect_activity, "_project_activity_facts", project
         )
+        now[0] += 91 * DAY
+        expired = admitted.activity(range_days=90)
+        assert expired == canonical.activity(range_days=90)
+        assert expired["events"] == []
+        assert facts.snapshot() is snapshot and projected == []
+        now[0] -= 91 * DAY
         transition = root._connection.execute(
             "SELECT transition_id FROM metadata_policy_transitions LIMIT 1"
         ).fetchone()[0]
@@ -1078,10 +1097,33 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
         projected.clear()
         from tests.support.activity_seed import _report
 
-        root.publish(_report("Unreferenced report", "no-event", "d", "e"), lambda: True)
+        unrelated = _report("Unreferenced report", "no-event", "d", "e")
+        root.publish(unrelated, lambda: True)
         assert admitted.activity(range_days=90) == canonical.activity(range_days=90)
         assert projected == []
         assert facts.snapshot() is not snapshot
+        columns = [
+            row[1]
+            for row in root._connection.execute("PRAGMA table_info(metadata_reports)")
+        ]
+        values = list(
+            root._connection.execute(
+                "SELECT * FROM metadata_reports WHERE report_id=?",
+                (unrelated.report_id,),
+            ).fetchone()
+        )
+        values[columns.index("document")] = "{invalid"
+        root._connection.execute("PRAGMA ignore_check_constraints=ON")
+        root._connection.execute(
+            "INSERT OR REPLACE INTO metadata_reports VALUES ("
+            + ",".join("?" for _ in values)
+            + ")",
+            values,
+        )
+        root._connection.commit()
+        root._connection.execute("PRAGMA ignore_check_constraints=OFF")
+        assert admitted.activity(range_days=90) == canonical.activity(range_days=90)
+        assert projected == []
         # Both witness overflow and entry overflow preserve the whole public
         # canonical page, without publishing a partial store.
         for maximum in (1, snapshot.accounted_bytes - 1):
@@ -1101,8 +1143,101 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
             reader._connection.execute(
                 "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
             )
+        unconfigured = open_repository(
+            tmp_path / "activity.sqlite", create=False, authority=root.authority
+        )
+        try:
+            baseline = application(unconfigured)
+            assert baseline.activity(range_days=90) == admitted.activity(range_days=90)
+            root._connection.execute(
+                "CREATE INDEX activity_fixture_drift ON metadata_reports(item_id)"
+            )
+            root._connection.commit()
+            assert admitted.activity(range_days=90) == baseline.activity(range_days=90)
+            assert reader._field_effect_activity._activity_facts is None
+        finally:
+            unconfigured.close()
     finally:
         reader.close()
+        root.close()
+
+
+def test_configured_borrowers_rescan_after_another_reader_wins_publication(
+    tmp_path, monkeypatch
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from tests.support.activity_seed import seed_activity
+
+    seeded = seed_activity(tmp_path)
+    root = seeded.repository
+    facts = ActivityFactStore()
+    readers = [
+        open_repository(
+            tmp_path / "activity.sqlite", create=False, authority=root.authority
+        )
+        for _ in range(3)
+    ]
+    for reader in readers:
+        reader.configure_activity_page_reader(facts)
+
+    def application(repository):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "books"),),
+            seeded.reader_now,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    first, second, fresh = map(application, readers)
+    refreshes = []
+    refresh = facts.refresh
+
+    def observe_refresh(connection, project):
+        refreshes.append(connection)
+        return refresh(connection, project)
+
+    monkeypatch.setattr(facts, "refresh", observe_refresh)
+    projection = readers[0]._field_effect_activity
+    project = projection._project_activity_facts
+    competing = []
+
+    def publish_competing_snapshot(candidates, max_bytes):
+        # Both independent read snapshots are real. The second finishes first,
+        # so the first must use its own result without replacing the winner.
+        competing.append(second.activity(range_days=90))
+        return project(candidates, max_bytes)
+
+    monkeypatch.setattr(
+        projection, "_project_activity_facts", publish_competing_snapshot
+    )
+    try:
+        expected = application(root).activity(range_days=90)
+        assert first.activity(range_days=90) == expected == competing[0]
+        published = facts.snapshot()
+        assert published is not None
+        stamp = projection._activity_fact_stamp
+        assert stamp is not None and stamp[2] is not published.version
+        assert refreshes == [readers[0]._connection, readers[1]._connection]
+        assert first.activity(range_days=90) == expected
+        assert projection._activity_fact_stamp == (*stamp[:2], published.version)
+        assert refreshes[-1] is readers[0]._connection and len(refreshes) == 3
+        assert len(competing) == 1
+        assert first.activity(range_days=90) == expected
+        assert len(refreshes) == 3  # Same reader, revision, identity and store.
+        assert fresh.activity(range_days=90) == expected
+        assert refreshes[-1] is readers[2]._connection and len(refreshes) == 4
+        readers[0].close()
+        assert second.activity(range_days=90) == expected
+        assert facts.snapshot() is published and len(refreshes) == 4
+    finally:
+        for reader in readers:
+            reader.close()
         root.close()
 
 

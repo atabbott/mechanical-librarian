@@ -2548,6 +2548,71 @@ def test_selected_effect_outcome_survives_new_attempt_and_reopen(
     reopened.close()
 
 
+def test_configured_activity_preserves_candidate_timestamp_exclusion(tmp_path):
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
+    )
+
+    repository, advice, binding, candidate, _ = _prepared(tmp_path)
+    decision = advice.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+    identity = decision.decision_id
+    reader = open_repository(
+        tmp_path / "reports.sqlite", create=False, authority=repository.authority
+    )
+
+    def activity(owner, **query):
+        return ContinuousGuardedApplication(
+            owner,
+            {},
+            {},
+            PersistedFieldEffectAuthority(owner),
+            (("primary", "books"),),
+            lambda: 2000,
+            lambda *_: None,
+            activity_only=True,
+        ).activity(**query)
+
+    try:
+        reader.configure_activity_page_reader()
+        initial = activity(reader)
+        assert initial == activity(repository)
+        assert any(row["event_id"] == identity for row in initial["events"])
+        connection = repository._connection
+        columns = [
+            row[1]
+            for row in connection.execute("PRAGMA table_info(description_decisions)")
+        ]
+        values = list(
+            connection.execute(
+                "SELECT * FROM description_decisions WHERE decision_id=?", (identity,)
+            ).fetchone()
+        )
+        malformed = json.loads(values[columns.index("document")])
+        malformed["occurred_at"] = None
+        values[columns.index("document")] = json.dumps(malformed)
+        cookie = connection.execute("PRAGMA schema_version").fetchone()
+        connection.execute(
+            "INSERT OR REPLACE INTO description_decisions VALUES("
+            + ",".join("?" for _ in values)
+            + ")",
+            values,
+        )
+        connection.commit()
+        assert connection.execute("PRAGMA schema_version").fetchone() == cookie
+        remaining = activity(reader)
+        assert remaining == activity(repository)
+        assert all(row["event_id"] != identity for row in remaining["events"])
+        assert remaining["ledger"]["total"] == initial["ledger"]["total"] - 1
+        assert activity(reader, search="no readable match") == activity(
+            repository, search="no readable match"
+        )
+    finally:
+        reader.close()
+        repository.close()
+
+
 def test_configured_activity_reprojects_authored_dependents_before_search(
     tmp_path, monkeypatch
 ):
