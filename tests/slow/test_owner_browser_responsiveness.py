@@ -184,6 +184,20 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     library_navigation: () => exact('.library-works-heading>span', '2300 total'),
                                     attention_status: () => exact('button', 'Load more attention'),
                                     preparation_status: () => heading('Background activity'),
+                                    activity_navigation: () => heading('Activity ledger') && !!document.querySelector('.cm-activity-events article'),
+                                    activity_negative: () => new URL(location.href).searchParams.get('q') === 'absent-search-term'
+                                        && exact('strong', 'No activity matches these filters'),
+                                    activity_clear: () => !new URL(location.href).searchParams.has('q')
+                                        && !!document.querySelector('.cm-activity-events article'),
+                                    activity_search: () => new URL(location.href).searchParams.get('q') === 'synthetic'
+                                        && !!document.querySelector('.cm-activity-events article'),
+                                    activity_filter: () => new URL(location.href).searchParams.get('eventType') === 'review'
+                                        && !!document.querySelector('.cm-activity-events article'),
+                                    activity_range: () => new URL(location.href).searchParams.get('rangeDays') === '90'
+                                        && !!document.querySelector('.cm-activity-events article'),
+                                    activity_deep: () => Number(document.querySelector('[aria-label="Activity page number"]')?.value) > 1
+                                        && !!document.querySelector('.cm-activity-pagination-nav button:last-child:disabled'),
+                                    activity_expansion: () => !!document.querySelector('.cm-activity-evidence'),
                                 };
                                 const timing = window.__ownerTiming = {
                                     started: null, ready: null, name: null, time_origin: performance.timeOrigin,
@@ -370,6 +384,103 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                 ).to_be_visible()
                                 if actors is not None:
                                     actors.confirm_unrelated(selected_case)
+                                measured(
+                                    "activity_navigation",
+                                    lambda page=page: page.get_by_role(
+                                        "link", name="Activity", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.locator(
+                                            ".cm-activity-events article"
+                                        ).first
+                                    ).to_be_visible(),
+                                )
+                                activity_search = page.get_by_role(
+                                    "searchbox", name="Search activity", exact=True
+                                )
+                                measured(
+                                    "activity_search",
+                                    lambda activity_search=activity_search: (
+                                        activity_search.fill("synthetic")
+                                    ),
+                                    lambda page=page: page.wait_for_url(
+                                        re.compile(r"[?&]q=synthetic(?:&|$)")
+                                    ),
+                                )
+                                measured(
+                                    "activity_negative",
+                                    lambda activity_search=activity_search: (
+                                        activity_search.fill("absent-search-term")
+                                    ),
+                                    lambda page=page: expect(
+                                        page.get_by_text(
+                                            "No activity matches these filters",
+                                            exact=True,
+                                        )
+                                    ).to_be_visible(),
+                                )
+                                measured(
+                                    "activity_clear",
+                                    lambda activity_search=activity_search: (
+                                        activity_search.fill("")
+                                    ),
+                                    lambda page=page: expect(
+                                        page.locator(
+                                            ".cm-activity-events article"
+                                        ).first
+                                    ).to_be_visible(),
+                                )
+                                expect(activity_search).to_be_focused()
+                                measured(
+                                    "activity_filter",
+                                    lambda page=page: page.get_by_role(
+                                        "button", name="Owner choices", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "button", name="Owner choices", exact=True
+                                        )
+                                    ).to_have_attribute("aria-pressed", "true"),
+                                )
+                                page.get_by_role(
+                                    "button", name="All", exact=True
+                                ).click()
+                                page.get_by_role(
+                                    "combobox", name="Activity date range", exact=True
+                                ).click()
+                                measured(
+                                    "activity_range",
+                                    lambda page=page: page.get_by_role(
+                                        "option", name="Last 90 days", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "combobox",
+                                            name="Activity date range",
+                                            exact=True,
+                                        )
+                                    ).to_contain_text("Last 90 days"),
+                                )
+                                measured(
+                                    "activity_deep",
+                                    lambda page=page: page.get_by_role(
+                                        "button", name="Last", exact=True
+                                    ).click(),
+                                    lambda page=page: expect(
+                                        page.get_by_role(
+                                            "button", name="Last", exact=True
+                                        )
+                                    ).to_be_disabled(),
+                                )
+                                measured(
+                                    "activity_expansion",
+                                    lambda page=page: page.get_by_role(
+                                        "button", name="Details", exact=True
+                                    ).first.click(),
+                                    lambda page=page: expect(
+                                        page.locator(".cm-activity-evidence")
+                                    ).to_be_visible(),
+                                )
                                 measured(
                                     "policy_navigation",
                                     lambda page=page: page.get_by_role(

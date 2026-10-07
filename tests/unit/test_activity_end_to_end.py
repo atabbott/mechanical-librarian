@@ -1104,3 +1104,254 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
     finally:
         reader.close()
         root.close()
+
+
+@pytest.mark.parametrize(
+    "table",
+    (
+        "human_decisions",
+        "human_decision_events",
+        "field_effect_events",
+        "field_effects",
+        "metadata_policy_drafts",
+    ),
+)
+def test_changed_activity_source_refuses_before_nonmatching_search(tmp_path, table):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from tests.support.activity_seed import seed_activity
+
+    seeded = seed_activity(tmp_path)
+    root = seeded.repository
+    reader = open_repository(
+        tmp_path / "activity.sqlite", create=False, authority=root.authority
+    )
+    facts = ActivityFactStore()
+    try:
+        reader.configure_activity_page_reader(facts)
+        assert (
+            reader.field_effect_activity_page(
+                search="no readable match",
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )["total"]
+            == 0
+        )
+        assert facts.snapshot() is not None
+        columns = [
+            row[1] for row in root._connection.execute(f"PRAGMA table_info({table})")
+        ]
+        row = list(
+            root._connection.execute(f"SELECT * FROM {table} LIMIT 1").fetchone()
+        )
+        row[columns.index("document")] = "{not-json"
+        schema = root._connection.execute("PRAGMA schema_version").fetchone()
+        root._connection.execute("PRAGMA ignore_check_constraints=ON")
+        root._connection.execute(
+            f"INSERT OR REPLACE INTO {table} VALUES ("
+            + ",".join("?" for _ in row)
+            + ")",
+            row,
+        )
+        root._connection.commit()
+        root._connection.execute("PRAGMA ignore_check_constraints=OFF")
+        assert root._connection.execute("PRAGMA schema_version").fetchone() == schema
+        for source in (root, reader):
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                source.field_effect_activity_page(
+                    search="no readable match",
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+    finally:
+        reader.close()
+        root.close()
+
+
+@pytest.mark.parametrize(
+    "table,column",
+    (
+        ("metadata_reports", "report_id"),
+        ("review_cases", "review_case_id"),
+        ("proposal_sets", "proposal_set_id"),
+        ("automatic_decisions", "decision_id"),
+        ("shadow_decision_outcomes", "review_case_id"),
+    ),
+)
+def test_automatic_activity_revalidates_its_exact_typed_dependencies(
+    effects,  # noqa: F811
+    table,
+    column,
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+
+    decision = _qualified_no_change_decision(effects)
+    root = effects.repository
+    reader = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    facts = ActivityFactStore()
+    try:
+        canonical = root.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=100
+        )
+        event = next(
+            event
+            for event in canonical["events"]
+            if event["event_id"] == decision.decision_id
+        )
+        assert event["record"]["source_kind"] == "automatic_decision"
+        assert event["report_id"] == decision.report_id
+        reader.configure_activity_page_reader(facts)
+        assert (
+            reader.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=100
+            )["total"]
+            == canonical["total"]
+        )
+        assert facts.snapshot() is not None
+        columns = [
+            row[1] for row in root._connection.execute(f"PRAGMA table_info({table})")
+        ]
+        row = list(
+            root._connection.execute(
+                f"SELECT * FROM {table} WHERE {column}=?", (getattr(decision, column),)
+            ).fetchone()
+        )
+        index = columns.index("document")
+        value = json.loads(row[index])
+        value["unexpected"] = True
+        row[index] = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        schema = root._connection.execute("PRAGMA schema_version").fetchone()
+        root._connection.execute(
+            f"INSERT OR REPLACE INTO {table} VALUES ("
+            + ",".join("?" for _ in row)
+            + ")",
+            row,
+        )
+        root._connection.commit()
+        assert root._connection.execute("PRAGMA schema_version").fetchone() == schema
+        for source in (root, reader):
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                source.field_effect_activity_page(
+                    search="no readable match",
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=100,
+                )
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("family", ("field_effect_no_change", "isbn_refusal"))
+def test_retained_no_change_and_isbn_candidates_revalidate_before_search(
+    effects,  # noqa: F811
+    family,
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from tests.support.audiobook_reports import (
+        publish_audiobook_preview,
+        synthetic_audiobook_isbn_reason_report,
+    )
+
+    root = effects.repository
+    if family == "field_effect_no_change":
+        decision = _qualified_no_change_decision(effects)
+        scheduler = ContinuousGuardedApplication(
+            root,
+            {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+            {("primary", "ebooks"): SimpleNamespace()},
+            PersistedFieldEffectAuthority(root),
+            (("primary", "ebooks"),),
+            lambda: 10,
+            lambda *_: None,
+        )
+        assert scheduler.schedule() == 0
+        table, column, identity = (
+            "field_effect_no_changes",
+            "decision_id",
+            decision.decision_id,
+        )
+    else:
+        case_id, _ = publish_audiobook_preview(
+            root,
+            synthetic_audiobook_isbn_reason_report("conflict"),
+            ("isbn_form",),
+            selected_options={"isbn_form": "preserve_exact"},
+        )
+        root.persist_shadow_outcome(case_id, 12)
+        table, column, identity = "shadow_decision_outcomes", "review_case_id", case_id
+    before = root.field_effect_activity_page(
+        search=None,
+        event_type="all",
+        occurred_after=0,
+        page=1,
+        page_size=100,
+    )
+    assert any(event["record"]["source_kind"] == family for event in before["events"])
+    reader = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    facts = ActivityFactStore()
+    try:
+        reader.configure_activity_page_reader(facts)
+        assert (
+            reader.field_effect_activity_page(
+                search="no readable match",
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )["total"]
+            == 0
+        )
+        snapshot = facts.snapshot()
+        assert snapshot is not None and any(key[0] == family for key in snapshot.facts)
+        columns = [
+            row[1] for row in root._connection.execute(f"PRAGMA table_info({table})")
+        ]
+        row = list(
+            root._connection.execute(
+                f"SELECT * FROM {table} WHERE {column}=?", (identity,)
+            ).fetchone()
+        )
+        if family == "field_effect_no_change":
+            row[columns.index("target_fingerprint")] = "f" * 64
+        else:
+            index = columns.index("document")
+            value = json.loads(row[index])
+            value["unexpected"] = True
+            row[index] = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        schema = root._connection.execute("PRAGMA schema_version").fetchone()
+        root._connection.execute(
+            f"INSERT OR REPLACE INTO {table} VALUES ("
+            + ",".join("?" for _ in row)
+            + ")",
+            row,
+        )
+        root._connection.commit()
+        assert root._connection.execute("PRAGMA schema_version").fetchone() == schema
+        for source in (root, reader):
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                source.field_effect_activity_page(
+                    search="no readable match",
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+    finally:
+        reader.close()

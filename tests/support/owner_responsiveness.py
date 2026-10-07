@@ -6,6 +6,7 @@ import json
 import threading
 import time
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from pathlib import Path
@@ -489,22 +490,27 @@ def measure_owner_routes(
     import httpx
 
     routes = {
+        "activity": "/api/v1/activity?range_days=90&page_size=25",
         "library": "/api/v1/library?lens=all&limit=25",
-        "search": "/api/v1/library?lens=all&limit=25&q=synthetic",
         "attention": "/api/v1/attention?limit=25",
+        "policy": "/api/v1/metadata-policy/state",
+        "detail": f"/api/v1/review-cases/{fixture.cases[2].review_case_id}",
+        "negative_activity": "/api/v1/activity?range_days=90&q=absent-search-term",
+        "filtered_activity": "/api/v1/activity?range_days=7&event_type=metadata",
+        "deep_activity": "/api/v1/activity?range_days=90&page=50&page_size=100",
+        "search": "/api/v1/library?lens=all&limit=25&q=synthetic",
         "negative_library": "/api/v1/library?lens=all&limit=25&q=absent-search-term",
         "negative_attention": "/api/v1/attention?limit=25&q=absent-search-term",
-        "detail": f"/api/v1/review-cases/{fixture.cases[2].review_case_id}",
-        "policy": "/api/v1/metadata-policy/state",
         "settings": "/api/v1/settings",
         "preparation": "/api/v1/review-preparation",
     }
     values: dict[str, list[float]] = {name: [] for name in routes}
     misses: list[dict[str, object]] = []
     preparation_progress: list[dict[str, object]] = []
-    with httpx.Client(
-        base_url=origin, headers={"Origin": origin}, timeout=30
-    ) as client:
+    with (
+        httpx.Client(base_url=origin, headers={"Origin": origin}, timeout=30) as client,
+        ThreadPoolExecutor(max_workers=5) as readers,
+    ):
         assert (
             client.post(
                 "/api/v1/session/login", json={"password": "synthetic-owner"}
@@ -514,13 +520,27 @@ def measure_owner_routes(
         if fixture.preparation is not None:
             for index in range(5):
                 fixture.preparation.request("primary", f"books-{index}")
+
+        def read_route(item):
+            name, route = item
+            started = time.perf_counter()
+            response = client.get(route)
+            return name, response, (time.perf_counter() - started) * 1000
+
         for sample in range(samples):
-            for name, route in routes.items():
-                started = time.perf_counter()
-                response = client.get(route)
-                elapsed = (time.perf_counter() - started) * 1000
+            # Activity scans overlap the actual owner routes and preparation
+            # writer; serial requests cannot prove shared-database contention.
+            for name, response, elapsed in readers.map(read_route, routes.items()):
                 values[name].append(elapsed)
-                if name.startswith("negative_") and response.status_code == 200:
+                if name.endswith("activity") and response.status_code == 200:
+                    data = response.json()
+                    assert len(data["events"]) <= data["ledger"]["page_size"]
+                    if name == "negative_activity":
+                        assert data["events"] == [] and data["ledger"]["total"] == 0
+                if (
+                    name in {"negative_library", "negative_attention"}
+                    and response.status_code == 200
+                ):
                     assert response.json()["items"] == []
                     if name == "negative_library":
                         assert response.json()["counts"]["all"] == 0
@@ -559,10 +579,15 @@ def measure_owner_routes(
         }
         for name, rows in values.items()
     }
+    snapshot = fixture.activity_facts.snapshot()
+    assert snapshot is not None
+    assert snapshot.accounted_bytes <= 64 * 1024 * 1024
     return {
         "routes": summary,
         "misses": misses,
         "preparation_progress": preparation_progress,
+        "activity_facts": len(snapshot.facts),
+        "activity_accounted_bytes": snapshot.accounted_bytes,
     }
 
 

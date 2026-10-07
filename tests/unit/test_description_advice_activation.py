@@ -2582,7 +2582,6 @@ def test_configured_activity_reprojects_authored_dependents_before_search(
     )
     assert operation is not None
     target.seed(operation.plan)
-    assert service.apply(operation.plan.plan_id).state == "verified"
     facts = ActivityFactStore()
     reader = open_repository(
         tmp_path / "reports.sqlite", create=False, authority=repository.authority
@@ -2620,6 +2619,10 @@ def test_configured_activity_reprojects_authored_dependents_before_search(
         monkeypatch.setattr(
             reader._field_effect_activity, "_project_activity_facts", project
         )
+        assert service.apply(operation.plan.plan_id).state == "verified"
+        assert application(reader).activity() == application(repository).activity()
+        assert projected == [{("field_effect", operation.plan.plan_id)}]
+        projected.clear()
         connection = repository._connection
         columns = [
             row[1]
