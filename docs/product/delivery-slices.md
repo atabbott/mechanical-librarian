@@ -243,7 +243,9 @@ cohort, endpoints/models, data-use posture, retention and spend caps are approve
 #877 closed as curtailed diagnostic work, not a passing full-library measurement.
 #1086 in 0.21.0 owns the outstanding reviewer-free joint 0.19.0/0.21.0 measurement
 after #1072/#1085/#1073/#1080/#1083/#1084. It is separate from #1060 reviewer
-collection; this checkpoint cannot retroactively pass #877.
+collection; this checkpoint cannot retroactively pass #877. The retained-run
+follow-ups proceed through Library search #1160, Activity responsiveness #1150,
+and #1155–#1159 before the remaining #1086 assessment; none restarts collection.
 
 Exit requires each issue contract, actual collection and inspection for #1060,
 and evidenced dispositions for the bounded investigations. #1013 reconciles

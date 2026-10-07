@@ -845,7 +845,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "FROM metadata_reports mr JOIN (SELECT DISTINCT rc.report_id "
                 "FROM current_review_packages c JOIN review_cases rc "
                 "ON rc.review_case_id=c.review_case_id) participating USING(report_id)),"
-                "candidates AS MATERIALIZED (SELECT rc.review_case_id AS review_case_id,"
+                "search_matches AS MATERIALIZED (SELECT "
+                "c.connection_name,c.library_name,c.item_id "
+                + _CURRENT_REVIEW_FROM_SQL
+                + " JOIN report_scalars scalars ON scalars.report_id=mr.report_id WHERE 1"
+                + _browse_scalar_sql(_REVIEW_SEARCH_SQL)
+                + "),candidates AS MATERIALIZED (SELECT rc.review_case_id AS review_case_id,"
                 "mr.report_id AS report_id,CASE WHEN "
                 "rc.proposal_set_id=c.proposal_set_id AND rc.report_id=c.report_id "
                 "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
@@ -859,8 +864,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + _CURRENT_REVIEW_FROM_SQL
                 + " JOIN report_scalars scalars ON scalars.report_id=mr.report_id "
                 " JOIN review_case_field_facts result "
-                "ON result.review_case_id=rc.review_case_id WHERE 1"
-                + _browse_scalar_sql(_REVIEW_SEARCH_SQL)
+                "ON result.review_case_id=rc.review_case_id "
+                "WHERE (c.connection_name,c.library_name,c.item_id) IN "
+                "(SELECT connection_name,library_name,item_id FROM search_matches)"
                 + "),attentive AS MATERIALIZED (SELECT review_case_id,report_id,"
                 "proposal_set_id,destination,count(*) OVER (PARTITION BY review_case_id) "
                 "AS attention_count,title_order,library_name,item_id "
@@ -892,7 +898,6 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "ORDER BY page.title_order,page.library_name,page.item_id,"
                 "page.destination,page.review_case_id",
                 (
-                    *cover_authority,
                     query,
                     pattern,
                     pattern,
@@ -901,6 +906,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     pattern,
                     json.dumps(library_labels),
                     pattern,
+                    *cover_authority,
                     limit,
                     offset,
                 ),

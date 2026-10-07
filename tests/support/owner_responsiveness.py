@@ -489,6 +489,8 @@ def measure_owner_routes(
         "library": "/api/v1/library?lens=all&limit=25",
         "search": "/api/v1/library?lens=all&limit=25&q=synthetic",
         "attention": "/api/v1/attention?limit=25",
+        "negative_library": "/api/v1/library?lens=all&limit=25&q=absent-search-term",
+        "negative_attention": "/api/v1/attention?limit=25&q=absent-search-term",
         "detail": f"/api/v1/review-cases/{fixture.cases[2].review_case_id}",
         "policy": "/api/v1/metadata-policy/state",
         "settings": "/api/v1/settings",
@@ -515,6 +517,12 @@ def measure_owner_routes(
                 response = client.get(route)
                 elapsed = (time.perf_counter() - started) * 1000
                 values[name].append(elapsed)
+                if name.startswith("negative_") and response.status_code == 200:
+                    assert response.json()["items"] == []
+                    if name == "negative_library":
+                        assert response.json()["counts"]["all"] == 0
+                    else:
+                        assert response.json()["total"] == 0
                 if name == "preparation" and response.status_code == 200:
                     state = response.json()
                     preparation_progress.append(
