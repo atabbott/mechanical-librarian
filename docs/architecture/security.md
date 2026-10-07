@@ -1271,8 +1271,8 @@ event, decision, consideration, candidate, or reference identifiers.
 
 The authenticated Activity endpoint is a private, `no-store`, read-only history
 projection. Its bounded event type, date range, page, page size, and search
-inputs are validated before a parameterized SQL query selects one page and its
-count from the same durable ledger projection. The response has no export,
+inputs are validated before one read snapshot selects a page and its count
+from the same durable ledger projection. The response has no export,
 write, target, provider, or recovery authority. Stored documents are hostile
 input: malformed, oversized, or inconsistent rows fail closed rather than
 exposing a raw row, private path, or invented verification claim. The projection
@@ -1283,6 +1283,17 @@ are snapshot-consistent only for the individual read transaction; concurrent
 append-only activity can change a later request. Focused repository,
 application, API, and browser tests cover bounds, redaction, malformed rows,
 current-state recovery, and private-cache headers.
+
+The runtime may retain up to 64 MiB of serialized readable facts and exact source
+witnesses for independently configured query-only readers (ADR-0082). Every new
+borrower scans source bytes; later reuse binds its own revision, file identity
+and store version. Witnesses retain exact scalar types and document SQL types
+alongside raw-byte hashes, so a normal commit cannot conceal a same-ID byte change.
+Affected canonical candidates are revalidated before search, including old and new
+missing/excluded dependencies. Schema drift or inability to admit the optimized
+representation returns to canonical query-scoped validation; overflow never returns
+partial counts. Typed authority objects do not persist between requests. This
+store grants no permission, backup, consent or effect authority.
 
 Ordinary history returns required null backup-readiness and example fields. The
 separate authenticated permission-readiness endpoint checks the existing database

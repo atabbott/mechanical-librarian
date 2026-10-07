@@ -41,6 +41,17 @@ Worker startup, recovery and scheduling retain background classification. Artifa
 recovery borrows that same coordinator for its retained-attempt update and reference
 reads, releasing admission for filesystem inspection and cleanup.
 
+[ADR-0082](decisions/0082-runtime-activity-facts.md) adds a root-owned, 64 MiB
+serialized Activity fact store borrowed by those query-only readers. Initial
+composition completes before readiness. Every new borrower scans exact scalar and
+raw-document byte witnesses inside its own snapshot; later reuse requires its own
+unchanged revision, file identity and store version. Changed witnesses refresh
+only dependent candidates using old and new bindings. The temporary reverse index
+is discarded before projection. Store locks never span SQL or parsing, and closing
+one generation does not erase successor facts. Overflow and schema drift use the
+canonical query path. Writable and direct repositories retain that path; no table,
+schema version, adoption command or journal setting changes.
+
 Library and Attention need no additional browse borrower. Membership, counts and
 row facts share a short deferred transaction; visible projection remains inside
 the bounded local operation after that transaction ends. External policy/replay

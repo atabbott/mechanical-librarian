@@ -2546,3 +2546,191 @@ def test_selected_effect_outcome_survives_new_attempt_and_reopen(
         advice["selected_advice"]["candidate"]["candidate_id"] == candidate.candidate_id
     )
     reopened.close()
+
+
+def test_configured_activity_preserves_candidate_timestamp_exclusion(tmp_path):
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
+    )
+
+    repository, advice, binding, candidate, _ = _prepared(tmp_path)
+    decision = advice.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+    identity = decision.decision_id
+    reader = open_repository(
+        tmp_path / "reports.sqlite", create=False, authority=repository.authority
+    )
+
+    def activity(owner, **query):
+        return ContinuousGuardedApplication(
+            owner,
+            {},
+            {},
+            PersistedFieldEffectAuthority(owner),
+            (("primary", "books"),),
+            lambda: 2000,
+            lambda *_: None,
+            activity_only=True,
+        ).activity(**query)
+
+    try:
+        reader.configure_activity_page_reader()
+        initial = activity(reader)
+        assert initial == activity(repository)
+        assert any(row["event_id"] == identity for row in initial["events"])
+        connection = repository._connection
+        columns = [
+            row[1]
+            for row in connection.execute("PRAGMA table_info(description_decisions)")
+        ]
+        values = list(
+            connection.execute(
+                "SELECT * FROM description_decisions WHERE decision_id=?", (identity,)
+            ).fetchone()
+        )
+        malformed = json.loads(values[columns.index("document")])
+        malformed["occurred_at"] = None
+        values[columns.index("document")] = json.dumps(malformed)
+        cookie = connection.execute("PRAGMA schema_version").fetchone()
+        connection.execute(
+            "INSERT OR REPLACE INTO description_decisions VALUES("
+            + ",".join("?" for _ in values)
+            + ")",
+            values,
+        )
+        connection.commit()
+        assert connection.execute("PRAGMA schema_version").fetchone() == cookie
+        remaining = activity(reader)
+        assert remaining == activity(repository)
+        assert all(row["event_id"] != identity for row in remaining["events"])
+        assert remaining["ledger"]["total"] == initial["ledger"]["total"] - 1
+        assert activity(reader, search="no readable match") == activity(
+            repository, search="no readable match"
+        )
+    finally:
+        reader.close()
+        repository.close()
+
+
+def test_configured_activity_reprojects_authored_dependents_before_search(
+    tmp_path, monkeypatch
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.application.continuous_field_effects import (
+        ContinuousGuardedApplication,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from tests.support.field_effects import CAPABILITY
+
+    repository, advice, binding, candidate, _ = _prepared(tmp_path)
+    decision = advice.admit(
+        candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11
+    )
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(decision)
+    service, target = _guarded_application(repository, tmp_path, authority)
+    operation = service.plan(
+        decision,
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=snapshot.destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    assert operation is not None
+    target.seed(operation.plan)
+    facts = ActivityFactStore()
+    reader = open_repository(
+        tmp_path / "reports.sqlite", create=False, authority=repository.authority
+    )
+
+    def application(owner):
+        return ContinuousGuardedApplication(
+            owner,
+            {},
+            {},
+            PersistedFieldEffectAuthority(owner),
+            (("primary", "books"),),
+            lambda: 2000,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    try:
+        reader.configure_activity_page_reader(facts)
+        assert application(reader).activity() == application(repository).activity()
+        admitted = facts.snapshot()
+        assert admitted is not None
+        assert {key[0] for key in admitted.facts} >= {
+            "description_preparation",
+            "description_decision",
+            "field_effect",
+        }
+        projected = []
+        original = reader._field_effect_activity._project_activity_facts
+
+        def project(candidates, maximum):
+            projected.append(candidates)
+            return original(candidates, maximum)
+
+        monkeypatch.setattr(
+            reader._field_effect_activity, "_project_activity_facts", project
+        )
+        assert service.apply(operation.plan.plan_id).state == "verified"
+        assert application(reader).activity() == application(repository).activity()
+        assert projected == [{("field_effect", operation.plan.plan_id)}]
+        projected.clear()
+        connection = repository._connection
+        columns = [
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(description_advice_candidates)"
+            )
+        ]
+        values = list(
+            connection.execute(
+                "SELECT * FROM description_advice_candidates WHERE candidate_id=?",
+                (candidate.candidate_id,),
+            ).fetchone()
+        )
+        values[columns.index("document")] = "{invalid"
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute(
+            "INSERT OR REPLACE INTO description_advice_candidates VALUES("
+            + ",".join("?" for _ in values)
+            + ")",
+            values,
+        )
+        connection.commit()
+        with pytest.raises(FieldEffectError, match="persistence"):
+            reader.field_effect_activity_page(
+                search="no readable match",
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+        assert {key[0] for key in projected[0]} >= {
+            "description_preparation",
+            "description_decision",
+            "field_effect",
+        }
+        with pytest.raises(FieldEffectError, match="persistence"):
+            repository.field_effect_activity_page(
+                search="no readable match",
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )
+    finally:
+        reader.close()
+        repository.close()

@@ -47,10 +47,18 @@ from collections.abc import Callable
 from contextlib import closing
 from copy import deepcopy
 from dataclasses import replace
+from functools import lru_cache
 from pathlib import Path
 from threading import RLock
 from typing import Any, Literal, TypeVar, cast
 
+from mechanical_librarian.adapters.persistence.activity_facts import (
+    ActivityFact,
+    ActivityFactCapacity,
+    ActivityFactStore,
+    Candidate,
+    activity_fact_bytes,
+)
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
@@ -70,7 +78,10 @@ from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
     preparation_failure_reference,
 )
-from mechanical_librarian.domain.activity_records import activity_search_text
+from mechanical_librarian.domain.activity_records import (
+    ReadableActivityEvent,
+    activity_search_text,
+)
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     AutomaticDecisionError,
@@ -268,6 +279,25 @@ def _bounded_fetch(cursor: sqlite3.Cursor, expected_max: int) -> list[tuple[Any,
     return rows
 
 
+def _validate_activity_query(
+    search: str | None, event_type: str, occurred_after: int, page: int, page_size: int
+) -> None:
+    if (
+        (
+            search is not None
+            and (type(search) is not str or not search or len(search) > 128)
+        )
+        or event_type
+        not in {"all", "review", "policy", "metadata", "safety", "unknown"}
+        or type(occurred_after) is not int
+        or occurred_after < 0
+        or type(page) is not int
+        or not 1 <= page <= 1_000_000
+        or page_size not in {25, 50, 100}
+    ):
+        raise FieldEffectError("invalid_activity_query")
+
+
 class SQLiteFieldEffectActivityRepository(ConnectionScoped):
     """Project field-effect activity, pending work and operational signals."""
 
@@ -341,6 +371,17 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         self._activity_page_cache_lock = RLock()
         self._backup_ready_cache: tuple[tuple[int, int], bool] | None = None
         self._activity_page_busy_retry_seconds = 0.0
+        self._activity_facts: ActivityFactStore | None = None
+        self._activity_fact_stamp: (
+            tuple[tuple[int, int], _ActivityDatabaseIdentity, object] | None
+        ) = None
+        self._activity_fact_schema: int | None = None
+        self._initial_report: Callable[[tuple[object, ...]], MetadataReport] | None = (
+            None
+        )
+        self._initial_case: Callable[[str], ReviewCase] | None = None
+        self._initial_proposal: Callable[[str], ProposalSet] | None = None
+        self._initial_outcome: Callable[[str], ShadowOutcomeSet] | None = None
 
     @property
     def _current_cover_policy_reference(self) -> str | None:
@@ -1500,7 +1541,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     or not 2 <= len(report_row[8].encode("utf-8")) <= document_limit
                 ):
                     raise MetadataReportError("persisted report is invalid")
-                reports[report_row[0]] = _validated_report_row(report_row)
+                reports[report_row[0]] = (
+                    self._initial_report or _validated_report_row
+                )(report_row)
                 report_documents[report_row[0]] = report_row[8]
         except MetadataReportError as error:
             raise FieldEffectError("persistence") from error
@@ -1636,9 +1679,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     raise FieldEffectError("persistence")
                 try:
                     automatic_authority[identity] = (
-                        ReviewCase.from_json(case_document),
-                        ProposalSet.from_json(proposal_document),
-                        ShadowOutcomeSet.from_json(outcome_document),
+                        (self._initial_case or ReviewCase.from_json)(case_document),
+                        (self._initial_proposal or ProposalSet.from_json)(
+                            proposal_document
+                        ),
+                        (self._initial_outcome or ShadowOutcomeSet.from_json)(
+                            outcome_document
+                        ),
                     )
                 except (
                     ReportValueError,
@@ -1989,7 +2036,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     checked_document, checked_at = self._validate_shadow_outcome_row(
                         outcome_row
                     )
-                    outcome = ShadowOutcomeSet.from_json(checked_document)
+                    outcome = (self._initial_outcome or ShadowOutcomeSet.from_json)(
+                        checked_document
+                    )
                     isbn = next(
                         (
                             field
@@ -2163,9 +2212,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         selected_value = _cover_automatic_decision_value(
                             self._connection,
                             projected_automatic,
-                            ReviewCase.from_json(cover_rows[0]),
+                            (self._initial_case or ReviewCase.from_json)(cover_rows[0]),
                             reports[projected_automatic.report_id],
-                            ProposalSet.from_json(cover_rows[1]),
+                            (self._initial_proposal or ProposalSet.from_json)(
+                                cover_rows[1]
+                            ),
                             cover_rows[2],
                         )
                     else:
@@ -2320,7 +2371,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             information.st_mtime_ns,
         )
 
-    def configure_activity_page_reader(self) -> None:
+    def configure_activity_page_reader(
+        self, facts: ActivityFactStore | None = None
+    ) -> None:
         """Constrain the independent reader to queries and bounded busy waits."""
 
         try:
@@ -2333,6 +2386,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         except sqlite3.Error as error:
             raise FieldEffectError("persistence") from error
         self._activity_page_busy_retry_seconds = _ACTIVITY_PAGE_BUSY_RETRY_SECONDS
+        self._activity_facts = facts if facts is not None else ActivityFactStore()
+        self._activity_fact_schema = self._connection.execute(
+            "PRAGMA schema_version"
+        ).fetchone()[0]
 
     @staticmethod
     def _retryable_activity_page_busy(error: FieldEffectError) -> bool:
@@ -2421,6 +2478,136 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         )
 
+    def initialize_activity_facts(self) -> None:
+        self._activity_fact_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=25
+        )
+
+    def _project_activity_facts(
+        self, candidates: set[Candidate] | None, max_bytes: int
+    ) -> dict[Candidate, ActivityFact]:
+        facts: dict[Candidate, ActivityFact] = {}
+        # Exact-document reuse exists only while initial history is composed.
+        # No domain object survives publication or is shared with another reader.
+        if candidates is None:
+            self._initial_report = lru_cache(maxsize=256)(_validated_report_row)
+            self._initial_case = lru_cache(maxsize=256)(ReviewCase.from_json)
+            self._initial_proposal = lru_cache(maxsize=256)(ProposalSet.from_json)
+            self._initial_outcome = lru_cache(maxsize=256)(ShadowOutcomeSet.from_json)
+        try:
+            self._field_effect_activity_page_uncached(
+                search="initialization",
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+                _collect=facts,
+                _candidates=candidates,
+                _collect_max_bytes=max_bytes,
+            )
+            return facts
+        finally:
+            self._initial_report = None
+            self._initial_case = None
+            self._initial_proposal = None
+            self._initial_outcome = None
+
+    @local_operation
+    def _activity_fact_page(
+        self,
+        *,
+        search: str | None,
+        event_type: str,
+        occurred_after: int,
+        page: int,
+        page_size: int,
+    ) -> dict[str, object] | None:
+        _validate_activity_query(search, event_type, occurred_after, page, page_size)
+        store = self._activity_facts
+        if store is None:
+            return None
+        transaction = self._transaction("activity_facts", deferred=True)
+        try:
+            transaction.begin()
+            self._connection.execute("SELECT 1 FROM sqlite_schema LIMIT 1").fetchone()
+            revision = self._activity_projection_revision()
+            identity = self._activity_database_identity()
+            if self._connection.execute("PRAGMA query_only").fetchone() != (
+                1,
+            ) or self._connection.execute("PRAGMA schema_version").fetchone() != (
+                self._activity_fact_schema,
+            ):
+                self._activity_facts = None
+                self._activity_page_cache.clear()
+                self._activity_page_cache_bytes = 0
+                return None
+            prior = self._activity_fact_stamp
+            if prior is not None and prior[0] == revision and prior[1] != identity:
+                raise FieldEffectError("persistence")
+            snapshot = store.snapshot()
+            if (
+                prior is None
+                or snapshot is None
+                or prior != (revision, identity, snapshot.version)
+            ):
+                try:
+                    snapshot = store.refresh(
+                        self._connection, self._project_activity_facts
+                    )
+                except (
+                    FieldEffectError,
+                    ValueError,
+                    TypeError,
+                    KeyError,
+                    RecursionError,
+                    sqlite3.OperationalError,
+                ) as error:
+                    if isinstance(error, sqlite3.OperationalError) and not (
+                        getattr(error, "sqlite_errorcode", None) is None
+                        and str(error).startswith("Could not decode to UTF-8 column ")
+                    ):
+                        raise
+                    # Full initialization must not broaden a normal page's
+                    # candidate validation. Malformed unrelated history uses
+                    # the original query-scoped canonical path.
+                    self._activity_facts = None
+                    self._activity_page_cache.clear()
+                    self._activity_page_cache_bytes = 0
+                    return None
+            if snapshot is None:
+                self._activity_facts = None
+                return None
+            selected = [
+                fact
+                for fact in snapshot.ordered
+                if fact.occurred_at >= occurred_after
+                and (event_type == "all" or fact.event_type == event_type)
+                and (search is None or search in fact.search)
+            ]
+            total = len(selected)
+            page_count = max(1, (total + page_size - 1) // page_size)
+            page = min(page, page_count)
+            result: dict[str, object] = {
+                "events": [
+                    fact.event
+                    for fact in selected[(page - 1) * page_size : page * page_size]
+                ],
+                "report_documents": {},
+                "current_waiting": self._activity_current_waiting(),
+                "page": page,
+                "page_count": page_count,
+                "page_size": page_size,
+                "total": total,
+            }
+            if identity != self._activity_database_identity():
+                raise FieldEffectError("persistence")
+            self._activity_fact_stamp = revision, identity, snapshot.version
+            return result
+        except sqlite3.Error as error:
+            raise FieldEffectError("persistence") from error
+        finally:
+            transaction.rollback()
+
     def _field_effect_activity_page_once(
         self,
         *,
@@ -2431,6 +2618,16 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         page_size: int,
     ) -> dict[str, object]:
         """Return a bounded page, reusing only an exact-current projection."""
+        if self._activity_facts is not None:
+            result = self._activity_fact_page(
+                search=search,
+                event_type=event_type,
+                occurred_after=occurred_after,
+                page=page,
+                page_size=page_size,
+            )
+            if result is not None:
+                return result
         key = (search, event_type, page, page_size)
         with self._activity_page_cache_lock:
             cached = self._activity_page_cache.get(key)
@@ -2507,6 +2704,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         occurred_after: int,
         page: int,
         page_size: int,
+        _collect: dict[Candidate, ActivityFact] | None = None,
+        _candidates: set[Candidate] | None = None,
+        _collect_max_bytes: int = 0,
     ) -> tuple[
         dict[str, object],
         tuple[int, int],
@@ -2514,20 +2714,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         _ActivityDatabaseIdentity,
     ]:
         """Return one exact, bounded page from the durable owner activity ledgers."""
-        if (
-            (
-                search is not None
-                and (type(search) is not str or not search or len(search) > 128)
-            )
-            or event_type
-            not in {"all", "review", "policy", "metadata", "safety", "unknown"}
-            or type(occurred_after) is not int
-            or occurred_after < 0
-            or type(page) is not int
-            or not 1 <= page <= 1_000_000
-            or page_size not in {25, 50, 100}
-        ):
-            raise FieldEffectError("invalid_activity_query")
+        _validate_activity_query(search, event_type, occurred_after, page, page_size)
         document_limit = 12_582_912
         scalar_limit = 512
         # The selected page and its joined report documents are validated
@@ -2564,10 +2751,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         isbn_title = "CASE WHEN json_valid(report.document) THEN json_extract(report.document, '$.target.fields[0].value') END"
         scalar = (
             report_scalars
-            if search is not None
+            if search is not None and _collect is None
             else dict.fromkeys(report_scalars, "NULL")
         )
-        selected_isbn_title = isbn_title if search is not None else "NULL"
+        selected_isbn_title = (
+            isbn_title if search is not None and _collect is None else "NULL"
+        )
         events: str | list[dict[str, object]] = f"""
             SELECT event.event_id, effect.connection_name, effect.destination,
                    effect.library_name, event.occurred_at,
@@ -2730,13 +2919,6 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             + " FROM ranked_activity_events WHERE activity_rank=1) "
         )
 
-        def waiting_scalar(value: object, *, nullable: bool = False) -> str | None:
-            if value is None and nullable:
-                return None
-            if type(value) is not str or not value or len(value) > scalar_limit:
-                raise FieldEffectError("persistence")
-            return value
-
         try:
             columns = (
                 "SELECT event_id,connection,destination,library,occurred_at,origin,"
@@ -2873,13 +3055,34 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     maxlen=page_size
                 )
                 matched_count = 0
-                cursor = self._connection.execute(
+                collected_bytes = 0
+                if _candidates is not None:
+                    predicate += (
+                        " AND (source_kind,"
+                        + group_identity
+                        + ") IN (SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each(?))"
+                    )
+                    parameters.append(json.dumps(sorted(_candidates)))
+                query = (
                     projection
                     + columns
                     + predicate
-                    + " ORDER BY occurred_at DESC,event_id DESC",
-                    parameters,
+                    + " ORDER BY occurred_at DESC,event_id DESC"
                 )
+                if _collect is not None:
+                    query = (
+                        projection
+                        + selected_projection
+                        + columns.replace(
+                            " FROM activity_events",
+                            ",report_target FROM activity_events",
+                        )
+                        + predicate
+                        + ") SELECT "
+                        + ",".join(restored_columns)
+                        + restored_projection
+                    )
+                cursor = self._connection.execute(query, parameters)
                 while batch := cursor.fetchmany(64):
                     batch_events, batch_documents, reports = (
                         self._project_activity_rows(
@@ -2889,11 +3092,30 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             searched=True,
                         )
                     )
-                    for event in batch_events:
+                    for source_row, event in zip(batch, batch_events, strict=True):
                         report_id = event.get("report_id")
                         report = (
                             reports.get(report_id) if type(report_id) is str else None
                         )
+                        if _collect is not None:
+                            candidate = (
+                                source_row[13],
+                                source_row[15]
+                                if source_row[13] == "field_effect"
+                                else source_row[0],
+                            )
+                            fact = ActivityFact(
+                                ReadableActivityEvent.compose(event, report),
+                                activity_search_text(event, report),
+                                cast(int, event["occurred_at"]),
+                                cast(str, event["event_type"]),
+                                cast(str, event["event_id"]),
+                            )
+                            collected_bytes += activity_fact_bytes(candidate, fact)
+                            if collected_bytes > _collect_max_bytes:
+                                raise ActivityFactCapacity
+                            _collect[candidate] = fact
+                            continue
                         if search not in activity_search_text(event, report):
                             continue
                         occurred_at = event.get("occurred_at")
@@ -2929,71 +3151,14 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     for event, document in selected
                     if type(event.get("report_id")) is str and document is not None
                 }
-            waiting = self._connection.execute(
-                "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
-                "COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id) FROM field_effects effect "
-                "LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id "
-                "LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id "
-                "LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id "
-                "LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id "
-                "LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic' "
-                "LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id "
-                "LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id "
-                "LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id "
-                "LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id "
-                "WHERE effect.state IN ('planned','claimed','applying','reconciling','retryable') "
-                "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
-            ).fetchone()
-            waiting_title = "Recorded work"
-            if waiting is not None:
-                for value in waiting[:5]:
-                    waiting_scalar(value)
-                waiting_report_id = waiting_scalar(waiting[5], nullable=True)
-                if waiting_report_id is not None:
-                    waiting_report_row = self._connection.execute(
-                        "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document "
-                        "FROM metadata_reports WHERE report_id=?",
-                        (waiting_report_id,),
-                    ).fetchone()
-                    if (
-                        waiting_report_row is None
-                        or type(waiting_report_row[8]) is not str
-                        or not 2
-                        <= len(waiting_report_row[8].encode("utf-8"))
-                        <= document_limit
-                    ):
-                        raise FieldEffectError("persistence")
-                    try:
-                        waiting_report_document = _validate_report_row(
-                            waiting_report_row
-                        )
-                        waiting_report = MetadataReport.from_json(
-                            waiting_report_document
-                        )
-                    except (MetadataReportError, ReportValueError) as error:
-                        raise FieldEffectError("persistence") from error
-                    if (
-                        waiting_report.target.connection != waiting[0]
-                        or waiting_report.target.library != waiting[2]
-                        or waiting_report.target.item != waiting[3]
-                    ):
-                        raise FieldEffectError("persistence")
-                    waiting_title = waiting_report.target.current_title or "Untitled"
+            waiting = self._activity_current_waiting()
             result = {
                 "events": projected_events,
                 "page": selected_page,
                 "page_count": page_count,
                 "page_size": page_size,
                 "report_documents": report_documents,
-                "current_waiting": None
-                if waiting is None
-                else {
-                    "destination": waiting[1],
-                    "library": waiting[2],
-                    "work_id": waiting[3],
-                    "state": waiting[4],
-                    "work_label": waiting_title,
-                },
+                "current_waiting": waiting,
                 "total": total,
             }
             if search is None:
@@ -3012,9 +3177,78 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         ) as error:
             transaction.rollback()
             raise FieldEffectError("persistence") from error
-        except FieldEffectError:
+        except (FieldEffectError, ActivityFactCapacity):
             transaction.rollback()
             raise
+
+    def _activity_current_waiting(self) -> dict[str, object] | None:
+        document_limit = 12_582_912
+        scalar_limit = 512
+
+        def waiting_scalar(value: object, *, nullable: bool = False) -> str | None:
+            if value is None and nullable:
+                return None
+            if type(value) is not str or not value or len(value) > scalar_limit:
+                raise FieldEffectError("persistence")
+            return value
+
+        waiting = self._connection.execute(
+            "SELECT effect.connection_name,effect.destination,effect.library_name,effect.work_id,effect.state,"
+            "COALESCE(human_review.report_id,automatic_review.report_id,cover_review.report_id,description_review.report_id) FROM field_effects effect "
+            "LEFT JOIN human_decisions human ON human.decision_id=effect.decision_id "
+            "LEFT JOIN review_cases human_review ON human_review.review_case_id=human.review_case_id "
+            "LEFT JOIN automatic_decisions automatic ON automatic.decision_id=effect.decision_id "
+            "LEFT JOIN review_cases automatic_review ON automatic_review.review_case_id=automatic.review_case_id "
+            "LEFT JOIN cover_selection_authorities cover_selection ON cover_selection.decision_id=effect.decision_id AND cover_selection.kind='automatic' "
+            "LEFT JOIN cover_considerations cover_consideration ON cover_consideration.consideration_id=cover_selection.consideration_id "
+            "LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id "
+            "LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id "
+            "LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id "
+            "WHERE effect.state IN ('planned','claimed','applying','reconciling','retryable') "
+            "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
+        ).fetchone()
+        waiting_title = "Recorded work"
+        if waiting is not None:
+            for value in waiting[:5]:
+                waiting_scalar(value)
+            waiting_report_id = waiting_scalar(waiting[5], nullable=True)
+            if waiting_report_id is not None:
+                waiting_report_row = self._connection.execute(
+                    "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document "
+                    "FROM metadata_reports WHERE report_id=?",
+                    (waiting_report_id,),
+                ).fetchone()
+                if (
+                    waiting_report_row is None
+                    or type(waiting_report_row[8]) is not str
+                    or not 2
+                    <= len(waiting_report_row[8].encode("utf-8"))
+                    <= document_limit
+                ):
+                    raise FieldEffectError("persistence")
+                try:
+                    waiting_report_document = _validate_report_row(waiting_report_row)
+                    waiting_report = MetadataReport.from_json(waiting_report_document)
+                except (MetadataReportError, ReportValueError) as error:
+                    raise FieldEffectError("persistence") from error
+                if (
+                    waiting_report.target.connection != waiting[0]
+                    or waiting_report.target.library != waiting[2]
+                    or waiting_report.target.item != waiting[3]
+                ):
+                    raise FieldEffectError("persistence")
+                waiting_title = waiting_report.target.current_title or "Untitled"
+        return (
+            None
+            if waiting is None
+            else {
+                "destination": waiting[1],
+                "library": waiting[2],
+                "work_id": waiting[3],
+                "state": waiting[4],
+                "work_label": waiting_title,
+            }
+        )
 
     def field_effect_activity_transitions(
         self, event_id: str, after_sequence: int | None = None, limit: int = 20

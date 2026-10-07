@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sqlite3
 from types import SimpleNamespace
 from typing import cast
 
@@ -97,19 +98,33 @@ def _ledger(
     the activity-only application, so the projection under assertion is the one
     the running product serves rather than a convenient stand-in.
     """
-    service = ContinuousGuardedApplication(
-        environment.repository,
-        {},
-        {},
-        PersistedFieldEffectAuthority(environment.repository),
-        (("primary", "books"),),
-        lambda: 2_000,
-        lambda *_: None,
-        activity_only=True,
+
+    def application(repository):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "books"),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    reader = open_repository(
+        environment.database_path,
+        create=False,
+        authority=environment.repository.authority,
     )
-    events = service.activity(search=search)["events"]
-    assert isinstance(events, list)
-    return events
+    try:
+        reader.configure_activity_page_reader()
+        actual = application(reader).activity(search=search)
+        assert actual == application(environment.repository).activity(search=search)
+        events = actual["events"]
+        assert isinstance(events, list)
+        return events
+    finally:
+        reader.close()
 
 
 def _facts(event: dict[str, object]) -> dict[str, str]:
@@ -984,3 +999,724 @@ def test_post_write_third_value_closes_without_claiming_no_write(
         == "The selected change was not confirmed"
     )
     assert "No write was applied" not in str(event)
+
+
+def test_configured_reader_serialized_facts_preserve_public_activity(
+    tmp_path, monkeypatch
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from tests.support import activity_seed
+    from tests.support.activity_seed import DAY, seed_activity
+
+    original_report = activity_seed._report
+    monkeypatch.setattr(
+        activity_seed,
+        "_report",
+        lambda title, *args: original_report("Café Straße 100%_done " + title, *args),
+    )
+    seeded = seed_activity(tmp_path)
+    now = [seeded.reader_now()]
+    root = seeded.repository
+    facts = ActivityFactStore()
+    reader = open_repository(
+        tmp_path / "activity.sqlite", create=False, authority=root.authority
+    )
+
+    def application(repository):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "books"),),
+            lambda: now[0],
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    try:
+        reader._field_effect_activity.configure_activity_page_reader(facts)
+        canonical, admitted = application(root), application(reader)
+        for search, event_type, days, page, size in (
+            (None, "all", 90, 1, 25),
+            ("title", "all", 90, 1, 25),
+            ("no readable match", "all", 30, 1, 100),
+            ("%_", "all", 7, 1, 50),
+            ("CAFÉ", "all", 90, 1, 25),
+            ("STRASSE", "all", 90, 1, 25),
+            ("100%_done", "all", 90, 1, 25),
+            (None, "review", 7, 100, 25),
+            (None, "policy", 30, 1, 50),
+            (None, "metadata", 90, 1, 100),
+            (None, "safety", 90, 1, 25),
+            (None, "unknown", 90, 1, 25),
+            (None, "all", 90, 2, 25),
+        ):
+            query = dict(
+                search=search,
+                event_type=event_type,
+                range_days=days,
+                page=page,
+                page_size=size,
+            )
+            assert admitted.activity(**query) == canonical.activity(**query)
+        for term in ("CAFÉ", "STRASSE", "100%_done"):
+            assert admitted.activity(search=term, range_days=90)["ledger"]["total"] > 0
+        snapshot = facts.snapshot()
+        assert snapshot is not None and len(snapshot.facts) == 27
+        assert 0 < snapshot.accounted_bytes < facts.max_bytes
+        assert root._field_effect_activity._activity_facts is None
+        projected = []
+        original_project = reader._field_effect_activity._project_activity_facts
+
+        def project(candidates, max_bytes):
+            projected.append(candidates)
+            return original_project(candidates, max_bytes)
+
+        monkeypatch.setattr(
+            reader._field_effect_activity, "_project_activity_facts", project
+        )
+        now[0] += 91 * DAY
+        expired = admitted.activity(range_days=90)
+        assert expired == canonical.activity(range_days=90)
+        assert expired["events"] == []
+        assert facts.snapshot() is snapshot and projected == []
+        now[0] -= 91 * DAY
+        transition = root._connection.execute(
+            "SELECT transition_id FROM metadata_policy_transitions LIMIT 1"
+        ).fetchone()[0]
+        root._connection.execute(
+            "UPDATE metadata_policy_transitions SET updated_at=updated_at+1 WHERE transition_id=?",
+            (transition,),
+        )
+        root._connection.commit()
+        assert admitted.activity(range_days=90) == canonical.activity(range_days=90)
+        assert projected == [{("policy_transition", transition)}]
+        projected.clear()
+        from tests.support.activity_seed import _report
+
+        unrelated = _report("Unreferenced report", "no-event", "d", "e")
+        root.publish(unrelated, lambda: True)
+        assert admitted.activity(range_days=90) == canonical.activity(range_days=90)
+        assert projected == []
+        assert facts.snapshot() is not snapshot
+        columns = [
+            row[1]
+            for row in root._connection.execute("PRAGMA table_info(metadata_reports)")
+        ]
+        values = list(
+            root._connection.execute(
+                "SELECT * FROM metadata_reports WHERE report_id=?",
+                (unrelated.report_id,),
+            ).fetchone()
+        )
+        values[columns.index("document")] = "{invalid"
+        root._connection.execute("PRAGMA ignore_check_constraints=ON")
+        root._connection.execute(
+            "INSERT OR REPLACE INTO metadata_reports VALUES ("
+            + ",".join("?" for _ in values)
+            + ")",
+            values,
+        )
+        root._connection.commit()
+        root._connection.execute("PRAGMA ignore_check_constraints=OFF")
+        assert admitted.activity(range_days=90) == canonical.activity(range_days=90)
+        assert projected == []
+        # Both witness overflow and entry overflow preserve the whole public
+        # canonical page, without publishing a partial store.
+        for maximum in (1, snapshot.accounted_bytes - 1):
+            bounded = ActivityFactStore(max_bytes=maximum)
+            borrower = open_repository(
+                tmp_path / "activity.sqlite", create=False, authority=root.authority
+            )
+            try:
+                borrower.configure_activity_page_reader(bounded)
+                assert application(borrower).activity(
+                    range_days=90
+                ) == canonical.activity(range_days=90)
+                assert bounded.snapshot() is None and bounded._disabled
+            finally:
+                borrower.close()
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            reader._connection.execute(
+                "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
+            )
+        unconfigured = open_repository(
+            tmp_path / "activity.sqlite", create=False, authority=root.authority
+        )
+        try:
+            baseline = application(unconfigured)
+            assert baseline.activity(range_days=90) == admitted.activity(range_days=90)
+            root._connection.execute(
+                "CREATE INDEX activity_fixture_drift ON metadata_reports(item_id)"
+            )
+            root._connection.commit()
+            assert admitted.activity(range_days=90) == baseline.activity(range_days=90)
+            assert reader._field_effect_activity._activity_facts is None
+        finally:
+            unconfigured.close()
+    finally:
+        reader.close()
+        root.close()
+
+
+def test_configured_borrowers_rescan_after_another_reader_wins_publication(
+    tmp_path, monkeypatch
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from tests.support.activity_seed import seed_activity
+
+    seeded = seed_activity(tmp_path)
+    root = seeded.repository
+    facts = ActivityFactStore()
+    readers = [
+        open_repository(
+            tmp_path / "activity.sqlite", create=False, authority=root.authority
+        )
+        for _ in range(3)
+    ]
+    for reader in readers:
+        reader.configure_activity_page_reader(facts)
+
+    def application(repository):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "books"),),
+            seeded.reader_now,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    first, second, fresh = map(application, readers)
+    refreshes = []
+    refresh = facts.refresh
+
+    def observe_refresh(connection, project):
+        refreshes.append(connection)
+        return refresh(connection, project)
+
+    monkeypatch.setattr(facts, "refresh", observe_refresh)
+    projection = readers[0]._field_effect_activity
+    project = projection._project_activity_facts
+    competing = []
+
+    def publish_competing_snapshot(candidates, max_bytes):
+        # Both independent read snapshots are real. The second finishes first,
+        # so the first must use its own result without replacing the winner.
+        competing.append(second.activity(range_days=90))
+        return project(candidates, max_bytes)
+
+    monkeypatch.setattr(
+        projection, "_project_activity_facts", publish_competing_snapshot
+    )
+    try:
+        expected = application(root).activity(range_days=90)
+        assert first.activity(range_days=90) == expected == competing[0]
+        published = facts.snapshot()
+        assert published is not None
+        stamp = projection._activity_fact_stamp
+        assert stamp is not None and stamp[2] is not published.version
+        assert refreshes == [readers[0]._connection, readers[1]._connection]
+        assert first.activity(range_days=90) == expected
+        assert projection._activity_fact_stamp == (*stamp[:2], published.version)
+        assert refreshes[-1] is readers[0]._connection and len(refreshes) == 3
+        assert len(competing) == 1
+        assert first.activity(range_days=90) == expected
+        assert len(refreshes) == 3  # Same reader, revision, identity and store.
+        assert fresh.activity(range_days=90) == expected
+        assert refreshes[-1] is readers[2]._connection and len(refreshes) == 4
+        readers[0].close()
+        assert second.activity(range_days=90) == expected
+        assert facts.snapshot() is published and len(refreshes) == 4
+    finally:
+        for reader in readers:
+            reader.close()
+        root.close()
+
+
+@pytest.mark.parametrize(
+    "table",
+    (
+        "human_decisions",
+        "human_decision_events",
+        "field_effect_events",
+        "field_effects",
+        "metadata_policy_drafts",
+    ),
+)
+def test_changed_activity_source_refuses_before_nonmatching_search(tmp_path, table):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from tests.support.activity_seed import seed_activity
+
+    seeded = seed_activity(tmp_path)
+    root = seeded.repository
+    reader = open_repository(
+        tmp_path / "activity.sqlite", create=False, authority=root.authority
+    )
+    facts = ActivityFactStore()
+    try:
+        reader.configure_activity_page_reader(facts)
+        assert (
+            reader.field_effect_activity_page(
+                search="no readable match",
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )["total"]
+            == 0
+        )
+        assert facts.snapshot() is not None
+        columns = [
+            row[1] for row in root._connection.execute(f"PRAGMA table_info({table})")
+        ]
+        row = list(
+            root._connection.execute(f"SELECT * FROM {table} LIMIT 1").fetchone()
+        )
+        row[columns.index("document")] = "{not-json"
+        schema = root._connection.execute("PRAGMA schema_version").fetchone()
+        root._connection.execute("PRAGMA ignore_check_constraints=ON")
+        root._connection.execute(
+            f"INSERT OR REPLACE INTO {table} VALUES ("
+            + ",".join("?" for _ in row)
+            + ")",
+            row,
+        )
+        root._connection.commit()
+        root._connection.execute("PRAGMA ignore_check_constraints=OFF")
+        assert root._connection.execute("PRAGMA schema_version").fetchone() == schema
+        for source in (root, reader):
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                source.field_effect_activity_page(
+                    search="no readable match",
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+    finally:
+        reader.close()
+        root.close()
+
+
+@pytest.mark.parametrize(
+    "table,column",
+    (
+        ("metadata_reports", "report_id"),
+        ("review_cases", "review_case_id"),
+        ("proposal_sets", "proposal_set_id"),
+        ("automatic_decisions", "decision_id"),
+        ("shadow_decision_outcomes", "review_case_id"),
+    ),
+)
+def test_automatic_activity_revalidates_its_exact_typed_dependencies(
+    effects,  # noqa: F811
+    table,
+    column,
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+
+    decision = _qualified_no_change_decision(effects)
+    root = effects.repository
+    reader = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    facts = ActivityFactStore()
+    try:
+        canonical = root.field_effect_activity_page(
+            search=None, event_type="all", occurred_after=0, page=1, page_size=100
+        )
+        event = next(
+            event
+            for event in canonical["events"]
+            if event["event_id"] == decision.decision_id
+        )
+        assert event["record"]["source_kind"] == "automatic_decision"
+        assert event["report_id"] == decision.report_id
+        reader.configure_activity_page_reader(facts)
+        assert (
+            reader.field_effect_activity_page(
+                search=None, event_type="all", occurred_after=0, page=1, page_size=100
+            )["total"]
+            == canonical["total"]
+        )
+        assert facts.snapshot() is not None
+        columns = [
+            row[1] for row in root._connection.execute(f"PRAGMA table_info({table})")
+        ]
+        row = list(
+            root._connection.execute(
+                f"SELECT * FROM {table} WHERE {column}=?", (getattr(decision, column),)
+            ).fetchone()
+        )
+        index = columns.index("document")
+        value = json.loads(row[index])
+        value["unexpected"] = True
+        row[index] = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        schema = root._connection.execute("PRAGMA schema_version").fetchone()
+        root._connection.execute(
+            f"INSERT OR REPLACE INTO {table} VALUES ("
+            + ",".join("?" for _ in row)
+            + ")",
+            row,
+        )
+        root._connection.commit()
+        assert root._connection.execute("PRAGMA schema_version").fetchone() == schema
+        for source in (root, reader):
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                source.field_effect_activity_page(
+                    search="no readable match",
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=100,
+                )
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("family", ("field_effect_no_change", "isbn_refusal"))
+def test_retained_no_change_and_isbn_candidates_revalidate_before_search(
+    effects,  # noqa: F811
+    family,
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from tests.support.audiobook_reports import (
+        publish_audiobook_preview,
+        synthetic_audiobook_isbn_reason_report,
+    )
+
+    root = effects.repository
+    if family == "field_effect_no_change":
+        decision = _qualified_no_change_decision(effects)
+        scheduler = ContinuousGuardedApplication(
+            root,
+            {("primary", "ebooks"): cast(GuardedFieldApplication, SimpleNamespace())},
+            {("primary", "ebooks"): SimpleNamespace()},
+            PersistedFieldEffectAuthority(root),
+            (("primary", "ebooks"),),
+            lambda: 10,
+            lambda *_: None,
+        )
+        assert scheduler.schedule() == 0
+        table, column, identity = (
+            "field_effect_no_changes",
+            "decision_id",
+            decision.decision_id,
+        )
+    else:
+        case_id, _ = publish_audiobook_preview(
+            root,
+            synthetic_audiobook_isbn_reason_report("conflict"),
+            ("isbn_form",),
+            selected_options={"isbn_form": "preserve_exact"},
+        )
+        root.persist_shadow_outcome(case_id, 12)
+        table, column, identity = "shadow_decision_outcomes", "review_case_id", case_id
+    before = root.field_effect_activity_page(
+        search=None,
+        event_type="all",
+        occurred_after=0,
+        page=1,
+        page_size=100,
+    )
+    assert any(event["record"]["source_kind"] == family for event in before["events"])
+    reader = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    facts = ActivityFactStore()
+    try:
+        reader.configure_activity_page_reader(facts)
+        assert (
+            reader.field_effect_activity_page(
+                search="no readable match",
+                event_type="all",
+                occurred_after=0,
+                page=1,
+                page_size=25,
+            )["total"]
+            == 0
+        )
+        snapshot = facts.snapshot()
+        assert snapshot is not None and any(key[0] == family for key in snapshot.facts)
+        columns = [
+            row[1] for row in root._connection.execute(f"PRAGMA table_info({table})")
+        ]
+        row = list(
+            root._connection.execute(
+                f"SELECT * FROM {table} WHERE {column}=?", (identity,)
+            ).fetchone()
+        )
+        if family == "field_effect_no_change":
+            row[columns.index("target_fingerprint")] = "f" * 64
+        else:
+            index = columns.index("document")
+            value = json.loads(row[index])
+            value["unexpected"] = True
+            row[index] = json.dumps(value, sort_keys=True, separators=(",", ":"))
+        schema = root._connection.execute("PRAGMA schema_version").fetchone()
+        root._connection.execute(
+            f"INSERT OR REPLACE INTO {table} VALUES ("
+            + ",".join("?" for _ in row)
+            + ")",
+            row,
+        )
+        root._connection.commit()
+        assert root._connection.execute("PRAGMA schema_version").fetchone() == schema
+        for source in (root, reader):
+            with pytest.raises(FieldEffectError, match="^persistence$"):
+                source.field_effect_activity_page(
+                    search="no readable match",
+                    event_type="all",
+                    occurred_after=0,
+                    page=1,
+                    page_size=25,
+                )
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "resolution_generation",
+        "resolution_library",
+        "fallback",
+        "missing_resolution",
+        "excluded_member",
+    ),
+)
+def test_configured_isbn_refusal_revalidates_exact_policy_lookup(
+    effects,  # noqa: F811
+    monkeypatch,
+    mutation,
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from tests.support.audiobook_reports import (
+        publish_audiobook_preview,
+        synthetic_audiobook_isbn_reason_report,
+    )
+
+    root = effects.repository
+    report = synthetic_audiobook_isbn_reason_report("conflict")
+    if mutation.startswith("resolution_"):
+        case_id, policy = publish_audiobook_preview(
+            root,
+            report,
+            ("isbn_form",),
+            selected_options={"isbn_form": "preserve_exact"},
+        )
+    else:
+        policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+        root.enter_shadow_preview(1)
+        root.publish(report, lambda: True)
+        proposal = evaluate_report(
+            report, policy.resolved_id, human_review_destinations(policy)
+        )
+        root.publish_proposal(proposal)
+        case_id = json.loads(root.admit_review_case(proposal))["review_case_id"]
+    outcome = json.loads(root.persist_shadow_outcome(case_id, 12))
+
+    def page(source, search=None):
+        return source.field_effect_activity_page(
+            search=search, event_type="all", occurred_after=0, page=1, page_size=100
+        )
+
+    assert any(
+        event["event_id"] == outcome["outcome_set_id"] + ":isbn"
+        for event in page(root)["events"]
+    )
+    reader = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    store = ActivityFactStore()
+    reader.configure_activity_page_reader(store)
+    try:
+        assert page(reader, "no readable match")["total"] == 0
+        snapshot = store.snapshot()
+        assert snapshot is not None
+        projected = []
+        original = reader._field_effect_activity._project_activity_facts
+
+        def project(candidates, maximum):
+            projected.append(candidates)
+            return original(candidates, maximum)
+
+        monkeypatch.setattr(
+            reader._field_effect_activity, "_project_activity_facts", project
+        )
+        if mutation == "excluded_member":
+            import os
+
+            # Supported inserts reject scalar members in the derived facts.
+            # A commit followed by raw-byte corruption still must retain the
+            # canonical query's exclusion, without an AttributeError.
+            canonical = open_repository(
+                effects.database_path, create=False, authority=root.authority
+            )
+            try:
+                member = next(
+                    value
+                    for value in outcome["outcomes"]
+                    if value["destination"] == "isbn"
+                )
+                encoded = json.dumps(
+                    member, sort_keys=True, separators=(",", ":")
+                ).encode()
+                root._connection.execute(
+                    "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
+                )
+                root._connection.commit()
+                raw = effects.database_path.read_bytes()
+                offset = raw.find(encoded)
+                assert offset >= 0 and raw.find(encoded, offset + 1) == -1
+                descriptor = os.open(effects.database_path, os.O_WRONLY)
+                try:
+                    os.pwrite(descriptor, b"0" + b" " * (len(encoded) - 1), offset)
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                assert page(reader, "no readable match") == page(
+                    canonical, "no readable match"
+                )
+                current = store.snapshot()
+                assert current is not None
+                assert (
+                    "isbn_refusal",
+                    outcome["outcome_set_id"] + ":isbn",
+                ) not in current.facts
+            finally:
+                canonical.close()
+            return
+        if mutation == "missing_resolution":
+            # The absent lookup remains a dependency; inserting the exact
+            # policy changes validation provenance without changing the page.
+            root._connection.execute(
+                "INSERT INTO metadata_policy_resolutions VALUES (?,?,?,?)",
+                (1, report.target.library, policy.resolved_id, policy.canonical_json),
+            )
+            root._connection.commit()
+            assert page(reader, "no readable match") == page(root, "no readable match")
+            assert projected == [
+                {("isbn_refusal", outcome["outcome_set_id"] + ":isbn")}
+            ]
+            projected.clear()
+            root._connection.execute(
+                "UPDATE metadata_policy_resolutions SET document='{}' WHERE generation=1"
+            )
+        elif mutation == "fallback":
+            root._connection.execute(
+                "INSERT OR REPLACE INTO metadata_policy_drafts VALUES (?,?)",
+                (outcome["policy_profile_id"], "{}"),
+            )
+        else:
+            column = (
+                "generation" if mutation == "resolution_generation" else "library_name"
+            )
+            value = (
+                outcome["policy_generation"] + 1
+                if column == "generation"
+                else "other-library"
+            )
+            root._connection.execute(
+                f"UPDATE metadata_policy_resolutions SET {column}=? WHERE generation=? AND library_name=?",
+                (value, outcome["policy_generation"], report.target.library),
+            )
+        root._connection.commit()
+        error_type, message = (
+            (MetadataReportError, "^shadow outcome persistence is invalid$")
+            if mutation.startswith("resolution_")
+            else (FieldEffectError, "^persistence$")
+        )
+        for source in (root, reader):
+            with pytest.raises(error_type, match=message):
+                page(source, "no readable match")
+        assert (
+            projected
+            and ("isbn_refusal", outcome["outcome_set_id"] + ":isbn") in projected[0]
+        )
+        if mutation != "fallback":
+            assert projected == [
+                {("isbn_refusal", outcome["outcome_set_id"] + ":isbn")}
+            ]
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("warm", (False, True))
+def test_configured_witness_utf8_failure_retains_query_scoped_canonical_admission(
+    tmp_path,
+    warm,
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from tests.support.activity_seed import _report, seed_activity
+
+    seeded = seed_activity(tmp_path)
+    root = seeded.repository
+    unrelated = _report("Unreferenced report", "no-event", "d", "e")
+    root.publish(unrelated, lambda: True)
+    reader = open_repository(
+        tmp_path / "activity.sqlite", create=False, authority=root.authority
+    )
+    reader.configure_activity_page_reader(ActivityFactStore())
+
+    def page(source):
+        return source.field_effect_activity_page(
+            search="no readable match",
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )
+
+    try:
+        if warm:
+            assert page(reader)["total"] == 0
+        columns = [
+            row[1]
+            for row in root._connection.execute("PRAGMA table_info(metadata_reports)")
+        ]
+        selections = [
+            "CAST(? AS TEXT)" if column == "library_name" else column
+            for column in columns
+        ]
+        root._connection.execute(
+            "INSERT OR REPLACE INTO metadata_reports SELECT "
+            + ",".join(selections)
+            + " FROM metadata_reports WHERE report_id=?",
+            (b"\x80", unrelated.report_id),
+        )
+        root._connection.commit()
+        assert page(root)["total"] == 0
+        assert page(reader) == page(root)
+        assert reader._field_effect_activity._activity_facts is None
+    finally:
+        reader.close()
+        root.close()

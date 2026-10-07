@@ -40,6 +40,7 @@ from mechanical_librarian.adapters.operational_evidence import (
     LocalTimingStore,
     SupportBundle,
 )
+from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
 from mechanical_librarian.adapters.persistence.provider_recovery import (
     SQLiteProviderRecoveryStore,
@@ -309,6 +310,7 @@ class _InstalledRepositoryTopology:
     def open(cls, database: Path) -> _InstalledRepositoryTopology:
         instance = cls()
         instance._database = database
+        instance.activity_facts = ActivityFactStore()
         instance.web_state_owner = open_repository(
             database, create=True, cross_thread=True, admission=OperationAdmission()
         )
@@ -331,7 +333,8 @@ class _InstalledRepositoryTopology:
             admission=self.web_state_owner.operation_admission,
             cross_thread=True,
         )
-        repository.configure_activity_page_reader()
+        repository.configure_activity_page_reader(self.activity_facts)
+        repository.initialize_activity_facts()
         return repository
 
     def open_action(self):

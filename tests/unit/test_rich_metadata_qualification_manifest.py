@@ -43,6 +43,7 @@ def test_current_records_match_runtime_and_frozen_permissions():
     assert [len(current[f]) for f in ("F19A", "F20", "F46")] == [12, 13, 76]
     displaced = {
         "F19A": {
+            "3f512f587f999ce675672686b03d96213bbd8afe44abdc2b17fe7aa8f2328bd9": 2,
             "b236b2612772f298c44e196a82e053a6b63e8eee05ea4c105bc262bdce0489ab": 2,
             "b0987ca2be0c2171545da8942b1646a99197e1315714e985b07049b637ca63b3": 2,
             "8a443c1c879ec69b64f8eef5ce4905042b570f265669411eda9ee8cddd404187": 2,
@@ -77,6 +78,7 @@ def test_current_records_match_runtime_and_frozen_permissions():
             "d5903b889fe5b457c7303e5b27d51677bcf798a11ed25bb637a4a7ae4eb5cd77": 2,
         },
         "F20": {
+            "938b9ce811802183145b92f4d45a8b61ef239b2e2cf042e49b408173842a4d92": 7,
             "5da9c325b2cacd183ceb83d342d07f22e835aeda435583716e14d13080533b52": 7,
             "013fd7173f7b748d900e9088a0955c857f1aeb3543fc630d1f2f792d6d8e1a59": 7,
             "814ad344e1579bf81e295a8c46b07000086bda409182747f43b232c5d8b476c1": 7,
@@ -111,6 +113,7 @@ def test_current_records_match_runtime_and_frozen_permissions():
             "28b95c60856b1c6a5f88b6e67f7cba9c55b215c10567eeb3b29d2a7e98233175": 7,
         },
         "F46": {
+            "c3865b28c6f2c86d1105d3fb8bd3c86d17479cad61363df04ce450ac0cbfa75b": 0,
             "73ffca05139a5c108a812f0d77692c5e8742f134d74ef3591d3d0f27d618adfa": 0,
             "c242735d3aa59e823ed9db00968828acd6a3a6a536c5b72d2ca4fbe644ddfd06": 0,
             "964c3311475bbd6f623656cc3385591fef2c8c9ca97d90f3cd7a6ac020c623b7": 0,
@@ -503,3 +506,24 @@ def test_refresh_changes_actual_imported_binding_not_decoy(tmp_path, family, dec
     module_path.write_text(f'# {constant} = "{expected}"\n' + source)
     with pytest.raises(ValueError, match="runtime authority binding drift"):
         records.verify(tmp_path)
+
+
+@pytest.mark.parametrize("family", ["F19A", "F20", "F46"])
+def test_activity_predecessor_producer_decisions_decode_without_current_authority(
+    family,
+):
+    fixture = json.loads(
+        (
+            ROOT / "tests/fixtures/activity-qualification-predecessor-decisions.json"
+        ).read_bytes()
+    )
+    assert fixture["source_sha"] == "43359510da9cc04aed874714728d1581801021e9"
+    assert len(fixture["documents"][family]) == 1
+    for document in fixture["documents"][family]:
+        decision = automatic.AutomaticDecision.from_json(document)
+        assert decision.to_json() == document
+        assert not automatic.qualification_manifest_is_current(
+            decision.policy_category,
+            decision.policy_option,
+            decision.qualification_manifest_sha256,
+        )

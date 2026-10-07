@@ -298,6 +298,107 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             page=1,
             page_size=25,
         )["events"]
+        # Current selected-value authority does not rewrite retained selection
+        # history or the verified effect through the same automatic decision.
+        from mechanical_librarian.adapters.persistence.activity_facts import (
+            ActivityFactStore,
+        )
+        from mechanical_librarian.application.continuous_field_effects import (
+            ContinuousGuardedApplication,
+        )
+
+        facts = ActivityFactStore()
+        reader = open_repository(database, create=False, authority=repository.authority)
+        reader.configure_activity_page_reader(facts)
+        try:
+            actual, canonical = (
+                ContinuousGuardedApplication(
+                    source,
+                    {},
+                    {},
+                    PersistedFieldEffectAuthority(source),
+                    ((report.target.connection, report.target.library),),
+                    lambda: 2000,
+                    lambda *_: None,
+                    activity_only=True,
+                )
+                for source in (reader, repository)
+            )
+            before = actual.activity(range_days=90)
+            assert before == canonical.activity(range_days=90)
+            assert any(event["state"] == "verified" for event in before["events"])
+            pointer = repository._connection.execute(
+                "SELECT * FROM current_cover_considerations WHERE review_case_id=?",
+                (automatic.review_case_id,),
+            ).fetchone()
+            assert pointer is not None
+            for change, parameters, restore, restore_parameters in (
+                (
+                    "DELETE FROM current_cover_considerations WHERE review_case_id=?",
+                    (automatic.review_case_id,),
+                    "INSERT INTO current_cover_considerations VALUES ("
+                    + ",".join("?" for _ in pointer)
+                    + ")",
+                    pointer,
+                ),
+                (
+                    "UPDATE metadata_policy_resolutions SET generation=generation+1 "
+                    "WHERE library_name=?",
+                    (report.target.library,),
+                    "UPDATE metadata_policy_resolutions SET generation=generation-1 "
+                    "WHERE library_name=?",
+                    (report.target.library,),
+                ),
+            ):
+                with patch.object(
+                    reader._field_effect_activity,
+                    "_project_activity_facts",
+                    wraps=reader._field_effect_activity._project_activity_facts,
+                ) as project:
+                    repository._connection.execute(change, parameters)
+                    repository._connection.commit()
+                    after = actual.activity(range_days=90)
+                    assert after == canonical.activity(range_days=90)
+                    project.assert_called_once()
+                    assert project.call_args.args[0] == {
+                        ("automatic_decision", automatic.decision_id)
+                    }
+                    assert [
+                        event
+                        for event in before["events"]
+                        if event["event_id"] != automatic.decision_id
+                    ] == [
+                        event
+                        for event in after["events"]
+                        if event["event_id"] != automatic.decision_id
+                    ]
+                repository._connection.execute(restore, restore_parameters)
+                repository._connection.commit()
+                assert actual.activity(range_days=90) == before
+            with patch.object(
+                reader._field_effect_activity,
+                "_project_activity_facts",
+                wraps=reader._field_effect_activity._project_activity_facts,
+            ) as project:
+                repository.record_cover_consideration_outcome(
+                    automatic.consideration_id, "owner_retry_prepared", 15
+                )
+                added = repository._connection.execute(
+                    "SELECT event_id FROM cover_consideration_events "
+                    "WHERE consideration_id=? AND kind='owner_retry_prepared'",
+                    (automatic.consideration_id,),
+                ).fetchone()[0]
+                refreshed = actual.activity(range_days=90)
+                assert refreshed == canonical.activity(range_days=90)
+                project.assert_called_once()
+                assert project.call_args.args[0] == {("cover_safeguard", added)}
+                repository.record_cover_consideration_outcome(
+                    automatic.consideration_id, "owner_retry_prepared", 15
+                )
+                assert actual.activity(range_days=90) == refreshed
+                project.assert_called_once()
+        finally:
+            reader.close()
         supervisor.stop()
         repository.close()
         reopened = open_repository(database)

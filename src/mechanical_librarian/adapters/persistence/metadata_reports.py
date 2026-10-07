@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import cast
 from urllib.parse import quote
 
+from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.binding import (
     _connect_bound,
     _LinuxDatabaseBinding,
@@ -940,10 +941,15 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             limit, include_events=include_events
         )
 
-    def configure_activity_page_reader(self) -> None:
+    def configure_activity_page_reader(
+        self, facts: ActivityFactStore | None = None
+    ) -> None:
         """Bound the independently opened Activity projection reader only."""
+        self._field_effect_activity.configure_activity_page_reader(facts)
 
-        self._field_effect_activity.configure_activity_page_reader()
+    def initialize_activity_facts(self) -> None:
+        """Admit initial readable history before this reader becomes ready."""
+        self._field_effect_activity.initialize_activity_facts()
 
     def field_effect_activity_page(
         self,

@@ -318,6 +318,9 @@ def test_captured_predecessor_closes_only_after_request_release() -> None:
 def test_real_activity_generations_keep_root_and_successor_usable(tmp_path):
     import threading
 
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
     from mechanical_librarian.adapters.persistence.metadata_reports import (
         open_repository,
     )
@@ -334,15 +337,17 @@ def test_real_activity_generations_keep_root_and_successor_usable(tmp_path):
         admission=root_admission,
     )
     sessions = SQLiteReviewSessionRepository.open(tmp_path / "sessions.sqlite3")
+    facts = ActivityFactStore()
     try:
         with (
             activity_generation(
-                root, tmp_path / "application.sqlite3", sessions
+                root, tmp_path / "application.sqlite3", sessions, facts=facts
             ) as old,
             activity_generation(
-                root, tmp_path / "application.sqlite3", sessions
+                root, tmp_path / "application.sqlite3", sessions, facts=facts
             ) as successor,
         ):
+            assert facts.snapshot() is not None
             projection = old._activity_projection
             assert projection is not None
             local = projection._operation_admission

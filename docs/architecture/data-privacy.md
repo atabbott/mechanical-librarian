@@ -177,7 +177,7 @@ media, covers and recovery bytes are categorically excluded.
 
 ## Authenticated Activity history
 
-The private no-store Activity history retains and returns only one bounded page
+The private no-store Activity history returns only one bounded page
 of existing ledger facts: opaque event/work identities, configured logical
 library and destination names, state, bounded timestamp, a bounded readable
 report title where it is already retained, and the exact before/after field
@@ -195,3 +195,8 @@ is append-only; count/page consistency applies only to its one read snapshot,
 and retention remains the existing record-retention policy. Tests cover bounds,
 stored-row corruption, source-specific evidence, current-state recovery, and
 authenticated private-cache behavior.
+
+The process may also retain up to 64 MiB of serialized readable Activity facts,
+search text and source/dependency witnesses. This private in-memory store is not
+an export or another durable ledger. It retains no domain report objects between
+requests and disappears with its runtime owner; canonical retention is unchanged.

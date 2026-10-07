@@ -4382,6 +4382,7 @@ def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
         elapsed = time.monotonic() - started
         cause = raised.value.__cause__
         assert isinstance(cause, sqlite3.OperationalError)
+        assert reader_c._field_effect_activity._activity_facts is not None
         activity_result.update(
             {
                 "elapsed": elapsed,
@@ -4546,8 +4547,10 @@ def test_activity_transitions_retry_a_short_delete_journal_convoy(
     assert [event["state"] for event in transitions] == ["planned"]
 
 
+@pytest.mark.parametrize("configured", [False, True])
 def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_once(
     effects: _EffectEnvironment,
+    configured: bool,
 ) -> None:
     """A miss stamps its snapshot; a hit performs only one current check."""
 
@@ -4558,7 +4561,8 @@ def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_on
         authority=effects.repository.authority,
         cross_thread=True,
     )
-    reader.configure_activity_page_reader()
+    if configured:
+        reader.configure_activity_page_reader()
     projection = reader._field_effect_activity
     original_revision = projection._activity_projection_revision
     original_page = projection._field_effect_activity_page_uncached
@@ -4589,10 +4593,20 @@ def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_on
                 page=1,
                 page_size=25,
             )
-            assert {
-                key: value.to_json()
-                for key, value in result.pop("validated_reports").items()
-            } == result["report_documents"]
+            if configured:
+                from mechanical_librarian.domain.activity_records import (
+                    ReadableActivityEvent,
+                )
+
+                assert result["report_documents"] == {}
+                assert all(
+                    type(event) is ReadableActivityEvent for event in result["events"]
+                )
+            else:
+                assert {
+                    key: value.to_json()
+                    for key, value in result.pop("validated_reports").items()
+                } == result["report_documents"]
             assert (
                 reader.field_effect_activity_page(
                     search=None,
@@ -4607,7 +4621,9 @@ def test_activity_projection_stamps_inside_snapshot_and_validates_a_cache_hit_on
             reader.close()
     assert result["events"]
     assert page_calls == [1]
-    assert revision_transactions == [True, False]
+    assert revision_transactions == (
+        [True, True, True] if configured else [True, False]
+    )
 
 
 def test_activity_projection_never_retries_a_nonbusy_error(
@@ -7459,3 +7475,132 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
             assert not effects.target._effects
         finally:
             repository.close()
+
+
+@pytest.mark.parametrize("fresh_borrower", [False, True])
+def test_activity_facts_refuse_commit_followed_by_raw_document_corruption(
+    tmp_path, fresh_borrower
+):
+    import os
+
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from tests.support.owner_responsiveness import OwnerResponsivenessFixture
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 10)
+    facts = ActivityFactStore()
+    reader = open_repository(
+        fixture.database, create=False, authority=fixture.repository.authority
+    )
+    query = dict(
+        search="no readable match",
+        event_type="all",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+    try:
+        reader.configure_activity_page_reader(facts)
+        reader.field_effect_activity_page(**query)
+        assert facts.snapshot() is not None
+        if fresh_borrower:
+            reader.close()
+        fixture.repository._connection.execute(
+            "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
+        )
+        fixture.repository._connection.commit()
+        document = (
+            fixture.repository._connection.execute(
+                "SELECT document FROM cover_consideration_events LIMIT 1"
+            )
+            .fetchone()[0]
+            .encode()
+        )
+        raw = fixture.database.read_bytes()
+        offset = raw.find(document)
+        assert offset >= 0 and raw.find(document, offset + 1) == -1
+        descriptor = os.open(fixture.database, os.O_WRONLY)
+        try:
+            os.pwrite(descriptor, b"!", offset)
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        if fresh_borrower:
+            reader = open_repository(
+                fixture.database, create=False, authority=fixture.repository.authority
+            )
+            reader.configure_activity_page_reader(facts)
+        with pytest.raises(FieldEffectError, match="persistence"):
+            reader.field_effect_activity_page(**query)
+    finally:
+        reader.close()
+        fixture.close()
+
+
+def test_activity_facts_witness_document_sql_type_before_nonmatching_search(tmp_path):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from tests.support.owner_responsiveness import OwnerResponsivenessFixture
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 1)
+    reader = open_repository(
+        fixture.database, create=False, authority=fixture.repository.authority
+    )
+    facts = ActivityFactStore()
+    query = dict(
+        search="no readable match",
+        event_type="all",
+        occurred_after=0,
+        page=1,
+        page_size=25,
+    )
+    try:
+        reader.configure_activity_page_reader(facts)
+        reader.field_effect_activity_page(**query)
+        assert facts.snapshot() is not None
+        connection = fixture.repository._connection
+        columns = [
+            row[1]
+            for row in connection.execute(
+                "PRAGMA table_info(cover_consideration_events)"
+            )
+        ]
+        values = list(
+            connection.execute(
+                "SELECT * FROM cover_consideration_events LIMIT 1"
+            ).fetchone()
+        )
+        document = columns.index("document")
+        values[document] = values[document].encode()
+        schema = connection.execute("PRAGMA schema_version").fetchone()
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute(
+            "INSERT OR REPLACE INTO cover_consideration_events VALUES("
+            + ",".join("?" for _ in values)
+            + ")",
+            values,
+        )
+        connection.commit()
+        assert connection.execute("PRAGMA schema_version").fetchone() == schema
+        with pytest.raises(FieldEffectError, match="persistence"):
+            reader.field_effect_activity_page(**query)
+    finally:
+        reader.close()
+        fixture.close()
+
+
+def test_activity_witness_encoding_distinguishes_exact_sqlite_scalar_types():
+    from mechanical_librarian.adapters.persistence.activity_facts import _encoded
+
+    connection = sqlite3.connect(":memory:")
+    try:
+        values = [
+            connection.execute("SELECT ?", (value,)).fetchone()
+            for value in (None, 1, 1.0, "1", b"1", -0.0, 0.0)
+        ]
+        assert values[1] == values[2]  # Python equality cannot be the witness.
+        assert len({_encoded(value) for value in values}) == len(values)
+    finally:
+        connection.close()
