@@ -19,6 +19,7 @@ import { fieldLabel } from '../labels'
 import { destinationReason, readWriteConsent } from '../writeConsent'
 import {
   activityRoute,
+  normalizeActivitySearch,
   PreparationNotice,
   useLiveStream,
   usePreparation,
@@ -292,6 +293,9 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     if (!resolvedLocation) return
     const identity = locationIdentity(resolvedLocation)
     const current = search.q ?? ''
+    // Route search and resolved location can publish in separate renders.
+    // Acknowledge only matching queries, preserving a newer pending draft.
+    if ((normalizeActivitySearch(resolvedLocation.search).q ?? '') !== current) return
     const external = externalTarget.current === identity
     if (external) {
       externalTarget.current = null

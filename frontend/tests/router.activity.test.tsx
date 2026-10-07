@@ -1919,6 +1919,62 @@ describe('Activity route', () => {
     },
   )
 
+  it('preserves the next query debounce when the prior response is acknowledged', async () => {
+    let resolveFirst!: (value: ActivityView) => void
+    const view = (search: ActivitySearch) =>
+      activity({
+        ledger: {
+          event_type: search.eventType,
+          page: search.page,
+          page_count: 1,
+          page_size: search.pageSize,
+          query: search.q ?? null,
+          range_days: search.rangeDays,
+          total: search.q === 'ab' ? 0 : 1,
+        },
+      })
+    const getActivity = vi.fn((search: ActivitySearch) =>
+      search.q === 'a'
+        ? new Promise<ActivityView>((resolve) => {
+            resolveFirst = resolve
+          })
+        : Promise.resolve(view(search)),
+    )
+    renderRoute('/activity', { ...createHttp(), getActivity })
+    await screen.findByRole('heading', { name: 'Activity and recovery' })
+    const query = screen.getByRole('searchbox', { name: 'Search activity' })
+    query.focus()
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(query, { target: { value: 'a' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(150)
+      })
+      expect(resolveFirst).toBeDefined()
+      fireEvent.change(query, { target: { value: 'ab' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(50)
+        resolveFirst(view({ q: 'a', eventType: 'all', page: 1, pageSize: 25, rangeDays: 30 }))
+        await vi.advanceTimersByTimeAsync(1)
+      })
+      expect(query).toHaveValue('ab')
+      expect(query).toHaveFocus()
+      expect(getActivity.mock.calls.some(([search]) => search.q === 'ab')).toBe(false)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100)
+      })
+      expect(getActivity).toHaveBeenLastCalledWith(
+        expect.objectContaining({ q: 'ab', page: 1 }),
+        expect.anything(),
+        'foreground',
+      )
+      expect(query).toHaveValue('ab')
+      expect(query).toHaveFocus()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('keeps slow sequential search editing focused when a prior dropdown replacement settles late', async () => {
     const deferred = new Map<string, { resolve: (value: ActivityView) => void }>()
     const http: ReviewHttp = {
