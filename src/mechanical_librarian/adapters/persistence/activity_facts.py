@@ -330,16 +330,26 @@ class ActivityFactStore:
             # Retain each forward binding once; discard this temporary traversal
             # index before parsing any affected canonical candidates.
             reverse: dict[Key, set[Key]] = defaultdict(set)
+            currentness: dict[Key, set[Candidate]] = defaultdict(set)
             for nodes in (witnesses, previous.witnesses):
                 for key, witness in nodes.items():
                     for dependency in witness.dependencies:
-                        reverse[dependency].add(key)
+                        if dependency[0] in {
+                            "current_cover_considerations",
+                            "resolution_identity",
+                        }:
+                            # These mutable bindings affect automatic selected-
+                            # value disclosure, not retained selection lineage.
+                            currentness[dependency].update(witness.candidates)
+                        else:
+                            reverse[dependency].add(key)
                     reverse[key].update(witness.aliases)
             affected = set()
             pending = deque(changed)
             reached = set(changed)
             while pending:
                 key = pending.popleft()
+                affected.update(currentness.get(key, ()))
                 for nodes in (witnesses, previous.witnesses):
                     reached_witness = nodes.get(key)
                     if reached_witness is not None:
@@ -348,7 +358,7 @@ class ActivityFactStore:
                     if dependent not in reached:
                         pending.append(dependent)
                         reached.add(dependent)
-            del reverse
+            del reverse, currentness
             facts = {
                 key: value
                 for key, value in previous.facts.items()
