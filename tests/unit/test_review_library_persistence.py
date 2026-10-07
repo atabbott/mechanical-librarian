@@ -934,6 +934,116 @@ def test_cover_retry_allows_a_successor_after_stale_retirement() -> None:
     assert successor == application.retry_cover_consideration("review_case_" + "e" * 64)
 
 
+def test_attention_search_matches_once_per_package_before_field_expansion(tmp_path):
+    repository = open_repository(tmp_path / "application.sqlite3")
+    report = _report()
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    repository.admit_review_case(proposal)
+    assert (
+        repository._connection.execute(
+            "SELECT count(*) FROM review_case_field_facts"
+        ).fetchone()[0]
+        > 10
+    )
+    item_calls = 0
+
+    def casefold(value: str) -> str:
+        nonlocal item_calls
+        if value == report.target.item:
+            item_calls += 1
+        return value.casefold()
+
+    repository._connection.create_function(
+        "ml_casefold", 1, casefold, deterministic=True
+    )
+    browser = BrowseReviewLibrary(repository)
+    try:
+        negative = browser.attention(search="absent-search-term", limit=10, cursor=None)
+        assert negative["items"] == []
+        assert negative["total"] == 0
+        assert item_calls == 1
+        positive = browser.attention(search=report.target.item, limit=10, cursor=None)
+        assert positive["total"] == 1
+        assert len(positive["items"]) == 1
+        assert item_calls == 2
+        cleared = browser.attention(search=None, limit=10, cursor=None)
+        assert cleared["items"] == positive["items"]
+        assert cleared["total"] == positive["total"]
+        assert cleared["query"] is None
+    finally:
+        repository.close()
+
+
+def test_attention_search_membership_uses_full_package_key(tmp_path):
+    repository = open_repository(tmp_path / "application.sqlite3")
+    report = _report()
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(report)
+    repository.publish_proposal(proposal)
+    repository.admit_review_case(proposal)
+    browser = BrowseReviewLibrary(repository)
+    try:
+        expected = browser.attention(search="alias-only", limit=10, cursor=None)
+        assert expected["total"] == 0
+        repository._connection.execute(
+            "INSERT INTO current_review_packages "
+            "SELECT connection_name,library_name,'alias-only',proposal_set_id,"
+            "report_id,review_case_id,checkpoint,outcome FROM current_review_packages"
+        )
+        repository._connection.commit()
+        matched = browser.attention(search="alias-only", limit=10, cursor=None)
+        assert matched["total"] == 1
+        assert len(matched["items"]) == 1
+        assert (
+            repository.read_current_attention_page("alias-only", 10, 0).rows[0][3] == 1
+        )
+        assert (
+            browser.attention(search=report.target.item, limit=10, cursor=None)["total"]
+            == 1
+        )
+    finally:
+        repository.close()
+
+
+@pytest.mark.parametrize("pointer", ["report_id", "proposal_set_id"])
+def test_attention_search_preserves_malformed_pointer_refusal(tmp_path, pointer):
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+    from mechanical_librarian.application.review_web import ReviewWebError
+    from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
+
+    repository = open_repository(tmp_path / "application.sqlite3")
+    first = _report()
+    second = _report(title="Replacement", content_digest="c")
+    for report in (first, second):
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        repository.publish_proposal(proposal)
+        repository.admit_review_case(proposal)
+    first_proposal = evaluate_report(first)
+    replacement = (
+        first.report_id if pointer == "report_id" else first_proposal.proposal_set_id
+    )
+    repository._connection.execute(
+        f"UPDATE current_review_packages SET {pointer}=?", (replacement,)
+    )
+    repository._connection.commit()
+    try:
+        with pytest.raises(ReviewWebError) as caught:
+            BrowseReviewLibrary(repository).attention(
+                search="Replacement", limit=10, cursor=None
+            )
+        assert caught.value.code == "unavailable"
+        cause = caught.value.__cause__
+        assert isinstance(cause, MetadataReportError)
+        assert str(cause) == "review attention is unavailable"
+        assert isinstance(cause.__cause__, ReviewBrowseValueError)
+        assert str(cause.__cause__) == "review browse lineage disagrees"
+    finally:
+        repository.close()
+
+
 def test_sqlite_library_and_attention_queries_are_current_and_bounded() -> None:
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "application.sqlite3"

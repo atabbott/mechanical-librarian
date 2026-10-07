@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Library and Attention search avoid repeating package matching for every review
+  field, keeping searches responsive while preserving current results, counts,
+  ordering, and unavailable-state checks (#1160).
+
 - Connection checks refuse promptly while startup recovery is incomplete or has
   failed. After recovery, an explicit retry preserves the connection result and
   existing review history (#1153).

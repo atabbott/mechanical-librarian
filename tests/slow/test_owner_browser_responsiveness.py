@@ -172,6 +172,10 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     cold_sign_in_destination: () => heading('Works'),
                                     warm_sign_in_destination: () => exact('.library-works-heading>span', '2300 total'),
                                     search: () => exact('.library-works-heading>span', '2070 total'),
+                                    negative_search: () => new URL(location.href).searchParams.get('q') === 'absent-search-term'
+                                        && exact('p', 'No exact-current works match this search and lens.'),
+                                    clear_search: () => !new URL(location.href).searchParams.has('q')
+                                        && exact('.library-works-heading>span', '2300 total'),
                                     pagination: () => exact('span', 'Page 2'),
                                     selected_detail: () => heading('Which cover should this work use?'),
                                     choice_confirmation: () => heading('Review complete'),
@@ -266,6 +270,29 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                                     ).to_be_visible(),
                                 )
                                 search = page.get_by_role("searchbox")
+                                measured(
+                                    "negative_search",
+                                    lambda search=search: search.fill(
+                                        "absent-search-term"
+                                    ),
+                                    lambda page=page: expect(
+                                        page.get_by_text(
+                                            "No exact-current works match this search and lens.",
+                                            exact=True,
+                                        )
+                                    ).to_be_visible(),
+                                )
+                                assert parse_qs(urlsplit(page.url).query)["q"] == [
+                                    "absent-search-term"
+                                ]
+                                measured(
+                                    "clear_search",
+                                    lambda search=search: search.fill(""),
+                                    lambda page=page: expect(
+                                        page.get_by_text("2300 total", exact=True)
+                                    ).to_be_visible(),
+                                )
+                                assert "q" not in parse_qs(urlsplit(page.url).query)
                                 measured(
                                     "search",
                                     lambda search=search: search.fill(
