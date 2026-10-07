@@ -8,6 +8,12 @@
 
 ## Unreleased
 
+- Preserve acquired current covers when metadata providers exhaust the shared
+  deadline, and restore supported declared EPUB covers in validated archives
+  containing directory entries. Timeout labels distinguish requests that never
+  started from attempted reads; owner confirmation and currentness guards remain
+  unchanged (#1156).
+
 - Clarify audiobook evidence-only outcomes and conditional retry guidance (#1155).
 
 - Activity reuses validated readable history across runtime generations, keeping

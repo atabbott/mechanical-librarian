@@ -932,6 +932,14 @@ catalogue refresh, fresh manifest creation, or supported report regeneration.
 This is the narrower runtime application of ADR-0013's repository-wide
 pre-release clean-schema rule; it does not limit that rule to database state.
 
+Cover acquisition reads the declared incumbent before provider dispatch inside
+the existing single aggregate window (#1156). Expired acquisition starts no
+request; known terminal descriptors precede pacing and transport. EPUB directory
+entries are excluded from file identity matching only after unchanged archive
+validation. Child wall timeout and cancellation retain process/pipe cleanup.
+Final target/media/digest currentness, admission caps, default-off automatic
+application and explicit owner authority remain unchanged.
+
 ### The contained cover observer
 
 There is no generic model-selected write authority and no generic reviewer

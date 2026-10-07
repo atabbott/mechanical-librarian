@@ -160,12 +160,16 @@ def read_declared_cover(descriptor: int, expected_digest: str) -> DeclaredEpubCo
             value["media_type"],
             data,
         )
+    except subprocess.TimeoutExpired:
+        return DeclaredEpubCover(
+            cover_source_id(CoverSourceKind.EPUB, "timeout"),
+            CoverSourceState.TIMEOUT,
+        )
     except (
         OSError,
         ValueError,
         KeyError,
         json.JSONDecodeError,
-        subprocess.TimeoutExpired,
     ):
         return DeclaredEpubCover(
             cover_source_id(CoverSourceKind.EPUB, "invalid"),

@@ -942,7 +942,14 @@ class _IsolatedEpubInspector:
                 assert declared.state is not None
                 covers = (
                     CoverSource(
-                        declared.source_id, CoverSourceKind.EPUB, declared.state
+                        declared.source_id,
+                        CoverSourceKind.EPUB,
+                        declared.state,
+                        timeout_scope=(
+                            "attempted"
+                            if declared.state is CoverSourceState.TIMEOUT
+                            else None
+                        ),
                     ),
                 )
             return InspectionResult(
@@ -1456,12 +1463,10 @@ class _CoverEvidenceObserver:
         self._artifacts = artifacts
         self._providers = {value.name: value for value in providers}
 
-    def observe(
+    def observe_current(
         self,
         target: TargetSnapshot,
-        providers: tuple[ProviderObservation, ...],
         local_sources: tuple[CoverSource, ...],
-        descriptors: tuple[ProviderCoverDescriptor, ...] = (),
         aggregate_deadline: float | None = None,
     ) -> tuple[CoverSource, ...]:
         now = time.monotonic()
@@ -1473,12 +1478,18 @@ class _CoverEvidenceObserver:
                 CoverSourceKind.ABS,
                 CoverSourceState.ABSENT,
             )
-            return (
-                source,
-                *local_sources,
-                *self._provider_covers(providers, descriptors, deadline=deadline),
-            )
+            return (source, *local_sources)
         source_id = cover_source_id(CoverSourceKind.ABS, target.cover.identity)
+        if time.monotonic() >= aggregate:
+            return (
+                CoverSource(
+                    source_id,
+                    CoverSourceKind.ABS,
+                    CoverSourceState.TIMEOUT,
+                    timeout_scope="not_started_due_to_aggregate_deadline",
+                ),
+                *local_sources,
+            )
         try:
             original = self._target.read_cover(
                 target.cover, deadline=deadline.aggregate_deadline
@@ -1529,8 +1540,20 @@ class _CoverEvidenceObserver:
             source = CoverSource(
                 source_id, CoverSourceKind.ABS, CoverSourceState.UNAVAILABLE
             )
+        return (source, *local_sources)
+
+    def observe(
+        self,
+        target: TargetSnapshot,
+        providers: tuple[ProviderObservation, ...],
+        local_sources: tuple[CoverSource, ...],
+        descriptors: tuple[ProviderCoverDescriptor, ...] = (),
+        aggregate_deadline: float | None = None,
+    ) -> tuple[CoverSource, ...]:
+        now = time.monotonic()
+        aggregate = now + 60.0 if aggregate_deadline is None else aggregate_deadline
+        deadline = CoverDeadline(aggregate, min(now + 20.0, aggregate))
         return (
-            source,
             *local_sources,
             *self._provider_covers(providers, descriptors, deadline=deadline),
         )
@@ -1548,18 +1571,6 @@ class _CoverEvidenceObserver:
         results: list[CoverSource] = []
         for provider in sorted(admitted):
             values = admitted[provider]
-            if time.monotonic() >= deadline.aggregate_deadline:
-                results.extend(
-                    CoverSource(
-                        value.source_id,
-                        value.kind,
-                        CoverSourceState.TIMEOUT,
-                        timeout_scope="not_started_due_to_aggregate_deadline",
-                        provenance=value.provenance,
-                    )
-                    for value in values
-                )
-                continue
             for value in values:
                 results.append(self._remote(value, deadline))
         return (*results, *truncations)
@@ -1693,6 +1704,14 @@ class _CoverEvidenceObserver:
                 source_id,
                 kind,
                 CoverSourceState.ABSENT,
+                provenance=descriptor.provenance,
+            )
+        if time.monotonic() >= deadline.aggregate_deadline:
+            return CoverSource(
+                source_id,
+                kind,
+                CoverSourceState.TIMEOUT,
+                timeout_scope="not_started_due_to_aggregate_deadline",
                 provenance=descriptor.provenance,
             )
         try:

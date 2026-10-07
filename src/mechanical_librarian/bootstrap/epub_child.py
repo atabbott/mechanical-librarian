@@ -258,9 +258,10 @@ def _selected_cover(
                 and item.resource_identity == values[0]
             ]
             names = [
-                name
-                for name in archive.namelist()
-                if epub_resource_identity(name) == values[0]
+                info.filename
+                for info in archive.infolist()
+                if not info.is_dir()
+                and epub_resource_identity(info.filename) == values[0]
             ]
             if len(media) != 1 or len(names) != 1:
                 return {"state": "invalid_declaration"}, None
