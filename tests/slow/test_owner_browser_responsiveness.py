@@ -6,12 +6,15 @@ import json
 import math
 import re
 import statistics
+import sys
 import time
+from collections import deque
 from contextlib import closing, nullcontext
+from itertools import count
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from playwright.sync_api import expect, sync_playwright
+from playwright.sync_api import Request, expect, sync_playwright
 from scripts.verify_playwright_browser import verify_playwright_browser
 
 from tests.support.owner_responsiveness import running_owner_fixture
@@ -26,6 +29,17 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
     preparation_active: list[bool] = []
     external_actors: list[dict[str, object]] = []
     decision_subjects: set[str] = set()
+    request_ids = count(1)
+
+    def observe_activity(kind, request, status=None):
+        if urlsplit(request.url).path != "/api/v1/activity":
+            return
+        if kind == "request":
+            outstanding[request] = (next(request_ids), time.monotonic())
+        identity, began = outstanding.get(request, (0, time.monotonic()))
+        recent.append((kind, identity, round(time.monotonic() - began, 3), status))
+        if kind in {"finished", "abort"}:
+            outstanding.pop(request, None)
 
     def receipt():
         return {
@@ -142,6 +156,46 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
         except Exception as error:
             failure = type(error).__name__
             elapsed = (time.perf_counter() - started) * 1000
+            try:
+                readers = (
+                    fixture.repository,
+                    fixture.application._activity_projection._repository,
+                )
+                note = {
+                    "schema": "owner-browser-failure-v1",
+                    "at": round(time.monotonic(), 3),
+                    "cold": cold,
+                    "sample": len(samples.get(name, [])),
+                    "action": name,
+                    "route": urlsplit(page.url).path,
+                    "query_keys": sorted(parse_qs(urlsplit(page.url).query)),
+                    "loading_activity": page.get_by_role(
+                        "heading", name="Loading activity…", exact=True
+                    ).count(),
+                    "outstanding": [
+                        (identity, round(time.monotonic() - began, 3))
+                        for identity, began in list(outstanding.values())[:8]
+                    ],
+                    "recent": list(recent),
+                    "admission": [
+                        {
+                            "waiting": len(reader.operation_admission._waiting),
+                            "active": reader.operation_admission._active is not None,
+                        }
+                        for reader in readers
+                    ],
+                    "threads": sorted(
+                        {
+                            frame.f_code.co_name
+                            for frame in sys._current_frames().values()
+                        }
+                    )[:12],
+                }
+                error.add_note(json.dumps(note, sort_keys=True))
+            except Exception as diagnostic_error:
+                error.add_note(
+                    "owner-browser-failure-v1: " + type(diagnostic_error).__name__
+                )
             raise
         finally:
             record(
@@ -161,6 +215,28 @@ def test_complete_cover_rendered_owner_journey(tmp_path: Path) -> None:
                     ) as context:
                         page = context.new_page()
                         page.set_default_timeout(60000)
+                        outstanding: dict[Request, tuple[int, float]] = {}
+                        recent: deque[tuple[str, int, float, int | None]] = deque(
+                            maxlen=8
+                        )
+                        page.on(
+                            "request",
+                            lambda request: observe_activity("request", request),
+                        )
+                        page.on(
+                            "response",
+                            lambda response: observe_activity(
+                                "response", response.request, response.status
+                            ),
+                        )
+                        page.on(
+                            "requestfinished",
+                            lambda request: observe_activity("finished", request),
+                        )
+                        page.on(
+                            "requestfailed",
+                            lambda request: observe_activity("abort", request),
+                        )
                         page.add_init_script("""
                             (() => {
                                 const visible = element => element.getClientRects().length > 0;
