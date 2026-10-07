@@ -62,6 +62,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.owner_settings import PROVIDER_LABELS
 from mechanical_librarian.domain.proposal_set import (
+    audiobook_review_scope,
     canonical_target_fields,
 )
 from mechanical_librarian.domain.review_browse import browse_report
@@ -791,8 +792,9 @@ class InspectCurrentReviewCase:
                 # were read from, never from a second source.
                 "media_health": _media_health(report),
                 "recording_identity_basis": recording_identity_basis(report),
+                "audiobook_review_scope": audiobook_review_scope(report),
                 "review_case_id": case.review_case_id,
-                "schema_version": "review-case-detail-v4",
+                "schema_version": "review-case-detail-v5",
                 # Read models never learn write authority. The composition root
                 # stamps the truth before the view leaves the application, and
                 # the default keeps a surface that never asks honest.
@@ -1697,6 +1699,7 @@ def _report_detail(
         # already published and nothing was rebuilt to obtain it.
         "media_health": _media_health(recorded),
         "recording_identity_basis": recording_identity_basis(recorded),
+        "audiobook_review_scope": audiobook_review_scope(recorded),
         # What every configured provider was asked, and how each ended.
         "provider_sources": _provider_outcomes(recorded),
         # What the admitted candidates stated, under the same ceiling and the
@@ -1704,7 +1707,7 @@ def _report_detail(
         "provider_evidence": provider_claims[:_EVIDENCE_CEILING],
         "provider_evidence_truncated": len(provider_claims) > _EVIDENCE_CEILING,
         "report_id": report["report_id"],
-        "schema_version": "review-report-detail-v4",
+        "schema_version": "review-report-detail-v5",
         "title": _report_title(report),
     }
 

@@ -19,6 +19,9 @@ from mechanical_librarian.application.cover_packet_semantics import (
     normalize_provenance,
     validate_cover_preview,
 )
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.cover_evidence import (
     PREVIEW_VARIANT,
     CoverSource,
@@ -93,6 +96,8 @@ def prepare_cover_packet(
 ) -> PreparedCoverPacket:
     """Project exact report-bound previews into one deterministic private packet."""
     report = MetadataReport.from_json(report_document)
+    if report.audio is not None and not admitted_audiobook_identity(report):
+        raise ValueError("cover packet requires recording admission")
     retrieved = tuple(
         source
         for source in report.cover_sources

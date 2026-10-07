@@ -2339,7 +2339,7 @@ def test_an_audiobooks_recorded_evidence_is_reachable_from_the_library(
 
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert body["schema_version"] == "review-report-detail-v4"
+    assert body["schema_version"] == "review-report-detail-v5"
     assert (body["connection"], body["library"], body["item"]) == (
         "primary",
         "ebooks",
@@ -2410,7 +2410,7 @@ def test_a_recordings_media_health_reaches_the_owner_with_its_bound(
 
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["schema_version"] == "review-report-detail-v4"
+    assert body["schema_version"] == "review-report-detail-v5"
     assert len(body["media_health"]) == 1
     stated = body["media_health"][0]
     assert stated["kind"] == "runtime_short_of_provider"
@@ -2867,7 +2867,7 @@ def test_chapter_runtime_admission_is_attributed_in_case_and_report(
     basis = response.json()["recording_identity_basis"]
     assert (basis is None) is omitted
     assert _report_detail(report.to_data(), report)["recording_identity_basis"] == basis
-    assert response.json()["schema_version"] == "review-case-detail-v4"
+    assert response.json()["schema_version"] == "review-case-detail-v5"
     if basis is not None:
         assert basis == {
             "basis": "chapter_runtime_and_structure",
@@ -2992,13 +2992,96 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
         ("isbn_form",),
         selected_options={"isbn_form": "preserve_exact"},
     )
+    password = tmp_path / "owner.hash"
+    password.write_text(PasswordHasher().hash("correct horse"))
+    password.chmod(0o600)
+    app = create_transport_test_app(
+        repository,
+        ReviewWebConfiguration(
+            tls_certificate_file="/synthetic/review.crt",
+            tls_private_key_file="/synthetic/review.key",
+            canonical_origin="https://review.test",
+            owner_password_hash_file=str(password),
+            session_lifetime_seconds=600,
+        ),
+        clock=lambda: 10,
+    )
+    if shape == "unavailable":
+        from mechanical_librarian.application.review_web import _report_detail
+        from mechanical_librarian.domain.audiobook_corroboration import (
+            admitted_audiobook_identity,
+        )
+
+        assert not admitted_audiobook_identity(report)
+        assert case_id is None
+        recorded = _report_detail(report.to_data(), report)
+        assert recorded["audiobook_review_scope"] is None
+        assert recorded["recording_identity_basis"] is None
+        assert {source["status"] for source in recorded["provider_sources"]} == {
+            "no_match",
+            "unavailable",
+        }
+        assert not any(
+            claim.kind is ClaimKind.ISBN
+            for provider in report.providers
+            for candidate in (
+                *provider.candidates,
+                *provider.recording_lookup_candidates,
+            )
+            for claim in candidate.claims
+        )
+        assert repository._connection.execute(
+            "SELECT count(*) FROM human_decisions"
+        ).fetchone() == (0,)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+        with TestClient(app, base_url="https://review.test") as client:
+            assert (
+                client.post(
+                    "/api/v1/session/login",
+                    json={"password": "correct horse"},
+                    headers={"Origin": "https://review.test"},
+                ).status_code
+                == 200
+            )
+            response = client.get(
+                "/api/v1/library/report",
+                params={
+                    "connection": report.target.connection,
+                    "library": report.target.library,
+                    "item": report.target.item,
+                },
+            )
+            assert response.status_code == 200
+            assert response.json()["audiobook_review_scope"] is None
+            assert {
+                source["status"] for source in response.json()["provider_sources"]
+            } == {"no_match", "unavailable"}
+        repository.close()
+        return
     repository.persist_shadow_outcome(case_id, 4)
     before = repository.get_review_case_decisions(case_id)
     inspector = InspectCurrentReviewCase(repository)
     detail = inspector.run(case_id)
     for field in detail["fields"]:
-        if field["destination"] in {"isbn", "asin"}:
+        if field["destination"] == "isbn":
             assert field["proposed_values"] == []
+            assert field["automatic_decision"] is None
+        if field["destination"] == "asin":
+            assert {value["value"] for value in field["proposed_values"]} == {
+                "B000000001",
+                "B000000002",
+            }
+            assert set(field["provenance"]) <= {
+                claim.reference
+                for provider in report.providers
+                for candidate in provider.candidates
+                for claim in candidate.claims
+                if claim.kind is ClaimKind.ASIN
+                and claim.value in {"B000000001", "B000000002"}
+            }
+            assert field["provenance"]
             assert field["automatic_decision"] is None
     linked = {
         reference for field in detail["fields"] for reference in field["provenance"]
@@ -3058,22 +3141,6 @@ def test_retained_audiobook_identifiers_are_paged_observations_without_choices(
         assert {fact.reference for fact in report.identifier_evidence} <= set(claims)
     if shape == "malformed":
         assert any("state: malformed" in item["observation"] for item in observations)
-    if shape == "unavailable":
-        assert not any(item["destinations"] == ["isbn"] for item in observations)
-    password = tmp_path / "owner.hash"
-    password.write_text(PasswordHasher().hash("correct horse"))
-    password.chmod(0o600)
-    app = create_transport_test_app(
-        repository,
-        ReviewWebConfiguration(
-            tls_certificate_file="/synthetic/review.crt",
-            tls_private_key_file="/synthetic/review.key",
-            canonical_origin="https://review.test",
-            owner_password_hash_file=str(password),
-            session_lifetime_seconds=600,
-        ),
-        clock=lambda: 10,
-    )
     with TestClient(app, base_url="https://review.test") as client:
         assert (
             client.post(

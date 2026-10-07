@@ -12,6 +12,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Mapping, Self, cast
 
 from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
     candidate_recording_runtime_veto,
 )
 from mechanical_librarian.domain.cover_evidence import (
@@ -66,6 +67,7 @@ from mechanical_librarian.domain.metadata_report import (
     complete_creator_identity_bindings,
     creator_comparison_key,
     creator_sequence_methods,
+    discovery_lane_identity,
     isbn_family,
     manifestation_publication_compatible,
     normalize_date_value,
@@ -96,7 +98,7 @@ PROPOSAL_SCHEMA = "proposal-set-v8"
 # may be applied, and it is bound into the set's identity rather than derived
 # beside it (#966).
 MEDIA_KINDS = ("ebook", "audiobook")
-POLICY_VERSION = "fixed-conservative-v32"
+POLICY_VERSION = "fixed-conservative-v33"
 BIBLIOGRAPHIC_RELATIONSHIP_SCHEMA = "bibliographic-relationships-v1"
 MAX_BIBLIOGRAPHIC_COMBINATIONS = 256
 MAX_PROPOSAL_BYTES = 2_097_152
@@ -1144,6 +1146,40 @@ def canonical_target_fields(
     return targets
 
 
+class AudiobookReviewScope(StrEnum):
+    """Recomputed admission, never an independent persisted authority flag."""
+
+    WORK = "work"
+    RECORDING = "recording"
+
+
+def _supported_work_source(
+    report: MetadataReport, provider: ProviderObservation, candidate: ProviderCandidate
+) -> bool:
+    context = target_work_identity_context(report.target)
+    return (
+        context is not None
+        and provider_candidate_exact_work_identity_admission(
+            candidate, *context, audiobook=True
+        ).admitted
+        and provider_candidate_represents_target_work(report, provider, candidate)
+    )
+
+
+def audiobook_review_scope(report: MetadataReport) -> AudiobookReviewScope | None:
+    """Distinguish useful book evidence from admitted recording identity."""
+    if report.audio is None:
+        return None
+    if admitted_audiobook_identity(report):
+        return AudiobookReviewScope.RECORDING
+    if any(
+        _observations(report, destination)
+        for destination in (TargetDestination.DESCRIPTION, TargetDestination.GENRES)
+    ):
+        return AudiobookReviewScope.WORK
+    return None
+
+
 def evaluate_report(
     report: MetadataReport,
     resolved_policy_id: str | None = None,
@@ -1327,6 +1363,22 @@ def evaluate_report(
     results[TargetDestination.COVER] = _apply_policy_destination(
         _cover_result(report, targets[TargetDestination.COVER]), ignored
     )
+    if report.audio is not None and not admitted_audiobook_identity(report):
+        for destination in TargetDestination:
+            if destination not in {
+                TargetDestination.DESCRIPTION,
+                TargetDestination.GENRES,
+            }:
+                results[destination] = ProposalResult(
+                    destination,
+                    ProposalOutcome.INELIGIBLE,
+                    (),
+                    None,
+                    ("no_supported_evidence",),
+                    _dependencies(destination),
+                )
+        observed_by_destination = {}
+        title_associations = {}
     combinations, unresolved = _bibliographic_combinations(
         targets,
         results,
@@ -1419,11 +1471,13 @@ def _observations(
     provider_scope = (
         ClaimScope.EDITION if destination is TargetDestination.SUBTITLE else scope
     )
+    work_only = report.audio is not None and not admitted_audiobook_identity(report)
     values: list[_Observed] = []
     claim: LocalClaim | ProviderClaim
     for claim in report.local_claims:
         if (
-            claim.kind in kinds
+            not work_only
+            and claim.kind in kinds
             and claim.scope is local_scope
             and claim.state is FieldState.VALID
             and claim.canonical is not None
@@ -1448,6 +1502,8 @@ def _observations(
             )
     for provider in report.providers:
         for candidate in provider.candidates:
+            if work_only and not _supported_work_source(report, provider, candidate):
+                continue
             for claim in candidate.claims:
                 if (
                     claim.kind in kinds
@@ -2627,6 +2683,7 @@ def _list_observations(
         if destination is TargetDestination.NARRATORS
         else _scope(scope)
     )
+    work_only = report.audio is not None and not admitted_audiobook_identity(report)
     values: list[_Observed] = []
     members: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
     claims: tuple[LocalClaim, ...] | tuple[ProviderClaim, ...]
@@ -2639,7 +2696,7 @@ def _list_observations(
             }
         )
     )
-    for basis in bases:
+    for basis in () if work_only else bases:
         basis_claims = tuple(
             claim for claim in report.local_claims if claim.basis == basis
         )
@@ -2719,6 +2776,8 @@ def _list_observations(
                 ),
             )
         for candidate in candidates:
+            if work_only and not _supported_work_source(report, provider, candidate):
+                continue
             if (
                 destination is TargetDestination.NARRATORS
                 and report.audio is not None
@@ -3059,7 +3118,7 @@ def _target_backed_lookup_contains(
                     )
                 )
                 and lane.identity
-                == _discovery_lane_identity(
+                == discovery_lane_identity(
                     {
                         # `_isbn_family_claims` only yields claims whose
                         # canonical value is not None.
@@ -3096,7 +3155,7 @@ def _target_backed_lookup_contains(
                     audiobook=report.audio is not None,
                 )
                 and lane.identity
-                == _discovery_lane_identity(
+                == discovery_lane_identity(
                     {
                         "authors": list(expected_authors),
                         "input_references": list(target_title_references),
@@ -3109,10 +3168,6 @@ def _target_backed_lookup_contains(
         for lane in provider.lanes
         if required_lane is None or lane == required_lane
     )
-
-
-def _discovery_lane_identity(payload: dict[str, object]) -> str:
-    return "lane_" + hashlib.sha256(canonical_json(payload).encode()).hexdigest()
 
 
 def _isbn_family_claims(
@@ -3217,7 +3272,7 @@ def provider_candidate_represents_target_work(
                     for member in lane.candidates
                 )
                 and lane.identity
-                == _discovery_lane_identity(
+                == discovery_lane_identity(
                     {
                         "canonical_asin": asins[0].value,
                         "input_references": list(lane.input_references),

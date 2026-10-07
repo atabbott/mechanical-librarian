@@ -38,6 +38,13 @@ admitted, decided, and read exactly as an ebook's, and the decision it records
 carries `application='apply'` on either medium: it plans and applies through
 the one guarded path
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
+When only the book is supported, the same Library/detail view explains that the
+recording is unresolved and offers supported description and genre choices only.
+Sources retain their provenance; Keep and Accept use the existing owner workflow.
+Automatic, other fields, covers and authored descriptions gain no authority from
+this work-only scope. Consent, stale-source/target refusal, verified application
+and Activity history remain the existing guarded path (#1166).
+
 Audiobook Automatic requires the exact F46 field, option and actual operation
 identity. Unqualified candidates remain owner decisions. A fill record cannot
 authorize replacement: creation, reopening and guarded effect reconstruction

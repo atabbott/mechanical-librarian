@@ -3260,6 +3260,21 @@
       "_CaseDetailResponse": {
         "additionalProperties": false,
         "properties": {
+          "audiobook_review_scope": {
+            "anyOf": [
+              {
+                "enum": [
+                  "work",
+                  "recording"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audiobook Review Scope"
+          },
           "comparison_notices": {
             "items": {
               "type": "string"
@@ -3301,7 +3316,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-case-detail-v4",
+            "const": "review-case-detail-v5",
             "title": "Schema Version",
             "type": "string"
           },
@@ -3315,6 +3330,7 @@
         },
         "required": [
           "recording_identity_basis",
+          "audiobook_review_scope",
           "comparison_notices",
           "current",
           "fields",
@@ -8060,6 +8076,21 @@
       "_ReportDetailResponse": {
         "additionalProperties": false,
         "properties": {
+          "audiobook_review_scope": {
+            "anyOf": [
+              {
+                "enum": [
+                  "work",
+                  "recording"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Audiobook Review Scope"
+          },
           "chapters": {
             "items": {
               "$ref": "#/components/schemas/_ReportChapter"
@@ -8163,7 +8194,7 @@
             "type": "string"
           },
           "schema_version": {
-            "const": "review-report-detail-v4",
+            "const": "review-report-detail-v5",
             "title": "Schema Version",
             "type": "string"
           },
@@ -8175,6 +8206,7 @@
         },
         "required": [
           "recording_identity_basis",
+          "audiobook_review_scope",
           "chapters",
           "chapters_truncated",
           "connection",

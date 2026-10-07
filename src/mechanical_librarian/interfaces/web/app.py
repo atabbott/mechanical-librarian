@@ -560,6 +560,7 @@ class _RecordingIdentityBasis(_ClosedModel):
 
 class _CaseDetailResponse(_ClosedModel):
     recording_identity_basis: _RecordingIdentityBasis | None
+    audiobook_review_scope: Literal["work", "recording"] | None
     comparison_notices: list[str]
     current: bool
     fields: list[_ReviewField]
@@ -571,9 +572,21 @@ class _CaseDetailResponse(_ClosedModel):
         max_length=MAX_HEALTH_OBSERVATIONS
     )
     review_case_id: str
-    schema_version: Literal["review-case-detail-v4"]
+    schema_version: Literal["review-case-detail-v5"]
     target: _TargetIdentity
     writes_consented: bool
+
+    @model_validator(mode="after")
+    def consistent_audiobook_scope(self) -> Self:
+        if (
+            self.recording_identity_basis is not None
+            and self.audiobook_review_scope != "recording"
+        ) or (
+            self.target.media_kind not in {"m4b", "m4a", "mp3"}
+            and self.audiobook_review_scope is not None
+        ):
+            raise ValueError("audiobook review scope is inconsistent")
+        return self
 
 
 class _ConfirmedDecision(_ClosedModel):
@@ -875,6 +888,7 @@ class _ReportProviderEvidence(_ClosedModel):
 
 class _ReportDetailResponse(_ClosedModel):
     recording_identity_basis: _RecordingIdentityBasis | None
+    audiobook_review_scope: Literal["work", "recording"] | None
     chapters: list[_ReportChapter] = Field(max_length=1024)
     chapters_truncated: bool
     connection: str = Field(max_length=512)
@@ -901,8 +915,20 @@ class _ReportDetailResponse(_ClosedModel):
     provider_evidence: list[_ReportProviderEvidence] = Field(max_length=1024)
     provider_evidence_truncated: bool
     report_id: str = Field(max_length=128)
-    schema_version: Literal["review-report-detail-v4"]
+    schema_version: Literal["review-report-detail-v5"]
     title: str = Field(max_length=1024)
+
+    @model_validator(mode="after")
+    def consistent_audiobook_scope(self) -> Self:
+        if (
+            self.recording_identity_basis is not None
+            and self.audiobook_review_scope != "recording"
+        ) or (
+            self.media_kind not in {"m4b", "m4a", "mp3"}
+            and self.audiobook_review_scope is not None
+        ):
+            raise ValueError("audiobook review scope is inconsistent")
+        return self
 
 
 class _LibraryResponse(_ClosedModel):

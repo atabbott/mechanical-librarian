@@ -62,10 +62,14 @@ from mechanical_librarian.application.review_web import (
     SessionTokens,
 )
 from mechanical_librarian.application.reviewer_access import ReviewerAccessOperations
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.automatic_decision import AutomaticSafetyState
 from mechanical_librarian.domain.description_advice import DescriptionAdviceBinding
 from mechanical_librarian.domain.field_effect import SUPPORTED_DESTINATIONS
 from mechanical_librarian.domain.metadata_policy import MetadataPolicyProfile
+from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.owner_settings import (
     OwnerSettingsDocument,
     OwnerSettingsError,
@@ -140,6 +144,7 @@ class CaseDetailView:
     target: dict[str, object]
     writes_consented: bool
     recording_identity_basis: dict[str, str] | None
+    audiobook_review_scope: str | None
 
     @classmethod
     def from_data(cls, value: dict[str, object]) -> "CaseDetailView":
@@ -162,6 +167,7 @@ class CaseDetailView:
             None
             if value["recording_identity_basis"] is None
             else dict(cast("dict[str, str]", value["recording_identity_basis"])),
+            cast("str | None", value["audiobook_review_scope"]),
         )
 
     def to_data(self) -> dict[str, object]:
@@ -175,6 +181,7 @@ class CaseDetailView:
             "target": dict(self.target),
             "writes_consented": self.writes_consented,
             "recording_identity_basis": self.recording_identity_basis,
+            "audiobook_review_scope": self.audiobook_review_scope,
         }
 
 
@@ -1475,6 +1482,11 @@ def prepare_cover_consideration(
             if staged is None:
                 raise ReviewApplicationError("stale")
             report_document, proposal_id, has_human_decision = staged
+        bound_report = MetadataReport.from_json(report_document)
+        if bound_report.audio is not None and not admitted_audiobook_identity(
+            bound_report
+        ):
+            raise ReviewApplicationError("unavailable")
         current = cover_considerations.current(review_case_id)
         if retry and has_human_decision and current is not None:
             raise ReviewApplicationError("already_decided")

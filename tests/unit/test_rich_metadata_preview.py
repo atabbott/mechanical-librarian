@@ -90,6 +90,7 @@ def regional_synopsis_products():
     return tuple(
         {
             "asin": f"B00000000{index}",
+            "runtimeLengthMin": 970,
             "title": "Synthetic Journey",
             "authors": [{"name": "Example Author"}],
             "summary": text,
@@ -117,7 +118,8 @@ def test_regional_synopsis_uses_stable_source_record_without_ranking_text(
         )
     expected = products[0]["summary"]
     report = synthetic_audiobook_product_lookup_report(
-        tuple(reversed(products)) if reverse else products
+        tuple(reversed(products)) if reverse else products,
+        recording_runtime="58200.000",
     )
     monkeypatch.setattr(
         audiobook_decision_qualification,
@@ -170,7 +172,9 @@ def test_regional_synopsis_preserves_source_safety_and_work_refusals(
             product["title"] = "Different Work"
     else:
         products[0]["summary"] = value
-    report = synthetic_audiobook_product_lookup_report(products)
+    report = synthetic_audiobook_product_lookup_report(
+        products, recording_runtime="58200.000"
+    )
     monkeypatch.setattr(
         audiobook_decision_qualification,
         "F46_PASSING_AUTOMATIC_OPTIONS",
@@ -191,7 +195,9 @@ def test_regional_synopsis_refuses_competing_texts_within_one_source_record(
     regional_synopsis_products,
     monkeypatch,
 ):
-    report = synthetic_audiobook_product_lookup_report(regional_synopsis_products)
+    report = synthetic_audiobook_product_lookup_report(
+        regional_synopsis_products, recording_runtime="58200.000"
+    )
     provider = next(value for value in report.providers if value.provider == "audnexus")
     candidate = provider.candidates[0]
     original = next(

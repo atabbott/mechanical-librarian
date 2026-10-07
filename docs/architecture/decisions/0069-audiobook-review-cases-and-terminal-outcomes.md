@@ -42,21 +42,28 @@ outcome to the artefact it claims. A scan partitions completed work into `ready`
 as blocked. This resolves #940 finding 3: an ebook that completes on `no_case`
 moves from `ready` to `recorded` with it, because it is asking nothing either.
 
-**Proposal formation behind the corroboration band.** Preparation forms
-audiobook proposals only when ADR-0061's runtime corroboration band admits some
-candidate the report retains: `admitted_audiobook_identity` recomputes
-`runtime_corroborated_candidate` over each retained observation's candidates and
-the report's own local claims, which is deterministic and reads no candidate's
-shape. #1042 adds the bounded retained-local-ASIN chapter fallback described
-below; the #1004 amendment later in this record defines its extension. A
-work-shape retention does not: qualification keeps
-a title-and-author match rather than dropping it, and naming a work is not
-naming this product. The item's own ASIN does not either: an embedded, sidecar,
-or path identifier naming a different cut of the same work is the disagreement
-the band exists to settle, and the 0.20.0 measurement settled such
-disagreements through the band rather than around it. A report with no admitted
-identity has nothing to compare a proposal against, so its evidence is recorded
-and the work completes in the transaction that published the report.
+**Recording and work review admission (#1166).** Recording admission continues
+through the unchanged runtime and chapter corroboration predicates. Independently,
+a report can support owner review of description and genres when each contributing
+source has both a complete title/full-author work witness and the retained relation
+to the target work. Lookup-only candidates cannot supply that witness. Another
+source's identity match cannot authorize a candidate's values.
+
+The derived review scope is `recording`, `work`, or absent. Work scope leaves the
+recording unresolved, excludes local-only values and every destination other than
+description and genres before combinations are formed, and preserves existing
+field safety and election rules. A report without supported work values or an
+admitted recording completes as evidence-only. Ignore can leave no case. Counts
+retain the same ready/recorded/blocked partition.
+
+Work-only choices use existing durable owner decisions and guarded manual effects.
+They create no automatic decisions or effects, actionable cover consideration, or
+authored-description advice, including retry and direct selection paths. Automatic
+configuration becomes Ask for these supported values; Ignore remains Ignore.
+This initial route does not qualify work-only automation. Case/report detail v5
+requires nullable scope separately from unchanged recording attribution. Proposal
+policy `fixed-conservative-v33` requires a clean rebuild; report, proposal, case
+and HumanDecision document shapes remain unchanged.
 
 **Explicitly absent provider runtime (#1042).** Existing stated-runtime admission
 runs first and yields no new attribution. Otherwise one canonical non-target local

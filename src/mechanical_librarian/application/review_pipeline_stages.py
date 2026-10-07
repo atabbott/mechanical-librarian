@@ -67,6 +67,9 @@ from mechanical_librarian.application.review_pipeline import (
     inspection_failure_code,
 )
 from mechanical_librarian.domain.audio_inspection import AudioInspectionOutcome
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.epub_inspection import EpubInspectionOutcome
 from mechanical_librarian.domain.metadata_report import (
     AUDIO_FILE_FORMATS,
@@ -417,6 +420,12 @@ class ReviewPipelineStages:
     def prepare_advice(
         self, repository: ReviewPipelineRepository, action: PipelineAction
     ) -> None:
+        if action.report_id is not None:
+            report = MetadataReport.from_json(
+                cast("ReviewStageRepository", repository).get(action.report_id)
+            )
+            if report.audio is not None and not admitted_audiobook_identity(report):
+                return
         self.prepare_cover(repository, action)
         if self._prepare_description is not None:
             self._prepare_description(repository, action)

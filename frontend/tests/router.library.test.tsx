@@ -1662,6 +1662,7 @@ describe('Library route', () => {
         ],
         providerEvidence: [],
         providerEvidenceTruncated: false,
+        audiobookReviewScope: chapterBasis ? ('recording' as const) : null,
         recordingIdentityBasis: chapterBasis
           ? {
               basis: 'chapter_runtime_and_structure' as const,

@@ -15,6 +15,9 @@ from pydantic import (
     field_validator,
 )
 
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     ClaimScope,
@@ -84,6 +87,8 @@ class DescriptionAdviceInput(_Closed):
         cls, report: MetadataReport, preferences: DescriptionPreferences
     ) -> DescriptionAdviceInput:
         """Project only target-backed provider text; owner and target text stay out."""
+        if report.audio is not None and not admitted_audiobook_identity(report):
+            raise ValueError("description advice requires recording admission")
         return cls(
             descriptions=tuple(
                 sorted(

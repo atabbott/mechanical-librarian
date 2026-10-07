@@ -191,7 +191,6 @@ from mechanical_librarian.application.metadata_report import (
     TargetNotFoundError,
     TargetSnapshot,
     UnsupportedMediaError,
-    admitted_audiobook_identity,
     require_report_current,
 )
 from mechanical_librarian.application.operation_admission import OperationAdmission
@@ -288,6 +287,9 @@ from mechanical_librarian.domain.audio_inspection import (
 from mechanical_librarian.domain.audio_inspection import (
     MAX_PUBLIC_REPORT_BYTES as MAX_AUDIO_BYTES,
 )
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.cover_evidence import (
     CoverDesignation,
     CoverProvenance,
@@ -328,7 +330,7 @@ from mechanical_librarian.domain.metadata_report import (
     claim_scope,
 )
 from mechanical_librarian.domain.owner_settings import SettingsView
-from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.proposal_set import ProposalSet, audiobook_review_scope
 from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.setup_state import (
     SetupLibraryCandidate,
@@ -2101,7 +2103,7 @@ def run_metadata_report_loaded(
                 # queues the proposal stage exactly as an ebook does (#966).
                 None
                 if report.file.format not in AUDIO_FILE_FORMATS
-                or admitted_audiobook_identity(report)
+                or audiobook_review_scope(report) is not None
                 else "evidence_only",
                 review_claim_next,
                 None,
@@ -2711,6 +2713,12 @@ def create_review_pipeline(
         if action.review_case_id is None:
             return
         repository = cast("SQLiteMetadataReportRepository", pipeline_repository)
+        if action.report_id is not None:
+            bound_report = MetadataReport.from_json(repository.get(action.report_id))
+            if bound_report.audio is not None and not admitted_audiobook_identity(
+                bound_report
+            ):
+                return
         identity = reviewer_access.current_description_rewrite_identity()
         if identity is None:
             repository.description_advice_store().consume_pending_if_unconfigured(
@@ -2763,6 +2771,12 @@ def create_review_pipeline(
         if action.review_case_id is None:
             return
         repository = cast("SQLiteMetadataReportRepository", pipeline_repository)
+        if action.report_id is not None:
+            bound_report = MetadataReport.from_json(repository.get(action.report_id))
+            if bound_report.audio is not None and not admitted_audiobook_identity(
+                bound_report
+            ):
+                return
         store = repository.description_advice_store()
         advice = store.read(action.review_case_id)
         if advice is None or advice["candidate"] is None:

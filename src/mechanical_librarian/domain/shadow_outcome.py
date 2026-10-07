@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from typing import cast
 
 from mechanical_librarian.domain import audiobook_decision_qualification
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.automatic_decision import (
     _PRIOR_F20_QUALIFICATION_MANIFESTS,
 )
@@ -778,7 +781,8 @@ class ShadowOutcomeSet:
                 else:
                     identity = None
                 policy_destination = _audiobook_destination(
-                    identity, policy_destination
+                    identity if admitted_audiobook_identity(report) else None,
+                    policy_destination,
                 )
             if policy_destination == "ignore":
                 disposition = "ignore"
@@ -881,7 +885,10 @@ class ShadowOutcomeSet:
                     current_values[destination],
                     rich[category].desired_value,
                 )
-                rich_destination = _audiobook_destination(identity, rich_destination)
+                rich_destination = _audiobook_destination(
+                    identity if admitted_audiobook_identity(report) else None,
+                    rich_destination,
+                )
                 rich_option = None if identity is None else identity.split(":", 1)[1]
             fields.append(
                 _rich_field_outcome(

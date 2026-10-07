@@ -1,5 +1,13 @@
 # Pre-release compatibility policy
 
+#1166 enables source-bound audiobook description/genre owner review without
+recording admission. **Clean rebuild required** for `fixed-conservative-v33`,
+including empty predecessor proposal tables. No migration or historical-document
+resealing is supplied. Only case/report detail wire versions advance to v5 with
+required-nullable review scope; stored document shapes stay unchanged. F19a/F20/F46
+source bindings rotate with their existing permission sets and measurements.
+
+
 #1140 rotates F19a, F20 and F46 exact-current bindings because their semantic
 sources include browse orchestration. **Clean rebuild required** for predecessor
 derived application stores. Schema shapes, shadow decision policy v20 and the
@@ -34,16 +42,16 @@ The current installed contract is intentionally narrow:
 - `config-v9` only;
 - an absent database or the installed exact current report database containing
   `metadata-report-v49` plus `proposal-set-v8` under
-  `fixed-conservative-v32`, or the separate `catalogue-v2` schema;
+  `fixed-conservative-v33`, or the separate `catalogue-v2` schema;
 - `review-case-v2`, `shadow-review-packet-v9`,
   `shadow-decision-set-v1` under
   `deterministic-shadow-decision-policy-v20`,
   `shadow-review-action-policy-v5`, `shadow-outcome-set-v10`,
   `metadata-policy-profile-v3` and `cover-automatic-decision-v3`;
   these successors require a clean rebuild and do not adopt prior state;
-- `review-session-v1`, `review-library-v2`, `review-case-detail-v4`,
+- `review-session-v1`, `review-library-v2`, `review-case-detail-v5`,
   `review-case-evidence-v4`,
-  `review-report-detail-v4`, `review-case-history-v2`, `human-decision-v2`,
+  `review-report-detail-v5`, `review-case-history-v2`, `human-decision-v2`,
   `human-decision-event-v1`, `human-decision-ack-v1`, bounded
   evidence/current-case history projections, and the exact-current
   opaque-session, login-throttle, immutable human-decision and decision-event

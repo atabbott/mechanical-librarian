@@ -5994,6 +5994,7 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
 
     products = tuple(
         {
+            "runtimeLengthMin": 970,
             "asin": f"B00000000{index}",
             "title": "Synthetic Journey",
             "authors": [{"name": "Example Author"}],
@@ -6015,7 +6016,9 @@ def test_audiobook_selected_sources_survive_reopen_and_refuse_resealed_authority
 
         report = asserted_asin_report(provider_duration="58200.000")
     else:
-        report = synthetic_audiobook_product_lookup_report(products)
+        report = synthetic_audiobook_product_lookup_report(
+            products, recording_runtime="58200.000"
+        )
     if current is not None:
         report = MetadataReport.create(
             target=replace(

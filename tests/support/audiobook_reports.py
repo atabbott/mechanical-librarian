@@ -652,7 +652,10 @@ def synthetic_audiobook_bibliographic_report(
 
 
 def synthetic_audiobook_product_lookup_report(
-    products: tuple[dict[str, object], ...], *, unavailable: bool = False
+    products: tuple[dict[str, object], ...],
+    *,
+    unavailable: bool = False,
+    recording_runtime: str | None = None,
 ) -> MetadataReport:
     """Real discovery and per-product adapters, without independent local ASINs."""
     import httpx
@@ -668,10 +671,16 @@ def synthetic_audiobook_product_lookup_report(
         audiobook_discovery_plan,
         observe_provider,
     )
-    from tests.support.audiobook_providers import audio_target, target_title_claim
+    from tests.support.audiobook_providers import (
+        audio_target,
+        local_runtime_claim,
+        target_title_claim,
+    )
 
     target = audio_target("Synthetic Journey", ("Example Author",))
-    claims = (target_title_claim("Synthetic Journey"),)
+    claims: tuple[LocalClaim, ...] = (target_title_claim("Synthetic Journey"),)
+    if recording_runtime is not None:
+        claims = (*claims, local_runtime_claim(recording_runtime))
     audio = single_track_audio_facts("b" * 64)
     plan = audiobook_discovery_plan(target, claims, audio=audio)
 
@@ -686,6 +695,12 @@ def synthetic_audiobook_product_lookup_report(
                             "title": "Synthetic Journey",
                             "authors": [{"name": "Example Author"}],
                             "narrators": product.get("narrators"),
+                            **(
+                                {"runtime_length_min": product["runtimeLengthMin"]}
+                                if recording_runtime is not None
+                                and "runtimeLengthMin" in product
+                                else {}
+                            ),
                         }
                         for product in products
                     ],
@@ -806,6 +821,7 @@ def synthetic_audiobook_isbn_reason_report(shape: str) -> MetadataReport:
     return synthetic_audiobook_product_lookup_report(
         tuple(
             {
+                "runtimeLengthMin": 970,
                 "asin": f"B00000000{index + 1}",
                 "title": "Synthetic Journey",
                 "authors": [{"name": "Example Author"}],
@@ -815,6 +831,7 @@ def synthetic_audiobook_isbn_reason_report(shape: str) -> MetadataReport:
             for index, value in enumerate(values)
         ),
         unavailable=shape == "unavailable",
+        recording_runtime="58200.000",
     )
 
 
@@ -841,11 +858,13 @@ def synthetic_audiobook_original_date_report(
     base = synthetic_audiobook_product_lookup_report(
         (
             {
+                "runtimeLengthMin": 970,
                 "asin": "B000000001",
                 "title": "Synthetic Journey",
                 "authors": [{"name": "Example Author"}],
             },
-        )
+        ),
+        recording_runtime="58200.000",
     )
     fields = tuple(
         TargetField(
@@ -890,7 +909,7 @@ def synthetic_audiobook_original_date_report(
         file=base.file,
         local_claims=base.local_claims,
         local_reasons=base.local_reasons,
-        providers=(observation,),
+        providers=(*base.providers, observation),
         audio=base.audio,
     )
     return MetadataReport.from_json(report.to_json())

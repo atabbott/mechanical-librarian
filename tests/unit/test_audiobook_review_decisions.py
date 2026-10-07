@@ -1705,6 +1705,11 @@ def test_recording_work_subtitle_reaches_manual_sql_case_only(tmp_path, variant)
     if variant == "supported":
         assert result.alternatives[0].value.value == "A Synthetic Expedition"
         assert result.alternatives[0].scope.value == "work"
+    if variant == "wrong_recording":
+        assert case_id is None
+        assert not any(result.alternatives for result in proposal.results)
+        repository.close()
+        return
     stored = repository.persist_shadow_outcome(case_id, 4)
     repository.close()
     repository = open_repository(path)
@@ -1749,6 +1754,13 @@ def test_audiosilo_single_series_fill_requires_actual_recording_admission(
         ("contributor_names", "series"),
         selected_options={"contributor_names": "canonical", "series": "add_qualified"},
     )
+    if runtime == 100:
+        assert case_id is None
+        assert not any(
+            result.alternatives for result in evaluate_report(report).results
+        )
+        repository.close()
+        return
     repository.persist_shadow_outcome(case_id, 4)
     decisions = [
         AutomaticDecision.from_json(value)

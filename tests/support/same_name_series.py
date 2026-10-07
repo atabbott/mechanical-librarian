@@ -40,6 +40,7 @@ def same_name_series_report(
     if media == "audiobook":
         products: tuple[dict[str, object], ...] = tuple(
             {
+                "runtimeLengthMin": 970,
                 "asin": f"B00000000{index + 1}",
                 "title": title,
                 "authors": [{"name": source_author or "Example Author"}],
@@ -50,7 +51,9 @@ def same_name_series_report(
                 positions if len(positions) > 1 else positions * 2
             )
         )
-        base = synthetic_audiobook_product_lookup_report(products)
+        base = synthetic_audiobook_product_lookup_report(
+            products, recording_runtime="58200.000"
+        )
         local = base.local_claims + (
             (audio_claim(ClaimKind.TITLE, title, 10),) if independent_title else ()
         )

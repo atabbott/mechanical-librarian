@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Final
+from typing import Final, cast
 
 from mechanical_librarian.domain.audio_inspection import (
     AudioChapterComposition,
@@ -27,6 +27,7 @@ from mechanical_librarian.domain.audio_inspection import (
     AudioObservationKind,
 )
 from mechanical_librarian.domain.metadata_report import (
+    AUDIOBOOK_PROVIDER_AUTHORITIES,
     AudioFacts,
     ClaimKind,
     ClaimScope,
@@ -37,7 +38,14 @@ from mechanical_librarian.domain.metadata_report import (
     ProviderChapterStructure,
     ProviderClaim,
     ProviderEvidenceKind,
+    ProviderQueryKind,
+    ProviderStatus,
+    TargetDestination,
+    canonical_asin,
+    discovery_lane_identity,
     duration_milliseconds,
+    provider_candidate_exact_work_identity_admission,
+    recording_variant_conflict,
 )
 
 # Ninety whole seconds. A provider states a runtime in whole minutes, so two
@@ -818,4 +826,230 @@ def candidate_recording_runtime_veto(
         and structures[0] is not None
         and not recording_runtime_veto(candidate, structures[0].runtime_seconds)
         and complete_chapter_runtime_agreement(audio, local_claims, structures[0])
+    )
+
+
+def _local_identifier_asins(local_claims: tuple[LocalClaim, ...]) -> frozenset[str]:
+    """Return the canonical ASINs the item's own surfaces carry.
+
+    A target assertion is deliberately not one of them. The tag, the sidecar,
+    and the path were read off the recording; the assertion was typed about it,
+    and ADR-0061 keeps those two apart everywhere identity is at stake.
+    """
+    return frozenset(
+        value
+        for claim in local_claims
+        if claim.kind is ClaimKind.ASIN
+        and claim.basis != "target_metadata"
+        and (value := canonical_asin(claim.canonical)) is not None
+    )
+
+
+def _unambiguous_candidate_asin(candidate: ProviderCandidate) -> str | None:
+    """A chapter source must identify one valid recording without alias conflict."""
+    identifiers = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.ASIN
+    )
+    asins = {claim.value for claim in identifiers}
+    if len(asins) != 1 or any(
+        claim.state is not FieldState.VALID
+        or canonical_asin(claim.value) != claim.value
+        for claim in identifiers
+    ):
+        return None
+    return next(iter(asins))
+
+
+def _chapter_candidate_support(
+    candidate: ProviderCandidate,
+    audio: AudioFacts | None,
+    local_claims: tuple[LocalClaim, ...],
+    title: str | None,
+    authors: tuple[str, ...],
+    requested_asin: str | None,
+) -> bool:
+    """Qualify raw recording evidence before shaping can discard its vetoes."""
+    if recording_variant_conflict(candidate, local_claims, title or "") is not None:
+        return False
+    if not provider_candidate_exact_work_identity_admission(
+        candidate, title or "", authors, audiobook=audio is not None
+    ).admitted:
+        return False
+    if (
+        requested_asin is None
+        or _unambiguous_candidate_asin(candidate) != requested_asin
+    ):
+        return False
+    structures = tuple(
+        value.chapters
+        for value in candidate.evidence
+        if value.kind is ProviderEvidenceKind.CHAPTER_STRUCTURE
+    )
+    durations = tuple(
+        claim for claim in candidate.claims if claim.kind is ClaimKind.DURATION
+    )
+    if (
+        audio is None
+        or len(structures) != 1
+        or structures[0] is None
+        or len(durations) != 1
+        or not complete_chapter_runtime_agreement(audio, local_claims, structures[0])
+    ):
+        return False
+    coverage = local_claim_runtime_seconds(local_claims)
+    if coverage is None:
+        coverage = (audio.chapters[-1].end_milliseconds + 500) // 1000
+    # The correspondence explains endpoint differences; the provider's stated
+    # runtime must still agree with its own complete chapter structure.
+    return not recording_runtime_veto(candidate, structures[0].runtime_seconds)
+
+
+def _stated_runtime_admitted(report: MetadataReport) -> bool:
+    """Keep the existing runtime-first decision identical for both consumers."""
+    return any(
+        observation.status is ProviderStatus.CANDIDATES
+        and runtime_corroborated_candidate(observation.candidates, report.local_claims)
+        is not None
+        for observation in report.providers
+    )
+
+
+def recording_identity_basis(report: MetadataReport) -> dict[str, str] | None:
+    """Select chapter support only after every matched same-ASIN veto is checked."""
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    if _stated_runtime_admitted(report) or report.audio is None:
+        return None
+    if len(_local_identifier_asins(report.local_claims)) > 1:
+        return None
+    audio = report.audio
+    if not audio.chapters:
+        return None
+    coverage = local_claim_runtime_seconds(report.local_claims)
+    if coverage is None:
+        coverage = (audio.chapters[-1].end_milliseconds + 500) // 1000
+    fields = {field.destination: field for field in report.target.fields}
+    authors_value = fields[TargetDestination.AUTHORS].value
+    authors = (
+        cast("tuple[str, ...]", authors_value) if type(authors_value) is tuple else ()
+    )
+    support: list[tuple[str, str, str]] = []
+    vetoed: set[str] = set()
+    for observation in report.providers:
+        if observation.authority not in AUDIOBOOK_PROVIDER_AUTHORITIES:
+            continue
+        for candidate in (
+            *observation.candidates,
+            *observation.recording_lookup_candidates,
+        ):
+            if not provider_candidate_exact_work_identity_admission(
+                candidate,
+                report.target.current_title or "",
+                authors,
+                audiobook=report.audio is not None,
+            ).admitted:
+                continue
+            identifiers = tuple(
+                claim for claim in candidate.claims if claim.kind is ClaimKind.ASIN
+            )
+            asins = {
+                value
+                for claim in identifiers
+                if claim.state is FieldState.VALID
+                and (value := canonical_asin(claim.value)) is not None
+            }
+            if len(asins) != 1:
+                vetoed.update(asins)
+                continue
+            asin = next(iter(asins))
+            if any(
+                claim.state is not FieldState.VALID or claim.value != asin
+                for claim in identifiers
+            ) or (
+                recording_runtime_veto(candidate, coverage)
+                and not _chapter_candidate_support(
+                    candidate,
+                    audio,
+                    report.local_claims,
+                    report.target.current_title,
+                    authors,
+                    asin,
+                )
+            ):
+                vetoed.add(asin)
+                continue
+            if candidate not in observation.candidates:
+                continue
+            retained = any(
+                lane.input_references
+                and (
+                    lane.kind is ProviderQueryKind.WORK
+                    or lane.kind is ProviderQueryKind.ASIN
+                    and lane.identity
+                    == discovery_lane_identity(
+                        {
+                            "canonical_asin": asin,
+                            "input_references": list(lane.input_references),
+                            "kind": ProviderQueryKind.ASIN.value,
+                        }
+                    )
+                )
+                and any(
+                    value.edition_identity == candidate.identity
+                    for value in lane.candidates
+                )
+                for lane in observation.lanes
+            )
+            if not observation.lanes:
+                retained = bool(observation.input_references) and (
+                    observation.query_kind is ProviderQueryKind.WORK
+                    or observation.query_kind is ProviderQueryKind.ASIN
+                    and _local_identifier_asins(
+                        tuple(
+                            claim
+                            for claim in report.local_claims
+                            if claim.reference in observation.input_references
+                        )
+                    )
+                    == {asin}
+                )
+            if not retained:
+                continue
+            # An acquisition hint alone never supplies recording support.
+            if not any(
+                value.kind is ProviderEvidenceKind.ASIN_MARKETPLACE
+                and value.scope is ClaimScope.EDITION
+                for value in candidate.evidence
+            ):
+                continue
+            if _chapter_candidate_support(
+                candidate,
+                audio,
+                report.local_claims,
+                report.target.current_title,
+                authors,
+                asin,
+            ):
+                support.append((observation.provider, candidate.identity, asin))
+    eligible = tuple(
+        (provider, identity)
+        for provider, identity, asin in support
+        if asin not in vetoed
+    )
+    if not eligible:
+        return None
+    provider, candidate_identity = min(eligible)
+    return {
+        "basis": "chapter_runtime_and_structure",
+        "provider": provider,
+        "candidate": candidate_identity,
+    }
+
+
+def admitted_audiobook_identity(report: MetadataReport) -> bool:
+    """Preserve stated-runtime admission, then try complete retained chapter timing."""
+    if type(report) is not MetadataReport:
+        raise CorroborationValueError("provider observation is invalid")
+    return (
+        _stated_runtime_admitted(report) or recording_identity_basis(report) is not None
     )

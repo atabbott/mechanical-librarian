@@ -20,7 +20,7 @@ from mechanical_librarian.application.cover_observation import (
 from mechanical_librarian.application.cover_packets import prepare_cover_packet
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.metadata_report import MetadataReport
-from tests.support.audiobook_synopsis import synopsis_report
+from tests.support.audiobook_synopsis import recording_synopsis_report
 from tests.support.automatic_no_change import _automatic_no_change_inputs
 from tests.support.cover_producers import _preview, _source
 from tests.support.description_advice import _contained_profile
@@ -32,12 +32,18 @@ def frozen(tmp_path):
     artifacts = tmp_path / "covers"
     store = CoverArtifactStore(artifacts)
     repository = open_repository(database)
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        admitted_audiobook_identity,
+    )
+
+    audio_report = recording_synopsis_report()
+    assert admitted_audiobook_identity(audio_report)
     reports = []
     try:
         for index, base in enumerate(
             (
                 _automatic_no_change_inputs("description_preserved")[0],
-                synopsis_report(),
+                audio_report,
             ),
             1,
         ):

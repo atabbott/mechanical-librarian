@@ -291,6 +291,7 @@ export interface RecordingIdentityBasisView {
 }
 export interface ReportDetailView {
   recordingIdentityBasis: RecordingIdentityBasisView | null
+  audiobookReviewScope: 'work' | 'recording' | null
   chapters: readonly ReportChapterView[]
   chaptersTruncated: boolean
   coverPresent: boolean
@@ -476,6 +477,7 @@ export interface CoverConsiderationView {
 }
 export interface CaseDetailView {
   recordingIdentityBasis: RecordingIdentityBasisView | null
+  audiobookReviewScope: 'work' | 'recording' | null
   id: string
   current: boolean
   target: {
@@ -2032,7 +2034,7 @@ const mediaHealthKind = (value: unknown, field: string): MediaHealthKind => {
     throw new ApiError(502, `invalid_${field}`)
   return value as MediaHealthKind
 }
-// `tracks` is required by review-report-detail-v4. A missing or non-array
+// `tracks` is required by review-report-detail-v5. A missing or non-array
 // member is a malformed document, not an observation about the whole item:
 // coercing it to no tracks would print "this item's audio files" where the
 // server named the files it read.
@@ -2680,6 +2682,21 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
   }
 }
 
+const mapAudiobookReviewScope = (
+  value: unknown,
+  mediaKind: unknown,
+  basis: unknown,
+): 'work' | 'recording' | null => {
+  if (value !== null && value !== 'work' && value !== 'recording')
+    throw new ApiError(502, 'invalid_audiobook_review_scope')
+  if (
+    (!['m4b', 'm4a', 'mp3'].includes(String(mediaKind)) && value !== null) ||
+    (basis !== null && value !== 'recording')
+  )
+    throw new ApiError(502, 'inconsistent_audiobook_review_scope')
+  return value
+}
+
 const mapRecordingIdentityBasis = (value: unknown): RecordingIdentityBasisView | null => {
   if (value === null) return null
   if (
@@ -2704,7 +2721,7 @@ const mapRecordingIdentityBasis = (value: unknown): RecordingIdentityBasisView |
 export const mapReportDetail = (value: unknown): ReportDetailView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-report-detail-v4' ||
+    value.schema_version !== 'review-report-detail-v5' ||
     !record(value.embedded_cover) ||
     !Array.isArray(value.chapters) ||
     !Array.isArray(value.evidence) ||
@@ -2752,6 +2769,11 @@ export const mapReportDetail = (value: unknown): ReportDetailView => {
       stringValue(value.library, 'report_library'),
     mediaHealth: mapMediaHealth(value.media_health, 'report_media_health'),
     recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
+    audiobookReviewScope: mapAudiobookReviewScope(
+      value.audiobook_review_scope,
+      value.media_kind,
+      value.recording_identity_basis,
+    ),
     mediaKind: stringValue(value.media_kind, 'report_media_kind'),
     providerSources: (value.provider_sources as unknown[]).map(mapProviderOutcome),
     providerEvidence: (value.provider_evidence as unknown[]).map((claim, index) => {
@@ -3121,7 +3143,7 @@ const mapDescriptionAdvice = (value: unknown): DescriptionAdviceView | null => {
 export const mapCaseDetail = (value: unknown): CaseDetailView => {
   if (
     !record(value) ||
-    value.schema_version !== 'review-case-detail-v4' ||
+    value.schema_version !== 'review-case-detail-v5' ||
     !record(value.target) ||
     !Array.isArray(value.fields)
   )
@@ -3154,6 +3176,11 @@ export const mapCaseDetail = (value: unknown): CaseDetailView => {
     comparisonNotices: stringArray(dto.comparison_notices, 'comparison_notices'),
     mediaHealth: mapMediaHealth(value.media_health, 'case_media_health'),
     recordingIdentityBasis: mapRecordingIdentityBasis(value.recording_identity_basis),
+    audiobookReviewScope: mapAudiobookReviewScope(
+      value.audiobook_review_scope,
+      mediaKind,
+      value.recording_identity_basis,
+    ),
     writesConsented: booleanValue(dto.writes_consented, 'writes_consented'),
     fields: dto.fields.map((field) => {
       // The three fields dereferenced without a validator below: an entry that

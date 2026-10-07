@@ -2,7 +2,7 @@
 
 - Status: accepted
 - Date: 2026-09-10
-- Issues: #967, #1047
+- Issues: #967, #1047, #1166
 
 ## Context
 
@@ -57,6 +57,13 @@ provider/source-record identity order, not wording, length or opaque alternative
 hashes. This is a deterministic choice among equally acceptable sources, not an
 authority ranking. Conflicting work identity, unsafe relevant text and internally
 competing texts within one record remain refusals. Ebook selection is unchanged.
+
+The work-only review route (#1166) does not activate these automatic envelopes.
+It permits explicit owner description/genre choices while recording admission
+remains unresolved. Automatic is routed to Ask, Ignore remains authoritative,
+and persisted automatic reconstruction refuses this scope. It cannot invoke
+cover or authored-description preparation. Existing recording-admitted and ebook
+qualification and guarded manual effect contracts remain unchanged.
 
 Authority comes from an F46 record and nowhere else. No F19a, F20, F38 or cover
 digest admits an audiobook identity, and an audiobook record admits none of

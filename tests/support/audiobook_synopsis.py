@@ -11,16 +11,19 @@ from mechanical_librarian.domain.metadata_report import (
 from tests.support.audiobook_reports import synthetic_audiobook_product_lookup_report
 
 
-def synopsis_report(
+def _synopsis_report(
     current: str | None = None,
     summaries: tuple[str, ...] = (
         "A voyage reveals a hidden city.",
         "An explorer crosses the sea and discovers an ancient city.",
     ),
+    *,
+    recording: bool = False,
 ) -> MetadataReport:
     report = synthetic_audiobook_product_lookup_report(
         tuple(
             {
+                **({"runtimeLengthMin": 970} if recording else {}),
                 "asin": f"B00000000{index}",
                 "title": "Synthetic Journey",
                 "authors": [{"name": "Example Author"}],
@@ -29,7 +32,8 @@ def synopsis_report(
                 "genres": [{"type": "tag", "name": "Exploration"}],
             }
             for index, summary in enumerate(summaries, 1)
-        )
+        ),
+        recording_runtime="58200.000" if recording else None,
     )
     return MetadataReport.create(
         target=replace(
@@ -53,3 +57,25 @@ def synopsis_report(
         providers=report.providers,
         audio=report.audio,
     )
+
+
+def synopsis_report(
+    current: str | None = None,
+    summaries: tuple[str, ...] = (
+        "A voyage reveals a hidden city.",
+        "An explorer crosses the sea and discovers an ancient city.",
+    ),
+) -> MetadataReport:
+    """Work-only source alternatives without a recording witness."""
+    return _synopsis_report(current, summaries)
+
+
+def recording_synopsis_report(
+    current: str | None = None,
+    summaries: tuple[str, ...] = (
+        "A voyage reveals a hidden city.",
+        "An explorer crosses the sea and discovers an ancient city.",
+    ),
+) -> MetadataReport:
+    """The same source alternatives with actual runtime corroboration."""
+    return _synopsis_report(current, summaries, recording=True)

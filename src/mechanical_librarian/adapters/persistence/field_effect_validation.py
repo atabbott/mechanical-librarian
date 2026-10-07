@@ -14,6 +14,9 @@ import sqlite3
 from typing import cast
 
 from mechanical_librarian.application.metadata_report import MetadataReportError
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.audiobook_cover_replacement import (
     material_audiobook_cover_reference,
 )
@@ -109,6 +112,8 @@ def _validate_automatic_decision_authority(
     source_outcome: ShadowOutcomeSet,
 ) -> ShadowFieldOutcome:
     """Bind an automatic decision to the exact immutable authorities it names."""
+    if report.audio is not None and not admitted_audiobook_identity(report):
+        raise FieldEffectError("authority_binding")
     target = case.target
     if (
         decision.review_case_id != case.review_case_id

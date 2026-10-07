@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Review supported audiobook descriptions and genres even when the exact
+  recording is unresolved. Source-backed owner choices use existing guarded
+  application; automatic, cover and other-field authority remain unchanged.
+  Existing installs require a clean rebuild (#1166).
+
 - Preserve acquired current covers when metadata providers exhaust the shared
   deadline, and restore supported declared EPUB covers in validated archives
   containing directory entries. Timeout labels distinguish requests that never

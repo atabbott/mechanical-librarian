@@ -113,6 +113,14 @@ previous 44 operations and adds the accepted audiobook metadata remainder
 eligibility. These bounded development examples support no population-accuracy
 or library-wide coverage claim.
 
+Work-only audiobook review (#1166) supports explicit owner choices for description
+and genres. Each source needs its own complete work witness; recording identity
+remains unresolved. Automatic becomes Ask and Ignore remains Ignore. No other
+field, cover, authored-description, or automatic authority follows from this
+scope. Manual choices still require existing consent, currentness and verified
+supported-service application. The following qualified rules apply within the
+existing recording-admitted route.
+
 One applicable independent source can suffice. A complete title/author match in
 a successful canonical ASIN lookup, or a bound independent local ASIN, can
 support work facts even when recording identity remains unresolved. Runtime alone

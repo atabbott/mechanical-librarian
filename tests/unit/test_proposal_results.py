@@ -90,7 +90,7 @@ def test_exact_sixteen_results_are_deterministic_and_round_trip() -> None:
         proposal_set.proposal_set_id
         == ProposalSet.from_json(proposal_set.to_json()).proposal_set_id
     )
-    assert "fixed-conservative-v32" == POLICY_VERSION
+    assert "fixed-conservative-v33" == POLICY_VERSION
     assert POLICY_VERSION == proposal_set.policy_version
     assert (
         re.search(r"^resolved_policy_[0-9a-f]{64}$", proposal_set.resolved_policy_id)
@@ -781,3 +781,22 @@ def test_multiline_populated_description_never_becomes_fill_empty(
     result = _result(evaluate_report(report), TargetDestination.DESCRIPTION)
     assert result.alternatives[0].assessment.value == assessment
     assert all(value.assessment.value != "fills_empty" for value in result.alternatives)
+
+
+def test_actual_v32_producer_is_rejected():
+    import hashlib
+    from pathlib import Path
+
+    capsule = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/proposal_predecessors/fixed-conservative-v32.json"
+        ).read_text()
+    )
+    document = capsule["proposal_document"]
+    assert hashlib.sha256(document.encode()).hexdigest() == capsule["proposal_sha256"]
+    assert json.loads(document)["policy_version"] == "fixed-conservative-v32"
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json(document)
+    current = evaluate_report(_report())
+    assert ProposalSet.from_json(current.to_json()) == current

@@ -473,8 +473,9 @@ def _field(
 def _case(case_id: str) -> dict[str, object]:
     if case_id == "case-stale":
         return {
-            "schema_version": "review-case-detail-v4",
+            "schema_version": "review-case-detail-v5",
             "recording_identity_basis": None,
+            "audiobook_review_scope": None,
             "media_health": [],
             "writes_consented": False,
             "review_case_id": case_id,
@@ -906,8 +907,9 @@ def _case(case_id: str) -> dict[str, object]:
         LIBRARY_WORKS[0],
     )
     return {
-        "schema_version": "review-case-detail-v4",
+        "schema_version": "review-case-detail-v5",
         "recording_identity_basis": None,
+        "audiobook_review_scope": None,
         "media_health": [],
         "writes_consented": False,
         "review_case_id": case_id,

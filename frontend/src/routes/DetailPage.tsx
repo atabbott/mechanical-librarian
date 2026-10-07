@@ -255,7 +255,10 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
                   available. The evidence below is the retained portion only.
                 </p>
               ) : null}
-              <RecordingIdentityBasis value={data.recordingIdentityBasis} />
+              <RecordingIdentityBasis
+                value={data.recordingIdentityBasis}
+                scope={data.audiobookReviewScope}
+              />
               {data.mediaHealth.length ? <MediaHealth observations={data.mediaHealth} /> : null}
               <div className="diagnostic-list evidence-fields">
                 {data.fields.map((field) => {

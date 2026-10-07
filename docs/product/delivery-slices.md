@@ -197,6 +197,7 @@ shaped from the 0.20.0 production measurement recorded on #749.
 | F46 Qualified automatic audiobook decisions | #967 | Audiobook decision classes earn their own measured field/operation authority, independently of ebook qualification. | Delivered. The first expanded record registered 44 operations across six fields; its frozen source quality and software correspondence remain historical evidence. |
 | F46a Useful automatic audiobook metadata | #1047; #1046–#1056 | Supported work and recording facts reach useful automatic decisions and guarded effects, including complete narrator/tag sets, original dates, paired title/subtitle, positive-only explicit and bounded cover replacement. | Combined implementation and activation, preserving F46's prior authority and existing owner, consent and recovery boundaries. #877 is curtailed; #1086 owns the outstanding separate closing measurement. |
 | F47 Guarded audiobook application | #968 | Exact-current human and qualified automatic audiobook decisions apply through the existing guarded Audiobookshelf path, canary first. | Delivered. |
+| F54 Audiobook work review | #1166 | Source-bound description and genre owner choices while recording identity remains unresolved, through existing guarded effects. | Implementation candidate; no new automatic, cover or other-field authority. |
 | F53 Stable exact cover reviewers | #1124 | GPT-6 Luna is recommended for advisory cover observations, with custom models, truthful recovery and retained model history. | Implementation candidate; owner accepts measured development-corpus limitations for advisory use only. |
 | F51 Chapter-based recording corroboration | #1004 | Complete reliable local/provider chapters establish an attributed owner-reviewable recording match when overall runtime is unavailable, across local-ASIN, target-asserted, promoted-ASIN and WORK-derived acquisition. | Delivered. The first increment landed through #1042/#1043 under the ADR-0064/0069 amendment, and #1044 completed the qualified activation outcome: complete missing-runtime support with bounded lookup-only acquisition. |
 | F08 Audiobook media-health observations | #144 | The audiobook report states typed, cited media-health observations distinct from metadata evidence. | Delivered. Unit 1 states the derived media-health section over retained evidence, the six composed set observations, and the zero-byte reclassification; unit 2 adds the probe's container, codec and encryption facts, preparation-time truncation for the lanes publication demotes, and `metadata-report-v40`. |
@@ -235,7 +236,7 @@ proceeds by useful outcome under the native issue dependencies:
 | Retained cover choice | #1078 / F52 | One manual-only vertical activation, with explicit owner confirmation and no automatic-admission expansion. |
 | Integrated completion | #1013 | All other open outcomes receive their required disposition before final responsive/copy consistency and acceptance. |
 
-Only F52 is a new functional slice. Other corrections use focused ticket-level
+F52 and F54 are new functional slices. Other corrections use focused ticket-level
 transactions; no horizontal constituent trackers are introduced. #1009, #1060
 and #1086 retain their blockers on #1034. #1060 cannot dispatch until its exact
 cohort, endpoints/models, data-use posture, retention and spend caps are approved.
@@ -245,7 +246,9 @@ cohort, endpoints/models, data-use posture, retention and spend caps are approve
 after #1072/#1085/#1073/#1080/#1083/#1084. It is separate from #1060 reviewer
 collection; this checkpoint cannot retroactively pass #877. The retained-run
 follow-ups proceed through Library search #1160, Activity responsiveness #1150 ([ADR-0082](../architecture/decisions/0082-runtime-activity-facts.md)),
-and #1155–#1159 before the remaining #1086 assessment; none restarts collection.
+and #1155/#1156, then audiobook work review #1166, provider recovery #1157 and
+bounded source comparison #1167 before remaining retention, #1086 assessment,
+Settings and final journey work. None restarts collection.
 
 Exit requires each issue contract, actual collection and inspection for #1060,
 and evidenced dispositions for the bounded investigations. #1013 reconciles

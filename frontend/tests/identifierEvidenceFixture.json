@@ -1,6 +1,7 @@
 {
   "detail": {
     "recording_identity_basis": null,
+    "audiobook_review_scope": "recording",
     "comparison_notices": [],
     "current": true,
     "fields": [
@@ -96,13 +97,101 @@
         ],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_56fb2f8ed4af7b95bb6f9cdb370df0e2dc25ad85b32a42f268a197c88a7f252c",
+        "proposal_id": "review_proposal_668a7edd18598597c69676df92cc7a54fc49786654e88e6f2172bb48513a35e7",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": ["competing_evidence"],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
+      },
+      {
+        "classification": "needs_attention",
+        "classification_reason": "This field needs your review.",
+        "current": {
+          "destination": "asin",
+          "state": "missing",
+          "value": null
+        },
+        "deterministic_disposition": "unresolved_choice",
+        "destination": "asin",
+        "decision_actions": ["keep_current", "accept"],
+        "editable": true,
+        "effect_capability": "unavailable",
+        "human_decision": null,
+        "inventory_role": "primary",
+        "automatic_decision": null,
+        "automatic_withheld_reason": null,
+        "automatic_selection_sources": [],
+        "manual_hold": false,
+        "manual_required": false,
+        "needs_attention": true,
+        "navigation_role": "attention",
+        "notices": ["competing_evidence"],
+        "proposed_values": [
+          {
+            "kind": "text",
+            "value": "B000000002"
+          },
+          {
+            "kind": "text",
+            "value": "B000000001"
+          }
+        ],
+        "choice_contexts": [
+          {
+            "alternative_id": null,
+            "evidence": [],
+            "limitations": [],
+            "rationale": "The local library has no retained value for this field.",
+            "recommendation": "no_recommendation",
+            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
+            "selection": "current"
+          },
+          {
+            "alternative_id": "alternative_2a328440c29fe4c45d479d1f61660daa4528d1332df50c620e901749624816c8",
+            "evidence": [
+              {
+                "observation": "ASIN: B000000002",
+                "role": "external_corroboration",
+                "source": "Audnexus"
+              }
+            ],
+            "limitations": [],
+            "rationale": "This alternative fills an empty local value using edition-specific evidence with retained supporting evidence.",
+            "recommendation": "no_recommendation",
+            "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+            "selection": "proposed"
+          },
+          {
+            "alternative_id": "alternative_4df9e8c953dd90707960d062780413630e84960acb9fd29d39f204ad27cdfb82",
+            "evidence": [
+              {
+                "observation": "ASIN: B000000001",
+                "role": "external_corroboration",
+                "source": "Audnexus"
+              }
+            ],
+            "limitations": [],
+            "rationale": "This alternative fills an empty local value using edition-specific evidence with retained supporting evidence.",
+            "recommendation": "no_recommendation",
+            "recommendation_reason": "No deterministic recommendation is retained for this alternative.",
+            "selection": "proposed"
+          }
+        ],
+        "provenance": [
+          "provider_732cacaa908d33b4cc1d54d4acb394c78516f2ed66dcfdbd7ee6389472581668",
+          "provider_f42fbcfc015b05af721e7cc6a9c45e63dc71c6c82829dabdd722036899783bcc"
+        ],
+        "preservation_only": false,
+        "corroboration_sources": [],
+        "proposal_id": "review_proposal_7f074a5c3fa24851d39ee9334105dd9720c027bd56253b082cf1dc8ea0ca89ef",
+        "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
+        "uncertainty": ["competing_evidence"],
+        "current_cover_selection_id": null,
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -181,13 +270,13 @@
         ],
         "preservation_only": true,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_def48e7f82f9b4b14cc7cd3bf0820843f2d752c983679feb9b2817dad3e49a95",
+        "proposal_id": "review_proposal_4fce118eda772f42dc8bb591322d2977f2202bb9364ca7757b07d4c5365ac233",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -227,13 +316,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_e56edb07048e978a525c148c3c64dc44f6c59ec582549d8f43b7257c04161b13",
+        "proposal_id": "review_proposal_97d9ecea48fe3a042f72cbbc9854c779f90c6324e7f051f045a0f55a6ef492ef",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -312,13 +401,13 @@
         ],
         "preservation_only": true,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_61df5a4481cbec36bbde659b45984eb639e161c03e8288a0c76647267c09ade6",
+        "proposal_id": "review_proposal_b9ea88e8c321ac46e2d3965564063e45a658446868e9acc142b4c4a0dd5ee778",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -358,13 +447,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_40c8ca17cd2d0a4c22839bdc5d7bf367351c11e756eed657a1d9e7c68e24c344",
+        "proposal_id": "review_proposal_f0aa35ae11bdf55a75506fe2a399132f2d0dd513df41f11b79d1318b446b28a4",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -404,13 +493,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_de996f1e1290893dc2090b203b70b5818e996bbba26d4d964c71b7a90034dddb",
+        "proposal_id": "review_proposal_022fdc593ab7164962c3193ba478b38eca29eccb961a666f82da336eeb57c99e",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -450,13 +539,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_5e701c1e73ccc0732f9f26bde60bbfa3fadb92722fc8f1d5b837de4b8e410d1c",
+        "proposal_id": "review_proposal_adfdd51b11fc8e033ff08e7ce50e2a7fa1afff313a8ce862b87e7b4283f21192",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -496,13 +585,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_3cee6727d3a2113180b810d3b1122ec7db9c751f1080a52014aad912e063745b",
+        "proposal_id": "review_proposal_a321f19a002bd44c18d5df44a6c35c51178e95ade5009a52df2bec5c37b3c55a",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -542,13 +631,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_cba8f10d0217e0e1acb2b47ed4fa0f7b971077670212fa0c3ecc2c536cc7a7f6",
+        "proposal_id": "review_proposal_4dbbe9ebab8ddc5ddf6307028685d06bbd3aee936e738ae62e8efc3684690609",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "manual_fallback",
@@ -588,59 +677,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_a4218acd75c9facd9480085bbc4227ca8eba766cafb5ad4345d9fc863f1b1dcf",
+        "proposal_id": "review_proposal_b4505a9c057fe3a5c1de15a5eac0eb56a079793007a7a0bd89f6c59bf95ea812",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
-      },
-      {
-        "classification": "needs_attention",
-        "classification_reason": "This field needs your review.",
-        "current": {
-          "destination": "asin",
-          "state": "missing",
-          "value": null
-        },
-        "deterministic_disposition": "ineligible",
-        "destination": "asin",
-        "decision_actions": [],
-        "editable": false,
-        "effect_capability": "unavailable",
-        "human_decision": null,
-        "inventory_role": "primary",
-        "automatic_decision": null,
-        "automatic_withheld_reason": null,
-        "automatic_selection_sources": [],
-        "manual_hold": false,
-        "manual_required": false,
-        "needs_attention": false,
-        "navigation_role": "attention",
-        "notices": ["no_supported_evidence"],
-        "proposed_values": [],
-        "choice_contexts": [
-          {
-            "alternative_id": null,
-            "evidence": [],
-            "limitations": [],
-            "rationale": "The local library has no retained value for this field.",
-            "recommendation": "no_recommendation",
-            "recommendation_reason": "No deterministic recommendation is retained for the current value.",
-            "selection": "current"
-          }
-        ],
-        "provenance": [],
-        "preservation_only": false,
-        "corroboration_sources": [],
-        "proposal_id": "review_proposal_1dd56ea60235782858a7b436d12ecfa377bfceea8074b99e6ec9fceff597d5c1",
-        "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
-        "uncertainty": [],
+        "current_cover_selection_artifact_id": null,
         "cover_consideration": null,
-        "description_advice": null,
-        "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -680,13 +723,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_5e2346ef3b73f8e26ffa56deaa95351868dd2717428b98d400fa83894b06b106",
+        "proposal_id": "review_proposal_5294db60e660dc0da157216bb739aa0e00ec3a21f5c8e5eaee1b1aeee4f53b6b",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -726,13 +769,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_059d8f8b65c08f46bd7bf073c61cb912483e9efca3b9568928e5d72bded113cd",
+        "proposal_id": "review_proposal_7d0b968fb86f0d5c09a92ee80ce3bb73c46acc1ac52acdbfd3b1896cff74455b",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -772,13 +815,13 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_8f40ad96885741ae31d2d73974871370fc4f87004cb5113037f4da526fc60b96",
+        "proposal_id": "review_proposal_5f7bcb549e517fb189c1e31d6ba71679661d70a36f9223206a1aabb3868e406e",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       },
       {
         "classification": "needs_attention",
@@ -802,7 +845,7 @@
         "manual_required": false,
         "needs_attention": false,
         "navigation_role": "attention",
-        "notices": ["audiobook_cover_withheld"],
+        "notices": ["no_supported_evidence"],
         "proposed_values": [],
         "choice_contexts": [
           {
@@ -818,18 +861,18 @@
         "provenance": [],
         "preservation_only": false,
         "corroboration_sources": [],
-        "proposal_id": "review_proposal_da3ce2ae8b29598e10c96c001cb6fc75de9c3f1828e933253b12701d96b4a077",
+        "proposal_id": "review_proposal_0968783894f76f4c6c5ff90cb8ba5a6191aef1bc443831f53c6da95322fc8499",
         "target_fingerprint": "9f24a512e52e8b8a823ca3859f4a9a50bc4e3bde4659e94f4eb2f2d553d3d285",
         "uncertainty": [],
-        "cover_consideration": null,
-        "description_advice": null,
         "current_cover_selection_id": null,
-        "current_cover_selection_artifact_id": null
+        "current_cover_selection_artifact_id": null,
+        "cover_consideration": null,
+        "description_advice": null
       }
     ],
     "media_health": [],
-    "review_case_id": "review_case_12e1b3a63bc327ca13758a86484dc2116b06b79875d4d92dda6ebb0cdeffae8d",
-    "schema_version": "review-case-detail-v4",
+    "review_case_id": "review_case_f1d624f5a5cbc104bccafca2442d2a98b84e04d6159f8f1aa5e85b8376c18a2a",
+    "schema_version": "review-case-detail-v5",
     "target": {
       "authors": ["Example Author"],
       "connection": "primary",
@@ -875,9 +918,9 @@
       },
       {
         "destinations": ["asin"],
-        "role": "external_observation",
-        "source": "Audnexus",
-        "observation": "ASIN: B000000001. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable."
+        "observation": "ASIN: B000000001",
+        "role": "external_corroboration",
+        "source": "Audnexus"
       },
       {
         "destinations": ["narrators"],
@@ -917,9 +960,9 @@
       },
       {
         "destinations": ["asin"],
-        "role": "external_observation",
-        "source": "Audnexus",
-        "observation": "ASIN: B000000002. Retained for review only; not an eligible choice. Scope: edition; state: valid; applicability: not_applicable."
+        "observation": "ASIN: B000000002",
+        "role": "external_corroboration",
+        "source": "Audnexus"
       },
       {
         "destinations": ["narrators"],
@@ -930,7 +973,7 @@
     ],
     "missing_lineage_count": 0,
     "next_cursor": null,
-    "review_case_id": "review_case_12e1b3a63bc327ca13758a86484dc2116b06b79875d4d92dda6ebb0cdeffae8d",
+    "review_case_id": "review_case_f1d624f5a5cbc104bccafca2442d2a98b84e04d6159f8f1aa5e85b8376c18a2a",
     "schema_version": "review-case-evidence-v4",
     "source_ledger": [
       {
