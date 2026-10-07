@@ -1490,3 +1490,233 @@ def test_retained_no_change_and_isbn_candidates_revalidate_before_search(
                 )
     finally:
         reader.close()
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    (
+        "resolution_generation",
+        "resolution_library",
+        "fallback",
+        "missing_resolution",
+        "excluded_member",
+    ),
+)
+def test_configured_isbn_refusal_revalidates_exact_policy_lookup(
+    effects,  # noqa: F811
+    monkeypatch,
+    mutation,
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from mechanical_librarian.application.metadata_report import MetadataReportError
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+    from mechanical_librarian.domain.metadata_policy import (
+        MetadataPolicyProfile,
+        human_review_destinations,
+        resolve_policy,
+    )
+    from tests.support.audiobook_reports import (
+        publish_audiobook_preview,
+        synthetic_audiobook_isbn_reason_report,
+    )
+
+    root = effects.repository
+    report = synthetic_audiobook_isbn_reason_report("conflict")
+    if mutation.startswith("resolution_"):
+        case_id, policy = publish_audiobook_preview(
+            root,
+            report,
+            ("isbn_form",),
+            selected_options={"isbn_form": "preserve_exact"},
+        )
+    else:
+        policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+        root.enter_shadow_preview(1)
+        root.publish(report, lambda: True)
+        proposal = evaluate_report(
+            report, policy.resolved_id, human_review_destinations(policy)
+        )
+        root.publish_proposal(proposal)
+        case_id = json.loads(root.admit_review_case(proposal))["review_case_id"]
+    outcome = json.loads(root.persist_shadow_outcome(case_id, 12))
+
+    def page(source, search=None):
+        return source.field_effect_activity_page(
+            search=search, event_type="all", occurred_after=0, page=1, page_size=100
+        )
+
+    assert any(
+        event["event_id"] == outcome["outcome_set_id"] + ":isbn"
+        for event in page(root)["events"]
+    )
+    reader = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    store = ActivityFactStore()
+    reader.configure_activity_page_reader(store)
+    try:
+        assert page(reader, "no readable match")["total"] == 0
+        snapshot = store.snapshot()
+        assert snapshot is not None
+        projected = []
+        original = reader._field_effect_activity._project_activity_facts
+
+        def project(candidates, maximum):
+            projected.append(candidates)
+            return original(candidates, maximum)
+
+        monkeypatch.setattr(
+            reader._field_effect_activity, "_project_activity_facts", project
+        )
+        if mutation == "excluded_member":
+            import os
+
+            # Supported inserts reject scalar members in the derived facts.
+            # A commit followed by raw-byte corruption still must retain the
+            # canonical query's exclusion, without an AttributeError.
+            canonical = open_repository(
+                effects.database_path, create=False, authority=root.authority
+            )
+            try:
+                member = next(
+                    value
+                    for value in outcome["outcomes"]
+                    if value["destination"] == "isbn"
+                )
+                encoded = json.dumps(
+                    member, sort_keys=True, separators=(",", ":")
+                ).encode()
+                root._connection.execute(
+                    "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
+                )
+                root._connection.commit()
+                raw = effects.database_path.read_bytes()
+                offset = raw.find(encoded)
+                assert offset >= 0 and raw.find(encoded, offset + 1) == -1
+                descriptor = os.open(effects.database_path, os.O_WRONLY)
+                try:
+                    os.pwrite(descriptor, b"0" + b" " * (len(encoded) - 1), offset)
+                    os.fsync(descriptor)
+                finally:
+                    os.close(descriptor)
+                assert page(reader, "no readable match") == page(
+                    canonical, "no readable match"
+                )
+                current = store.snapshot()
+                assert current is not None
+                assert (
+                    "isbn_refusal",
+                    outcome["outcome_set_id"] + ":isbn",
+                ) not in current.facts
+            finally:
+                canonical.close()
+            return
+        if mutation == "missing_resolution":
+            # The absent lookup remains a dependency; inserting the exact
+            # policy changes validation provenance without changing the page.
+            root._connection.execute(
+                "INSERT INTO metadata_policy_resolutions VALUES (?,?,?,?)",
+                (1, report.target.library, policy.resolved_id, policy.canonical_json),
+            )
+            root._connection.commit()
+            assert page(reader, "no readable match") == page(root, "no readable match")
+            assert projected == [
+                {("isbn_refusal", outcome["outcome_set_id"] + ":isbn")}
+            ]
+            projected.clear()
+            root._connection.execute(
+                "UPDATE metadata_policy_resolutions SET document='{}' WHERE generation=1"
+            )
+        elif mutation == "fallback":
+            root._connection.execute(
+                "INSERT OR REPLACE INTO metadata_policy_drafts VALUES (?,?)",
+                (outcome["policy_profile_id"], "{}"),
+            )
+        else:
+            column = (
+                "generation" if mutation == "resolution_generation" else "library_name"
+            )
+            value = (
+                outcome["policy_generation"] + 1
+                if column == "generation"
+                else "other-library"
+            )
+            root._connection.execute(
+                f"UPDATE metadata_policy_resolutions SET {column}=? WHERE generation=? AND library_name=?",
+                (value, outcome["policy_generation"], report.target.library),
+            )
+        root._connection.commit()
+        error_type, message = (
+            (MetadataReportError, "^shadow outcome persistence is invalid$")
+            if mutation.startswith("resolution_")
+            else (FieldEffectError, "^persistence$")
+        )
+        for source in (root, reader):
+            with pytest.raises(error_type, match=message):
+                page(source, "no readable match")
+        assert (
+            projected
+            and ("isbn_refusal", outcome["outcome_set_id"] + ":isbn") in projected[0]
+        )
+        if mutation != "fallback":
+            assert projected == [
+                {("isbn_refusal", outcome["outcome_set_id"] + ":isbn")}
+            ]
+    finally:
+        reader.close()
+
+
+@pytest.mark.parametrize("warm", (False, True))
+def test_configured_witness_utf8_failure_retains_query_scoped_canonical_admission(
+    tmp_path,
+    warm,
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from tests.support.activity_seed import _report, seed_activity
+
+    seeded = seed_activity(tmp_path)
+    root = seeded.repository
+    unrelated = _report("Unreferenced report", "no-event", "d", "e")
+    root.publish(unrelated, lambda: True)
+    reader = open_repository(
+        tmp_path / "activity.sqlite", create=False, authority=root.authority
+    )
+    reader.configure_activity_page_reader(ActivityFactStore())
+
+    def page(source):
+        return source.field_effect_activity_page(
+            search="no readable match",
+            event_type="all",
+            occurred_after=0,
+            page=1,
+            page_size=25,
+        )
+
+    try:
+        if warm:
+            assert page(reader)["total"] == 0
+        columns = [
+            row[1]
+            for row in root._connection.execute("PRAGMA table_info(metadata_reports)")
+        ]
+        selections = [
+            "CAST(? AS TEXT)" if column == "library_name" else column
+            for column in columns
+        ]
+        root._connection.execute(
+            "INSERT OR REPLACE INTO metadata_reports SELECT "
+            + ",".join(selections)
+            + " FROM metadata_reports WHERE report_id=?",
+            (b"\x80", unrelated.report_id),
+        )
+        root._connection.commit()
+        assert page(root)["total"] == 0
+        assert page(reader) == page(root)
+        assert reader._field_effect_activity._activity_facts is None
+    finally:
+        reader.close()
+        root.close()

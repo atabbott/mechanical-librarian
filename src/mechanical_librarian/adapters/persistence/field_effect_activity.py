@@ -2560,7 +2560,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     TypeError,
                     KeyError,
                     RecursionError,
-                ):
+                    sqlite3.OperationalError,
+                ) as error:
+                    if isinstance(error, sqlite3.OperationalError) and not (
+                        getattr(error, "sqlite_errorcode", None) is None
+                        and str(error).startswith("Could not decode to UTF-8 column ")
+                    ):
+                        raise
                     # Full initialization must not broaden a normal page's
                     # candidate validation. Malformed unrelated history uses
                     # the original query-scoped canonical path.

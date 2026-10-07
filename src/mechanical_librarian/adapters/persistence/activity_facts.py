@@ -13,6 +13,7 @@ from threading import Lock
 from typing import Any, cast
 
 from mechanical_librarian.domain.activity_records import ReadableActivityEvent
+from mechanical_librarian.domain.readable_activity import ISBN_REFUSAL_REASONS
 
 _TABLES = (
     "metadata_reports",
@@ -102,7 +103,7 @@ class _Snapshot:
 
 
 def _bindings(
-    table: str, row: dict[str, Any]
+    table: str, row: dict[str, Any], connection: sqlite3.Connection
 ) -> tuple[frozenset[Key], frozenset[Key], frozenset[Candidate]]:
     dependencies: set[Key] = set()
     aliases: set[Key] = set()
@@ -137,6 +138,27 @@ def _bindings(
     }:
         dependency("review_cases", row.get("review_case_id"))
     if table == "shadow_decision_outcomes":
+        document = json.loads(row["document"])
+        # Only ISBN-refusal membership reads policy authority. Keep every
+        # outcome candidate below so a source change can enter that membership.
+        if any(
+            type(member) is dict
+            and member.get("destination") == "isbn"
+            and member.get("reason_code") in ISBN_REFUSAL_REASONS
+            for member in document["outcomes"]
+        ):
+            case = connection.execute(
+                "SELECT CAST(document AS BLOB) FROM review_cases WHERE review_case_id=?",
+                (row["review_case_id"],),
+            ).fetchone()
+            if case is not None:
+                dependency(
+                    "isbn_resolution",
+                    document["policy_generation"],
+                    json.loads(case[0])["target"]["library"],
+                )
+            if document["policy_generation"] == 1:
+                dependency("isbn_fallback", document["policy_profile_id"])
         aliases.add(
             _key(
                 "outcome_identity",
@@ -225,7 +247,10 @@ def _bindings(
         dependency("metadata_policy_drafts", row["from_policy_id"])
         dependency("metadata_policy_drafts", row["to_policy_id"])
         candidate("policy_transition", row["transition_id"])
+    elif table == "metadata_policy_drafts":
+        aliases.add(_key("isbn_fallback", row["policy_id"]))
     elif table == "metadata_policy_resolutions":
+        aliases.add(_key("isbn_resolution", row["generation"], row["library_name"]))
         aliases.add(
             _key(
                 "resolution_identity",
@@ -288,13 +313,24 @@ class ActivityFactStore:
                         values[i] = hashlib.sha256(values[i]).digest()
                 value = _encoded(values)
                 old = None if previous is None else previous.witnesses.get(key)
-                if old is not None and old.value == value:
+                # The ISBN policy lookup uses the case target's library. A
+                # replaced/missing case must rebuild that binding even when
+                # the outcome document itself is unchanged.
+                case_changed = False
+                if table == "shadow_decision_outcomes" and previous is not None:
+                    case_key = _key("review_cases", row[names.index("review_case_id")])
+                    case_changed = witnesses.get(case_key) != previous.witnesses.get(
+                        case_key
+                    )
+                if old is not None and old.value == value and not case_changed:
                     witnesses[key] = old
                 else:
                     # Only changed documents needed for a dependency binding
                     # are decoded, and never retained after this row.
                     decoded = dict(zip(names, row, strict=False))
-                    dependencies, aliases, candidates = _bindings(table, decoded)
+                    dependencies, aliases, candidates = _bindings(
+                        table, decoded, connection
+                    )
                     witnesses[key] = _Witness(value, dependencies, aliases, candidates)
                 admitted = witnesses[key]
                 accounted += (
@@ -337,9 +373,11 @@ class ActivityFactStore:
                         if dependency[0] in {
                             "current_cover_considerations",
                             "resolution_identity",
+                            "isbn_resolution",
+                            "isbn_fallback",
                         }:
-                            # These mutable bindings affect automatic selected-
-                            # value disclosure, not retained selection lineage.
+                            # Currentness and ISBN policy lookups affect these
+                            # candidates, not ordinary retained decision lineage.
                             currentness[dependency].update(witness.candidates)
                         else:
                             reverse[dependency].add(key)

@@ -4382,6 +4382,7 @@ def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
         elapsed = time.monotonic() - started
         cause = raised.value.__cause__
         assert isinstance(cause, sqlite3.OperationalError)
+        assert reader_c._field_effect_activity._activity_facts is not None
         activity_result.update(
             {
                 "elapsed": elapsed,

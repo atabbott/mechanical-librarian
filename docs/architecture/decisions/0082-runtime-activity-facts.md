@@ -39,10 +39,15 @@ file/currentness recheck remains mandatory.
 Changed sources identify affected candidates through both old and new bindings,
 including excluded candidates, missing joins, deletion and replacement. A temporary
 reverse index computes that closure and is discarded before canonical reprojection.
+ISBN refusal candidates bind the exact policy generation/library lookup and the
+generation-one profile fallback, including absent lookups. These policy edges
+refresh only the ISBN candidate, not ordinary automatic decision lineage.
 Affected candidates are admitted before matching search. The canonical projector
 still owns membership, lineage, target identity, readable composition and
 query-scoped refusal. Initialization or refresh that cannot admit the complete
-optimized representation falls back to the original query-scoped path.
+optimized representation falls back to the original query-scoped path. This
+includes SQLite text-decoding failures in unrelated witness columns; ordinary
+SQLite busy failures retain the bounded retry behavior.
 
 The content bound is 64 MiB, including witness keys and values, forward bindings,
 excluded candidates, serialized entries, search text and ordering references.
