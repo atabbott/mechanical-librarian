@@ -423,7 +423,10 @@ def test_final_currentness_rejects_absent_abs_source_that_becomes_bytes() -> Non
     )
 
     class Observer:
-        def observe(self, *_args, **_kwargs):
+        def observe(self, _target, _providers, current, *_args):
+            return current
+
+        def observe_current(self, *_args, **_kwargs):
             return (
                 CoverSource(
                     cover_source_id(CoverSourceKind.ABS, "descriptor"),
@@ -471,7 +474,10 @@ def test_final_currentness_rejects_same_path_abs_byte_drift() -> None:
     artifact = CoverArtifact.create(b"staged-original", b"preview", "image/png", 1, 1)
 
     class Observer:
-        def observe(self, *_args, **_kwargs):
+        def observe(self, _target, _providers, current, *_args):
+            return current
+
+        def observe_current(self, *_args, **_kwargs):
             return (
                 CoverSource(
                     cover_source_id(CoverSourceKind.ABS, "descriptor"),
@@ -872,6 +878,10 @@ def test_application_shares_aggregate_deadline_with_metadata_and_cover_providers
             )
 
     class CoverObserver:
+        def observe_current(self, _target, local, aggregate_deadline):
+            observed.append(("current", aggregate_deadline))
+            return local
+
         def observe(
             self,
             _target,
@@ -907,8 +917,8 @@ def test_application_shares_aggregate_deadline_with_metadata_and_cover_providers
     report = MetadataReport.from_json(service.run("item-1", 0))
 
     assert ProviderStatus.NO_MATCH == report.providers[0].status
-    assert ["metadata", "cover"] == [boundary for boundary, _ in observed]
-    assert observed[0][1] == observed[1][1]
+    assert ["current", "metadata", "cover"] == [boundary for boundary, _ in observed]
+    assert observed[0][1] == observed[1][1] == observed[2][1]
 
 
 def test_incomplete_cause_property_is_mapped_without_private_material() -> None:
@@ -2409,6 +2419,9 @@ def test_initial_failure_passes_exact_partial_descriptors_to_cover_observer():
             )
 
     class Observer:
+        def observe_current(self, _target, local, aggregate_deadline):
+            return local
+
         def observe(
             self, _target, providers, _local, candidate_descriptors, aggregate_deadline
         ):
@@ -2437,3 +2450,171 @@ def test_initial_failure_passes_exact_partial_descriptors_to_cover_observer():
     assert seen[0][1] == descriptors
     assert seen[0][1][0] is descriptors[0]
     assert repository.closed
+
+
+@pytest.mark.parametrize("media", ("ebook", "audiobook"))
+@pytest.mark.parametrize("incumbent", ("retrieved", "absent", "consumes_budget"))
+def test_incumbent_precedes_metadata_and_survives_exhausted_alternative_budget(
+    media, incumbent, tmp_path, monkeypatch
+):
+    import io
+    import time
+    from unittest.mock import patch
+
+    from PIL import Image
+
+    from mechanical_librarian.adapters.persistence.cover_artifacts import (
+        CoverArtifactStore,
+    )
+    from mechanical_librarian.application.configuration import (
+        ProviderConnectionConfiguration,
+    )
+    from mechanical_librarian.bootstrap.composition import _CoverEvidenceObserver
+    from mechanical_librarian.domain.cover_evidence import (
+        CoverDesignation,
+        CoverProvenance,
+    )
+
+    image = io.BytesIO()
+    Image.new("RGB", (10, 20), "red").save(image, "JPEG")
+    original = image.getvalue()
+    clock = [time.monotonic()]
+    started = clock[0]
+    monkeypatch.setattr(time, "monotonic", lambda: clock[0])
+    events = []
+    selected = TargetFile(
+        "a" * 64,
+        "book.m4b" if media == "audiobook" else "book.epub",
+        "m4b" if media == "audiobook" else "epub",
+    )
+    snapshot = TargetSnapshot(
+        media,
+        "Current title",
+        (selected,),
+        TargetCover("descriptor", "/cover.jpg") if incumbent != "absent" else None,
+    )
+
+    class Target(FakeTarget):
+        def read_cover(self, cover, *, deadline=None):
+            events.append(("current", deadline))
+            if incumbent == "consumes_budget" and len(events) == 1:
+                clock[0] += 61
+            return original
+
+    class Provider:
+        def observe(self, plan, *, deadline):
+            events.append(("metadata", deadline))
+            clock[0] = started + 61
+            return ProviderResult(
+                ProviderObservation(
+                    "catalogue",
+                    ProviderStatus.CANDIDATES,
+                    (),
+                    (ProviderCandidate("edition", "work", ()),),
+                ),
+                (
+                    ProviderCoverDescriptor(
+                        "catalogue",
+                        CoverSourceKind.HARDCOVER,
+                        cover_source_id(CoverSourceKind.HARDCOVER, "cover"),
+                        "https://example.com/cover.jpg",
+                        CoverProvenance(
+                            "catalogue", CoverDesignation.WORK, "work", "edition"
+                        ),
+                    ),
+                ),
+            )
+
+    target = Target([snapshot, snapshot])
+    repository = FakeReportRepository()
+    observer = _CoverEvidenceObserver(
+        target,
+        CoverArtifactStore(tmp_path / "artifacts"),
+        (ProviderConnectionConfiguration("catalogue", True, True, None),),
+    )
+    service = GenerateMetadataReport(
+        target=target,
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        audio_inspector=FakeAudioInspector(audio_result()),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=(ProviderBinding("catalogue", True, Provider),),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "books", "primary", "library-id", media, "books", ("catalogue",)
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+        cover_observer=observer,
+    )
+    with patch(
+        "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+    ) as fetch:
+        report = MetadataReport.from_json(service.run("item-1", 0))
+    fetch.assert_not_called()
+    assert repository.closed
+    current, alternative = report.cover_sources
+    assert current.kind is CoverSourceKind.ABS
+    assert (
+        current.state
+        is {
+            "retrieved": CoverSourceState.RETRIEVED,
+            "absent": CoverSourceState.ABSENT,
+            "consumes_budget": CoverSourceState.TIMEOUT,
+        }[incumbent]
+    )
+    assert alternative.state is CoverSourceState.TIMEOUT
+    assert alternative.timeout_scope == "not_started_due_to_aggregate_deadline"
+    if incumbent != "absent":
+        assert events[0] == ("current", started + 60)
+    metadata = [event for event in events if event[0] == "metadata"]
+    assert metadata and all(deadline == started + 60 for _, deadline in metadata)
+
+
+@pytest.mark.parametrize("media", ("ebook", "audiobook"))
+@pytest.mark.parametrize(
+    "failure", (RuntimeError("acquisition failed"), KeyboardInterrupt())
+)
+def test_early_cover_failure_releases_repository_preserving_original(media, failure):
+    selected = TargetFile(
+        "a" * 64,
+        "book.m4b" if media == "audiobook" else "book.epub",
+        "m4b" if media == "audiobook" else "epub",
+    )
+    snapshot = TargetSnapshot(media, "Title", (selected,))
+
+    class Observer:
+        def observe_current(self, *args):
+            raise failure
+
+        def observe(self, *args):
+            raise AssertionError("alternatives must not start")
+
+    class Repository(FakeReportRepository):
+        def close(self):
+            super().close()
+            raise RuntimeError("close failed")
+
+    repository = Repository()
+    service = GenerateMetadataReport(
+        target=FakeTarget([snapshot]),
+        inspector=FakeInspector(InspectionResult("c" * 64, ())),
+        audio_inspector=FakeAudioInspector(audio_result()),
+        repository_factory=lambda: cast(ReportRepository, repository),
+        providers=(),
+        connection=TargetConnectionConfiguration(
+            "primary", "https://example.invalid", "/private/target"
+        ),
+        library=LibraryConfiguration(
+            "books", "primary", "library-id", media, "books", ()
+        ),
+        mount=MediaMountConfiguration("books", "/media", "/library", True),
+        limits=ReportLimits(),
+        cover_observer=Observer(),
+    )
+    with pytest.raises(type(failure)) as raised:
+        service.run("item-1", 0)
+    assert raised.value is failure
+    assert repository.closed and not repository.values
+    assert any("close failed" in note for note in failure.__notes__)

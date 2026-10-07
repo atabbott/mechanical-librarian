@@ -400,7 +400,7 @@ def test_abs_result_is_recorded_without_a_request() -> None:
         target = _Target(b"unexpected")
         value = _CoverEvidenceObserver(
             target, CoverArtifactStore(Path(directory))
-        ).observe(TargetSnapshot("ebook", "Title", (), None), (), ())
+        ).observe_current(TargetSnapshot("ebook", "Title", (), None), ())
     assert (CoverSourceKind.ABS, CoverSourceState.ABSENT) == (
         value[0].kind,
         value[0].state,
@@ -412,11 +412,10 @@ def test_retrieves_and_stages_one_declared_abs_cover() -> None:
     with tempfile.TemporaryDirectory() as directory:
         store = CoverArtifactStore(Path(directory))
         target = _Target(_jpeg())
-        value = _CoverEvidenceObserver(target, store).observe(
+        value = _CoverEvidenceObserver(target, store).observe_current(
             TargetSnapshot(
                 "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
             ),
-            (),
             (),
         )
         assert CoverSourceState.RETRIEVED == value[0].state
@@ -428,11 +427,10 @@ def test_timeout_is_an_explicit_attempted_outcome() -> None:
     with tempfile.TemporaryDirectory() as directory:
         value = _CoverEvidenceObserver(
             _Target(CoverTimeoutError("elapsed")), CoverArtifactStore(Path(directory))
-        ).observe(
+        ).observe_current(
             TargetSnapshot(
                 "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
             ),
-            (),
             (),
         )
     assert (CoverSourceState.TIMEOUT, "attempted") == (
@@ -446,11 +444,10 @@ def test_changed_abs_source_is_recorded_without_publication() -> None:
         value = _CoverEvidenceObserver(
             _Target(CoverSourceChangedError("changed")),
             CoverArtifactStore(Path(directory)),
-        ).observe(
+        ).observe_current(
             TargetSnapshot(
                 "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
             ),
-            (),
             (),
         )
     assert CoverSourceState.SOURCE_CHANGED == value[0].state
@@ -471,11 +468,10 @@ def test_abs_terminal_read_classifications_are_preserved(
         value = _CoverEvidenceObserver(
             _Target(CoverReadError(state)),
             CoverArtifactStore(Path(directory)),
-        ).observe(
+        ).observe_current(
             TargetSnapshot(
                 "ebook", "Title", (), TargetCover("descriptor", "/cover.jpg")
             ),
-            (),
             (),
         )
     assert expected == value[0].state
@@ -493,14 +489,13 @@ def test_abs_decoder_uses_aggregate_deadline_and_maps_expiry_to_timeout() -> Non
         value = _CoverEvidenceObserver(
             _Target(_jpeg()),
             CoverArtifactStore(Path(directory)),
-        ).observe(
+        ).observe_current(
             TargetSnapshot(
                 "ebook",
                 "Title",
                 (),
                 TargetCover("descriptor", "/cover.jpg"),
             ),
-            (),
             (),
             aggregate_deadline=aggregate,
         )
@@ -587,3 +582,71 @@ def test_inventaire_remote_nonretrieved_outcomes(outcome: str, tmp_path: Path) -
     if outcome == "deadline":
         assert source.timeout_scope == "not_started_due_to_aggregate_deadline"
     assert fetch.call_count == (1 if outcome == "unavailable" else 0)
+
+
+@pytest.mark.parametrize("declared", (False, True))
+def test_expired_current_acquisition_does_not_dispatch(declared, tmp_path):
+    target = _Target(_jpeg())
+    snapshot = TargetSnapshot(
+        "ebook",
+        "Title",
+        (),
+        TargetCover("descriptor", "/cover.jpg") if declared else None,
+    )
+    sources = _CoverEvidenceObserver(
+        target, CoverArtifactStore(tmp_path)
+    ).observe_current(snapshot, (), time.monotonic() - 1)
+    assert target.calls == 0
+    assert sources[0].state is (
+        CoverSourceState.TIMEOUT if declared else CoverSourceState.ABSENT
+    )
+    assert sources[0].timeout_scope == (
+        "not_started_due_to_aggregate_deadline" if declared else None
+    )
+
+
+@pytest.mark.parametrize(
+    "terminal,url,expected",
+    (
+        (
+            CoverSourceState.UNSAFE_REMOTE,
+            "https://example.com/cover.jpg",
+            CoverSourceState.UNSAFE_REMOTE,
+        ),
+        (CoverSourceState.UNAVAILABLE, None, CoverSourceState.UNAVAILABLE),
+        (None, None, CoverSourceState.ABSENT),
+        (None, "https://example.com/cover.jpg", CoverSourceState.TIMEOUT),
+    ),
+)
+def test_expired_provider_preserves_known_outcome_before_pacing_or_transport(
+    terminal, url, expected, tmp_path
+):
+    from dataclasses import replace
+
+    wait = Mock(return_value=True)
+    descriptor = replace(
+        _provider_descriptor(CoverDesignation.WORK, "work", "edition"),
+        terminal_state=terminal,
+        url=url,
+        wait=wait,
+    )
+    with patch(
+        "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
+    ) as fetch:
+        sources = _CoverEvidenceObserver(
+            _Target(None), CoverArtifactStore(tmp_path), (_CATALOGUE,)
+        ).observe(
+            TargetSnapshot("ebook", "Title", (), None),
+            (_candidates_observation("catalogue", "edition", "work"),),
+            (),
+            (descriptor,),
+            time.monotonic() - 1,
+        )
+    assert sources[0].state is expected
+    assert sources[0].timeout_scope == (
+        "not_started_due_to_aggregate_deadline"
+        if expected is CoverSourceState.TIMEOUT
+        else None
+    )
+    wait.assert_not_called()
+    fetch.assert_not_called()

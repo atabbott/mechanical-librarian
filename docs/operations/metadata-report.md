@@ -765,6 +765,19 @@ same edition and records lanes that converge on one provider-local work.
 That convergence is correlation within one source, never another vote or an
 upgrade from work-scoped to edition-scoped authority.
 
+The declared current ABS cover is acquired before metadata providers, for both
+ebooks and audiobooks, within the same single 60-second aggregate window used
+by metadata and alternative covers. A provider consuming the remaining budget
+does not discard the acquired incumbent. Known absence or terminal refusal is
+preserved; an expired request that never starts records
+`not_started_due_to_aggregate_deadline`, while a dispatched timeout records
+`attempted`. Final target, media and cover-byte currentness checks still run
+before publication and retain their existing bounded reads.
+
+Validated EPUB directory entries are not file-cover candidates. The package
+must still pass the existing archive validation and declare exactly one supported
+image resource. A child wall timeout is a timeout, not an invalid declaration.
+
 In addition to one ABS and one declared EPUB outcome, cover-enabled providers
 contribute at most eight admitted sources overall and four per provider. Exact
 edition, qualified-work/default, and related-edition designations retain safe

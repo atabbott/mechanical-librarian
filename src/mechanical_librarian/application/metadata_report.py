@@ -1341,6 +1341,13 @@ class MetadataProvider(Protocol):
 class CoverObserver(Protocol):
     """Collect bounded report-only cover outcomes before final publication."""
 
+    def observe_current(
+        self,
+        target: TargetSnapshot,
+        local_sources: tuple[CoverSource, ...],
+        aggregate_deadline: float | None = None,
+    ) -> tuple[CoverSource, ...]: ...
+
     def observe(
         self,
         target: TargetSnapshot,
@@ -2446,6 +2453,19 @@ class GenerateMetadataReport:
         local = cast("InspectionResult", local)
         plan = metadata_discovery_plan(initial, combined_claims)
         cover_aggregate_deadline = time.monotonic() + 60.0
+        try:
+            current_sources = (
+                local.cover_sources
+                if self._cover_observer is None
+                else self._cover_observer.observe_current(
+                    initial, local.cover_sources, cover_aggregate_deadline
+                )
+            )
+        except BaseException as error:
+            # Acquisition owns no publication; preserve cancellation and the
+            # original failure while releasing the already-open repository.
+            _release_repository(repository, error)
+            raise
         observations, descriptors = self._observe_providers(
             repository, plan, cover_aggregate_deadline
         )
@@ -2464,7 +2484,7 @@ class GenerateMetadataReport:
                 else self._cover_observer.observe(
                     initial,
                     tuple(observations),
-                    local.cover_sources,
+                    current_sources,
                     tuple(descriptors),
                     cover_aggregate_deadline,
                 )
@@ -2711,6 +2731,19 @@ class GenerateMetadataReport:
         )
         plan = audiobook_discovery_plan(initial, combined_claims, audio=audio.audio)
         cover_aggregate_deadline = time.monotonic() + 60.0
+        try:
+            current_sources = (
+                ()
+                if self._cover_observer is None
+                else self._cover_observer.observe_current(
+                    initial, (), cover_aggregate_deadline
+                )
+            )
+        except BaseException as error:
+            # Acquisition owns no publication; preserve cancellation and the
+            # original failure while releasing the already-open repository.
+            _release_repository(repository, error)
+            raise
         observations, descriptors = self._observe_providers(
             repository, plan, cover_aggregate_deadline
         )
@@ -2744,7 +2777,7 @@ class GenerateMetadataReport:
                 else self._cover_observer.observe(
                     initial,
                     tuple(observations),
-                    (),
+                    current_sources,
                     tuple(descriptors),
                     cover_aggregate_deadline,
                 )

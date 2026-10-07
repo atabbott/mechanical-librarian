@@ -1534,14 +1534,17 @@ def test_isbn_without_image_reaches_persisted_authority(tmp_path, shape):
     with patch(
         "mechanical_librarian.bootstrap.composition.fetch_remote_cover"
     ) as fetch:
-        covers = _CoverEvidenceObserver(
+        observer = _CoverEvidenceObserver(
             target,
             CoverArtifactStore(tmp_path / "artifacts"),
             (ProviderConnectionConfiguration("inventaire", True, True, None),),
-        ).observe(
-            TargetSnapshot("ebook", "Example Book", (), None),
+        )
+        snapshot = TargetSnapshot("ebook", "Example Book", (), None)
+        current = observer.observe_current(snapshot, ())
+        covers = observer.observe(
+            snapshot,
             (result.observation,),
-            (),
+            current,
             result.cover_descriptors,
         )
     fetch.assert_not_called()
