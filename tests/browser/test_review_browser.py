@@ -820,14 +820,28 @@ def _server(
                 for index, summary in enumerate(
                     (
                         "A voyage reveals a hidden city.",
-                        "An explorer crosses the sea and discovers an ancient city. "
-                        * 12,
+                        "A librarian follows a forgotten expedition across a distant archipelago. "
+                        "The letters left behind describe the lives of sailors, the rituals of "
+                        "island communities, and a city whose history has been deliberately "
+                        "concealed. As storms close the shipping routes, she must decide which "
+                        "account to trust and whether the discoveries belong in the archive or "
+                        "with the people who preserved them.",
                     ),
                     1,
                 )
             )
         )
         assert audiobook_review_scope(report) == "work"
+        assert (
+            len(
+                next(
+                    result
+                    for result in evaluate_report(report).results
+                    if result.destination.value == "description"
+                ).alternatives
+            )
+            == 2
+        )
         repository.publish(report, lambda: True)
         proposal_set = evaluate_report(report)
         repository.publish_proposal(proposal_set)
