@@ -8,6 +8,8 @@
 
 ## Unreleased
 
+- Clarify audiobook evidence-only outcomes and conditional retry guidance (#1155).
+
 - Activity reuses validated readable history across runtime generations, keeping
   search and paging responsive while preparation continues. Exact source-byte
   checks preserve corruption refusal and current results without a schema change
