@@ -55,6 +55,7 @@ from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
 from mechanical_librarian.adapters.library_services.audiobookshelf_setup import (
     AudiobookshelfSetupProbe,
 )
+from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.batch_manifest import (
     create as create_batch_manifest,
 )
@@ -434,6 +435,7 @@ class _StoreRuntimeActivation:
         self._dispatcher: MutableRuntimeDispatcher | None = None
         self._lock = threading.RLock()
         self._codex_auth = _CodexAuthLeaseCoordinator()
+        self.activity_facts = ActivityFactStore()
 
     @property
     def dispatcher(self) -> MutableRuntimeDispatcher:
@@ -774,6 +776,7 @@ def open_field_effect_activity_projection(
     database_path: Path,
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    facts: ActivityFactStore | None = None,
 ) -> tuple[ContinuousGuardedApplication, Callable[[], None]]:
     """Open a generation-owned, independently admitted Activity reader."""
     admission = OperationAdmission()
@@ -794,7 +797,9 @@ def open_field_effect_activity_projection(
         repository.close()
 
     try:
-        repository.configure_activity_page_reader()
+        repository.configure_activity_page_reader(facts)
+        if facts is not None:
+            repository.initialize_activity_facts()
         return (
             compose_field_effect_activity_projection(
                 configuration, repository, provider_recovery
@@ -811,13 +816,18 @@ def open_field_effect_activity_readers(
     database_path: Path,
     authority: object,
     provider_recovery: SQLiteProviderRecoveryStore | None = None,
+    facts: ActivityFactStore | None = None,
 ) -> tuple[
     ContinuousGuardedApplication, ContinuousGuardedApplication, Callable[[], None]
 ]:
     """Own both independent readers as one generation resource, including failure."""
     with ExitStack() as activation:
         history, close_history = open_field_effect_activity_projection(
-            configuration, database_path, authority, provider_recovery
+            configuration,
+            database_path,
+            authority,
+            provider_recovery,
+            facts if facts is not None else ActivityFactStore(),
         )
         activation.callback(close_history)
         permissions, close_permissions = open_field_effect_activity_projection(
@@ -3382,6 +3392,7 @@ def compose_store_runtime_generation(
                     database_path,
                     repository.authority,
                     provider_recovery,
+                    activation.activity_facts if activation is not None else None,
                 )
             owner_binding = owner_password_binding(encoded_verifier)
             review_application = compose_review_application(

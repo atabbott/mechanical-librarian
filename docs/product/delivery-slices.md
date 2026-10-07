@@ -244,7 +244,7 @@ cohort, endpoints/models, data-use posture, retention and spend caps are approve
 #1086 in 0.21.0 owns the outstanding reviewer-free joint 0.19.0/0.21.0 measurement
 after #1072/#1085/#1073/#1080/#1083/#1084. It is separate from #1060 reviewer
 collection; this checkpoint cannot retroactively pass #877. The retained-run
-follow-ups proceed through Library search #1160, Activity responsiveness #1150,
+follow-ups proceed through Library search #1160, Activity responsiveness #1150 ([ADR-0082](../architecture/decisions/0082-runtime-activity-facts.md)),
 and #1155–#1159 before the remaining #1086 assessment; none restarts collection.
 
 Exit requires each issue contract, actual collection and inspection for #1060,

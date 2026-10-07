@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Activity reuses validated readable history across runtime generations, keeping
+  search and paging responsive while preparation continues. Exact source-byte
+  checks preserve corruption refusal and current results without a schema change
+  or changes to write permissions (#1150).
+
 - Library and Attention search avoid repeating package matching for every review
   field, keeping searches responsive while preserving current results, counts,
   ordering, and unavailable-state checks (#1160).

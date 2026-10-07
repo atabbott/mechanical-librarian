@@ -17,6 +17,8 @@ because it was that state.
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import cast
 
@@ -48,6 +50,7 @@ __all__ = [
     "activity_result_label",
     "activity_search_text",
     "readable_activity_event",
+    "project_readable_activity_event",
 ]
 
 ACTIVITY_CATEGORIES = ("owner", "automatic", "policy", "recovery")
@@ -114,6 +117,68 @@ _RESULT_LABELS = {
     "superseded": ActivityResult.SUPERSEDED,
     "abandoned": ActivityResult.STOPPED_SAFELY,
 }
+
+
+@dataclass(frozen=True, slots=True)
+class ReadableActivityEvent:
+    """Serialized output of canonical event/report composition, without join data."""
+
+    document: bytes
+
+    @classmethod
+    def compose(
+        cls, event: dict[str, object], report: MetadataReport | None
+    ) -> ReadableActivityEvent:
+        public = dict(event)
+        project_readable_activity_event(public, report)
+        return cls(
+            json.dumps(public, ensure_ascii=False, separators=(",", ":")).encode()
+        )
+
+    def to_data(self) -> dict[str, object]:
+        return cast("dict[str, object]", json.loads(self.document))
+
+
+class ActivityProjectionError(ValueError):
+    """An event's declared report identity or target does not agree."""
+
+
+def project_readable_activity_event(
+    event: dict[str, object], report: MetadataReport | None
+) -> None:
+    """Compose an event from its exact report; retain no report or join values."""
+    connection = event.pop("connection", None)
+    report_id = event.pop("report_id", None)
+    event["work_label"] = event.get("work_label", "Recorded work")
+    event["author_label"] = "Author details are not recorded"
+    if connection is None and report_id is None:
+        readable_activity_event(event, None)
+        return
+    if (
+        type(connection) is not str
+        or type(report_id) is not str
+        or report is None
+        or report.report_id != report_id
+        or report.target.connection != connection
+        or report.target.library != event.get("library")
+        or report.target.item != event.get("work_id")
+    ):
+        raise ActivityProjectionError("activity")
+    event["work_label"] = report.target.current_title or "Untitled"
+    authors = next(
+        (
+            field.value
+            for field in report.target.fields
+            if field.destination is TargetDestination.AUTHORS
+        ),
+        (),
+    )
+    if type(authors) is tuple and all(type(author) is str for author in authors):
+        joined = ", ".join(cast("tuple[str, ...]", authors))
+        event["author_label"] = (
+            joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
+        ) or "Author details are not recorded"
+    readable_activity_event(event, report)
 
 
 def activity_result_label(state: str) -> ActivityResult:

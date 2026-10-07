@@ -13,6 +13,7 @@ from pathlib import Path
 import uvicorn
 from argon2 import PasswordHasher
 
+from mechanical_librarian.adapters.persistence.activity_facts import ActivityFactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     SQLiteMetadataReportRepository,
     open_repository,
@@ -81,6 +82,7 @@ class OwnerResponsivenessFixture:
     ) -> None:
         self.root = root
         self.database = root / "reports.sqlite"
+        self.activity_facts = ActivityFactStore()
         self._close_external_actors: Callable[[], None] | None = None
         with ExitStack() as activation:
             self.repository = open_repository(
@@ -249,6 +251,7 @@ class OwnerResponsivenessFixture:
                     self.database,
                     self.repository.authority,
                     self.recovery,
+                    self.activity_facts,
                 )
             )
             activation.callback(close_activity)
@@ -883,6 +886,7 @@ def activity_generation(
     sessions: SQLiteReviewSessionRepository,
     *,
     graceful_shutdown_seconds: int = 1,
+    facts: ActivityFactStore | None = None,
 ) -> Iterator[ReviewApplication]:
     """Real generation ownership without starting external actors or transport."""
     configuration = ApplicationConfiguration(
@@ -903,6 +907,7 @@ def activity_generation(
         configuration,
         database,
         root.authority,
+        facts=facts,
     )
 
     def close_reader() -> None:

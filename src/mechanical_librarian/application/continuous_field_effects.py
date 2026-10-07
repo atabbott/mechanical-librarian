@@ -20,7 +20,11 @@ from mechanical_librarian.application.operation_admission import (
     WorkClass,
 )
 from mechanical_librarian.application.operations import StageTimer
-from mechanical_librarian.domain.activity_records import readable_activity_event
+from mechanical_librarian.domain.activity_records import (
+    ActivityProjectionError,
+    ReadableActivityEvent,
+    project_readable_activity_event,
+)
 from mechanical_librarian.domain.automatic_decision import (
     AutomaticDecision,
     qualification_manifest_is_current,
@@ -42,7 +46,6 @@ from mechanical_librarian.domain.metadata_report import (
     MAX_REPORT_BYTES,
     MetadataReport,
     ReportValueError,
-    TargetDestination,
 )
 
 
@@ -1226,20 +1229,16 @@ class ContinuousGuardedApplication:
             not in {"planned", "claimed", "applying", "reconciling", "retryable"}
         ):
             raise GuardedApplicationError("activity")
-        for event in events:
+        for index, event in enumerate(events):
+            if type(event) is ReadableActivityEvent:
+                events[index] = event.to_data()
+                continue
             if type(event) is not dict:
                 raise GuardedApplicationError("activity")
-            # The persistence projection carries these private join values
-            # only long enough to derive a closed, readable Activity display.
-            # Keeping old in-memory test projections value-free is intentional:
-            # they are already a public-shaped activity record, not a report
-            # lineage assertion.
-            connection = event.pop("connection", None)
-            report_id = event.pop("report_id", None)
-            event["work_label"] = event.get("work_label", "Recorded work")
-            event["author_label"] = "Author details are not recorded"
+            connection = event.get("connection")
+            report_id = event.get("report_id")
             if connection is None and report_id is None:
-                readable_activity_event(event, None)
+                project_readable_activity_event(event, None)
                 continue
             if type(connection) is not str or type(report_id) is not str:
                 raise GuardedApplicationError("activity")
@@ -1264,32 +1263,10 @@ class ContinuousGuardedApplication:
                 if report.report_id != report_id:
                     raise GuardedApplicationError("activity")
                 reports[report_id] = report
-            if (
-                report.target.connection != connection
-                or report.target.library != event.get("library")
-                or report.target.item != event.get("work_id")
-            ):
-                raise GuardedApplicationError("activity")
-            event["work_label"] = report.target.current_title or "Untitled"
-            authors = next(
-                (
-                    field.value
-                    for field in report.target.fields
-                    if field.destination is TargetDestination.AUTHORS
-                ),
-                (),
-            )
-            if type(authors) is tuple and all(
-                type(author) is str for author in authors
-            ):
-                joined = ", ".join(cast("tuple[str, ...]", authors))
-                event["author_label"] = (
-                    joined if len(joined) <= 512 else joined[:511].rstrip() + "…"
-                ) or "Author details are not recorded"
-            # The report is passed rather than looked up again: an event only
-            # accepts it as the source of a previous value when its own
-            # recorded fingerprint names it (#636).
-            readable_activity_event(event, report)
+            try:
+                project_readable_activity_event(event, report)
+            except ActivityProjectionError as error:
+                raise GuardedApplicationError("activity") from error
         cleanup = data.pop("cleanup", None)
         if cleanup is not None and (
             type(cleanup) is not dict

@@ -105,3 +105,5 @@ an accepted ADR to make history match current preference; supersede it.
 | [0080](0080-isbn-evidence-without-image.md) | accepted | Verify ebook ISBN identity independently of image retrieval |
 
 | [0081](0081-image-owned-reviewer-provisioning.md) | accepted | Ship and validate the contained reviewer profile |
+
+| [0082](0082-runtime-activity-facts.md) | accepted | Reuse readable Activity facts with exact source witnesses |

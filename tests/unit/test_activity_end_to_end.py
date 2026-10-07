@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import sqlite3
 from types import SimpleNamespace
 from typing import cast
 
@@ -97,19 +98,33 @@ def _ledger(
     the activity-only application, so the projection under assertion is the one
     the running product serves rather than a convenient stand-in.
     """
-    service = ContinuousGuardedApplication(
-        environment.repository,
-        {},
-        {},
-        PersistedFieldEffectAuthority(environment.repository),
-        (("primary", "books"),),
-        lambda: 2_000,
-        lambda *_: None,
-        activity_only=True,
+
+    def application(repository):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "books"),),
+            lambda: 2_000,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    reader = open_repository(
+        environment.database_path,
+        create=False,
+        authority=environment.repository.authority,
     )
-    events = service.activity(search=search)["events"]
-    assert isinstance(events, list)
-    return events
+    try:
+        reader.configure_activity_page_reader()
+        actual = application(reader).activity(search=search)
+        assert actual == application(environment.repository).activity(search=search)
+        events = actual["events"]
+        assert isinstance(events, list)
+        return events
+    finally:
+        reader.close()
 
 
 def _facts(event: dict[str, object]) -> dict[str, str]:
@@ -984,3 +999,108 @@ def test_post_write_third_value_closes_without_claiming_no_write(
         == "The selected change was not confirmed"
     )
     assert "No write was applied" not in str(event)
+
+
+def test_configured_reader_serialized_facts_preserve_public_activity(
+    tmp_path, monkeypatch
+):
+    from mechanical_librarian.adapters.persistence.activity_facts import (
+        ActivityFactStore,
+    )
+    from tests.support.activity_seed import seed_activity
+
+    seeded = seed_activity(tmp_path)
+    root = seeded.repository
+    facts = ActivityFactStore()
+    reader = open_repository(
+        tmp_path / "activity.sqlite", create=False, authority=root.authority
+    )
+
+    def application(repository):
+        return ContinuousGuardedApplication(
+            repository,
+            {},
+            {},
+            PersistedFieldEffectAuthority(repository),
+            (("primary", "books"),),
+            seeded.reader_now,
+            lambda *_: None,
+            activity_only=True,
+        )
+
+    try:
+        reader._field_effect_activity.configure_activity_page_reader(facts)
+        canonical, admitted = application(root), application(reader)
+        for search, event_type, days, page, size in (
+            (None, "all", 90, 1, 25),
+            ("title", "all", 90, 1, 25),
+            ("no readable match", "all", 30, 1, 100),
+            ("%_", "all", 7, 1, 50),
+            (None, "review", 7, 100, 25),
+            (None, "policy", 30, 1, 50),
+            (None, "metadata", 90, 1, 100),
+            (None, "safety", 90, 1, 25),
+            (None, "unknown", 90, 1, 25),
+            (None, "all", 90, 2, 25),
+        ):
+            query = dict(
+                search=search,
+                event_type=event_type,
+                range_days=days,
+                page=page,
+                page_size=size,
+            )
+            assert admitted.activity(**query) == canonical.activity(**query)
+        snapshot = facts.snapshot()
+        assert snapshot is not None and len(snapshot.facts) == 27
+        assert 0 < snapshot.accounted_bytes < facts.max_bytes
+        assert root._field_effect_activity._activity_facts is None
+        projected = []
+        original_project = reader._field_effect_activity._project_activity_facts
+
+        def project(candidates, max_bytes):
+            projected.append(candidates)
+            return original_project(candidates, max_bytes)
+
+        monkeypatch.setattr(
+            reader._field_effect_activity, "_project_activity_facts", project
+        )
+        transition = root._connection.execute(
+            "SELECT transition_id FROM metadata_policy_transitions LIMIT 1"
+        ).fetchone()[0]
+        root._connection.execute(
+            "UPDATE metadata_policy_transitions SET updated_at=updated_at+1 WHERE transition_id=?",
+            (transition,),
+        )
+        root._connection.commit()
+        assert admitted.activity(range_days=90) == canonical.activity(range_days=90)
+        assert projected == [{("policy_transition", transition)}]
+        projected.clear()
+        from tests.support.activity_seed import _report
+
+        root.publish(_report("Unreferenced report", "no-event", "d", "e"), lambda: True)
+        assert admitted.activity(range_days=90) == canonical.activity(range_days=90)
+        assert projected == []
+        assert facts.snapshot() is not snapshot
+        # Both witness overflow and entry overflow preserve the whole public
+        # canonical page, without publishing a partial store.
+        for maximum in (1, snapshot.accounted_bytes - 1):
+            bounded = ActivityFactStore(max_bytes=maximum)
+            borrower = open_repository(
+                tmp_path / "activity.sqlite", create=False, authority=root.authority
+            )
+            try:
+                borrower.configure_activity_page_reader(bounded)
+                assert application(borrower).activity(
+                    range_days=90
+                ) == canonical.activity(range_days=90)
+                assert bounded.snapshot() is None and bounded._disabled
+            finally:
+                borrower.close()
+        with pytest.raises(sqlite3.OperationalError, match="readonly"):
+            reader._connection.execute(
+                "UPDATE metadata_policy_transitions SET updated_at=updated_at+1"
+            )
+    finally:
+        reader.close()
+        root.close()

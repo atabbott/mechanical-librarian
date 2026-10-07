@@ -294,6 +294,15 @@ queue administration, blind retries, telemetry, exports, or extra write
 authority; recovery and consent remain the existing server-validated actions.
 
 
+Activity prepares its bounded in-memory readable history before the server becomes
+ready. Restarting rebuilds it from canonical history; no schema adoption or state
+conversion is required for this optimization. Large retained histories can add
+startup time. Capacity overflow uses the original complete read path and may make
+search slower; it never loses history or truncates results. A corruption refusal
+still requires the existing backup/recovery procedure, not deletion of ledger rows
+or a repeated attempt to bypass validation.
+
+
 ## Optional description advice
 
 Before enabling an adviser, open Policy → Curation → Description advice. Review
