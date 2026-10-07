@@ -173,8 +173,9 @@ including immediate prior `metadata-report-v42`, remains offline and requires a
 clean current database under ADR-0013.
 
 An audiobook item in a mounted audiobook library, with 1 to 512 audio files in
-supported containers, is prepared as a local-evidence report and nothing
-further. Its closed evidence set carries ASIN, narrator contributions, series
+supported containers, is prepared as a report of local and provider evidence.
+It becomes a review case only when the recording-admission conditions below
+are met. Its closed local evidence set carries ASIN, narrator contributions, series
 and sequence, running time, performance type, language, description, embedded
 chapters, and whether the file carries embedded cover art — each attributed to
 the surface it was read from: an embedded tag, a sidecar document beside the
@@ -257,6 +258,15 @@ prepared audiobook counted as a failure would discard every absence its scan
 staged, including a disappeared ebook's in a mixed-format library. Each file's digest is bounded by `audio_source_bytes` rather
 than the EPUB archive limit, and its catalogue fingerprint follows the audio
 files' own revisions, so playing an audiobook does not re-prepare it.
+
+A local `no_candidate` result is not an extraction failure and does not negate
+provider evidence. A WORK match identifies a work, not this recording; provider
+unavailability or overflow does not establish that no matching recording exists.
+For an evidence-only item, inspect the recorded provider statuses and legitimate
+title, full-author and ASIN context. If runtime disagrees, check the edition,
+track grouping and completeness. Retry explicitly only when the relevant input
+or provider condition has changed; without recording corroboration, the item
+remains evidence-only.
 
 A multi-file item is one preparable unit. Every file is read by its own isolated
 child, and the per-file documents are composed into one evidence set: one
