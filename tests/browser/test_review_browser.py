@@ -1511,7 +1511,11 @@ def _server(
         session_store=session_store,
         clock=lambda: 1_000,
         close_repository=True,
-        policy_libraries=((report.target.library, None),) if refusal_fixture else (),
+        policy_libraries=(
+            ((report.target.library, None),)
+            if refusal_fixture or work_review_fixture
+            else ()
+        ),
         field_application=(
             _BrowserActivityApplication()
             if not isbn_fixture
