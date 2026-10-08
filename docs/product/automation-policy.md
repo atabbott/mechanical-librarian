@@ -474,7 +474,9 @@ generation transition may return its prior result.
 
 Primary counts describe sampled works and fields whose selected outcome or
 meaningful candidate routing changed because of the edit. A supported
-Ask-to-Automatic candidate counts even when it equals the incumbent. Unchanged
+Ask-to-Automatic candidate counts even when it equals the incumbent. Changes to
+manual description or genre availability for work-only audiobooks also count,
+even when no single value is elected. Unchanged
 outcomes and projected changes against library values are separate context;
 proposal identities and explanatory wording alone are not impact. Title,
 authors, narrators, date, publisher, language and cover are outside this rich

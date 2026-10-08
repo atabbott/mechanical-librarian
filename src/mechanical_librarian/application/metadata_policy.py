@@ -22,6 +22,7 @@ from mechanical_librarian.domain.cover_qualification_policy import (
     COVER_ELECTION_QUALIFICATION_MANIFEST_SHA256,
     cover_aware_qualified_policy_options,
 )
+from mechanical_librarian.domain.human_decision import decision_actions
 from mechanical_librarian.domain.metadata_policy import (
     OPTION_CATALOGUE,
     MetadataPolicyError,
@@ -29,8 +30,15 @@ from mechanical_librarian.domain.metadata_policy import (
     ResolvedMetadataPolicy,
     resolve_policy,
 )
-from mechanical_librarian.domain.metadata_report import MetadataReport
-from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
+from mechanical_librarian.domain.metadata_report import (
+    MetadataReport,
+    TargetDestination,
+)
+from mechanical_librarian.domain.proposal_set import (
+    ProposalSet,
+    audiobook_review_scope,
+    evaluate_report,
+)
 from mechanical_librarian.domain.rich_metadata_preview import (
     RichFieldPreview,
     RichMetadataPreview,
@@ -475,6 +483,30 @@ def preview_policy(
                                 after.outcome,
                                 after.desired_value,
                                 after.qualified_value,
+                            )
+                            or (
+                                audiobook_review_scope(report) == "work"
+                                and before.field in {"description_fill", "genres"}
+                                and any(
+                                    bool(
+                                        decision_actions({"result": previous.to_data()})
+                                    )
+                                    != bool(
+                                        decision_actions(
+                                            {"result": following.to_data()}
+                                        )
+                                    )
+                                    for previous, following in zip(
+                                        compiled_pair[0].results,
+                                        compiled_pair[1].results,
+                                        strict=True,
+                                    )
+                                    if previous.destination
+                                    is {
+                                        "description_fill": TargetDestination.DESCRIPTION,
+                                        "genres": TargetDestination.GENRES,
+                                    }[before.field]
+                                )
                             )
                             or (
                                 active_destinations[before.field]

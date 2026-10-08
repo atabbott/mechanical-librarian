@@ -47,6 +47,7 @@ from tests.support.audiobook_providers import (
     audio_claim,
     audio_target,
     local_claims,
+    local_runtime_claim,
     payload,
     target_asin_claim,
     target_title_claim,
@@ -574,6 +575,7 @@ def _tag_source_report(shape: str = "complete") -> d.MetadataReport:
     target = audio_target("Synthetic Journey", ("Example Author",))
     claims = (
         target_title_claim("Synthetic Journey"),
+        local_runtime_claim("58200.000"),
         audio_claim(d.ClaimKind.ASIN, "B000000001", 1),
         audio_claim(d.ClaimKind.ASIN, "B000000002", 2),
     )
@@ -581,6 +583,7 @@ def _tag_source_report(shape: str = "complete") -> d.MetadataReport:
     raw: dict[str, dict[str, Any]] = {
         asin: {
             "asin": asin,
+            "runtimeLengthMin": 970,
             "title": "Synthetic Journey",
             "authors": [{"name": "Example Author"}],
             "genres": [{"type": "tag", "name": tag} for tag in tags],
@@ -621,6 +624,7 @@ def _tag_source_report(shape: str = "complete") -> d.MetadataReport:
         providers=(observation,),
         audio=base.audio,
     )
+    assert m.admitted_audiobook_identity(report)
     return d.MetadataReport.from_json(report.to_json())
 
 
@@ -664,6 +668,7 @@ def test_tag_union_refuses_incomplete_or_non_tag_source_lists(shape: str) -> Non
 def _series_work_lookup_report(
     *,
     current_sequence: str | None = None,
+    recording: bool = False,
     source_title: str = "Synthetic Journey",
     source_author: str = "Example Author",
 ) -> d.MetadataReport:
@@ -683,7 +688,12 @@ def _series_work_lookup_report(
                 for field in target.fields
             ),
         )
-    claims = (target_title_claim("Synthetic Journey"), target_asin_claim("B000000001"))
+    claims: tuple[d.LocalClaim, ...] = (
+        target_title_claim("Synthetic Journey"),
+        target_asin_claim("B000000001"),
+    )
+    if recording:
+        claims = (*claims, local_runtime_claim("58200.000"))
     base = asserted_asin_report(provider_duration="58200.000")
     discovery = m.audiobook_discovery_plan(target, claims, audio=base.audio)
     feed = m.audiobook_asin_feed_plan(target, discovery, ())
@@ -695,6 +705,7 @@ def _series_work_lookup_report(
         return _json(
             {
                 "asin": "B000000001",
+                **({"runtimeLengthMin": 970} if recording else {}),
                 "title": source_title,
                 "authors": [{"name": source_author}],
                 "seriesPrimary": {"name": "Synthetic Cycle", "position": "2"},
@@ -718,24 +729,22 @@ def _series_work_lookup_report(
 
 
 @pytest.mark.parametrize(
-    ("sequence", "title", "author", "reason"),
+    ("sequence", "title", "author"),
     [
-        (None, "Synthetic Journey", "Example Author", None),
-        ("1", "Synthetic Journey", "Example Author", "series_conflicting_membership"),
+        (None, "Synthetic Journey", "Example Author"),
+        ("1", "Synthetic Journey", "Example Author"),
         (
             None,
             "Different Journey",
             "Example Author",
-            "target_work_applicability_unproved",
         ),
-        (None, "Synthetic Journey", "Example", "target_work_applicability_unproved"),
+        (None, "Synthetic Journey", "Example"),
     ],
 )
-def test_one_complete_asin_work_lookup_supports_series_without_recording_authority(
+def test_complete_asin_work_lookup_has_no_series_authority_without_recording(
     sequence: str | None,
     title: str,
     author: str,
-    reason: str | None,
 ) -> None:
     report = _series_work_lookup_report(
         current_sequence=sequence,
@@ -766,28 +775,63 @@ def test_one_complete_asin_work_lookup_supports_series_without_recording_authori
         for value in compile_rich_metadata_preview(policy, report, proposal).fields
         if value.field == "series"
     )
-    assert field.reason == reason
-    if reason is None:
-        assert field.outcome == "projected"
-        assert field.desired_value == ({"name": "Synthetic Cycle", "sequence": "2"},)
-        result = next(
-            value
-            for value in proposal.results
-            if value.destination is TargetDestination.SERIES
+    assert (field.outcome, field.reason, field.desired_value) == (
+        "abstain",
+        "no_candidate",
+        None,
+    )
+    assert not next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.SERIES
+    ).alternatives
+
+
+@pytest.mark.parametrize("sequence", (None, "1"))
+def test_recording_admitted_series_retains_membership_and_provenance(sequence):
+    report = _series_work_lookup_report(current_sequence=sequence, recording=True)
+    assert m.admitted_audiobook_identity(report)
+    baseline = MetadataPolicyProfile.builtin()
+    policy = resolve_policy(
+        MetadataPolicyProfile.create(
+            "Automatic series",
+            {**dict(baseline.options), "series": "replace_qualified"},
+            {**dict(baseline.destinations), "series": "automatic"},
+        ),
+        report.target.library,
+    )
+    proposal = evaluate_report(report, policy.resolved_id, dict(policy.destinations))
+    field = next(
+        value
+        for value in compile_rich_metadata_preview(policy, report, proposal).fields
+        if value.field == "series"
+    )
+    result = next(
+        value
+        for value in proposal.results
+        if value.destination is TargetDestination.SERIES
+    )
+    assert len(result.alternatives) == 1
+    references = {
+        claim.reference
+        for provider in report.providers
+        for candidate in provider.candidates
+        for claim in candidate.claims
+        if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
+    }
+    assert set(result.alternatives[0].evidence_references) == references
+    if sequence is None:
+        assert (field.outcome, field.reason, field.desired_value) == (
+            "projected",
+            None,
+            ({"name": "Synthetic Cycle", "sequence": "2"},),
         )
-        references = {
-            claim.reference
-            for claim in candidate.claims
-            if claim.kind in {ClaimKind.SERIES, ClaimKind.SERIES_SEQUENCE}
-        }
-        assert set(result.alternatives[0].evidence_references) == references
     else:
-        assert field.outcome == "abstain" and field.desired_value is None
-        assert next(
-            value
-            for value in proposal.results
-            if value.destination is TargetDestination.SERIES
-        ).alternatives
+        assert (field.outcome, field.reason, field.desired_value) == (
+            "abstain",
+            "series_conflicting_membership",
+            None,
+        )
 
 
 @pytest.mark.parametrize(
@@ -857,11 +901,11 @@ def test_actual_isbn_source_reasons_preserve_earlier_policy_precedence(
         "policy_ignored" if mode == "ignore" else reason,
         None,
     )
-    assert not any(
+    assert any(
         p.provider_candidate_represents_target_recording(report, provider, candidate)
         for provider in report.providers
         for candidate in provider.candidates
-    )
+    ) is (shape != "unavailable")
     assert d.MetadataReport.from_json(report.to_json()).to_json() == report.to_json()
 
 

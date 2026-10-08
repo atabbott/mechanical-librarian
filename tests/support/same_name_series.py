@@ -52,7 +52,7 @@ def same_name_series_report(
             )
         )
         base = synthetic_audiobook_product_lookup_report(
-            products, recording_runtime="58200.000"
+            products, recording_runtime="58200.000" if independent_title else None
         )
         local = base.local_claims + (
             (audio_claim(ClaimKind.TITLE, title, 10),) if independent_title else ()

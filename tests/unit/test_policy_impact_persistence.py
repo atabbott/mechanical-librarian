@@ -808,3 +808,184 @@ def test_real_activation_api_rejects_aba_and_requires_preview_generation(tmp_pat
             assert accepted.json()["transition"]["generation"] == 4
     finally:
         repository.close()
+
+
+@pytest.mark.parametrize(
+    "field,active_route,draft_route,available,recording,changed",
+    [
+        (field, active, draft, available, False, changed)
+        for field in ("description_fill", "genres")
+        for active, draft, available, changed in (
+            ("automatic", "ignore", True, True),
+            ("ignore", "ask", True, True),
+            ("ask", "ignore", True, True),
+            ("automatic", "ask", True, False),
+            ("ask", "ask", True, False),
+            ("ask", "ignore", False, False),
+            ("ignore", "ask", False, False),
+        )
+    ]
+    + [("description_fill", "automatic", "ignore", True, True, True)],
+)
+def test_work_manual_availability_is_policy_impact(
+    tmp_path, field, active_route, draft_route, available, recording, changed
+):
+    from argon2 import PasswordHasher
+    from fastapi.testclient import TestClient
+
+    from mechanical_librarian.application.configuration import ReviewWebConfiguration
+    from mechanical_librarian.application.metadata_policy import preview_policy
+    from mechanical_librarian.domain.metadata_policy import (
+        DEFAULT_OPTIONS,
+        MetadataPolicyProfile,
+        resolve_policy,
+    )
+    from mechanical_librarian.domain.proposal_set import audiobook_review_scope
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_product_lookup_report,
+    )
+    from tests.unit.review_app_fixture import (
+        TEST_REACT_BUILD_IDENTITY,
+        create_transport_test_app,
+    )
+
+    report = synthetic_audiobook_product_lookup_report(
+        tuple(
+            {
+                "asin": f"B00000000{index}",
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+                "summary": summary if available or field != "description_fill" else "",
+                "genres": [{"type": "genre", "name": genre}]
+                if available or field != "genres"
+                else [],
+                **({"runtimeLengthMin": 970} if recording else {}),
+            }
+            for index, (summary, genre) in enumerate(
+                (
+                    ("A voyage reveals a hidden city.", "Adventure"),
+                    (
+                        "An explorer crosses the sea and discovers an ancient city.",
+                        "Exploration",
+                    ),
+                ),
+                1,
+            )
+        ),
+        recording_runtime="58200.000" if recording else None,
+    )
+    assert audiobook_review_scope(report) == ("recording" if recording else "work")
+    builtin = MetadataPolicyProfile.builtin()
+
+    def profile(route):
+        destinations = {
+            key: "unsupported" if value == "unsupported" else "ask"
+            for key, value in builtin.destinations
+        }
+        return MetadataPolicyProfile.create(
+            route, dict(DEFAULT_OPTIONS), {**destinations, field: route}
+        )
+
+    active, draft = profile(active_route), profile(draft_route)
+    resolution = resolve_policy(active, report.target.library)
+    database = tmp_path / "manual-impact.sqlite"
+    repository = open_repository(database)
+    repository.create_metadata_policy_draft(active.canonical_json)
+    repository.activate_metadata_policy(
+        active.policy_id,
+        builtin.policy_id,
+        ((report.target.library, resolution.resolved_id, resolution.canonical_json),),
+        1,
+        expected_active_generation=1,
+    )
+    repository.publish(report, lambda: True)
+    proposal = evaluate_report(
+        report, resolution.resolved_id, dict(resolution.destinations)
+    )
+    repository.publish_proposal(proposal)
+    assert json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    repository.close()
+    before = database.read_bytes()
+    reader = open_shadow_preview_repository(database)
+    try:
+        preview = preview_policy(draft, (report.target.library,), {}, reader)
+        assert len(preview.libraries) == 1
+        impact = preview.libraries[0]
+        assert impact.current_unapplied_count == 1
+        assert len(impact.comparisons) == 1
+        comparison = next(
+            value
+            for value in impact.comparisons[0].fields
+            if value.active.field == field
+        )
+        assert comparison.changed is changed
+        if recording:
+            assert comparison.active.outcome == "projected"
+            assert comparison.active.desired_value == "A voyage reveals a hidden city."
+            assert comparison.active.source_candidate_id is not None
+            assert comparison.draft.outcome == "abstain"
+            assert comparison.draft.reason == "policy_ignored"
+        else:
+            for value in (comparison.active, comparison.draft):
+                assert value.outcome == "abstain"
+                assert value.desired_value is None and value.qualified_value is None
+                assert value.source_candidate_id is None
+    finally:
+        reader.close()
+    assert database.read_bytes() == before
+
+    # One actual transport assertion carries the routing-only change, without
+    # inventing a selected description or a value-level metadata change.
+    if (field, active_route, draft_route, available, recording) != (
+        "description_fill",
+        "automatic",
+        "ignore",
+        True,
+        False,
+    ):
+        return
+    password = tmp_path / "owner.hash"
+    password.write_text(PasswordHasher().hash("synthetic owner password"))
+    password.chmod(0o600)
+    repository = open_repository(database, create=False, cross_thread=True)
+    app = create_transport_test_app(
+        repository,
+        ReviewWebConfiguration(
+            canonical_origin="http://review.test",
+            owner_password_hash_file=str(password),
+        ),
+        policy_libraries=((report.target.library, None),),
+    )
+    try:
+        with TestClient(app, base_url="http://review.test") as client:
+            headers = {
+                "Origin": "http://review.test",
+                "X-ML-Build-Identity": TEST_REACT_BUILD_IDENTITY,
+            }
+            login = client.post(
+                "/api/v1/session/login",
+                headers=headers,
+                json={"password": "synthetic owner password"},
+            )
+            assert login.status_code == 200
+            headers["X-CSRF-Token"] = login.json()["csrf_token"]
+            response = client.post(
+                "/api/v1/metadata-policy/preview",
+                headers=headers,
+                json={
+                    "name": draft.name,
+                    "options": dict(draft.options),
+                    "destinations": dict(draft.destinations),
+                },
+            )
+            assert response.status_code == 200
+            wire = next(
+                value
+                for value in response.json()["libraries"][0]["comparisons"][0]["fields"]
+                if value["active"]["field"] == field
+            )
+            assert wire["changed"] is True
+            assert wire["active"]["desired_value"] is None
+            assert wire["draft"]["desired_value"] is None
+    finally:
+        repository.close()
