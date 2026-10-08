@@ -587,7 +587,7 @@
     "tests/integration/test_database_crash_recovery.py": "285eb4cb629482f192426f61b11f306c352f53a8b40fbdea9d2b1452041619f0",
     "tests/integration/test_owner_responsiveness.py": "1c9e31652610a367144054425a8d2a1254534bdf262f0612915a34cd471fdc2e",
     "tests/integration/test_preparation_claim_recovery.py": "e528eca31625cd7d26bb98cd63cbdd7b7a7b2625a395d26b79b63cbf22d59327",
-    "tests/integration/test_review_case_lifecycle.py": "3526778db011a376f4661f078bc67ccd4433c0b69af66a25397b2347cc5cf491",
+    "tests/integration/test_review_case_lifecycle.py": "0e2f244831736109df337425fa54594a410fd2b6ff2a33235a396f85930205f4",
     "tests/slow/test_owner_browser_responsiveness.py": "3544b63a4f5e5ed8a3e9c6a564e31eeac7eaa76f7e88e7e288e0254dd9499d93",
     "tests/slow/test_owner_responsiveness.py": "8fdb8778d994be43f37eed8262fc06194c0e0040c13715ac710588f2fe71269f",
     "tests/support/audiobook_covers.py": "8a4ca15e6ba952b2214fee4d965192a4bf49615c226adf0af2e0ab24b1c9d696",
