@@ -29,6 +29,7 @@ from mechanical_librarian.adapters.field_effect_runtime import (
     PersistedEffectConsent,
     PersistedEffectDependencies,
 )
+from mechanical_librarian.adapters.persistence import schema as persistence_schema
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
 from mechanical_librarian.adapters.persistence.metadata_reports import (
     MetadataReportError,
@@ -230,10 +231,10 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
             _cover_automatic_decision_value,
         )
 
-        consideration = repository._connection.execute(
-            "SELECT document FROM cover_considerations WHERE consideration_id=?",
-            (automatic.consideration_id,),
-        ).fetchone()[0]
+        consideration = repository.current_cover_consideration_document(
+            automatic.review_case_id
+        )
+        assert consideration is not None
         case_document = repository._connection.execute(
             "SELECT document FROM review_cases WHERE review_case_id=?",
             (automatic.review_case_id,),
@@ -399,6 +400,28 @@ def test_real_automatic_cover_admission_controls_guarded_fake_service_effect(
                 project.assert_called_once()
         finally:
             reader.close()
+        digest = repository._connection.execute(
+            "SELECT document_digest FROM cover_considerations WHERE consideration_id=?",
+            (automatic.consideration_id,),
+        ).fetchone()[0]
+        repository._connection.execute("DROP TRIGGER cover_considerations_no_update")
+        repository._connection.execute(
+            "UPDATE cover_considerations SET document_digest=? WHERE consideration_id=?",
+            ("0" * 64, automatic.consideration_id),
+        )
+        with pytest.raises(FieldEffectError, match="^authority_binding$"):
+            repository.field_effect_authority_source(automatic)
+        assert not repository.field_effect_dependencies_current(
+            snapshot.dependency_digests
+        )
+        repository._connection.execute(
+            "UPDATE cover_considerations SET document_digest=? WHERE consideration_id=?",
+            (digest, automatic.consideration_id),
+        )
+        repository._connection.execute(
+            persistence_schema._COVER_CONSIDERATION_NO_UPDATE_SQL
+        )
+        repository._connection.commit()
         supervisor.stop()
         repository.close()
         reopened = open_repository(database)
@@ -740,6 +763,28 @@ def test_selected_original_reaches_verified_guarded_fake_service_application() -
         )
         assert successor["policy"] == selected_history["consideration"]["policy"]
         assert repository.field_effect_dependencies_current(snapshot.dependency_digests)
+        digest = repository._connection.execute(
+            "SELECT document_digest FROM cover_considerations WHERE consideration_id=?",
+            (successor["consideration_id"],),
+        ).fetchone()[0]
+        repository._connection.execute("DROP TRIGGER cover_considerations_no_update")
+        repository._connection.execute(
+            "UPDATE cover_considerations SET document_digest=? WHERE consideration_id=?",
+            ("0" * 64, successor["consideration_id"]),
+        )
+        with pytest.raises(FieldEffectError, match="^authority_binding$"):
+            repository.field_effect_authority_source(replacement)
+        assert not repository.field_effect_dependencies_current(
+            snapshot.dependency_digests
+        )
+        repository._connection.execute(
+            "UPDATE cover_considerations SET document_digest=? WHERE consideration_id=?",
+            (digest, successor["consideration_id"]),
+        )
+        repository._connection.execute(
+            persistence_schema._COVER_CONSIDERATION_NO_UPDATE_SQL
+        )
+        repository._connection.commit()
         repository.close()
 
 

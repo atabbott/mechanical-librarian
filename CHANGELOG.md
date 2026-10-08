@@ -8,6 +8,10 @@
 
 ## Unreleased
 
+- Cover considerations retain exact canonical report references instead of duplicate
+  report JSON, preserving all evidence, history and effect authority. Clean rebuild
+  required for prior application stores; no migration or cleanup is added (#1158).
+
 - Provider recovery retains bounded request and failure diagnostics while keeping
   completed work available. Activity explains current provider waits using the
   existing retry eligibility timestamp. Retry pacing is unchanged; existing

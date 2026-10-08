@@ -759,6 +759,7 @@ def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:
                 "consideration_id": consideration_id,
                 "replay_digest": replay_digest,
                 "report_id": report.report_id,
+                "report_document": report.to_json(),
                 "review_case_id": case_id,
                 "schema_version": "cover-consideration-v4",
                 "supersedes_id": None,
@@ -822,6 +823,10 @@ def test_cover_state_is_inside_the_current_case_read_snapshot() -> None:
         assert [] == writer_errors
         after = reader.read_current_review_case(case_id, 50)
         assert document == after.cover_consideration_document
+        assert (
+            json.loads(after.cover_consideration_document)["report_document"]
+            == report.to_json()
+        )
         assert "automatic_prepared" == after.cover_history[0]["kind"]
         reader.close()
 

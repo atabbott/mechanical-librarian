@@ -76,6 +76,55 @@ joins, canonical visible-row validation, catalogue attachment and deferred snaps
 remain authoritative. Empty and out-of-range pages carry validated totals through
 an explicit presence marker; independent count APIs remain available (#1148).
 
+## Lossless cover report retention (#1158)
+
+SQLite stores each consideration without its duplicate `report_document`, binding
+`report_document_digest` to the immutable `metadata_reports` row named by
+`report_id`. Reads join that exact report in the same statement/snapshot and
+reconstruct byte-identical application v4 JSON. Selection, replay and effect
+hashes still bind the expanded document. Missing or mismatched report evidence
+fails closed. Publication compares canonical report bytes inside the writer
+transaction. The complete candidate packet, every report, history and artifact
+remain retained; supersession grants no deletion authority.
+
+This exact SQLite schema requires a **clean rebuild** under ADR-0013, including
+empty predecessor stores. No migration, adoption, pruning or vacuum is supplied.
+The report's 2 MiB and expanded consideration's 12 MiB bounds remain; compaction
+bounds incremental representation cost, not lifetime append-only history.
+
+A separate October 2026 read-only retained-state attribution found 712,019,968
+application bytes (logical and allocated), with no free pages. `dbstat` attributed
+259,571,712 bytes to 2,744 considerations, 212,606,976 to reports, 78,917,632 to
+cases, 38,473,728 to proposals, 36,597,760 to shadow outcomes, 31,739,904 to
+automatic decisions, and 24,764,416 to all indexes. There were 2,268 current reports and 854
+noncurrent reports; all 854 noncurrent reports remained referenced by proposals. All 2,744 embedded reports
+were exactly equal to their canonical stored report.
+
+Against the preceding retained snapshot, application growth was 172,257,280
+bytes: considerations 63,471,616; reports 52,383,744; cases 19,181,568; proposals
+9,342,976; outcomes 8,953,856; automatic decisions 7,811,072. These are snapshot
+page differences, not write-frequency telemetry. The planning estimate replaced duplicate report JSON with a 64-byte digest and
+excluded its JSON key overhead: 255,247,188 to 34,443,914 bytes, a 220,803,274-byte
+logical-payload reduction, with 55,891,763 incremental duplicate bytes. Applying
+the actual codec read-only gives 34,520,746 payload bytes, a 220,726,442-byte
+reduction. These are payload calculations, not physically reclaimed space or
+measured compact-database savings for that retained state.
+
+Device/inode accounting found 6,780 unique image files, 1,438,477,369 logical and
+1,452,331,008 allocated bytes. Every image was referenced by current reports;
+5,001 were shared, with no orphan or historical-only image. The actual artifact
+reference consumer also refused absent digests. The independent derived catalogue
+was 2,342,912 bytes with 268 free pages. There is no justified image removal.
+The figures are aggregate only; private snapshot provenance and reproducible
+read-only query evidence remain outside the repository. The synthetic slow
+retention test measures actual equal-workload payload, page, logical/allocated
+and incremental costs while proving restart and history equivalence. Its two-table
+report/consideration specimens with 24 reports and 96 considerations used
+2,691,072 logical/allocated bytes (657 pages) full versus 1,314,816 (321 pages)
+compact. Consideration payload was 2,160,336 versus 905,040 bytes; all four append
+stages had smaller representation growth. These isolated synthetic specimens
+measure storage cost, not a capacity guarantee for a complete application.
+
 ## Audit boundary and evidence
 
 The map was checked against the exact-current schema, production persistence
@@ -111,7 +160,7 @@ nearest KiB.
 | Append-only audit/history | `human_decisions` | 2 R / 4 KiB | `decisions.record_human_decision`; browse, history and effect readers | Owner decision, idempotency key and target fingerprint remain immutable audit authority. |
 | Append-only audit/history | `human_decision_events` | 2 R / 4 KiB | `decisions.record_human_decision`; Activity/history readers | Event wording and immutable event identity are not interchangeable with the decision authority row. |
 | Append-only audit/history | `automatic_decisions` | 3,847 R / 7,716 KiB | automatic projection; browse, safety and effect readers | Exact policy decision fact has independent idempotency and a per-case/destination uniqueness boundary. |
-| Append-only audit/history | `cover_considerations` | 2,019 R / 147,220 KiB | `cover_considerations.record_cover_consideration`; cover readers | Immutable prepared candidate packet may be large; it is the dominant retained cover payload and cannot become a pointer. |
+| Append-only audit/history | `cover_considerations` | 2,019 R / 147,220 KiB | `cover_considerations.record_cover_consideration`; cover readers | The full immutable prepared candidate packet remains retained; only its already-canonical report is resolved by exact immutable reference, never by a changing current pointer. |
 | Append-only audit/history | `cover_consideration_events` | 2,019 R / 1,352 KiB | cover preparation/outcome and stale retirement; cover/activity readers | Preparation, supersession, selection and stale facts are independently auditable. |
 | Append-only audit/history | `field_effect_events` | 0 R / 4 KiB | field-effect transitions; Activity reader | Required append-only operational audit, empty in this report-only retained state. |
 | Append-only audit/history | `field_effect_no_changes` | 71 R / 52 KiB | `record_current_field_effect_no_change`; Activity/history readers | Equal automatic candidate is a terminal durable fact, not an absent effect. |

@@ -257,6 +257,16 @@ def test_current_authority_and_predecessor_refusal_without_history(
     )
     old_path = tmp_path / "prior.sqlite"
     with monkeypatch.context() as old_schema:
+        old_schema.setattr(
+            schema,
+            "_COVER_CONSIDERATIONS_SQL",
+            json.loads(
+                (
+                    Path(__file__).parents[1]
+                    / "fixtures/cover-consideration-embedded-report.json"
+                ).read_text()
+            )["cover_considerations_sql"],
+        )
         # Preserve the frozen producer's full schema inventory, including its
         # reviewer table; the historical digest remains unchanged.
         old_schema.setattr(

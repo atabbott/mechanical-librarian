@@ -1794,6 +1794,10 @@ def test_manual_hold_requires_explicit_return_and_later_human_wins(
         {
             "consideration_id": consideration_id,
             "report_id": case.report_id,
+            "report_document_digest": effects.repository._connection.execute(
+                "SELECT document_digest FROM metadata_reports WHERE report_id=?",
+                (case.report_id,),
+            ).fetchone()[0],
             "replay_digest": "8" * 64,
             "review_case_id": case.review_case_id,
             "schema_version": "cover-consideration-v4",

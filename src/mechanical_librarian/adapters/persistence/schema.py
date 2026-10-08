@@ -29,6 +29,9 @@ from urllib.parse import quote
 from mechanical_librarian.adapters.persistence.binding import (
     _validate_connection_binding,
 )
+from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
+    expand_cover_consideration,
+)
 from mechanical_librarian.adapters.persistence.description_advice import (
     validate_description_history,
 )
@@ -433,7 +436,7 @@ _COVER_CONSIDERATIONS_SQL = (
     "supersedes_id TEXT REFERENCES cover_considerations(consideration_id), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "currentness_document TEXT NOT NULL CHECK(typeof(currentness_document)='text' AND length(CAST(currentness_document AS BLOB)) BETWEEN 4 AND 4096), "
-    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 12582912))"
+    "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(document) AND json_type(document,'$.report_document') IS NULL AND json_type(document,'$.report_document_digest') IS 'text' AND length(json_extract(document,'$.report_document_digest'))=64 AND json_extract(document,'$.report_document_digest') NOT GLOB '*[^0-9a-f]*'))"
 )
 _CURRENT_COVER_CONSIDERATIONS_SQL = (
     "CREATE TABLE current_cover_considerations ("
@@ -1246,10 +1249,11 @@ def _validate_schema_against(
 def _validate_schema_contents(connection: sqlite3.Connection) -> None:
     _validate_schema_contents_without_review_field_facts(connection)
     _validate_review_field_facts(connection)
-    for document, facts in connection.execute(
-        "SELECT document,currentness_document FROM cover_considerations"
+    for row in connection.execute(
+        "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id,consideration.currentness_document FROM cover_considerations consideration LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id"
     ):
-        if cover_consideration_currentness_document(document) != facts:
+        document = expand_cover_consideration(*row[:5])
+        if cover_consideration_currentness_document(document) != row[5]:
             raise MetadataReportError("database is unavailable or incompatible")
 
 
@@ -1311,13 +1315,16 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                 raise ValueError
             decision_document = cast(str, document["decision_document"])
             consideration_row = connection.execute(
-                "SELECT document,review_case_id FROM cover_considerations "
-                "WHERE consideration_id=?",
+                "SELECT consideration.document,consideration.review_case_id,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM cover_considerations consideration LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
+                "WHERE consideration.consideration_id=?",
                 (row[6],),
             ).fetchone()
             if consideration_row is None:
                 raise ValueError
-            consideration = json.loads(consideration_row[0])
+            expanded_document = expand_cover_consideration(
+                consideration_row[0], *consideration_row[2:]
+            )
+            consideration = json.loads(expanded_document)
             case_row = connection.execute(
                 "SELECT document FROM review_cases WHERE review_case_id=?",
                 (consideration_row[1],),
@@ -1428,7 +1435,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
                     if candidate is None
                     else candidate["preview_sha256"],
                     "consideration_digest": hashlib.sha256(
-                        consideration_row[0].encode()
+                        expanded_document.encode()
                     ).hexdigest(),
                     "target": dict(case.target),
                 }

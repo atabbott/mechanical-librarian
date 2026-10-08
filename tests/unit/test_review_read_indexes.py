@@ -356,6 +356,10 @@ def _representative_database(path: Path, works: int = _WORKS) -> sqlite3.Connect
             {
                 "consideration_id": consideration_id,
                 "report_id": case.report_id,
+                "report_document": connection.execute(
+                    "SELECT document FROM metadata_reports WHERE report_id=?",
+                    (case.report_id,),
+                ).fetchone()[0],
                 "replay_digest": replay_digest,
                 "review_case_id": case.review_case_id,
                 "schema_version": "cover-consideration-v4",

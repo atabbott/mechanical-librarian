@@ -29,6 +29,9 @@ from mechanical_librarian.adapters.field_effect_fakes import (
 from mechanical_librarian.adapters.field_effect_runtime import PersistedEffectConsent
 from mechanical_librarian.adapters.persistence import metadata_reports as metadata
 from mechanical_librarian.adapters.persistence.cover_artifacts import CoverArtifactStore
+from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
+    compact_cover_consideration,
+)
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
     _cover_automatic_decision_value,
@@ -1250,6 +1253,10 @@ def test_activity_projects_cover_reviewer_terminal_state_without_private_payload
                     "profile": "private-profile",
                     "recommendation": "private-recommendation",
                     "reviewer_status": status,
+                    "report_document_digest": repository._connection.execute(
+                        "SELECT document_digest FROM metadata_reports WHERE report_id=?",
+                        (report_id,),
+                    ).fetchone()[0],
                 },
                 separators=(",", ":"),
                 sort_keys=True,
@@ -1383,6 +1390,7 @@ def test_activity_fails_closed_for_malformed_cover_consideration_projection() ->
             "report_id"
         ]
         consideration_id = "cover_consideration_" + "f" * 64
+        repository._connection.execute("PRAGMA ignore_check_constraints=ON")
         repository._connection.execute(
             "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,'null')",
             (
@@ -1396,6 +1404,7 @@ def test_activity_fails_closed_for_malformed_cover_consideration_projection() ->
                 "{malformed",
             ),
         )
+        repository._connection.execute("PRAGMA ignore_check_constraints=OFF")
         event = json.dumps(
             {
                 "consideration_id": consideration_id,
@@ -1481,7 +1490,14 @@ def test_activity_accepts_the_cover_document_cap_and_rejects_larger_or_malformed
             )
 
         for size, suffix in ((2_097_153, "a"), (12_582_912, "b")):
-            prefix = '{"padding":"'
+            prefix = (
+                '{"report_document_digest":"'
+                + repository._connection.execute(
+                    "SELECT document_digest FROM metadata_reports WHERE report_id=?",
+                    (report_id,),
+                ).fetchone()[0]
+                + '","padding":"'
+            )
             suffix_text = '","reviewer_status":"completed"}'
             document = (
                 prefix + "x" * (size - len(prefix) - len(suffix_text)) + suffix_text
@@ -1516,7 +1532,14 @@ def test_activity_page_does_not_materialize_repeated_near_limit_cover_documents(
             "report_id"
         ]
         consideration_id = "cover_consideration_" + "a" * 64
-        prefix = '{"candidate":"private-candidate","document":"private-document","image":"private-image","padding":"'
+        prefix = (
+            '{"report_document_digest":"'
+            + repository._connection.execute(
+                "SELECT document_digest FROM metadata_reports WHERE report_id=?",
+                (report_id,),
+            ).fetchone()[0]
+            + '","candidate":"private-candidate","document":"private-document","image":"private-image","padding":"'
+        )
         suffix = '","profile":"private-profile","recommendation":"private-recommendation","reviewer_status":"completed"}'
         document = prefix + "x" * (12_582_912 - len(prefix) - len(suffix)) + suffix
         repository._connection.execute(
@@ -1617,6 +1640,10 @@ def test_atomic_cover_preparation_excludes_sibling_drift_and_rolls_back_every_po
                 "consideration_id": consideration_id,
                 "replay_digest": "e" * 64,
                 "report_id": report_id,
+                "report_document": repository._connection.execute(
+                    "SELECT document FROM metadata_reports WHERE report_id=?",
+                    (report_id,),
+                ).fetchone()[0],
                 "review_case_id": review_case_id,
                 "schema_version": "cover-consideration-v4",
                 "supersedes_id": None,
@@ -1709,6 +1736,10 @@ def test_manual_cover_predecessor_drift_rolls_back_and_releases_the_writer_lock(
                     "consideration_id": "cover_consideration_" + suffix * 64,
                     "replay_digest": suffix * 64,
                     "report_id": report_id,
+                    "report_document": repository._connection.execute(
+                        "SELECT document FROM metadata_reports WHERE report_id=?",
+                        (report_id,),
+                    ).fetchone()[0],
                     "review_case_id": review_case_id,
                     "schema_version": "cover-consideration-v4",
                     "supersedes_id": supersedes_id,
@@ -4430,7 +4461,11 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                     (current_work["review_case_id"],),
                 ).fetchone()
                 assert current_row is not None
-                persisted = json.loads(current_row[1])
+                persisted = json.loads(
+                    repository.current_cover_consideration_document(
+                        current_work["review_case_id"]
+                    )
+                )
                 persisted["candidates"] = [{}]
                 persisted["supersedes_id"] = current_row[0]
                 identity = dict(persisted)
@@ -4456,7 +4491,9 @@ def test_new_owner_ready_cover_case_is_attentive_after_automatic_predecessor(
                         hashlib.sha256(malformed_document.encode()).hexdigest(),
                         current_row[0],
                         20,
-                        malformed_document,
+                        compact_cover_consideration(
+                            malformed_document, persisted["report_document"]
+                        ),
                     ),
                 )
                 repository._connection.execute(

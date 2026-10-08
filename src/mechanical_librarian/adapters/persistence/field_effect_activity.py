@@ -60,6 +60,9 @@ from mechanical_librarian.adapters.persistence.activity_facts import (
     activity_fact_bytes,
 )
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
+from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
+    expand_cover_consideration,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
@@ -484,8 +487,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             try:
                 if type(automatic) is CoverAutomaticDecision:
                     consideration_row = self._connection.execute(
-                        "SELECT consideration.document FROM current_cover_considerations current "
+                        "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
                         "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                        "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
                         "WHERE current.review_case_id=? AND current.consideration_id=?",
                         (automatic.review_case_id, automatic.consideration_id),
                     ).fetchone()
@@ -497,7 +501,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         case,
                         MetadataReport.from_json(report_row[0]),
                         ProposalSet.from_json(proposal_row[0]),
-                        consideration_row[0],
+                        expand_cover_consideration(*consideration_row),
                     )
                 else:
                     outcome_row = self._connection.execute(
@@ -559,6 +563,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                         )
                         paired_decision_id = sibling.decision_id
             except (
+                MetadataReportError,
                 ReportValueError,
                 ProposalValueError,
                 RichMetadataPreviewError,
@@ -661,15 +666,20 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             )
         if type(decision) is HumanDecision and decision.destination == "cover":
             consideration_row = self._connection.execute(
-                "SELECT consideration.document FROM current_cover_considerations current "
+                "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
                 "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
                 "JOIN cover_consideration_events event ON event.consideration_id=consideration.consideration_id "
                 "WHERE current.review_case_id=? AND event.kind='selected' AND event.decision_id=?",
                 (decision.review_case_id, decision.decision_id),
             ).fetchone()
             if consideration_row is None:
                 raise FieldEffectError("authority_binding")
-            consideration = json.loads(consideration_row[0])
+            try:
+                expanded_document = expand_cover_consideration(*consideration_row)
+            except MetadataReportError as error:
+                raise FieldEffectError("authority_binding") from error
+            consideration = json.loads(expanded_document)
             selected_artifact = value.get("value") if type(value) is dict else None
             selected_authority = self._connection.execute(
                 "SELECT 1 FROM current_cover_selection_authorities current JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id WHERE selection.decision_id=? AND selection.kind='owner'",
@@ -678,7 +688,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if selected_authority != (1,):
                 raise FieldEffectError("authority_binding")
             try:
-                self._require_owner_cover(consideration_row[0], selected_artifact)
+                self._require_owner_cover(expanded_document, selected_artifact)
             except (ValueError, RuntimeError) as error:
                 raise FieldEffectError("authority_binding") from error
             selected_candidate = next(
@@ -710,7 +720,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 raise FieldEffectError("authority_binding")
             dependency_digests = (
                 decision.target_fingerprint,
-                hashlib.sha256(consideration_row[0].encode("utf-8")).hexdigest(),
+                hashlib.sha256(expanded_document.encode("utf-8")).hexdigest(),
             )
         return {
             "paired_bundle_id": paired_bundle_id,
@@ -786,7 +796,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             except (ValueError, FieldEffectError):
                 return False
         owner_cover = self._connection.execute(
-            "SELECT consideration.document,json_extract(selection.document,'$.candidate_artifact_id') FROM cover_selection_authorities selection JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id WHERE selection.decision_id=? AND selection.kind='owner'",
+            "SELECT consideration.document,json_extract(selection.document,'$.candidate_artifact_id'),report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM cover_selection_authorities selection JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id WHERE selection.decision_id=? AND selection.kind='owner'",
             (authority.decision_id,),
         ).fetchone()
         if owner_cover is not None:
@@ -796,7 +806,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             ).fetchone() != (1,):
                 return False
             try:
-                self._require_owner_cover(owner_cover[0], owner_cover[1])
+                self._require_owner_cover(
+                    expand_cover_consideration(owner_cover[0], *owner_cover[2:]),
+                    owner_cover[1],
+                )
             except (ValueError, RuntimeError):
                 return False
         if not current or authority.origin != "automatic_policy":
@@ -1213,8 +1226,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 or self._connection.execute(
                     "SELECT 1 FROM current_cover_considerations current "
                     "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                    "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
                     "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
                     "WHERE consideration.document_digest=? "
+                    "AND report.report_id=json_extract(consideration.document,'$.report_id') "
+                    "AND report.document_digest=json_extract(consideration.document,'$.report_document_digest') "
                     "AND json_extract(consideration.document,'$.policy_reference')=? "
                     "AND json_extract(consideration.document,'$.replay_reference')=? "
                     "AND ml_cover_consideration_current(consideration.currentness_document,?)=1 LIMIT 1",
@@ -2196,11 +2212,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 try:
                     if type(projected_automatic) is CoverAutomaticDecision:
                         cover_rows = self._connection.execute(
-                            "SELECT review.document,proposal.document,consideration.document "
+                            "SELECT review.document,proposal.document,consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id "
                             "FROM review_cases review JOIN proposal_sets proposal "
                             "ON proposal.proposal_set_id=review.proposal_set_id "
                             "JOIN current_cover_considerations current ON current.review_case_id=review.review_case_id "
                             "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
                             "WHERE review.review_case_id=? AND consideration.consideration_id=?",
                             (
                                 projected_automatic.review_case_id,
@@ -2217,7 +2234,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                             (self._initial_proposal or ProposalSet.from_json)(
                                 cover_rows[1]
                             ),
-                            cover_rows[2],
+                            expand_cover_consideration(*cover_rows[2:]),
                         )
                     else:
                         authority = automatic_authority.get(
@@ -2280,6 +2297,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     )
                     continue
                 except (
+                    MetadataReportError,
                     ReportValueError,
                     ProposalValueError,
                     RichMetadataPreviewError,
@@ -2829,7 +2847,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
               FROM cover_selection_authorities selection
               JOIN cover_considerations consideration ON consideration.consideration_id=selection.consideration_id
               JOIN review_cases review ON review.review_case_id=consideration.review_case_id
-              JOIN metadata_reports report ON report.report_id=review.report_id
+         LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id
              WHERE selection.kind='automatic'
             UNION ALL
             SELECT no_change.event_id, no_change.connection_name, no_change.destination,
@@ -2847,11 +2865,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                    event.document,
                    CASE WHEN event.kind IN ('stale','superseded') THEN 'safety' WHEN event.kind='automatic_prepared' THEN 'metadata' WHEN event.kind IN ('owner_retry_prepared','selected','kept_incumbent','no_action') THEN 'review' ELSE 'unknown' END,
                    {scalar["title"]}, NULL, 'cover_safeguard', CASE WHEN json_extract(consideration.document, '$.reviewer_status') IN ('completed','unavailable','failed') THEN json_object('reviewer_status', json_extract(consideration.document, '$.reviewer_status')) ELSE '{{}}' END, event.review_case_id, NULL, event.consideration_id, NULL, NULL,
-                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) THEN 1 ELSE 0 END, 0
+                   CASE WHEN typeof(event.document)='text' AND length(CAST(event.document AS BLOB)) BETWEEN 2 AND 2097152 AND json_valid(event.document) AND typeof(consideration.document)='text' AND length(CAST(consideration.document AS BLOB)) BETWEEN 2 AND 12582912 AND json_valid(consideration.document) AND report.report_id=review.report_id AND report.document_digest=json_extract(consideration.document,'$.report_document_digest') THEN 1 ELSE 0 END, 0
               FROM cover_consideration_events event
               JOIN cover_considerations consideration ON consideration.consideration_id=event.consideration_id
               JOIN review_cases review ON review.review_case_id=event.review_case_id
-              JOIN metadata_reports report ON report.report_id=review.report_id
+         LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id
              WHERE event.kind<>'selected' OR NOT EXISTS (
                    SELECT 1 FROM cover_selection_authorities selection
                     WHERE selection.decision_id=event.decision_id
