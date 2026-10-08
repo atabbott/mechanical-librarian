@@ -110,6 +110,9 @@ grant runtime authority beyond the operations, compatibility, and security
 contracts above. The assessment is the entry point and the Google Books note is
 the worked case it cites.
 
+- [Audiobook recording-source comparison](research/audiobook-recording-source-comparison.md)
+  — bounded Hardcover and AudiobookDB research; no recording-authority promotion
+
 ## Historical record
 
 Retained, with what depends on each:
