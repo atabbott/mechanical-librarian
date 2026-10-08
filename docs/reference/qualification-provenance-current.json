@@ -209,7 +209,7 @@
     "docs/reference/f46-audiobook-qualification-current.json": "6f2e4c0b2fef99d4b7fd5c038a84987d92aac3d8d91d527a8e30f65284bb0fc0",
     "docs/reference/qualification-archive-index.json": "c03d2a7d44a3795a3d7146a07bdc3eb789b9324d61d8478e748bb67c0da0389d",
     "docs/reference/review-openapi-v1.json": "678b0448ec6adc8896ffba6f1700a4c7ec756f99cb01e00dbd1392bfb11c98dd",
-    "frontend/src/api/http.ts": "ea7b31190f144f59a0a08bad4964d8527e6fdee5f29ba9e27f326d130ca52553",
+    "frontend/src/api/http.ts": "23edde8ea73bc12765e50e510ffdcb54d60857f3a22ab47c21298bc0b7dd524e",
     "frontend/src/components/DescriptionAdvice.tsx": "42e08b46a2a2eab607b1401df3d6edafcf9c5b056095cd92621b83f5b82e2bd0",
     "frontend/src/components/DescriptionAdviceSettings.tsx": "02b2b4f64b2cf672207808bad72ee3e6a844cdeeb6bfc303e7e7617ecd9b9c5d",
     "frontend/src/components/MediaHealth.tsx": "7fd0b3a09ab254fbed861f9d2641c80d706bd8d0469f6eb0b8ca584e38829aa4",
