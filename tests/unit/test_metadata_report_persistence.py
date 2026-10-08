@@ -672,6 +672,16 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
     )
     with monkeypatch.context() as old:
         old.setattr(
+            persistence_schema,
+            "_COVER_CONSIDERATIONS_SQL",
+            json.loads(
+                (
+                    Path(__file__).parents[1]
+                    / "fixtures/cover-consideration-embedded-report.json"
+                ).read_text()
+            )["cover_considerations_sql"],
+        )
+        old.setattr(
             persistence_schema, "_PROPOSAL_SETS_SQL", predecessor["proposal_sets_ddl"]
         )
         # Reconstruct the frozen producer's reviewer table too; never update
@@ -2256,6 +2266,16 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         ).read_text()
     )
     with monkeypatch.context() as old:
+        old.setattr(
+            persistence_schema,
+            "_COVER_CONSIDERATIONS_SQL",
+            json.loads(
+                (
+                    Path(__file__).parents[1]
+                    / "fixtures/cover-consideration-embedded-report.json"
+                ).read_text()
+            )["cover_considerations_sql"],
+        )
         old.setattr(
             persistence_schema, "_PROPOSAL_SETS_SQL", predecessor["proposal_sets_ddl"]
         )

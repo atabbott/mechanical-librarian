@@ -17,6 +17,10 @@ import sqlite3
 from collections.abc import Callable
 from typing import cast
 
+from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
+    compact_cover_consideration,
+    expand_cover_consideration,
+)
 from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
@@ -433,8 +437,9 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         self, review_case_id: str, replay_digest: str
     ) -> str | None:
         row = self._connection.execute(
-            "SELECT consideration.document FROM current_cover_considerations current "
+            "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
             "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
             "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
             "WHERE current.review_case_id=? AND consideration.replay_digest=? "
             "AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event "
@@ -442,13 +447,14 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "AND event.kind='stale')",
             (review_case_id, replay_digest),
         ).fetchone()
-        return None if row is None else str(row[0])
+        return None if row is None else expand_cover_consideration(*row)
 
     @local_operation
     def current_cover_consideration_document(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
-            "SELECT consideration.document FROM current_cover_considerations current "
+            "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
             "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
             "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
             "WHERE current.review_case_id=? "
             "AND NOT EXISTS (SELECT 1 FROM cover_consideration_events event "
@@ -456,20 +462,21 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             "AND event.kind='stale')",
             (review_case_id,),
         ).fetchone()
-        return None if row is None else str(row[0])
+        return None if row is None else expand_cover_consideration(*row)
 
     @local_operation
     def latest_cover_consideration_document(self, review_case_id: str) -> str | None:
         row = self._connection.execute(
-            "SELECT consideration.document FROM current_cover_considerations current "
+            "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
             "JOIN cover_considerations consideration "
             "ON consideration.consideration_id=current.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
             "JOIN current_review_case_lineages lineage "
             "ON lineage.review_case_id=current.review_case_id "
             "WHERE current.review_case_id=?",
             (review_case_id,),
         ).fetchone()
-        return None if row is None else str(row[0])
+        return None if row is None else expand_cover_consideration(*row)
 
     def _record_cover_consideration_event(
         self,
@@ -567,11 +574,11 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 if current_revision != reviewer_access_revision:
                     raise MetadataReportError("cover consideration changed")
             existing = self._connection.execute(
-                "SELECT document FROM cover_considerations WHERE consideration_id=?",
+                "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM cover_considerations consideration LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id WHERE consideration.consideration_id=?",
                 (consideration_id,),
             ).fetchone()
             if existing is not None:
-                if existing != (document,):
+                if expand_cover_consideration(*existing) != document:
                     raise MetadataReportError("cover consideration disagrees")
                 self._admit_automatic_cover(document, occurred_at)
                 transaction.commit()
@@ -583,6 +590,17 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             actual_supersedes = None if current is None else current[0]
             if actual_supersedes != supersedes_id:
                 raise MetadataReportError("cover consideration changed")
+            report_row = self._connection.execute(
+                "SELECT document,document_digest FROM metadata_reports WHERE report_id=?",
+                (report_id,),
+            ).fetchone()
+            if (
+                report_row is None
+                or hashlib.sha256(report_row[0].encode("utf-8")).hexdigest()
+                != report_row[1]
+            ):
+                raise MetadataReportError("cover consideration is invalid")
+            stored_document = compact_cover_consideration(document, report_row[0])
             self._connection.execute(
                 "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,replay_digest,document_digest,supersedes_id,occurred_at,document,currentness_document) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
@@ -593,7 +611,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                     hashlib.sha256(document.encode("utf-8")).hexdigest(),
                     supersedes_id,
                     occurred_at,
-                    document,
+                    stored_document,
                     currentness_document,
                 ),
             )
@@ -643,16 +661,17 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         self, review_case_id: str, limit: int = 50
     ) -> tuple[dict[str, object], ...]:
         rows = self._connection.execute(
-            "SELECT event.document,consideration.document FROM "
+            "SELECT event.document,consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM "
             "cover_consideration_events event JOIN cover_considerations consideration "
             "ON consideration.consideration_id=event.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
             "WHERE event.review_case_id=? ORDER BY event.occurred_at DESC,event.event_id DESC LIMIT ?",
             (review_case_id, min(max(limit, 1), 50)),
         ).fetchall()
         items = []
-        for event_document, consideration_document in rows:
-            event = json.loads(event_document)
-            event["consideration_document"] = consideration_document
+        for row in rows:
+            event = json.loads(row[0])
+            event["consideration_document"] = expand_cover_consideration(*row[1:])
             items.append(event)
         return tuple(items)
 
@@ -696,9 +715,10 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         ):
             raise HumanDecisionError("idempotency_conflict")
         row = self._connection.execute(
-            "SELECT consideration.document,review.document FROM current_cover_considerations current "
+            "SELECT consideration.document,review.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
             "JOIN cover_considerations consideration "
             "ON consideration.consideration_id=current.consideration_id "
+            "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
             "JOIN review_cases review ON review.review_case_id=current.review_case_id "
             "JOIN current_review_case_lineages lineage ON lineage.review_case_id=review.review_case_id "
             "JOIN current_review_packages package ON package.review_case_id=lineage.review_case_id AND package.report_id=lineage.report_id AND package.proposal_set_id=lineage.proposal_set_id "
@@ -708,7 +728,8 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
         if row is None:
             raise HumanDecisionError("stale")
         try:
-            consideration, report = _validated_cover_consideration(row[0])
+            expanded_document = expand_cover_consideration(row[0], *row[2:])
+            consideration, report = _validated_cover_consideration(expanded_document)
             case = ReviewCase.from_json(row[1])
             if (
                 consideration["policy_reference"],
@@ -805,7 +826,8 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             raise HumanDecisionError("invalid_choice")
         try:
             self.require_owner_cover(
-                row[0], None if selected is None else cast(str, selected["artifact_id"])
+                expanded_document,
+                None if selected is None else cast(str, selected["artifact_id"]),
             )
         except CoverConsiderationError as error:
             raise HumanDecisionError(error.code) from error
@@ -837,7 +859,9 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
                 "preview_sha256": None
                 if selected is None
                 else selected["preview_sha256"],
-                "consideration_digest": hashlib.sha256(row[0].encode()).hexdigest(),
+                "consideration_digest": hashlib.sha256(
+                    expanded_document.encode()
+                ).hexdigest(),
                 "target": dict(case.target),
                 "selection_id": selection_id,
                 "supersedes_selection_id": (

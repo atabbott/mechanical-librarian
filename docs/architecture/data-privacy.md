@@ -200,3 +200,11 @@ The process may also retain up to 64 MiB of serialized readable Activity facts,
 search text and source/dependency witnesses. This private in-memory store is not
 an export or another durable ledger. It retains no domain report objects between
 requests and disappears with its runtime owner; canonical retention is unchanged.
+
+## Compact retained cover evidence (#1158)
+
+Cover considerations retain their full immutable packet and reference the exact
+canonical report already retained in the application database. Expanded public
+and application documents are unchanged. This removes duplicate representation,
+not evidence: reports, histories, originals and previews retain their existing
+privacy, backup and retention obligations. No pruning or new cleanup is enabled.

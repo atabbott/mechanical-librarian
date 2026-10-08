@@ -1835,3 +1835,15 @@ only current closed reasons, never diagnostic history or counts. Provider work
 remains outside transactions. Exact predecessor recovery stores require a clean
 rebuild, with no migration or retained-state modification; report schema and all
 publication and effect guards remain unchanged.
+
+## Canonical cover report references (#1158)
+
+Only the persistence representation of a cover consideration is compact. Its
+canonical immutable report must match before publication within the writer
+transaction. Readers bind the report in the same SQLite statement/read snapshot,
+refuse missing or mismatched evidence, and enforce the expanded size bound before
+returning byte-identical v4 documents. Authority digests remain over expansion;
+owner confirmation, automatic permission, currentness and guarded effects retain
+their checks. No atomicity across artifact staging or backup files is implied.
+Exact predecessor schemas require a clean rebuild; reports and history remain
+append-only, with no migration, adoption or new cleanup authority.

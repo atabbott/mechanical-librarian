@@ -254,3 +254,13 @@ hashes without changing current grants. Historical decoding remains available bu
 cannot authorize current decisions or effects. The historical qualification-state
 bridge target stays fixed and does not adopt this transition. See the
 [qualification contract](../product/rich-metadata-qualification.md#current-compact-authority).
+
+## Compact cover report references (#1158)
+
+**Clean rebuild required** under ADR-0013, including empty predecessor application
+stores. The exact `cover_considerations` SQLite contract now omits duplicate
+embedded report JSON and binds its canonical report by identity and digest.
+Application `cover-consideration-v4` bytes and authority hashes remain unchanged.
+Startup accepts absent or exact-current state; no migration or adoption is
+provided. Preserve prior reports, histories and artifacts under the existing
+backup obligations; this change supplies no data-removal procedure.

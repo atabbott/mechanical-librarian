@@ -148,3 +148,13 @@ they are not ordinary backup artifacts or Undo. Restore only an absent or
 exact-current state. Permission, capacity, read-only-filesystem or cleanup
 failure remains a typed degraded condition and must not be bypassed by editing
 SQLite or recovery files.
+
+## Compact cover consideration storage (#1158)
+
+Back up the complete application database together with its referenced artifacts.
+A compact consideration depends on its exact immutable canonical report, not on
+a current pointer; restoring only consideration rows is insufficient. Recovery
+reconstructs the identical application document and refuses missing or mismatched
+report evidence. All histories and shared originals/previews remain required.
+Existing staging-orphan cleanup and retryable effect-recovery obligations remain
+separate; this correction authorizes no deletion or vacuum.

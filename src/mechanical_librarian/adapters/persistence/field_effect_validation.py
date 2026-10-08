@@ -1,7 +1,7 @@
 """Deep validation of the persisted field-effect state.
 
 `schema.py` calls this during open-time total validation. It deliberately
-imports nothing from any persistence module, so the schema spine stays acyclic
+imports only persistence document leaves, so the schema spine stays acyclic
 once the field-effect aggregate moves into its own module.
 """
 
@@ -13,6 +13,9 @@ import re
 import sqlite3
 from typing import cast
 
+from mechanical_librarian.adapters.persistence.cover_consideration_documents import (
+    expand_cover_consideration,
+)
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.domain.audiobook_corroboration import (
     admitted_audiobook_identity,
@@ -890,8 +893,9 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
             pre_value = target.get("value") if target["state"] == "value" else None
             if type(decision) is CoverAutomaticDecision:
                 consideration_row = connection.execute(
-                    "SELECT consideration.document FROM current_cover_considerations current "
+                    "SELECT consideration.document,report.document,report.document_digest,consideration.document_digest,consideration.report_id FROM current_cover_considerations current "
                     "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
+                    "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
                     "WHERE current.review_case_id=? AND current.consideration_id=?",
                     (decision.review_case_id, decision.consideration_id),
                 ).fetchone()
@@ -903,7 +907,7 @@ def _validate_field_effect_state(connection: sqlite3.Connection) -> None:
                     case,
                     report,
                     proposal_set,
-                    consideration_row[0],
+                    expand_cover_consideration(*consideration_row),
                 )
             else:
                 if source_outcome is None:
