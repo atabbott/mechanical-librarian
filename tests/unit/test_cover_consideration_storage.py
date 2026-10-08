@@ -322,3 +322,34 @@ def test_expanded_limit_applies_even_when_compact_document_fits(tmp_path: Path) 
                 hashlib.sha256(expanded.encode()).hexdigest(),
                 report.report_id,
             )
+
+
+def test_corrupt_report_sql_type_rolls_back_publication(tmp_path: Path) -> None:
+    with retained_cover_case(tmp_path) as (repository, _service, case, report):
+        original = repository.current_cover_consideration_document(case.review_case_id)
+        assert original is not None
+        value = json.loads(original)
+        value["supersedes_id"] = value["consideration_id"]
+        value["consideration_id"] = "cover_consideration_" + "9" * 64
+        connection = repository._connection
+        connection.execute("DROP TRIGGER metadata_reports_no_update")
+        connection.execute("PRAGMA ignore_check_constraints=ON")
+        connection.execute(
+            "UPDATE metadata_reports SET document=CAST(document AS BLOB)"
+        )
+        connection.execute("PRAGMA ignore_check_constraints=OFF")
+        connection.execute(schema._NO_UPDATE_SQL)
+        connection.commit()
+        with pytest.raises(MetadataReportError, match="cover consideration is invalid"):
+            repository.record_cover_consideration(
+                _canonical_json(value),
+                review_case_id=case.review_case_id,
+                report_id=report.report_id,
+                replay_digest=value["replay_digest"],
+                supersedes_id=value["supersedes_id"],
+                occurred_at=11,
+            )
+        assert not connection.in_transaction
+        assert connection.execute(
+            "SELECT count(*) FROM cover_considerations"
+        ).fetchone() == (1,)

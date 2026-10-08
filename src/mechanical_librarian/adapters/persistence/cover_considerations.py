@@ -596,6 +596,7 @@ class SQLiteCoverConsiderationRepository(ConnectionScoped):
             ).fetchone()
             if (
                 report_row is None
+                or type(report_row[0]) is not str
                 or hashlib.sha256(report_row[0].encode("utf-8")).hexdigest()
                 != report_row[1]
             ):
