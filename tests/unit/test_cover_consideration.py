@@ -1195,23 +1195,78 @@ def test_an_audiobook_with_retrieved_covers_builds_no_cover_packet() -> None:
     assert [] == dispatches
 
 
+@pytest.mark.parametrize("recording", [True, False], ids=["recording", "work"])
 def test_an_audiobook_consideration_dispatches_no_observer(
     case: _Case,
+    recording: bool,
 ) -> None:
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        admitted_audiobook_identity,
+    )
+    from mechanical_librarian.domain.proposal_set import audiobook_review_scope
+    from tests.support.audiobook_synopsis import synopsis_report
+
     service, document, dispatches, proposal = _audiobook_case()
 
+    original_report = MetadataReport.from_json(document)
+    report = original_report
+    if not recording:
+        work = synopsis_report()
+        report = MetadataReport.create(
+            target=work.target,
+            file=work.file,
+            local_claims=work.local_claims,
+            local_reasons=work.local_reasons,
+            providers=work.providers,
+            audio=work.audio,
+            cover_sources=original_report.cover_sources,
+        )
+        document = report.to_json()
+    assert admitted_audiobook_identity(report) is recording
+    assert audiobook_review_scope(report) == ("recording" if recording else "work")
     projected = service.ensure("review_case_" + "e" * 64, document, proposal)
 
     assert [] == dispatches
     assert "unavailable" == projected["reviewer_status"]
-    assert [] == projected["candidates"]
+    if recording:
+        assert len(projected["candidates"]) == 2
+        for candidate in projected["candidates"]:
+            assert candidate["state"] == "excluded"
+            assert candidate["manual_eligible"] is True
+            assert candidate["selectable"] is False
+            assert candidate["identity"]["outcome"] == "unknown"
+            assert "unbound_provider_identity" in candidate["identity"]["reasons"]
+            assert candidate["observation"] is None
+            service.validate_decision(
+                "review_case_" + "e" * 64,
+                projected["consideration_id"],
+                "accept",
+                {"kind": "cover", "value": candidate["artifact_id"]},
+            )
+        assert projected["policy"]["status"] == "abstained"
+        assert projected["policy"]["recommended_candidate_reference"] is None
+    else:
+        assert projected["candidates"] == []
+        assert projected["ready"] is False
+        artifact = original_report.cover_sources[0].artifact
+        assert artifact is not None
+        with pytest.raises(CoverConsiderationError, match="invalid_choice"):
+            service.validate_decision(
+                "review_case_" + "e" * 64,
+                projected["consideration_id"],
+                "accept",
+                {
+                    "kind": "cover",
+                    "value": artifact.artifact_id,
+                },
+            )
     persisted = json.loads(
         cast("_Store", service._store).current["review_case_" + "e" * 64]
     )
-    assert persisted["packet_document"] is None
+    assert (persisted["packet_document"] is not None) is recording
     assert persisted["observation_document"] is None
-    assert persisted["identity_document"] is None
-    assert persisted["policy_report_document"] is None
+    assert (persisted["identity_document"] is not None) is recording
+    assert (persisted["policy_report_document"] is not None) is recording
     # The same evidence on the ebook path still packets and still observes.
     assert case.service.ensure(
         "review_case_" + "f" * 64, case.report.to_json(), case.proposal

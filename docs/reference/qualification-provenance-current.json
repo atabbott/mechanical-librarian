@@ -652,7 +652,7 @@
     "tests/unit/test_continuous_field_effects.py": "55865d2a496d49cdecabb1275f7de08b83e44f7546924379ca21f683a0138f06",
     "tests/unit/test_cover_activation.py": "8ce7f03c752dd4ddcc8668b653f5a585aad29ce5956a06664d63a6ccff715fea",
     "tests/unit/test_cover_artifacts.py": "7187a2e9698755558b89f86d829feed6d8c2ce82372e33de1cb015ed7fad6e00",
-    "tests/unit/test_cover_consideration.py": "455d1a2e0f3e170271cb78e2bfbbf0dac84bfe3d4c1b2c4524c73f6d33057f45",
+    "tests/unit/test_cover_consideration.py": "de191de768b73a473b45be7e9a72cca3136cd4bd6147c90333ba2106d53236f1",
     "tests/unit/test_cover_packets.py": "b2c776a6abb112ba446d7b07ecb15a8e4651b216e35d3bde23174fcfdad2e583",
     "tests/unit/test_cover_qualification.py": "9e7f8fd7e373bbef288fc354809939fba36e5497ecf45e38f340e280d33845a5",
     "tests/unit/test_cover_review_cli.py": "b46a596f661ce1aa08399a95f2a05b27e46f2b282b6f0b63cd1ee2d8dfdb439f",
