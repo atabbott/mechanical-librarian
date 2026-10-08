@@ -581,7 +581,7 @@
     "tests/fixtures/shadow-outcome-v9.json": "9c979a146b3fa91c46c5efefbf7cc9d0ed0adaedf4ce2807752ff11f28d66791",
     "tests/fixtures/title-conflict-v18.json": "760e900d08d9d867ce399c2c3e7e784c246627432e514058ccf80e0085cdea65",
     "tests/fixtures/title-preservation-v19.json": "835fa9807b3f1c90b614404fc03a09f9b30bfe6d19f663494233321a81275b08",
-    "tests/installed/test_continuous_review_scale.py": "96c9893aafc9c6f008d99f103dd4dc64a9f64af2cff5dc303c0d68eb47a7d25f",
+    "tests/installed/test_continuous_review_scale.py": "33583edd5b4de61593ee81e2e5ac8eb7d4a972acaac166cb98f34e2f2701423c",
     "tests/integration/test_audiobook_provider_activation.py": "c4fb23d81acb21d942d0d0f2e58ae9d38e7b966fbe9974b10ec403fb44961f73",
     "tests/integration/test_continuous_review_scale.py": "a3700a28f38289a898ea75b9693efd304974ba6a41dcc1ad3ee9ce80ff757e23",
     "tests/integration/test_database_crash_recovery.py": "285eb4cb629482f192426f61b11f306c352f53a8b40fbdea9d2b1452041619f0",
