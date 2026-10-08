@@ -1100,6 +1100,17 @@ class _ActivityWaiting(_ClosedModel):
 
 
 class _ProviderRecoveryActivity(_ClosedModel):
+    failure_reasons: list[
+        Literal[
+            "authentication",
+            "authorization",
+            "configuration",
+            "rate_limited",
+            "burst_throttled",
+            "quota_exhausted",
+            "transient",
+        ]
+    ] = Field(default_factory=list, max_length=7)
     affected_count: int = Field(ge=1, le=1_000_000)
     dispatch_reasons: list[
         Literal[

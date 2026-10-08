@@ -706,7 +706,16 @@ export interface ActivitySuspensionView {
 }
 export type ProviderRecoveryDispatchReason =
   'missing_corroboration' | 'zero_provider_evidence' | 'settleable_disagreement' | 'blanket_scan'
+export type ProviderRecoveryFailureReason =
+  | 'authentication'
+  | 'authorization'
+  | 'configuration'
+  | 'rate_limited'
+  | 'burst_throttled'
+  | 'quota_exhausted'
+  | 'transient'
 export interface ProviderRecoveryActivityView {
+  failure_reasons?: readonly ProviderRecoveryFailureReason[]
   affected_count: number
   dispatch_reasons?: readonly ProviderRecoveryDispatchReason[]
   next_eligible_at: number | null
@@ -2492,6 +2501,28 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
         : integerValue(item.next_eligible_at, 'provider_recovery_next_eligible_at')
     if (next !== null && (!Number.isSafeInteger(next) || next < 0 || next > 8640000000000))
       throw new ApiError(502, 'invalid_provider_recovery_timestamp')
+    const failureReasons =
+      item.failure_reasons === undefined
+        ? []
+        : stringArray(item.failure_reasons, 'provider_recovery_failure_reasons')
+    if (
+      failureReasons.length > 7 ||
+      new Set(failureReasons).size !== failureReasons.length ||
+      failureReasons.some(
+        (reason, position) =>
+          ![
+            'authentication',
+            'authorization',
+            'configuration',
+            'rate_limited',
+            'burst_throttled',
+            'quota_exhausted',
+            'transient',
+          ].includes(reason) ||
+          (position > 0 && (failureReasons[position - 1] ?? '') > reason),
+      )
+    )
+      throw new ApiError(502, 'invalid_provider_recovery_failure_reasons')
     const rawDispatchReasons = item.dispatch_reasons
     const dispatchReasons =
       rawDispatchReasons === undefined
@@ -2518,6 +2549,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
       state: item.state as ProviderRecoveryActivityView['state'],
       affected_count: integerValue(item.affected_count, 'provider_recovery_affected_count'),
       ...(dispatchReasons === undefined ? {} : { dispatch_reasons: dispatchReasons }),
+      failure_reasons: failureReasons as ProviderRecoveryFailureReason[],
       next_eligible_at: next,
     }
   })

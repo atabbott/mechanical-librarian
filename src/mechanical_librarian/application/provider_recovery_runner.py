@@ -9,14 +9,18 @@ caller and the background caller cannot fan out concurrently.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, cast
 from uuid import uuid4
 
+from mechanical_librarian.application.provider_recovery_evidence import (
+    settled_recovery_evidence,
+)
 from mechanical_librarian.domain.provider_recovery import (
     RECOVERY_FAILURES,
     ProviderRecovery,
     ProviderRecoveryJob,
+    RecoveryAttemptEvidence,
 )
 
 
@@ -37,7 +41,14 @@ class ProviderRecoveryStore(Protocol):
     ) -> ProviderRecoveryJob | None: ...
     def renew_job(self, *, job: ProviderRecoveryJob, token: str, now: int) -> None: ...
     def complete_job(
-        self, *, job: ProviderRecoveryJob, token: str, now: int, success: bool
+        self,
+        *,
+        job: ProviderRecoveryJob,
+        token: str,
+        now: int,
+        success: bool,
+        recovery: ProviderRecovery,
+        evidence: RecoveryAttemptEvidence | None = None,
     ) -> None: ...
     def complete_stale_job(
         self, *, job: ProviderRecoveryJob, token: str, now: int
@@ -57,6 +68,7 @@ class ProviderRecoveryStore(Protocol):
         token: str,
         recovery: ProviderRecovery,
         now: int,
+        evidence: RecoveryAttemptEvidence | None = None,
     ) -> ProviderRecovery: ...
     def complete_canary_failure(
         self,
@@ -65,6 +77,7 @@ class ProviderRecoveryStore(Protocol):
         token: str,
         recovery: ProviderRecovery,
         now: int,
+        evidence: RecoveryAttemptEvidence | None = None,
         failure: str,
         retry_after: int | None,
     ) -> ProviderRecovery: ...
@@ -75,6 +88,7 @@ class ProviderRecoveryStore(Protocol):
         token: str,
         recovery: ProviderRecovery,
         now: int,
+        evidence: RecoveryAttemptEvidence | None = None,
     ) -> ProviderRecovery: ...
     def finish_fanout(
         self, *, recovery: ProviderRecovery, token: str, now: int
@@ -86,6 +100,7 @@ class ProviderRecoveryStore(Protocol):
         token: str,
         recovery: ProviderRecovery,
         now: int,
+        evidence: RecoveryAttemptEvidence | None = None,
         failure: str,
         retry_after: int | None,
     ) -> ProviderRecovery: ...
@@ -147,7 +162,8 @@ class ScopedProviderRecoveryRunner:
         store: ProviderRecoveryStore,
         generation: int,
         retry: Callable[
-            [ProviderRecovery, ProviderRecoveryJob, Callable[[], None]], None
+            [ProviderRecovery, ProviderRecoveryJob, Callable[[], None]],
+            RecoveryAttemptEvidence | None,
         ],
         classify_failure: Callable[[Exception], tuple[str, int | None]],
         clock: Callable[[], int] | None = None,
@@ -229,7 +245,7 @@ class ScopedProviderRecoveryRunner:
                     )
 
                 try:
-                    self._retry(claimed, canary, renew_canary)
+                    evidence = self._retry(claimed, canary, renew_canary)
                 except Exception as error:
                     # ``_classify_failure`` is the narrowing: it inspects the
                     # error and names the transaction outcome, so breadth here
@@ -238,6 +254,7 @@ class ScopedProviderRecoveryRunner:
                     # to escape instead would leave the canary job claimed and
                     # its target hold unreleased.
                     failure, retry_after = self._classify_failure(error)
+                    evidence = settled_recovery_evidence(error, failure)
                     current = self._current(current)
                     if failure == "target_held":
                         self._store.release_target_hold(
@@ -266,6 +283,7 @@ class ScopedProviderRecoveryRunner:
                             token=token,
                             recovery=claimed,
                             now=current,
+                            evidence=evidence,
                         )
                         return RecoveryRun(exhausted.state)
                     self._store.complete_canary_failure(
@@ -273,6 +291,7 @@ class ScopedProviderRecoveryRunner:
                         token=token,
                         recovery=claimed,
                         now=current,
+                        evidence=evidence,
                         failure=failure,
                         retry_after=retry_after,
                     )
@@ -283,6 +302,7 @@ class ScopedProviderRecoveryRunner:
                     token=token,
                     recovery=claimed,
                     now=current,
+                    evidence=evidence,
                 )
                 break
             if canary is None:
@@ -304,6 +324,7 @@ class ScopedProviderRecoveryRunner:
             )
             if member is None:
                 break
+            completed_evidence = None
             try:
 
                 def renew_member(
@@ -316,13 +337,16 @@ class ScopedProviderRecoveryRunner:
                         now=self._current(current),  # noqa: B023 - `current` is deliberately read late: the renewal must use the newest clock reading, and `self._retry` invokes the renewal before `current` is next reassigned
                     )
 
-                self._retry(fanout_state, member, renew_member)
+                evidence = self._retry(fanout_state, member, renew_member)
+                completed_evidence = evidence or RecoveryAttemptEvidence("completed")
                 current = self._current(current)
                 self._store.complete_job(
                     job=member,
                     token=token,
                     now=current,
                     success=True,
+                    recovery=fanout_state,
+                    evidence=evidence,
                 )
                 fanout += 1
             except Exception as error:
@@ -336,6 +360,11 @@ class ScopedProviderRecoveryRunner:
                 # escaped would be left claimed with its target hold unreleased.
                 current = self._current(current)
                 failure, retry_after = self._classify_failure(error)
+                evidence = (
+                    replace(completed_evidence, outcome="terminal_failure")
+                    if completed_evidence is not None
+                    else settled_recovery_evidence(error, failure)
+                )
                 if failure == "target_held":
                     self._store.release_target_hold(
                         job=member,
@@ -356,6 +385,7 @@ class ScopedProviderRecoveryRunner:
                         token=token,
                         recovery=fanout_state,
                         now=current,
+                        evidence=evidence,
                         failure=failure,
                         retry_after=retry_after,
                     )
@@ -366,6 +396,8 @@ class ScopedProviderRecoveryRunner:
                         token=token,
                         now=current,
                         success=False,
+                        recovery=fanout_state,
+                        evidence=evidence,
                     )
         if self._cancelled():
             return RecoveryRun("fanout", fanout)

@@ -1293,3 +1293,23 @@ def test_connection_startup_predecessors_are_readable_but_never_current(
         assert (
             audiobook_decision_qualification.F46_COVER_FILL_IDENTITY not in permissions
         )
+
+
+def test_actual_provider_recovery_base_decisions_remain_historical_only() -> None:
+    fixture = json.loads(
+        Path(
+            "tests/fixtures/provider-recovery-base-decisions-25e2a3b6.json"
+        ).read_text()
+    )
+    assert fixture["source_sha"] == "25e2a3b604ec1d82e7ee100c6bc946cab859b37d"
+    assert set(fixture["decisions"]) == {"f19a", "f20", "f46"}
+    for document in fixture["decisions"].values():
+        decision = AutomaticDecision.from_json(document)
+        assert decision.to_json() == document
+        assert not qualification_manifest_is_current(
+            decision.policy_category,
+            decision.policy_option,
+            decision.qualification_manifest_sha256,
+        )
+        with pytest.raises(AutomaticDecisionError):
+            AutomaticDecision.create(**decision._core(), occurred_at=2)

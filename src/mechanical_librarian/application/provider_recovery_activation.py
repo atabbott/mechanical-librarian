@@ -29,6 +29,7 @@ from mechanical_librarian.application.metadata_report import (
     TargetReader,
 )
 from mechanical_librarian.application.provider_recovery_evidence import (
+    ProviderRecoveryAttemptFailure,
     TargetConnectionHeld,
     provider_recovery_jobs,
 )
@@ -43,6 +44,7 @@ from mechanical_librarian.application.review_pipeline import (
 )
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.proposal_set import ProposalSet
+from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
 
 if TYPE_CHECKING:
     from mechanical_librarian.application.configuration import (
@@ -127,17 +129,28 @@ class ProviderRecoveryActivation:
         recovery_state: ProviderRecovery,
         job: ProviderRecoveryJob,
         heartbeat: Callable[[], None],
-    ) -> None:
+    ) -> RecoveryAttemptEvidence | None:
         owed, staged_report_id = self._admit(job)
         if not owed:
-            return
+            return None
+        evidence: list[RecoveryAttemptEvidence] = []
         pipeline = self._pipeline()
         report_id = (
             staged_report_id
             if staged_report_id is not None
-            else self._generate_successor(pipeline, recovery_state, job, heartbeat)
+            else self._generate_successor(
+                pipeline, recovery_state, job, heartbeat, evidence.append
+            )
         )
-        self._complete_successor(pipeline, job, report_id, heartbeat)
+        try:
+            self._complete_successor(pipeline, job, report_id, heartbeat)
+        except CurrentnessError:
+            raise
+        except Exception as error:
+            raise ProviderRecoveryAttemptFailure(
+                evidence[0] if evidence else RecoveryAttemptEvidence("terminal_failure")
+            ) from error
+        return evidence[0] if evidence else None
 
     def _admit(self, job: ProviderRecoveryJob) -> tuple[bool, str | None]:
         """Prove the claimed package is still exact-current before observing.
@@ -189,6 +202,7 @@ class ProviderRecoveryActivation:
         recovery_state: ProviderRecovery,
         job: ProviderRecoveryJob,
         heartbeat: Callable[[], None],
+        operational_evidence: Callable[[RecoveryAttemptEvidence], None],
     ) -> str:
         connection, library, mount, _ = self._configuration.select(
             job.target_connection, job.library
@@ -218,6 +232,7 @@ class ProviderRecoveryActivation:
                     ),
                 ),
                 heartbeat=heartbeat,
+                operational_evidence=operational_evidence,
             ).run(
                 job.source_report_id,
                 tuple(json.loads(job.lane_ids)),

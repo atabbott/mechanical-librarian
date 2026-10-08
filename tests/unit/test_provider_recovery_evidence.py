@@ -12,7 +12,7 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -71,6 +71,7 @@ from mechanical_librarian.domain.metadata_report import (
     FileFacts,
     MetadataReport,
     ProviderObservation,
+    ProviderRequestAccounting,
     ProviderStatus,
     TargetFacts,
 )
@@ -833,3 +834,144 @@ def test_declared_failure_unwraps_only_one_credential_cause(shape, expected):
     assert classify_provider_recovery_failure(
         carrier if shape == "raw_carrier" else error
     ) == (expected, None)
+
+
+@pytest.mark.parametrize("count", [0, 1, 54])
+def test_observed_accounting_preserves_known_zero_and_bound(count: int) -> None:
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        observed_recovery_evidence,
+    )
+    from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
+
+    observation = replace(
+        _provider("catalogue", "candidate", ()),
+        request_accounting=ProviderRequestAccounting(count, count),
+    )
+    assert observed_recovery_evidence(observation) == RecoveryAttemptEvidence(
+        "terminal_failure", count, "observed"
+    )
+
+
+@pytest.mark.parametrize("records", [None, [], (object(),)])
+def test_partial_accounting_rejects_untyped_records(records: object) -> None:
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderOperationalEvidence,
+    )
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        partial_recovery_evidence,
+    )
+    from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
+
+    snapshot = ProviderFailureSnapshot(
+        evidence=ProviderOperationalEvidence(attempt_records=cast(Any, records))
+    )
+    assert partial_recovery_evidence(
+        ProviderObservationFailure(snapshot), "catalogue"
+    ) == RecoveryAttemptEvidence("terminal_failure")
+
+
+@pytest.mark.parametrize("count", [0, 1, 54, 55])
+def test_partial_accounting_is_bounded_completed_record_lower_bound(count: int) -> None:
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderAttemptRecord,
+        ProviderOperationalEvidence,
+    )
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        partial_recovery_evidence,
+    )
+    from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
+
+    records = tuple(
+        ProviderAttemptRecord("catalogue", ordinal, "http_429", None, 0.1, "terminal")
+        for ordinal in range(1, count + 1)
+    )
+    error = ProviderObservationFailure(
+        ProviderFailureSnapshot(
+            evidence=ProviderOperationalEvidence(attempt_records=records)
+        )
+    )
+    result = partial_recovery_evidence(error, "catalogue")
+    assert result == (
+        RecoveryAttemptEvidence("terminal_failure", count, "partial")
+        if count <= 54
+        else RecoveryAttemptEvidence("terminal_failure")
+    )
+
+
+@pytest.mark.parametrize(
+    "accounting", [None, object(), ProviderRequestAccounting(55, 55)]
+)
+def test_observed_accounting_missing_or_oversized_is_unknown(
+    accounting: object,
+) -> None:
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        observed_recovery_evidence,
+    )
+    from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
+
+    observation = _provider("catalogue", "candidate", ())
+    object.__setattr__(observation, "request_accounting", accounting)
+    assert observed_recovery_evidence(observation) == RecoveryAttemptEvidence(
+        "terminal_failure"
+    )
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("initial_dispatches", True),
+        ("retry_dispatches", -1),
+        ("logical_requests", 4),
+        ("replays", 0.0),
+    ],
+)
+def test_observed_accounting_revalidates_exact_numbers(
+    field: str, value: object
+) -> None:
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        observed_recovery_evidence,
+    )
+    from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
+
+    accounting = ProviderRequestAccounting(1, 1)
+    object.__setattr__(accounting, field, value)
+    observation = _provider("catalogue", "candidate", ())
+    object.__setattr__(observation, "request_accounting", accounting)
+    assert observed_recovery_evidence(observation) == RecoveryAttemptEvidence(
+        "terminal_failure"
+    )
+
+
+@pytest.mark.parametrize(
+    "provider,ordinal",
+    [
+        ("other", 1),
+        ("catalogue", True),
+        ("catalogue", 2),
+        ("catalogue", 0),
+        ("catalogue", 1.0),
+    ],
+)
+def test_partial_accounting_requires_exact_provider_and_contiguous_ordinals(
+    provider: str, ordinal: object
+) -> None:
+    from mechanical_librarian.application.provider_evidence import (
+        ProviderAttemptRecord,
+        ProviderOperationalEvidence,
+    )
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        partial_recovery_evidence,
+    )
+    from mechanical_librarian.domain.provider_recovery import RecoveryAttemptEvidence
+
+    record = ProviderAttemptRecord(
+        provider, cast(int, ordinal), "http_429", None, 0.1, "terminal"
+    )
+    error = ProviderObservationFailure(
+        ProviderFailureSnapshot(
+            evidence=ProviderOperationalEvidence(attempt_records=(record,))
+        )
+    )
+    assert partial_recovery_evidence(error, "catalogue") == RecoveryAttemptEvidence(
+        "terminal_failure"
+    )

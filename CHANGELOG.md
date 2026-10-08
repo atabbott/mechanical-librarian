@@ -8,6 +8,11 @@
 
 ## Unreleased
 
+- Provider recovery retains bounded request and failure diagnostics while keeping
+  completed work available. Activity explains current provider waits using the
+  existing retry eligibility timestamp. Retry pacing is unchanged; existing
+  recovery stores require a clean rebuild (#1157).
+
 - Review supported audiobook descriptions and genres even when the exact
   recording is unresolved. Source-backed owner choices use existing guarded
   application; automatic, cover and other-field authority remain unchanged.

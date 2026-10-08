@@ -8372,3 +8372,76 @@ def test_fetching_transition_browse_and_manual_recovery(
                 fixture.application.serialized(assert_released)
         finally:
             actor.close()
+
+
+def test_completed_work_remains_browsable_during_explained_provider_waits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mechanical_librarian.interfaces.web import app as web_app
+    from tests.support.owner_responsiveness import running_owner_fixture
+
+    monkeypatch.setattr(
+        web_app,
+        "ReactAssetLoader",
+        lambda: ReactAssetLoader(Path(os.environ["ML_REACT_ASSET_DIR"])),
+    )
+    with running_owner_fixture(tmp_path, 2) as (fixture, origin):
+        for failure, delay in (
+            ("burst_throttled", 100),
+            ("quota_exhausted", 3600),
+            ("transient", None),
+        ):
+            fixture.recovery.observe_failure(
+                connection=failure,
+                adapter="google_books",
+                scope="books",
+                generation=1,
+                failure=failure,
+                now=100,
+                retry_after=delay,
+            )
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 1000})
+                page.goto(origin + "/login")
+                page.get_by_label("Password").fill("synthetic-owner")
+                page.get_by_role("button", name="Sign in").click()
+                expect(
+                    page.get_by_role("heading", name="Works", exact=True)
+                ).to_be_visible()
+                expect(
+                    page.get_by_text("Synthetic title", exact=True).first
+                ).to_be_visible()
+                case_id = fixture.cases[0].review_case_id
+                page.goto(origin + f"/review/{case_id}?subview=evidence")
+                expect(page.get_by_role("main")).to_contain_text(
+                    "Prepared synthetic work 0000"
+                )
+                page.goto(origin + "/activity")
+                recovery = page.get_by_role("region", name="Provider recovery")
+                expect(recovery).to_contain_text(
+                    "Provider burst limit; Provider quota exhausted; Provider temporarily unavailable"
+                )
+                expect(recovery).to_contain_text("next eligible")
+                expect(
+                    recovery.get_by_role("button", name=re.compile("retry", re.I))
+                ).to_have_count(0)
+                for index in range(3):
+                    token = f"recovered-{index}"
+                    claimed = fixture.recovery.claim_one(
+                        generation=1, now=8000, token=token
+                    )
+                    assert claimed is not None
+                    fixture.recovery.complete_success(
+                        token=token, recovery=claimed, now=8000
+                    )
+                page.reload()
+                expect(recovery).not_to_contain_text("Provider burst limit")
+                page.goto(origin + "/library")
+                expect(
+                    page.get_by_text("Synthetic title", exact=True).first
+                ).to_be_visible()
+            finally:
+                browser.close()

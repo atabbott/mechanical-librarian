@@ -1770,6 +1770,24 @@ def test_activity_accepts_activated_recovery_states_and_rejects_unknown_state() 
     activity = service(snapshot).activity()
     assert list(snapshot) == activity["provider_recovery"]
     assert 1 == activity["waiting"]["held_for_recovery"]
+    reason_row = {
+        "state": "waiting",
+        "affected_count": 1,
+        "next_eligible_at": 100,
+        "failure_reasons": ["burst_throttled", "transient"],
+    }
+    assert service((reason_row,)).activity()["provider_recovery"] == [reason_row]
+    for invalid in (
+        ["private"],
+        ["transient", "transient"],
+        ["transient", "authentication"],
+        [None],
+        [["transient"]],
+        "transient",
+        ["transient"] * 8,
+    ):
+        with pytest.raises(GuardedApplicationError, match="activity"):
+            service(({**reason_row, "failure_reasons": invalid},)).activity()
     with pytest.raises(GuardedApplicationError, match="activity"):
         service(
             ({"state": "unknown", "affected_count": 1, "next_eligible_at": None},)

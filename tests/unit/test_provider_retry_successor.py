@@ -79,6 +79,10 @@ from mechanical_librarian.domain.metadata_report import (
     _provider_from_data,
     default_target_fields,
 )
+from mechanical_librarian.domain.provider_recovery import (
+    ProviderRecoveryJob,
+    RecoveryAttemptEvidence,
+)
 from mechanical_librarian.domain.work_identity import (
     WorkDispatchLineage,
     WorkDispatchRung,
@@ -207,6 +211,7 @@ class _Retry:
             [ReportRepository, MetadataReport], object
         ] = lambda *_args: None,
         resolver: ProviderRetryResolver | None = None,
+        operational_evidence: Callable[[RecoveryAttemptEvidence], None] | None = None,
     ) -> GenerateProviderRetrySuccessor:
         return GenerateProviderRetrySuccessor(
             target=_Target(self.snapshot),
@@ -220,6 +225,7 @@ class _Retry:
             mount=MediaMountConfiguration("books", "/container", "/service", True),
             limits=ReportLimits(),
             after_publication=after_publication,
+            operational_evidence=operational_evidence,
         )
 
 
@@ -2076,3 +2082,208 @@ def test_lookup_hint_retry_reconstructs_identical_context_and_asin_lanes() -> No
         successor.providers[0].recording_lookup_candidates
         == source.providers[0].recording_lookup_candidates
     )
+
+
+@pytest.mark.parametrize(
+    ("status", "outcome", "state"),
+    [
+        (ProviderStatus.MALFORMED, "terminal_response", "exhausted"),
+        (ProviderStatus.UNAVAILABLE, "transient", "waiting"),
+        (ProviderStatus.AUTHENTICATION, "authentication", "waiting"),
+        (ProviderStatus.RATE_LIMITED, "rate_limited", "waiting"),
+        (ProviderStatus.NO_MATCH, "no_match", "recovered"),
+        (ProviderStatus.NO_MATCH, "terminal_failure", "waiting"),
+    ],
+)
+def test_actual_successor_runner_retains_one_accounted_settlement(
+    retry: _Retry,
+    tmp_path: Path,
+    status: ProviderStatus,
+    outcome: str,
+    state: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from mechanical_librarian.adapters.persistence.provider_recovery import (
+        SQLiteProviderRecoveryStore,
+    )
+    from mechanical_librarian.application.provider_recovery_runner import (
+        ScopedProviderRecoveryRunner,
+    )
+
+    observation = replace(
+        provider_observation(
+            "catalogue",
+            (ProviderLaneResult(retry.failed, status),),
+            authority="open_library",
+        ),
+        request_accounting=ProviderRequestAccounting(1, 1),
+    )
+    provider = _Provider(observation)
+    evidence: list[RecoveryAttemptEvidence] = []
+    service = retry.service(
+        ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+            "open_library",
+            2,
+        ),
+        operational_evidence=evidence.append,
+    )
+    store = SQLiteProviderRecoveryStore.open(tmp_path / "recovery.sqlite")
+    store.observe_failure(
+        connection="catalogue",
+        adapter="open_library",
+        scope="ebooks",
+        generation=2,
+        failure="transient",
+        now=0,
+        retry_after=1,
+    )
+    job = ProviderRecoveryJob(
+        "catalogue",
+        "open_library",
+        "ebooks",
+        2,
+        "member",
+        "primary",
+        "ebooks",
+        "item",
+        "file",
+        retry.report.report_id,
+        None,
+        retry.report.report_id,
+        None,
+        None,
+        "report_only",
+        json.dumps([retry.failed.identity]),
+    )
+    store.enqueue_jobs((job,), enqueued_at=0)
+
+    def invoke(*_args: object) -> RecoveryAttemptEvidence | None:
+        service.run(
+            retry.report.report_id,
+            (retry.failed.identity,),
+            provider_name="catalogue",
+            adapter="open_library",
+            generation=2,
+        )
+        return evidence[-1] if evidence else None
+
+    callback: Callable[..., RecoveryAttemptEvidence | None] = invoke
+    if outcome == "terminal_failure":
+        from mechanical_librarian.application.provider_recovery_activation import (
+            ProviderRecoveryActivation,
+        )
+        from mechanical_librarian.application.review_pipeline import ReviewPipelineError
+
+        class FailingPipeline:
+            def run_recovery_successor(self, *_args):
+                raise ReviewPipelineError("projection")
+
+        activation = ProviderRecoveryActivation(
+            configuration=cast(Any, None),
+            repository_factory=lambda: cast(Any, retry.repository),
+            observers=cast(Any, None),
+            provider_resolver=cast(Any, None),
+            pipeline=lambda: cast(Any, FailingPipeline()),
+            enqueue=cast(Any, None),
+            clock=lambda: 1,
+        )
+        monkeypatch.setattr(activation, "_admit", lambda _: (True, None))
+
+        def generate(_pipeline, _health, _job, _heartbeat, capture):
+            capture(invoke())
+            return retry.repository.current_id
+
+        monkeypatch.setattr(activation, "_generate_successor", generate)
+        callback = activation.retry_member
+
+    runner = ScopedProviderRecoveryRunner(
+        store=store,
+        generation=2,
+        retry=callback,
+        classify_failure=_classify_provider_recovery_failure,
+    )
+    assert runner.run_one(now=1, token="owner").state == state
+    assert store._connection.execute(
+        "SELECT outcome,job_attempt,physical_requests,request_count_status FROM provider_recovery_events WHERE job_attempt IS NOT NULL"
+    ).fetchall() == [(outcome, 1, 1, "observed")]
+    assert len(provider.plans) == 1
+    if outcome == "terminal_failure":
+        assert store.snapshot()[0].state == "waiting"
+        next_eligible = store.snapshot()[0].next_eligible_at
+        assert next_eligible is not None and next_eligible > 1
+        assert retry.repository.package[1] == retry.report.report_id
+        assert store._connection.execute(
+            "SELECT state,attempt FROM provider_recovery_jobs"
+        ).fetchall() == [("queued", 1)]
+    if status is ProviderStatus.NO_MATCH:
+        assert retry.repository.current_id != retry.report.report_id
+    else:
+        assert retry.repository.current_id == retry.report.report_id
+        assert evidence == []
+    store.close()
+
+
+def test_real_publication_failure_retains_accounting_without_success_or_new_report(
+    retry: _Retry, tmp_path: Path
+) -> None:
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        settled_recovery_evidence,
+    )
+    from mechanical_librarian.application.review_pipeline import ReviewPipelineError
+
+    path = tmp_path / "reports.sqlite"
+    repository = open_repository(path)
+    repository.publish(retry.report, lambda: True)
+    repository.close()
+    observation = replace(
+        provider_observation(
+            "catalogue",
+            (ProviderLaneResult(retry.failed, ProviderStatus.NO_MATCH),),
+            authority="open_library",
+        ),
+        request_accounting=ProviderRequestAccounting(1, 1),
+    )
+    provider = _Provider(observation)
+    successful: list[RecoveryAttemptEvidence] = []
+
+    def fail_stage(*_args: object) -> None:
+        raise ReviewPipelineError("projection")
+
+    service = GenerateProviderRetrySuccessor(
+        target=_Target(retry.snapshot),
+        inspector=_Inspector(),
+        repository_factory=lambda: cast(ReportRepository, open_repository(path)),
+        provider_resolver=lambda *_args: ConfiguredProviderRetry(
+            ProviderBinding("catalogue", True, lambda: provider, "open_library"),
+            "open_library",
+            2,
+        ),
+        mount=MediaMountConfiguration("books", "/container", "/service", True),
+        limits=ReportLimits(),
+        after_publication=fail_stage,
+        operational_evidence=successful.append,
+    )
+    with pytest.raises(ProviderRetrySuccessorError) as raised:
+        service.run(
+            retry.report.report_id,
+            (retry.failed.identity,),
+            provider_name="catalogue",
+            adapter="open_library",
+            generation=2,
+        )
+    classification = _classify_provider_recovery_failure(raised.value)
+    assert classification == ("terminal", None)
+    assert settled_recovery_evidence(
+        raised.value, classification[0]
+    ) == RecoveryAttemptEvidence("terminal_failure", 1, "observed")
+    assert successful == []
+    repository = open_repository(path)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM metadata_reports"
+    ).fetchone() == (1,)
+    assert (
+        repository.current_review_package_report("primary", "ebooks", "item")
+        == retry.report.report_id
+    )
+    repository.close()

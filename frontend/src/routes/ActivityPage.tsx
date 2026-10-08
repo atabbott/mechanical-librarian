@@ -11,6 +11,7 @@ import type {
   ActivityTransitionView,
   ActivityView,
   ProviderRecoveryDispatchReason,
+  ProviderRecoveryFailureReason,
 } from '../api/http'
 import { activityOutcome } from '../activityState'
 import { Dropdown } from '../components/Dropdown'
@@ -82,6 +83,16 @@ const categoryLabel: Record<ActivityCategory, string> = {
   policy: 'Policy change',
   recovery: 'Recovery',
 }
+const recoveryFailureLabel: Record<ProviderRecoveryFailureReason, string> = {
+  authentication: 'Provider credentials need attention',
+  authorization: 'Provider access was denied',
+  configuration: 'Provider configuration needs attention',
+  rate_limited: 'Provider rate limit',
+  burst_throttled: 'Provider burst limit',
+  quota_exhausted: 'Provider quota exhausted',
+  transient: 'Provider temporarily unavailable',
+}
+
 const recoveryDispatchLabel: Record<ProviderRecoveryDispatchReason, string> = {
   missing_corroboration: 'needs independent evidence',
   zero_provider_evidence: 'no provider evidence yet',
@@ -1287,6 +1298,13 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
                 {item.next_eligible_at === null
                   ? ''
                   : ` · next eligible ${dateParts(item.next_eligible_at).time}`}
+                {item.failure_reasons?.length ? (
+                  <span>
+                    {' '}
+                    ·{' '}
+                    {item.failure_reasons.map((reason) => recoveryFailureLabel[reason]).join('; ')}
+                  </span>
+                ) : null}
                 {item.dispatch_reasons?.length ? (
                   <span>
                     {' '}

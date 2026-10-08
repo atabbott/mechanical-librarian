@@ -47,6 +47,7 @@ from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
     ReportValueError,
 )
+from mechanical_librarian.domain.provider_recovery import RECOVERY_FAILURES
 
 
 @dataclass(frozen=True, slots=True)
@@ -1282,6 +1283,14 @@ class ContinuousGuardedApplication:
             not in (
                 {"state", "next_eligible_at", "affected_count"},
                 {"state", "next_eligible_at", "affected_count", "dispatch_reasons"},
+                {"state", "next_eligible_at", "affected_count", "failure_reasons"},
+                {
+                    "state",
+                    "next_eligible_at",
+                    "affected_count",
+                    "dispatch_reasons",
+                    "failure_reasons",
+                },
             )
             or item["state"]
             not in {
@@ -1294,6 +1303,18 @@ class ContinuousGuardedApplication:
             }
             or type(item["affected_count"]) is not int
             or not 1 <= item["affected_count"] <= 1_000_000
+            or (
+                "failure_reasons" in item
+                and (
+                    type(item["failure_reasons"]) is not list
+                    or len(item["failure_reasons"]) > 7
+                    or any(
+                        type(reason) is not str or reason not in RECOVERY_FAILURES
+                        for reason in item["failure_reasons"]
+                    )
+                    or item["failure_reasons"] != sorted(set(item["failure_reasons"]))
+                )
+            )
             or (
                 "dispatch_reasons" in item
                 and (
