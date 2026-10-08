@@ -983,6 +983,16 @@ def test_three_work_shared_failure_then_real_f22_cutover(
             check.close()
             assert [ProviderStatus.RATE_LIMITED] == calls
             assert "waiting" == recovery.snapshot()[0].state
+            diagnostic = recovery._connection.execute(
+                "SELECT outcome,job_attempt,physical_requests,request_count_status "
+                "FROM provider_recovery_events WHERE job_attempt IS NOT NULL"
+            ).fetchall()
+            assert len(diagnostic) == 1
+            assert diagnostic[0][0] == ("burst_throttled" if burst else "rate_limited")
+            assert diagnostic[0][1] == (0 if burst else 1)
+            assert diagnostic[0][3] == "observed"
+            if burst:
+                assert diagnostic[0][2] == 0  # Existing pacer denied actual HTTP.
 
             if burst:
                 assert len(physical) == 1
@@ -1032,6 +1042,18 @@ def test_three_work_shared_failure_then_real_f22_cutover(
             assert 4 == len(calls)
             assert 3 == calls.count(ProviderStatus.CANDIDATES)
             assert "recovered" == recovery.snapshot()[0].state
+            diagnostics = recovery._connection.execute(
+                "SELECT outcome,request_count_status FROM provider_recovery_events "
+                "WHERE job_attempt IS NOT NULL ORDER BY sequence"
+            ).fetchall()
+            assert len(diagnostics) == 4
+            # The interrupted, already committed package is not fetched again;
+            # its earlier request count cannot be reconstructed after restart.
+            assert diagnostics[1] == ("completed", "unknown")
+            assert all(status == "observed" for _, status in diagnostics[2:])
+            assert all(
+                outcome in {"completed", "no_match"} for outcome, _ in diagnostics[1:]
+            )
             assert [] == outcomes
             supervisor.stop()
 

@@ -16,7 +16,9 @@ from mechanical_librarian.domain.provider_recovery import (
     ProviderRecovery,
     ProviderRecoveryError,
     ProviderRecoveryJob,
+    RecoveryAttemptEvidence,
 )
+from mechanical_librarian.domain.validation import bounded_integer
 
 
 class ProviderRecoveryStoreError(RuntimeError):
@@ -27,7 +29,8 @@ _HEALTH = """CREATE TABLE provider_recovery_health(connection TEXT NOT NULL CHEC
 _MEMBERS = """CREATE TABLE provider_recovery_members(connection TEXT NOT NULL CHECK(length(connection) BETWEEN 1 AND 64),adapter TEXT NOT NULL CHECK(length(adapter) BETWEEN 1 AND 64),scope TEXT NOT NULL CHECK(length(scope) BETWEEN 1 AND 64),PRIMARY KEY(connection,adapter,scope)) STRICT"""
 _JOBS = """CREATE TABLE provider_recovery_jobs(connection TEXT NOT NULL,adapter TEXT NOT NULL,scope TEXT NOT NULL,generation INTEGER NOT NULL CHECK(generation>=1),member_id TEXT NOT NULL CHECK(length(member_id) BETWEEN 1 AND 128),target_connection TEXT NOT NULL CHECK(length(target_connection) BETWEEN 1 AND 64),library TEXT NOT NULL CHECK(length(library) BETWEEN 1 AND 128),item TEXT NOT NULL CHECK(length(item) BETWEEN 1 AND 256),file_identity TEXT NOT NULL CHECK(length(file_identity) BETWEEN 1 AND 256),source_report_id TEXT NOT NULL CHECK(length(source_report_id) BETWEEN 1 AND 128),package_proposal_id TEXT CHECK(package_proposal_id IS NULL OR length(package_proposal_id) BETWEEN 1 AND 128),package_report_id TEXT NOT NULL CHECK(length(package_report_id) BETWEEN 1 AND 128),package_case_id TEXT CHECK(package_case_id IS NULL OR length(package_case_id) BETWEEN 1 AND 128),package_checkpoint INTEGER CHECK(package_checkpoint IS NULL OR package_checkpoint>=0),package_outcome TEXT NOT NULL CHECK(package_outcome IN ('report_only','admitted','superseded','no_case','retired')),lane_ids TEXT NOT NULL CHECK(length(lane_ids) BETWEEN 2 AND 4096),state TEXT NOT NULL CHECK(state IN ('queued','running','complete','failed','stale')),attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 5),dispatch_reason TEXT NOT NULL CHECK(dispatch_reason IN ('missing_corroboration','zero_provider_evidence','settleable_disagreement','blanket_scan')),dispatch_rank INTEGER NOT NULL CHECK(dispatch_rank BETWEEN 0 AND 3),enrollment_ordinal INTEGER NOT NULL CHECK(enrollment_ordinal>=1),cohort_epoch INTEGER CHECK(cohort_epoch IS NULL OR cohort_epoch>=1),claim_token TEXT,claim_expires_at INTEGER,PRIMARY KEY(connection,adapter,scope,generation,member_id),FOREIGN KEY(connection,adapter,scope) REFERENCES provider_recovery_members(connection,adapter,scope),CHECK((dispatch_reason='missing_corroboration' AND dispatch_rank=0) OR (dispatch_reason='zero_provider_evidence' AND dispatch_rank=1) OR (dispatch_reason='settleable_disagreement' AND dispatch_rank=2) OR (dispatch_reason='blanket_scan' AND dispatch_rank=3)),CHECK((package_outcome='report_only' AND package_proposal_id IS NULL AND package_case_id IS NULL AND package_checkpoint IS NULL) OR (package_outcome IN ('admitted','superseded') AND package_proposal_id IS NOT NULL AND package_case_id IS NOT NULL AND package_checkpoint IS NOT NULL) OR (package_outcome IN ('no_case','retired') AND package_proposal_id IS NOT NULL AND package_case_id IS NULL AND package_checkpoint IS NOT NULL)),CHECK((state='running')=(claim_token IS NOT NULL AND claim_expires_at IS NOT NULL)),CHECK(state='running' OR (claim_token IS NULL AND claim_expires_at IS NULL)),CHECK(claim_token IS NULL OR length(claim_token) BETWEEN 1 AND 128),CHECK(claim_expires_at IS NULL OR claim_expires_at BETWEEN 0 AND 8640000000000)) STRICT"""
 _JOBS_CLAIM_INDEX = "CREATE INDEX provider_recovery_jobs_claim_order ON provider_recovery_jobs(connection,adapter,generation,cohort_epoch,state,dispatch_rank,member_id,scope,enrollment_ordinal)"
-_EVENTS = """CREATE TABLE provider_recovery_events(sequence INTEGER PRIMARY KEY,connection TEXT NOT NULL,adapter TEXT NOT NULL,scope TEXT NOT NULL,generation INTEGER NOT NULL CHECK(generation>=1),state TEXT NOT NULL CHECK(state IN ('waiting','dormant','checking','fanout','recovered','exhausted')),attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 5),next_eligible_at INTEGER,occurred_at INTEGER NOT NULL CHECK(occurred_at BETWEEN 0 AND 8640000000000),CHECK((state='waiting')=(next_eligible_at IS NOT NULL)),CHECK(state!='recovered' OR (attempt=0 AND next_eligible_at IS NULL)),CHECK(next_eligible_at IS NULL OR next_eligible_at BETWEEN 0 AND 8640000000000)) STRICT"""
+_EVENTS = """CREATE TABLE provider_recovery_events(sequence INTEGER PRIMARY KEY,connection TEXT NOT NULL,adapter TEXT NOT NULL,scope TEXT NOT NULL,generation INTEGER NOT NULL CHECK(generation>=1),state TEXT NOT NULL CHECK(state IN ('waiting','dormant','checking','fanout','recovered','exhausted')),attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 5),next_eligible_at INTEGER,occurred_at INTEGER NOT NULL CHECK(occurred_at BETWEEN 0 AND 8640000000000),outcome TEXT,job_attempt INTEGER,physical_requests INTEGER,request_count_status TEXT,CHECK((job_attempt IS NULL AND physical_requests IS NULL AND request_count_status IS NULL AND (outcome IS NULL OR outcome IN ('authentication','authorization','configuration','rate_limited','burst_throttled','quota_exhausted','transient'))) OR (job_attempt IS NOT NULL AND job_attempt BETWEEN 0 AND 5 AND outcome IS NOT NULL AND outcome IN ('authentication','authorization','configuration','rate_limited','burst_throttled','quota_exhausted','transient','terminal_response','terminal_failure','no_match','completed') AND state IN ('checking','fanout') AND request_count_status IS NOT NULL AND ((request_count_status='unknown' AND physical_requests IS NULL) OR (request_count_status IN ('observed','partial') AND physical_requests IS NOT NULL AND physical_requests BETWEEN 0 AND 54)))),CHECK((state='waiting')=(next_eligible_at IS NOT NULL)),CHECK(state!='recovered' OR (attempt=0 AND next_eligible_at IS NULL)),CHECK(next_eligible_at IS NULL OR next_eligible_at BETWEEN 0 AND 8640000000000)) STRICT"""
+_EVENTS_SCOPE_INDEX = "CREATE INDEX provider_recovery_events_scope_latest ON provider_recovery_events(connection,adapter,scope,generation,sequence DESC) WHERE job_attempt IS NULL"
 _NO_UPDATE = "CREATE TRIGGER provider_recovery_events_no_update BEFORE UPDATE ON provider_recovery_events BEGIN SELECT RAISE(ABORT, 'append only'); END"
 _NO_DELETE = "CREATE TRIGGER provider_recovery_events_no_delete BEFORE DELETE ON provider_recovery_events BEGIN SELECT RAISE(ABORT, 'append only'); END"
 _RECOVERY_NAMES = frozenset(
@@ -42,9 +45,19 @@ _RECOVERY_NAMES = frozenset(
         "sqlite_autoindex_provider_recovery_members_1",
         "sqlite_autoindex_provider_recovery_jobs_1",
         "provider_recovery_jobs_claim_order",
+        "provider_recovery_events_scope_latest",
     )
 )
-_CREATE = (_MEMBERS, _HEALTH, _JOBS, _JOBS_CLAIM_INDEX, _EVENTS, _NO_UPDATE, _NO_DELETE)
+_CREATE = (
+    _MEMBERS,
+    _HEALTH,
+    _JOBS,
+    _JOBS_CLAIM_INDEX,
+    _EVENTS,
+    _EVENTS_SCOPE_INDEX,
+    _NO_UPDATE,
+    _NO_DELETE,
+)
 
 # The column shapes the schema above guarantees for the leading identity
 # Columns selected from ``provider_recovery_health``. ``sqlite3`` hands these
@@ -77,6 +90,50 @@ def _append_checking(
             "checking",
             recovery.attempt,
             now,
+        ),
+    )
+
+
+def _append_attempt(
+    connection: sqlite3.Connection,
+    recovery: ProviderRecovery,
+    job: ProviderRecoveryJob,
+    now: int,
+    evidence: RecoveryAttemptEvidence,
+) -> None:
+    """Append once after lease settlement, inside its existing transaction."""
+    if (
+        type(recovery) is not ProviderRecovery
+        or recovery.state not in {"checking", "fanout"}
+        or (job.connection, job.adapter, job.generation)
+        != (recovery.connection, recovery.adapter, recovery.generation)
+        or type(evidence) is not RecoveryAttemptEvidence
+    ):
+        raise ProviderRecoveryStoreError("provider recovery evidence is invalid")
+    evidence.__post_init__()
+    row = connection.execute(
+        "SELECT attempt FROM provider_recovery_jobs WHERE connection=? AND adapter=? "
+        "AND scope=? AND generation=? AND member_id=?",
+        (job.connection, job.adapter, job.scope, job.generation, job.member_id),
+    ).fetchone()
+    if row is None or not bounded_integer(0, 5)(row[0]):
+        raise ProviderRecoveryStoreError("provider recovery evidence is invalid")
+    connection.execute(
+        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,"
+        "next_eligible_at,occurred_at,outcome,job_attempt,physical_requests,request_count_status) "
+        "VALUES(?,?,?,?,?,?,NULL,?,?,?,?,?)",
+        (
+            recovery.connection,
+            recovery.adapter,
+            recovery.scope,
+            recovery.generation,
+            recovery.state,
+            recovery.attempt,
+            now,
+            evidence.outcome,
+            row[0],
+            evidence.physical_requests,
+            evidence.request_count_status,
         ),
     )
 
@@ -881,7 +938,10 @@ class SQLiteProviderRecoveryStore:
             )
             with self._lock:
                 self._observe_failure(
-                    observed, now, deferred=failure in DEFERRED_RECOVERY_FAILURES
+                    observed,
+                    now,
+                    failure=failure,
+                    deferred=failure in DEFERRED_RECOVERY_FAILURES,
                 )
                 return
         except ProviderRecoveryStoreError:
@@ -892,7 +952,7 @@ class SQLiteProviderRecoveryStore:
             ) from error
 
     def _observe_failure(
-        self, observed: ProviderRecovery, now: int, *, deferred: bool
+        self, observed: ProviderRecovery, now: int, *, failure: str, deferred: bool
     ) -> None:
         with self._rollback_on_failure(ProviderRecoveryError):
             self._connection.execute("BEGIN IMMEDIATE")
@@ -952,7 +1012,7 @@ class SQLiteProviderRecoveryStore:
                 ),
             )
             self._connection.execute(
-                "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at,outcome) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     successor.connection,
                     successor.adapter,
@@ -962,6 +1022,7 @@ class SQLiteProviderRecoveryStore:
                     successor.attempt,
                     successor.next_eligible_at,
                     now,
+                    failure,
                 ),
             )
             self._connection.execute("COMMIT")
@@ -1246,8 +1307,13 @@ class SQLiteProviderRecoveryStore:
             with self._lock:
                 rows = self._connection.execute(
                     "SELECT h.state,MIN(h.next_eligible_at),"
-                    "CASE WHEN h.state='fanout' THEN count(j.member_id) ELSE count(DISTINCT h.connection||char(0)||h.adapter||char(0)||h.scope) END "
-                    "FROM provider_recovery_health h LEFT JOIN provider_recovery_jobs j "
+                    "CASE WHEN h.state='fanout' THEN count(j.member_id) ELSE count(DISTINCT h.connection||char(0)||h.adapter||char(0)||h.scope) END,group_concat(DISTINCT CASE WHEN h.state IN ('waiting','dormant') THEN e.outcome END) "
+                    "FROM provider_recovery_health h LEFT JOIN provider_recovery_events e ON e.sequence=("
+                    "SELECT sequence FROM provider_recovery_events INDEXED BY provider_recovery_events_scope_latest "
+                    "WHERE connection=h.connection AND adapter=h.adapter AND scope=h.scope "
+                    "AND generation=h.generation AND job_attempt IS NULL ORDER BY sequence DESC LIMIT 1) "
+                    "AND e.state=h.state AND e.attempt=h.attempt AND e.next_eligible_at IS h.next_eligible_at "
+                    "LEFT JOIN provider_recovery_jobs j "
                     "ON j.connection=h.connection AND j.adapter=h.adapter AND j.generation=h.generation "
                     "AND ((h.state='fanout' AND j.cohort_epoch=h.cohort_epoch) "
                     "OR (h.state='waiting' AND j.scope=h.scope AND NOT EXISTS (SELECT 1 "
@@ -1281,6 +1347,9 @@ class SQLiteProviderRecoveryStore:
                     "state": row[0],
                     "next_eligible_at": row[1],
                     "affected_count": row[2],
+                    **(
+                        {"failure_reasons": sorted(row[3].split(","))} if row[3] else {}
+                    ),
                     **(
                         {"dispatch_reasons": reasons[row[0]]} if reasons[row[0]] else {}
                     ),
@@ -1748,11 +1817,35 @@ class SQLiteProviderRecoveryStore:
                 self._connection.execute("COMMIT")
 
     def complete_job(
-        self, *, job: ProviderRecoveryJob, token: str, now: int, success: bool
+        self,
+        *,
+        job: ProviderRecoveryJob,
+        token: str,
+        now: int,
+        success: bool,
+        recovery: ProviderRecovery,
+        evidence: RecoveryAttemptEvidence | None = None,
     ) -> None:
-        with self._rollback_on_failure():
+        with self._rollback_on_failure(ProviderRecoveryError):
             with self._lock:
                 self._connection.execute("BEGIN IMMEDIATE")
+                owner = self._connection.execute(
+                    "SELECT state,attempt,claim_token,claim_expires_at FROM provider_recovery_health "
+                    "WHERE connection=? AND adapter=? AND scope=? AND generation=?",
+                    (
+                        recovery.connection,
+                        recovery.adapter,
+                        recovery.scope,
+                        recovery.generation,
+                    ),
+                ).fetchone()
+                if (
+                    owner is None
+                    or owner[:3] != (recovery.state, recovery.attempt, token)
+                    or owner[3] is None
+                    or owner[3] <= now
+                ):
+                    raise ProviderRecoveryStoreError("provider recovery claim is owned")
                 state = "complete" if success else "failed"
                 changed = self._connection.execute(
                     "UPDATE provider_recovery_jobs SET state=?,claim_token=NULL,claim_expires_at=NULL WHERE connection=? AND adapter=? AND scope=? AND generation=? AND member_id=? AND state='running' AND claim_token=? AND claim_expires_at>?",
@@ -1769,6 +1862,16 @@ class SQLiteProviderRecoveryStore:
                 ).rowcount
                 if changed != 1:
                     raise ProviderRecoveryStoreError("provider recovery claim is owned")
+                _append_attempt(
+                    self._connection,
+                    recovery,
+                    job,
+                    now,
+                    evidence
+                    or RecoveryAttemptEvidence(
+                        ("completed" if success else "terminal_failure")
+                    ),
+                )
                 self._connection.execute("COMMIT")
 
     def complete_stale_job(
@@ -1893,6 +1996,7 @@ class SQLiteProviderRecoveryStore:
         token: str,
         recovery: ProviderRecovery,
         now: int,
+        evidence: RecoveryAttemptEvidence | None = None,
     ) -> ProviderRecovery:
         """Close a nonretryable canary without admitting sibling egress."""
         with self._rollback_on_failure(ProviderRecoveryError):
@@ -1995,6 +2099,15 @@ class SQLiteProviderRecoveryStore:
                         now,
                     ),
                 )
+                _append_attempt(
+                    self._connection,
+                    recovery,
+                    job,
+                    now,
+                    evidence
+                    if evidence is not None
+                    else RecoveryAttemptEvidence("terminal_failure"),
+                )
                 self._connection.execute("COMMIT")
                 self._claim_snapshots.pop(
                     (
@@ -2045,6 +2158,7 @@ class SQLiteProviderRecoveryStore:
         token: str,
         recovery: ProviderRecovery,
         now: int,
+        evidence: RecoveryAttemptEvidence | None = None,
         failure: str,
         retry_after: int | None,
     ) -> ProviderRecovery:
@@ -2151,7 +2265,7 @@ class SQLiteProviderRecoveryStore:
                         ),
                     )
                     self._connection.execute(
-                        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at,outcome) VALUES(?,?,?,?,?,?,?,?,?)",
                         (
                             successor.connection,
                             successor.adapter,
@@ -2161,6 +2275,7 @@ class SQLiteProviderRecoveryStore:
                             successor.attempt,
                             successor.next_eligible_at,
                             now,
+                            failure,
                         ),
                     )
                     if scope == recovery.scope:
@@ -2169,6 +2284,15 @@ class SQLiteProviderRecoveryStore:
                     raise ProviderRecoveryStoreError(
                         "provider recovery transition is invalid"
                     )
+                _append_attempt(
+                    self._connection,
+                    recovery,
+                    job,
+                    now,
+                    evidence
+                    if evidence is not None
+                    else RecoveryAttemptEvidence(failure),
+                )
                 self._connection.execute("COMMIT")
                 return owner_successor
 
@@ -2179,6 +2303,7 @@ class SQLiteProviderRecoveryStore:
         token: str,
         recovery: ProviderRecovery,
         now: int,
+        evidence: RecoveryAttemptEvidence | None = None,
     ) -> ProviderRecovery:
         """Commit canary success before siblings receive independent leases."""
         with self._rollback_on_failure(ProviderRecoveryError):
@@ -2257,6 +2382,15 @@ class SQLiteProviderRecoveryStore:
                         None,
                         now,
                     ),
+                )
+                _append_attempt(
+                    self._connection,
+                    recovery,
+                    job,
+                    now,
+                    evidence
+                    if evidence is not None
+                    else RecoveryAttemptEvidence("completed"),
                 )
                 self._connection.execute("COMMIT")
                 self._claim_snapshots.pop(
@@ -2437,6 +2571,7 @@ class SQLiteProviderRecoveryStore:
         token: str,
         recovery: ProviderRecovery,
         now: int,
+        evidence: RecoveryAttemptEvidence | None = None,
         failure: str,
         retry_after: int | None,
     ) -> ProviderRecovery:
@@ -2573,7 +2708,7 @@ class SQLiteProviderRecoveryStore:
                         ),
                     )
                     self._connection.execute(
-                        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES(?,?,?,?,?,?,?,?)",
+                        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at,outcome) VALUES(?,?,?,?,?,?,?,?,?)",
                         (
                             successor.connection,
                             successor.adapter,
@@ -2583,6 +2718,7 @@ class SQLiteProviderRecoveryStore:
                             successor.attempt,
                             successor.next_eligible_at,
                             now,
+                            failure,
                         ),
                     )
                     if scope == recovery.scope:
@@ -2601,6 +2737,15 @@ class SQLiteProviderRecoveryStore:
                     raise ProviderRecoveryStoreError(
                         "provider recovery transition is invalid"
                     )
+                _append_attempt(
+                    self._connection,
+                    recovery,
+                    job,
+                    now,
+                    evidence
+                    if evidence is not None
+                    else RecoveryAttemptEvidence(failure),
+                )
                 self._connection.execute("COMMIT")
                 return owner_successor
 
@@ -2613,6 +2758,7 @@ def _validate(connection: sqlite3.Connection) -> None:
             ("index", "sqlite_autoindex_provider_recovery_members_1", None),
             ("index", "sqlite_autoindex_provider_recovery_jobs_1", None),
             ("index", "provider_recovery_jobs_claim_order", _JOBS_CLAIM_INDEX),
+            ("index", "provider_recovery_events_scope_latest", _EVENTS_SCOPE_INDEX),
             ("table", "provider_recovery_health", _HEALTH),
             ("table", "provider_recovery_members", _MEMBERS),
             ("table", "provider_recovery_jobs", _JOBS),
@@ -2678,9 +2824,24 @@ def _validate(connection: sqlite3.Connection) -> None:
                     "provider recovery database is unavailable or incompatible"
                 )
         for row in connection.execute(
-            "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at FROM provider_recovery_events"
+            "SELECT connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at,outcome,job_attempt,physical_requests,request_count_status FROM provider_recovery_events"
         ):
             ProviderRecovery(*row[:7])
+            if row[9] is not None:
+                RecoveryAttemptEvidence(row[8], row[10], row[11])
+                if not bounded_integer(0, 5)(row[9]) or row[4] not in {
+                    "checking",
+                    "fanout",
+                }:
+                    raise ProviderRecoveryStoreError(
+                        "provider recovery evidence is invalid"
+                    )
+            elif row[10:] != (None, None) or (
+                row[8] is not None and row[8] not in RECOVERY_FAILURES
+            ):
+                raise ProviderRecoveryStoreError(
+                    "provider recovery evidence is invalid"
+                )
             if (
                 row[:3] not in members
                 or type(row[7]) is not int

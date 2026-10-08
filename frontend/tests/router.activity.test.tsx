@@ -726,6 +726,7 @@ describe('Activity route', () => {
           provider_recovery: [
             {
               state: 'waiting',
+              failure_reasons: ['burst_throttled', 'quota_exhausted', 'transient'],
               affected_count: 2,
               next_eligible_at: 1,
               dispatch_reasons: ['missing_corroboration', 'blanket_scan'],
@@ -749,6 +750,12 @@ describe('Activity route', () => {
     expect(await screen.findByRole('heading', { name: 'Provider recovery' })).toBeVisible()
     expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
       '2 affected scopes',
+    )
+    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
+      'Provider burst limit; Provider quota exhausted; Provider temporarily unavailable',
+    )
+    expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
+      'next eligible',
     )
     expect(screen.getByText('Waiting for a safe retry').parentElement).toHaveTextContent(
       'Priority: needs independent evidence, general recovery scan',

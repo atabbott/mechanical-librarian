@@ -129,3 +129,47 @@ six rows and admits at most five distinct candidates; it neither truncates an
 overflow nor repeats the same request as a supposed narrower query. Its narrowing
 flag does not change the wire term. The ordinary query ladder removes information
 and advances only after no-match, so it is not an overflow remedy (#1082).
+
+
+## Settlement diagnostics
+
+Recovery event history separates ordinary health transitions from one diagnostic
+per settled executing member (#1157). `outcome` is a closed failure or result;
+`job_attempt` is the charged attempt after settlement. `physical_requests` counts
+only the actual replacement observation's initial and retry dispatches, before
+retained lanes are merged. A shared scope failure records this cost once, not once
+per affected scope. Burst/quota deferral can therefore record physical requests
+while retaining a zero charged attempt. Existing pacing and retry allowances do
+not change.
+
+`request_count_status` distinguishes `observed` complete accounting, `partial`
+completed typed dispatch records, and `unknown` unavailable or invalid evidence.
+Observed zero means that returned observation dispatched nothing. Partial zero is
+a lower bound and does not prove no unrecorded request began. Unknown has no count.
+Counts are bounded at 54, the current maximum per observation, never clamped or
+inferred from exception text, elapsed time, predecessor evidence or job attempts.
+Malformed responses retain accounting without becoming successor reports. A
+construction or publication failure retains `terminal_failure` diagnostics while
+its existing retry classification remains authoritative. Success is reported to
+the runner only after the complete review package succeeds.
+
+The job, health and diagnostic commit together in the existing recovery SQLite
+transaction; provider work remains outside it. Rejected leases and rolled-back
+commits append nothing. A crash after egress but before settlement can leave no
+diagnostic, so this is neither a complete request ledger nor a billing record.
+Older checking transitions cannot establish total request cost or prove checks
+were avoidable. Controlled clocks can distinguish due canaries, non-due idle,
+shared failures, interrupted fanout and eventual recovery; that does not establish
+an historical cost reduction.
+
+Activity shows only current waiting/dormant failure reasons from the latest
+ordinary event matching the current health identity. A later transition clears
+an old reason. The existing next-eligible timestamp is eligibility, not a finish
+estimate. Completed Library work and detail remain available during provider waits;
+existing owner retry and provider configuration controls retain their meaning.
+
+**Clean rebuild required:** predecessor recovery stores, including empty ones,
+are rejected without modification under ADR-0013. No adoption, migration or
+retained-run rewrite is provided. The report schema is unchanged. Diagnostics add
+no work/report/member identifiers, queries, headers, payloads, exception text,
+credentials or paths; existing scope, generation and sequence provide attribution.

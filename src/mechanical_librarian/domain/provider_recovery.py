@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from mechanical_librarian.domain.validation import bounded_integer, text
+
 
 class ProviderRecoveryError(ValueError):
     """A value-free provider recovery boundary failure."""
@@ -129,6 +131,33 @@ RECOVERY_FAILURES = (
 _BACKOFF = (7_200, 14_400, 28_800, 57_600, 86_400)
 MAX_RECOVERY_DELAY = 90_000
 MAX_TIMESTAMP = 8_640_000_000_000
+
+RECOVERY_OUTCOMES = RECOVERY_FAILURES | frozenset(
+    {"terminal_response", "terminal_failure", "no_match", "completed"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RecoveryAttemptEvidence:
+    """Bounded operational facts, never retry or publication authority."""
+
+    outcome: str
+    physical_requests: int | None = None
+    request_count_status: str = "unknown"
+
+    def __post_init__(self) -> None:
+        if (
+            not text(self.outcome)
+            or self.outcome not in RECOVERY_OUTCOMES
+            or not text(self.request_count_status)
+            or self.request_count_status not in {"observed", "partial", "unknown"}
+            or (
+                self.physical_requests is not None
+                if self.request_count_status == "unknown"
+                else not bounded_integer(0, 54)(self.physical_requests)
+            )
+        ):
+            raise ProviderRecoveryError("provider recovery evidence is invalid")
 
 
 def _valid_failure_delay(failure: str, retry_after: object) -> bool:

@@ -12,6 +12,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
+from mechanical_librarian.application.catalogue import TargetConnectionError
 from mechanical_librarian.application.configuration import (
     MediaMountConfiguration,
     ReportLimits,
@@ -42,6 +43,11 @@ from mechanical_librarian.application.metadata_report import (
 from mechanical_librarian.application.provider_evidence import (
     ProviderOperationalEvidence,
 )
+from mechanical_librarian.application.provider_recovery_evidence import (
+    ProviderRecoveryAttemptFailure,
+    observed_recovery_evidence,
+    partial_recovery_evidence,
+)
 from mechanical_librarian.application.provider_recovery_policy import (
     provider_recovery_decision,
 )
@@ -59,17 +65,30 @@ from mechanical_librarian.domain.metadata_report import (
 from mechanical_librarian.domain.provider_recovery import (
     MAX_RECOVERY_DELAY,
     MAX_TIMESTAMP,
+    RecoveryAttemptEvidence,
 )
 
 
 class ProviderRetrySuccessorError(MetadataReportError):
     """Reject a stale, rebound, or non-retryable internal retry request."""
 
+    def __init__(
+        self, message: str, *, evidence: RecoveryAttemptEvidence | None = None
+    ) -> None:
+        super().__init__(message)
+        self.evidence = evidence or RecoveryAttemptEvidence("terminal_failure")
+
 
 class ProviderRetrySharedFailure(ProviderRetrySuccessorError):
     """A bounded provider-health result that must not publish a successor."""
 
-    def __init__(self, failure: str, retry_after: int | None = None) -> None:
+    def __init__(
+        self,
+        failure: str,
+        retry_after: int | None = None,
+        *,
+        evidence: RecoveryAttemptEvidence | None = None,
+    ) -> None:
         if failure not in {
             "authentication",
             "authorization",
@@ -90,7 +109,7 @@ class ProviderRetrySharedFailure(ProviderRetrySuccessorError):
             )
         ):
             raise ProviderRetrySuccessorError("provider retry failure is invalid")
-        super().__init__("provider retry shared failure")
+        super().__init__("provider retry shared failure", evidence=evidence)
         self.failure = failure
         self.retry_after = retry_after
 
@@ -172,6 +191,7 @@ class GenerateProviderRetrySuccessor:
         after_publication: Callable[[ReportRepository, MetadataReport], object],
         heartbeat: Callable[[], None] = lambda: None,
         wall_clock: Callable[[], float] = time.time,
+        operational_evidence: Callable[[RecoveryAttemptEvidence], None] | None = None,
     ) -> None:
         self._target = target
         self._inspector = inspector
@@ -190,6 +210,7 @@ class GenerateProviderRetrySuccessor:
         self._after_publication = after_publication
         self._heartbeat = heartbeat
         self._wall_clock = wall_clock
+        self._operational_evidence = operational_evidence
 
     def run(
         self,
@@ -212,6 +233,7 @@ class GenerateProviderRetrySuccessor:
         ):
             raise ProviderRetrySuccessorError("provider retry request is invalid")
         repository = self._repository_factory()
+        evidence = RecoveryAttemptEvidence("terminal_failure")
         try:
             source = self._source(repository, source_report_id)
             current = self._current_source(repository, source)
@@ -249,7 +271,7 @@ class GenerateProviderRetrySuccessor:
                     "provider retry configuration changed"
                 )
             self._heartbeat()
-            replacement, retry_after = self._observe(
+            replacement, retry_after, evidence = self._observe(
                 live_provider, plan, selected, deadline=time.monotonic() + 60.0
             )
             self._heartbeat()
@@ -278,6 +300,7 @@ class GenerateProviderRetrySuccessor:
                     else retry_after
                     if failure == "rate_limited"
                     else None,
+                    evidence=replace(evidence, outcome=failure),
                 )
             merged = self._merged(plan, original, selected, replacement)
             successor = MetadataReport.create(
@@ -333,10 +356,27 @@ class GenerateProviderRetrySuccessor:
                 or repository.get(successor.report_id) != published
             ):
                 raise ProviderRetrySuccessorError("provider retry publication failed")
+            if self._operational_evidence is not None:
+                self._operational_evidence(
+                    replace(
+                        evidence,
+                        outcome="no_match"
+                        if all(
+                            lane.status is ProviderStatus.NO_MATCH
+                            for lane in replacement.lanes
+                        )
+                        else "completed",
+                    )
+                )
             return published
-        except CurrentnessError:
+        except (CurrentnessError, TargetConnectionError):
             raise
-        except ProviderRetrySuccessorError:
+        except ProviderRetrySuccessorError as error:
+            if (
+                error.evidence.request_count_status == "unknown"
+                and evidence.request_count_status != "unknown"
+            ):
+                error.evidence = replace(evidence, outcome=error.evidence.outcome)
             raise
         except AudioItemInspectionError as error:
             # Revalidating a composed audiobook re-digests every track under
@@ -347,8 +387,12 @@ class GenerateProviderRetrySuccessor:
             raise CurrentnessError("target or media changed") from error
         except (ReportValueError, MetadataReportError) as error:
             raise ProviderRetrySuccessorError(
-                "provider retry source is invalid"
+                "provider retry source is invalid", evidence=evidence
             ) from error
+        except ProviderRecoveryAttemptFailure:
+            raise
+        except Exception as error:
+            raise ProviderRecoveryAttemptFailure(evidence) from error
         finally:
             repository.close()
 
@@ -501,7 +545,7 @@ class GenerateProviderRetrySuccessor:
         selected: tuple[MetadataDiscoveryLane, ...],
         *,
         deadline: float,
-    ) -> tuple[ProviderObservation, int | None]:
+    ) -> tuple[ProviderObservation, int | None, RecoveryAttemptEvidence]:
         try:
             client: MetadataProvider = provider.binding.factory()
             result = client.observe(replace(plan, lanes=selected), deadline=deadline)
@@ -513,29 +557,50 @@ class GenerateProviderRetrySuccessor:
             # run on a dispatch that returned. The cause is chained, and the
             # caller classifies it from the chain rather than from this code.
             raise ProviderRetrySuccessorError(
-                "provider retry dispatch failed"
+                "provider retry dispatch failed",
+                evidence=partial_recovery_evidence(error, provider.binding.name),
             ) from error
         observation = result.observation
-        if type(observation) is ProviderObservation and observation.authority is None:
-            observation = replace(observation, authority=provider.binding.authority)
-        if (
-            observation.provider != provider.binding.name
-            or observation.authority != provider.binding.authority
-        ):
-            raise ProviderRetrySuccessorError("provider retry result is invalid")
-        if {lane.identity for lane in observation.lanes} != {
-            lane.identity for lane in selected
-        }:
-            raise ProviderRetrySuccessorError("provider retry result is invalid")
-        if observation.status is ProviderStatus.MALFORMED or any(
-            lane.status is ProviderStatus.MALFORMED for lane in observation.lanes
-        ):
-            raise ProviderRetrySuccessorError("provider retry result is invalid")
-        observation = replace(
-            observation,
-            diagnostics=provider_result_diagnostics(observation, result.evidence),
-        )
-        return observation, self._retry_after(result.evidence)
+        evidence = observed_recovery_evidence(observation)
+        try:
+            if (
+                type(observation) is ProviderObservation
+                and observation.authority is None
+            ):
+                observation = replace(observation, authority=provider.binding.authority)
+            if (
+                observation.provider != provider.binding.name
+                or observation.authority != provider.binding.authority
+            ):
+                raise ProviderRetrySuccessorError(
+                    "provider retry result is invalid", evidence=evidence
+                )
+            if {lane.identity for lane in observation.lanes} != {
+                lane.identity for lane in selected
+            }:
+                raise ProviderRetrySuccessorError(
+                    "provider retry result is invalid", evidence=evidence
+                )
+            if observation.status is ProviderStatus.MALFORMED or any(
+                lane.status is ProviderStatus.MALFORMED for lane in observation.lanes
+            ):
+                raise ProviderRetrySuccessorError(
+                    "provider retry result is invalid",
+                    evidence=replace(evidence, outcome="terminal_response"),
+                )
+            observation = replace(
+                observation,
+                diagnostics=provider_result_diagnostics(observation, result.evidence),
+            )
+            return observation, self._retry_after(result.evidence), evidence
+        except ProviderRetrySuccessorError:
+            raise
+        except (ReportValueError, MetadataReportError) as error:
+            raise ProviderRetrySuccessorError(
+                "provider retry result is invalid", evidence=evidence
+            ) from error
+        except Exception as error:
+            raise ProviderRecoveryAttemptFailure(evidence) from error
 
     @staticmethod
     def _retry_after(evidence: ProviderOperationalEvidence) -> int | None:

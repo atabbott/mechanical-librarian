@@ -1822,3 +1822,16 @@ preparation/retry remain unavailable. Explicit owner choices reuse exact-current
 binding, library consent, backup readiness, target comparison, supported service
 writes, read-back verification and durable reconciliation. No provider or reviewer
 receives credentials or write authority through this route.
+
+
+## Recovery settlement diagnostics (#1157)
+
+Closed bounded outcomes and observed/partial/unknown request accounting are
+operational evidence only. They grant no retry, credential, currentness or write
+authority and contain no raw provider or work-identifying values. One diagnostic
+commits with each executed member settlement in the existing recovery store;
+shared scope updates cannot multiply physical request counts. Activity exposes
+only current closed reasons, never diagnostic history or counts. Provider work
+remains outside transactions. Exact predecessor recovery stores require a clean
+rebuild, with no migration or retained-state modification; report schema and all
+publication and effect guards remain unchanged.

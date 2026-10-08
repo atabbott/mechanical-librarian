@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 import sqlite3
 import tempfile
 import threading
@@ -41,6 +43,7 @@ from mechanical_librarian.domain.provider_recovery import (
     MAX_TIMESTAMP,
     ProviderRecovery,
     ProviderRecoveryError,
+    RecoveryAttemptEvidence,
 )
 from tests.support.review_cases import _report
 
@@ -1043,7 +1046,7 @@ def test_due_health_without_an_exact_member_fails_closed() -> None:
         assert "recovered" not in [
             row[0]
             for row in store._connection.execute(
-                "SELECT state FROM provider_recovery_events"
+                "SELECT state FROM provider_recovery_events WHERE job_attempt IS NULL"
             )
         ]
         store.close()
@@ -1310,7 +1313,7 @@ def test_non_target_outcomes_append_checking_before_the_terminal_event() -> None
         states = [
             row[0]
             for row in store._connection.execute(
-                "SELECT state FROM provider_recovery_events ORDER BY sequence"
+                "SELECT state FROM provider_recovery_events WHERE job_attempt IS NULL ORDER BY sequence"
             )
         ]
         assert ["waiting", "checking", "fanout", "recovered"] == states
@@ -1341,7 +1344,7 @@ def test_non_target_outcomes_append_checking_before_the_terminal_event() -> None
         states = [
             row[0]
             for row in store._connection.execute(
-                "SELECT state FROM provider_recovery_events ORDER BY sequence"
+                "SELECT state FROM provider_recovery_events WHERE job_attempt IS NULL ORDER BY sequence"
             )
         ]
         assert ["waiting", "checking", "waiting"] == states
@@ -1498,7 +1501,7 @@ def test_blocked_active_member_releases_mixed_scope_after_open_member_exhausts()
         assert ["waiting"] == [
             row[0]
             for row in store._connection.execute(
-                "SELECT state FROM provider_recovery_events ORDER BY sequence"
+                "SELECT state FROM provider_recovery_events WHERE job_attempt IS NULL ORDER BY sequence"
             )
         ]
         held = frozenset()
@@ -1507,7 +1510,7 @@ def test_blocked_active_member_releases_mixed_scope_after_open_member_exhausts()
         assert ["waiting", "checking", "fanout", "exhausted"] == [
             row[0]
             for row in store._connection.execute(
-                "SELECT state FROM provider_recovery_events ORDER BY sequence"
+                "SELECT state FROM provider_recovery_events WHERE job_attempt IS NULL ORDER BY sequence"
             )
         ]
         store.close()
@@ -1548,7 +1551,7 @@ def test_attempt_five_job_is_never_persisted_as_attempt_six() -> None:
         assert ["waiting", "checking", "exhausted"] == [
             row[0]
             for row in store._connection.execute(
-                "SELECT state FROM provider_recovery_events ORDER BY sequence"
+                "SELECT state FROM provider_recovery_events WHERE job_attempt IS NULL ORDER BY sequence"
             )
         ]
         store.close()
@@ -1970,7 +1973,7 @@ def test_restart_stale_cleanup_preserves_failed_canary_exhaustion() -> None:
         assert (
             "exhausted"
             == store._connection.execute(
-                "SELECT state FROM provider_recovery_events ORDER BY sequence DESC LIMIT 1"
+                "SELECT state FROM provider_recovery_events WHERE job_attempt IS NULL ORDER BY sequence DESC LIMIT 1"
             ).fetchone()[0]
         )
         store.enqueue_jobs((_job("later"),), enqueued_at=3)
@@ -2024,7 +2027,9 @@ def test_stale_cleanup_preserves_newer_quota_deadline() -> None:
         terminal = store.claim_job(recovery=recovery, token="owner", now=1)
         assert terminal is not None
         assert "failed" == terminal.member_id
-        store.complete_job(job=terminal, token="owner", now=1, success=False)
+        store.complete_job(
+            recovery=recovery, job=terminal, token="owner", now=1, success=False
+        )
         stale_second = store.claim_job(recovery=recovery, token="owner", now=1)
         assert stale_second is not None
         assert "second" == stale_second.member_id
@@ -2241,7 +2246,9 @@ def test_reenqueue_refreshes_current_package_and_invalidates_running_claim() -> 
         store.close()
         store = SQLiteProviderRecoveryStore.open(Path(directory) / "recovery.sqlite")
         with pytest.raises(ProviderRecoveryStoreError):
-            store.complete_job(job=running, token="owner", now=1, success=True)
+            store.complete_job(
+                recovery=claimed, job=running, token="owner", now=1, success=True
+            )
         missing = store.complete_missing_jobs(token="owner", recovery=claimed, now=1)
         assert missing is not None
         assert "waiting" == missing.state
@@ -2249,7 +2256,13 @@ def test_reenqueue_refreshes_current_package_and_invalidates_running_claim() -> 
         assert claimed is not None
         refreshed = store.claim_job(recovery=claimed, token="refreshed-owner", now=1)
         assert refreshed is not None
-        store.complete_job(job=refreshed, token="refreshed-owner", now=1, success=True)
+        store.complete_job(
+            recovery=claimed,
+            job=refreshed,
+            token="refreshed-owner",
+            now=1,
+            success=True,
+        )
         assert 0 == store.enqueue_jobs((current,), enqueued_at=0)
         assert ("complete", 1, None) == store._connection.execute(
             "SELECT state,attempt,claim_token FROM provider_recovery_jobs"
@@ -4049,7 +4062,12 @@ def test_activity_aggregates_128_distinct_deadlines_without_truncation() -> None
         assert store.claim_one(generation=1, now=1, token="owner") is not None
         assert (
             {"state": "checking", "next_eligible_at": None, "affected_count": 1},
-            {"state": "dormant", "next_eligible_at": None, "affected_count": 1},
+            {
+                "state": "dormant",
+                "next_eligible_at": None,
+                "affected_count": 1,
+                "failure_reasons": ["authentication"],
+            },
             {"state": "waiting", "next_eligible_at": 2, "affected_count": 127},
         ) == store.activity_snapshot()
         store.close()
@@ -4117,7 +4135,9 @@ def test_activity_projects_non_owner_cohort_work_only_under_provider_owner() -> 
         ) == store.activity_snapshot()
         member = store.claim_job(recovery=fanout, token="owner", now=1)
         assert member is not None
-        store.complete_job(job=member, token="owner", now=1, success=True)
+        store.complete_job(
+            recovery=fanout, job=member, token="owner", now=1, success=True
+        )
         store.finish_fanout(recovery=fanout, token="owner", now=1)
         store.close()
 
@@ -4442,7 +4462,7 @@ def test_every_call_site_names_the_set_it_wrapped_before() -> None:
         "_reconcile_generation": [[]],
         "claim_job": [[]],
         "renew_job": [[]],
-        "complete_job": [[]],
+        "complete_job": [["ProviderRecoveryError"]],
         "complete_stale_job": [[]],
         "release_target_hold": [[]],
         # The ten this change adopted.
@@ -4631,3 +4651,231 @@ def test_a_committed_claim_survives_a_failure_building_its_return_value() -> Non
         assert not store._connection.in_transaction
         assert store.claim_one(generation=1, now=1_000, token="later") is not None
         store.close()
+
+
+@pytest.mark.parametrize("populated", [False, True])
+def test_actual_predecessor_schema_refuses_without_mutation(
+    tmp_path: Path, populated: bool
+) -> None:
+    capsule = json.loads(
+        Path("tests/fixtures/provider-recovery-predecessor-25e2a3b6.json").read_text()
+    )
+    assert capsule["source_sha"] == "25e2a3b604ec1d82e7ee100c6bc946cab859b37d"
+    assert (
+        hashlib.sha256(
+            json.dumps(
+                capsule["create"], ensure_ascii=False, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        == "d4dcb7582865390d7f2fc2af770aaef2f7cd2f0d2760ed4d95e9baca05e4439c"
+    )
+    path = tmp_path / "predecessor.sqlite"
+    with sqlite3.connect(path) as connection:
+        for statement in capsule["create"]:
+            connection.execute(statement)
+        if populated:
+            connection.execute(
+                "INSERT INTO provider_recovery_members VALUES('google','google_books','books')"
+            )
+            connection.execute(
+                "INSERT INTO provider_recovery_health(connection,adapter,scope,generation,state,attempt,next_eligible_at) VALUES('google','google_books','books',1,'waiting',0,100)"
+            )
+            connection.execute(
+                "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES('google','google_books','books',1,'waiting',0,100,0)"
+            )
+    before = path.read_bytes()
+    with pytest.raises(ProviderRecoveryStoreError, match="incompatible"):
+        SQLiteProviderRecoveryStore.open(path)
+    assert path.read_bytes() == before
+
+
+def test_attempt_diagnostic_counts_one_shared_burst_and_survives_restart(
+    tmp_path: Path,
+) -> None:
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        classify_provider_recovery_failure,
+    )
+    from mechanical_librarian.application.provider_retry_successor import (
+        ProviderRetrySharedFailure,
+    )
+
+    path = tmp_path / "recovery.sqlite"
+    store = _due_store(path, "books", "other")
+    store.enqueue_jobs((_job("a"), replace(_job("b"), scope="other")), enqueued_at=0)
+    calls = []
+
+    def retry(*_args: object) -> None:
+        calls.append(1)
+        raise ProviderRetrySharedFailure(
+            "burst_throttled",
+            100,
+            evidence=RecoveryAttemptEvidence("burst_throttled", 2, "observed"),
+        )
+
+    runner = ScopedProviderRecoveryRunner(
+        store=store,
+        generation=1,
+        retry=retry,
+        classify_failure=classify_provider_recovery_failure,
+    )
+    assert runner.run_one(now=1, token="owner").state == "waiting"
+    assert runner.run_one(now=100, token="early").state == "idle"
+    assert calls == [1]
+    assert store._connection.execute(
+        "SELECT outcome,job_attempt,physical_requests,request_count_status,state FROM provider_recovery_events WHERE job_attempt IS NOT NULL"
+    ).fetchall() == [("burst_throttled", 0, 2, "observed", "checking")]
+    assert store._connection.execute(
+        "SELECT attempt FROM provider_recovery_jobs"
+    ).fetchall() == [(0,), (0,)]
+    store.close()
+    store = SQLiteProviderRecoveryStore.open(path)
+    assert store._connection.execute(
+        "SELECT count(*),SUM(physical_requests) FROM provider_recovery_events WHERE job_attempt IS NOT NULL"
+    ).fetchone() == (1, 2)
+    store.close()
+
+
+def test_activity_failure_reason_matches_latest_ordinary_health_and_uses_index(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "recovery.sqlite"
+    store = SQLiteProviderRecoveryStore.open(path)
+    store.observe_failure(
+        connection="google",
+        adapter="google_books",
+        scope="books",
+        generation=1,
+        failure="burst_throttled",
+        retry_after=100,
+        now=0,
+    )
+    statements: list[str] = []
+    store._connection.set_trace_callback(statements.append)
+    assert store.activity_snapshot() == (
+        {
+            "state": "waiting",
+            "next_eligible_at": 100,
+            "affected_count": 1,
+            "failure_reasons": ["burst_throttled"],
+        },
+    )
+    query = next(statement for statement in statements if "group_concat" in statement)
+    store._connection.set_trace_callback(None)
+    plan = store._connection.execute("EXPLAIN QUERY PLAN " + query).fetchall()
+    assert any("provider_recovery_events_scope_latest" in row[3] for row in plan)
+    store._connection.execute(
+        "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at) VALUES('google','google_books','books',1,'waiting',0,100,1)"
+    )
+    assert "failure_reasons" not in store.activity_snapshot()[0]
+    store.close()
+    with sqlite3.connect(path) as connection:
+        connection.execute("DROP INDEX provider_recovery_events_scope_latest")
+    with pytest.raises(ProviderRecoveryStoreError, match="incompatible"):
+        SQLiteProviderRecoveryStore.open(path)
+
+
+@pytest.mark.parametrize(
+    "settlement",
+    [
+        "complete_canary_failure",
+        "complete_exhausted_scope",
+        "authorize_fanout",
+        "complete_job",
+        "interrupt_fanout",
+    ],
+)
+def test_attempt_settlement_commit_failure_and_repeated_lease_append_nothing(
+    tmp_path: Path, settlement: str
+) -> None:
+    store, proxy = _store_over(str(tmp_path), generation=1, commit_error=None)
+    store.enqueue_jobs((_job("a"), _job("b")), enqueued_at=0)
+    recovery = store.claim_one(generation=1, now=1, token="owner")
+    assert recovery is not None
+    job = store.claim_job(recovery=recovery, token="owner", now=1)
+    assert job is not None
+    if settlement in {"complete_job", "interrupt_fanout"}:
+        recovery = store.authorize_fanout(
+            job=job, recovery=recovery, token="owner", now=1
+        )
+        job = store.claim_job(recovery=recovery, token="owner", now=1)
+        assert job is not None
+    arguments = dict(
+        job=job,
+        recovery=recovery,
+        token="owner",
+        now=1,
+        evidence=RecoveryAttemptEvidence("completed", 3, "observed"),
+    )
+    if settlement in {"complete_canary_failure", "interrupt_fanout"}:
+        arguments.update(
+            failure="transient",
+            retry_after=None,
+            evidence=RecoveryAttemptEvidence("transient", 3, "observed"),
+        )
+    if settlement == "complete_job":
+        arguments["success"] = True
+    before = tuple(proxy._connection.iterdump())
+    proxy.commit_error = sqlite3.OperationalError("injected commit failure")
+    with pytest.raises(ProviderRecoveryStoreError, match="unavailable"):
+        getattr(store, settlement)(**arguments)
+    assert not proxy.in_transaction
+    assert tuple(proxy._connection.iterdump()) == before
+    proxy.commit_error = None
+    getattr(store, settlement)(**arguments)
+    after = tuple(proxy._connection.iterdump())
+    with pytest.raises(ProviderRecoveryStoreError):
+        getattr(store, settlement)(**arguments)
+    assert tuple(proxy._connection.iterdump()) == after
+    assert proxy._connection.execute(
+        "SELECT physical_requests FROM provider_recovery_events WHERE job_attempt IS NOT NULL ORDER BY sequence DESC LIMIT 1"
+    ).fetchone() == (3,)
+    store.close()
+
+
+@pytest.mark.parametrize(
+    "outcome,count,status",
+    [
+        ("private", 1, "observed"),
+        ("completed", True, "observed"),
+        ("completed", -1, "partial"),
+        ("completed", 55, "observed"),
+        ("completed", 1.0, "observed"),
+        ("completed", None, "observed"),
+        ("completed", 0, "unknown"),
+        ("completed", 1, "private"),
+    ],
+)
+def test_attempt_evidence_rejects_noncanonical_values(
+    outcome: str, count: object, status: str
+) -> None:
+    with pytest.raises(ProviderRecoveryError):
+        RecoveryAttemptEvidence(outcome, cast(int | None, count), status)
+
+
+@pytest.mark.parametrize(
+    "outcome,job_attempt,count,status",
+    [
+        ("private", None, None, None),
+        (None, 1, 1, "observed"),
+        ("completed", None, None, None),
+        ("completed", 6, 1, "observed"),
+        ("completed", 1, 55, "partial"),
+        ("completed", 1, None, "observed"),
+        ("completed", 1, 0, "unknown"),
+        ("completed", 1, 0, None),
+    ],
+)
+def test_event_ddl_rejects_invalid_diagnostic_combinations(
+    tmp_path: Path,
+    outcome: str | None,
+    job_attempt: int | None,
+    count: int | None,
+    status: str | None,
+) -> None:
+    store = _due_store(tmp_path / "recovery.sqlite")
+    with pytest.raises(sqlite3.IntegrityError):
+        store._connection.execute(
+            "INSERT INTO provider_recovery_events(connection,adapter,scope,generation,state,attempt,next_eligible_at,occurred_at,outcome,job_attempt,physical_requests,request_count_status) VALUES('google','google_books','books',1,'checking',1,NULL,1,?,?,?,?)",
+            (outcome, job_attempt, count, status),
+        )
+    store.close()

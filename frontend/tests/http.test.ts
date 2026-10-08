@@ -1675,6 +1675,29 @@ describe('ReviewApiClient', () => {
       'missing_corroboration',
       'blanket_scan',
     ])
+    expect(activity.provider_recovery?.[0]?.failure_reasons).toEqual([])
+    const reasons = ['burst_throttled', 'quota_exhausted', 'transient']
+    expect(
+      mapActivity({
+        ...activity,
+        provider_recovery: [{ ...activity.provider_recovery?.[0], failure_reasons: reasons }],
+      }).provider_recovery?.[0]?.failure_reasons,
+    ).toEqual(reasons)
+    for (const failure_reasons of [
+      ['private'],
+      ['transient', 'transient'],
+      ['transient', 'authentication'],
+      [1],
+      'transient',
+      Array(8).fill('transient'),
+    ]) {
+      expect(() =>
+        mapActivity({
+          ...activity,
+          provider_recovery: [{ ...activity.provider_recovery?.[0], failure_reasons }],
+        }),
+      ).toThrow(ApiError)
+    }
     for (const dispatch_reasons of [
       ['private-detail'],
       ['blanket_scan', 'blanket_scan'],
@@ -1698,6 +1721,7 @@ describe('ReviewApiClient', () => {
       ],
     })
     expect(terminalRecovery.provider_recovery?.[0]).toEqual({
+      failure_reasons: [],
       state: 'recovered',
       affected_count: 1,
       next_eligible_at: null,

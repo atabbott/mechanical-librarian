@@ -7920,6 +7920,23 @@
             "title": "Dispatch Reasons",
             "type": "array"
           },
+          "failure_reasons": {
+            "items": {
+              "enum": [
+                "authentication",
+                "authorization",
+                "configuration",
+                "rate_limited",
+                "burst_throttled",
+                "quota_exhausted",
+                "transient"
+              ],
+              "type": "string"
+            },
+            "maxItems": 7,
+            "title": "Failure Reasons",
+            "type": "array"
+          },
           "next_eligible_at": {
             "anyOf": [
               {
