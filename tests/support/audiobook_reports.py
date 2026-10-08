@@ -588,7 +588,7 @@ def synthetic_audiobook_bibliographic_report(
     source_authors: tuple[str, ...] = ("Example Author",),
     target_authors: tuple[str, ...] = ("Example Author",),
 ) -> MetadataReport:
-    """A real adapter produces a fully synthetic title/subtitle pair."""
+    """A real adapter produces a recording-admitted synthetic bibliographic pair."""
     import httpx
 
     from mechanical_librarian.adapters.providers.audnexus_metadata import (
@@ -609,6 +609,7 @@ def synthetic_audiobook_bibliographic_report(
         target_title_claim(title),
         audio_claim(ClaimKind.ASIN, "B000000001", 1),
         audio_claim(ClaimKind.ASIN, "B000000002", 2),
+        audio_claim(ClaimKind.DURATION, "58200.000", 3),
     )
     audio = single_track_audio_facts("b" * 64)
     plan = audiobook_discovery_plan(target, claims, audio=audio)
@@ -622,6 +623,7 @@ def synthetic_audiobook_bibliographic_report(
                 "asin": request.url.path.split("/")[2],
                 "title": "Synthetic Journey",
                 "subtitle": "A Tale of Courage",
+                "runtimeLengthMin": 970,
                 "isAdult": adult_product,
                 "authors": [{"name": name} for name in source_authors],
             },

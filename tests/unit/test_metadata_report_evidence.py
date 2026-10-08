@@ -2101,18 +2101,17 @@ def test_one_malformed_asin_surface_reports_malformed_beside_a_valid_one() -> No
 def test_a_malformed_asin_is_never_an_alternative_a_proposal_can_offer() -> None:
     """The gate is upstream of every decision surface, so nothing has to
     re-derive it: proposals already admit only valid, canonical claims."""
-    report = MetadataReport.create(
-        target=TargetFacts(
-            "primary", "audiobooks", "item-1", default_target_fields("Recorded title")
-        ),
-        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
-        local_claims=(
-            _audio_asin("B0CW1KL2QD", "B0CW1KL2QD", FieldState.VALID),
+    from tests.support.audiobook_reports import (
+        admitted_audiobook_report,
+        audio_local_claims,
+    )
+
+    report = admitted_audiobook_report(
+        audio_local_claims()
+        + (
+            _audio_asin("B08G9PRS1K", "B08G9PRS1K", FieldState.VALID),
             _audio_asin("B0CW1KL-QD", None, FieldState.MALFORMED),
-        ),
-        local_reasons=("embedded_tag_asin",),
-        providers=(),
-        audio=_ONE_TRACK_AUDIO_FACTS,
+        )
     )
 
     asin = next(
@@ -2121,13 +2120,16 @@ def test_a_malformed_asin_is_never_an_alternative_a_proposal_can_offer() -> None
         if value.destination is TargetDestination.ASIN
     )
 
-    assert [value.value.value for value in asin.alternatives] == ["B0CW1KL2QD"]
+    assert [value.value.value for value in asin.alternatives] == ["B08G9PRS1K"]
 
 
 def test_recording_lookup_roundtrip_retains_only_complete_narrator_agreement() -> None:
     from mechanical_librarian.application.metadata_report import (
         admitted_audiobook_identity,
     )
+    from mechanical_librarian.domain.review_case import ReviewCase
+    from mechanical_librarian.domain.shadow_decision import decide_shadow_packet
+    from mechanical_librarian.domain.shadow_review import ShadowReviewPacket
 
     report = recording_lookup_report()
     reopened = MetadataReport.from_json(report.to_json())
@@ -2162,7 +2164,23 @@ def test_recording_lookup_roundtrip_retains_only_complete_narrator_agreement() -
     narration = next(
         value for value in results if value.destination is TargetDestination.NARRATORS
     )
-    assert narration.alternatives[0].value.value == ("Ray Porter",)
+    from mechanical_librarian.domain.proposal_set import (
+        _plausible_narrator_candidates,
+        narrator_candidate_set_agrees,
+    )
+
+    assert not narration.alternatives
+    plausible = _plausible_narrator_candidates(reopened, observation)
+    assert tuple(plausible) == observation.recording_lookup_candidates
+    assert all(
+        tuple(
+            claim.value
+            for claim in candidate.claims
+            if claim.kind is ClaimKind.CONTRIBUTOR
+        )
+        == ("Ray Porter",)
+        for candidate in plausible
+    )
     member_references = [
         {
             claim.reference
@@ -2172,12 +2190,24 @@ def test_recording_lookup_roundtrip_retains_only_complete_narrator_agreement() -
         for candidate in observation.recording_lookup_candidates
     ]
     assert len(member_references) == 2 and all(member_references)
-    assert set(narration.alternatives[0].evidence_references) == set().union(
-        *member_references
-    )
+    references = tuple(sorted(set().union(*member_references)))
+    assert narrator_candidate_set_agrees(reopened, references)
+    assert not narrator_candidate_set_agrees(reopened, references[:-1])
     assert (
         evaluate_report(report).bibliographic_combinations
         == evaluate_report(empty).bibliographic_combinations
+    )
+
+    proposal = evaluate_report(reopened)
+    packet = ShadowReviewPacket.create(
+        ReviewCase.create(proposal, reopened), proposal, reopened
+    )
+    assert not any(
+        value.destination == "narrators"
+        and value.recommendation == "recommend_candidate"
+        for value in decide_shadow_packet(
+            ShadowReviewPacket.from_json(packet.to_json(), reopened, proposal)
+        ).decisions
     )
 
 

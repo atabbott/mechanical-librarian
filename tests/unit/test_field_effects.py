@@ -4680,6 +4680,9 @@ def test_activity_projection_never_retries_a_nonbusy_error(
 def test_audiobook_title_author_preservation_is_one_durable_no_change(
     effects: _EffectEnvironment, field: str, category: str, option: str
 ) -> None:
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        admitted_audiobook_identity,
+    )
     from mechanical_librarian.domain.metadata_report import (
         TargetDestination,
         TargetField,
@@ -4687,6 +4690,7 @@ def test_audiobook_title_author_preservation_is_one_durable_no_change(
     )
 
     report = synthetic_audiobook_bibliographic_report()
+    assert admitted_audiobook_identity(report)
     fields = tuple(
         TargetField(item.destination, TargetFieldState.VALUE, "Synthetic Journey")
         if item.destination is TargetDestination.TITLE
@@ -6455,12 +6459,29 @@ def test_original_work_date_precision_reaches_current_guarded_effect(effects, so
 def test_isbn_refusal_history_pagination_filter_and_reader_cache(tmp_path):
     from mechanical_librarian.domain.readable_activity import ISBN_REFUSAL_REASONS
     from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
-    from tests.support.audiobook_reports import synthetic_audiobook_isbn_reason_report
+    from tests.support.audiobook_reports import (
+        admitted_audiobook_report,
+        audio_local_claims,
+        synthetic_audiobook_isbn_reason_report,
+    )
 
     shapes = ("absent", "unavailable", "malformed", "conflict", "unassociated")
     base_reports = {
         shape: synthetic_audiobook_isbn_reason_report(shape) for shape in shapes
     }
+    unavailable = base_reports["unavailable"]
+    failed = tuple(
+        provider
+        for provider in unavailable.providers
+        if provider.provider == "audnexus"
+    )
+    required = {ref for provider in failed for ref in provider.input_references}
+    witnesses = tuple(
+        claim for claim in unavailable.local_claims if claim.reference in required
+    )
+    base_reports["unavailable"] = admitted_audiobook_report(
+        (*audio_local_claims(), *witnesses), additional_providers=failed
+    )
     path = tmp_path / "isbn-history.sqlite"
     repository = open_repository(path)
     reader = None
@@ -7396,6 +7417,10 @@ def test_permission_readiness_never_reuses_a_previous_success(
 
 
 def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effects):
+    from mechanical_librarian.domain.cover_automatic_decision import (
+        CoverAutomaticDecision,
+    )
+
     fixture = json.loads(
         (
             Path(__file__).parents[1]
@@ -7415,43 +7440,13 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
             ("cover_order",),
             selected_options={"cover_order": "replace_if_strictly_better"},
         )
-        consideration = fixture["consideration"]
-        assert case_id == consideration["review_case_id"]
-        document = json.dumps(consideration, sort_keys=True, separators=(",", ":"))
+        assert case_id != fixture["consideration"]["review_case_id"]
+        historical_decision = CoverAutomaticDecision.from_json(fixture["decision"])
+        assert historical_decision.to_json() == fixture["decision"]
         assert (
-            source.record_cover_consideration(
-                document,
-                review_case_id=case_id,
-                report_id=report.report_id,
-                replay_digest=consideration["replay_digest"],
-                supersedes_id=consideration["supersedes_id"],
-                occurred_at=10,
-            )
-            == document
+            historical_decision.review_case_id
+            == operation.plan.authority.review_case_id
         )
-        assert (
-            json.loads(source.get_review_case_decisions(case_id)[0])["decision_id"]
-            == operation.plan.authority.decision_id
-        )
-        connection = source._connection
-        # Restore genuinely produced predecessor rows in this synthetic fixture;
-        # the exact append-only trigger is restored before reopening the store.
-        trigger = connection.execute(
-            "SELECT sql FROM sqlite_master WHERE name='cover_selection_authorities_no_delete'"
-        ).fetchone()[0]
-        connection.execute("DELETE FROM current_cover_selection_authorities")
-        connection.execute("DROP TRIGGER cover_selection_authorities_no_delete")
-        connection.execute("DELETE FROM cover_selection_authorities")
-        connection.execute(trigger)
-        connection.executemany(
-            "INSERT INTO cover_selection_authorities VALUES(?,?,?,?,?,?,?,?,?,?)",
-            fixture["selection_rows"],
-        )
-        connection.executemany(
-            "INSERT INTO current_cover_selection_authorities VALUES(?,?,?,?)",
-            fixture["current_selection_rows"],
-        )
-        connection.commit()
         source.record_field_effect(operation)
         source.close()
         repository = open_repository(path, create=False)
@@ -7463,9 +7458,6 @@ def test_retained_audiobook_cover_plan_reopens_but_cannot_apply(tmp_path, effect
                 fixture["consideration"]["replay_reference"]
             )
             assert repository.get_field_effect(operation.plan.plan_id) == operation
-            assert fixture["decision"] in repository.get_review_case_decisions(
-                operation.plan.authority.review_case_id
-            )
             assert not repository.field_effect_authority_is_current(
                 operation.plan.authority
             )
