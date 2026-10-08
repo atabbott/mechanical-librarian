@@ -9,7 +9,7 @@ caller and the background caller cannot fan out concurrently.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol, cast
 from uuid import uuid4
 
@@ -324,6 +324,7 @@ class ScopedProviderRecoveryRunner:
             )
             if member is None:
                 break
+            completed_evidence = None
             try:
 
                 def renew_member(
@@ -337,6 +338,7 @@ class ScopedProviderRecoveryRunner:
                     )
 
                 evidence = self._retry(fanout_state, member, renew_member)
+                completed_evidence = evidence or RecoveryAttemptEvidence("completed")
                 current = self._current(current)
                 self._store.complete_job(
                     job=member,
@@ -358,7 +360,11 @@ class ScopedProviderRecoveryRunner:
                 # escaped would be left claimed with its target hold unreleased.
                 current = self._current(current)
                 failure, retry_after = self._classify_failure(error)
-                evidence = settled_recovery_evidence(error, failure)
+                evidence = (
+                    replace(completed_evidence, outcome="terminal_failure")
+                    if completed_evidence is not None
+                    else settled_recovery_evidence(error, failure)
+                )
                 if failure == "target_held":
                     self._store.release_target_hold(
                         job=member,

@@ -4879,3 +4879,74 @@ def test_event_ddl_rejects_invalid_diagnostic_combinations(
             (outcome, job_attempt, count, status),
         )
     store.close()
+
+
+@pytest.mark.parametrize("failure_point", ["commit", "clock", "retry"])
+def test_fanout_fallback_preserves_only_current_invocation_accounting(
+    tmp_path: Path, failure_point: str
+) -> None:
+    from mechanical_librarian.application.provider_recovery_evidence import (
+        classify_provider_recovery_failure,
+    )
+
+    store, proxy = _store_over(str(tmp_path), generation=1, commit_error=None)
+    store.enqueue_jobs(tuple(_job(member) for member in ("a", "b", "c")), enqueued_at=0)
+    calls: list[str] = []
+    clock_failure = False
+
+    def retry(*args: object) -> RecoveryAttemptEvidence:
+        nonlocal clock_failure
+        job = cast(ProviderRecoveryJob, args[1])
+        calls.append(job.member_id)
+        if job.member_id == "c":
+            if failure_point == "retry":
+                raise RuntimeError("provider failed before returning evidence")
+            if failure_point == "commit":
+                proxy.commit_error = sqlite3.OperationalError("disk I/O error")
+            else:
+                clock_failure = True
+        return RecoveryAttemptEvidence(
+            "completed", 3 if job.member_id == "c" else 7, "observed"
+        )
+
+    def classify(error: Exception) -> tuple[str, int | None]:
+        # Disarm the one-shot COMMIT fault only after the real store rolled back.
+        if failure_point == "commit":
+            assert isinstance(error, ProviderRecoveryStoreError)
+            assert "ROLLBACK" in proxy.statements
+            assert not proxy.in_transaction
+            proxy.commit_error = None
+        return classify_provider_recovery_failure(error)
+
+    def clock() -> int:
+        nonlocal clock_failure
+        if clock_failure:
+            clock_failure = False
+            raise RuntimeError("clock unavailable")
+        return 1
+
+    runner = ScopedProviderRecoveryRunner(
+        store=store, generation=1, retry=retry, classify_failure=classify, clock=clock
+    )
+    result = runner.run_one(now=1, token="owner")
+    assert (result.state, result.fanout) == ("waiting", 1)
+    assert calls == ["a", "b", "c"]
+    expected = (
+        ("transient", None, "unknown")
+        if failure_point == "retry"
+        else ("terminal_failure", 3, "observed")
+    )
+    assert proxy.execute(
+        "SELECT outcome,physical_requests,request_count_status FROM provider_recovery_events WHERE job_attempt IS NOT NULL ORDER BY sequence"
+    ).fetchall() == [
+        ("completed", 7, "observed"),
+        ("completed", 7, "observed"),
+        expected,
+    ]
+    assert proxy.execute(
+        "SELECT state,attempt FROM provider_recovery_jobs ORDER BY member_id"
+    ).fetchall() == [("complete", 1), ("complete", 1), ("queued", 1)]
+    assert proxy.execute(
+        "SELECT state,next_eligible_at FROM provider_recovery_health"
+    ).fetchone() == ("waiting", 14_401)
+    store.close()
