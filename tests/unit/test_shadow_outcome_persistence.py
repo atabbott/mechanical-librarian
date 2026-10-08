@@ -9687,26 +9687,87 @@ def test_scalar_audiobook_title_persists_without_suspension_and_reopens(
             ] == {"kind": "text", "value": "Project Hail Mary"}
 
 
-@pytest.fixture
-def retained_rich_predecessor(tmp_path, request):
+@pytest.mark.parametrize("name", ("rich", "isbn", "ebook-asin"))
+def test_frozen_proposal_refused_but_outcome_remains_readable(name):
+    from mechanical_librarian.domain.proposal_set import ProposalValueError
+
     frozen = json.loads(
         (
             Path(__file__).parents[1]
             / "support/retained_qualification_predecessors"
-            / (getattr(request, "param", "rich") + ".json")
+            / (name + ".json")
         ).read_text()
     )
-    report = MetadataReport.from_json(frozen["report"])
-    proposal = ProposalSet.from_json(frozen["proposal"])
+    with pytest.raises(ProposalValueError):
+        ProposalSet.from_json(frozen["proposal"])
+    outcome = ShadowOutcomeSet.from_json(frozen["outcome_row"][-1])
+    assert outcome.to_json() == frozen["outcome_row"][-1]
+    assert outcome.authority == "none"
+
+
+@pytest.fixture
+def retained_rich_predecessor(tmp_path, request):
+    from mechanical_librarian.domain import shadow_outcome
+    from mechanical_librarian.domain.automatic_decision import (
+        _PRIOR_F20_QUALIFICATION_MANIFESTS,
+    )
+    from tests.support.audiobook_reports import synthetic_audiobook_isbn_reason_report
+
+    name = getattr(request, "param", "rich")
+    frozen = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/retained_qualification_predecessors"
+            / (name + ".json")
+        ).read_text()
+    )
+    report = (
+        synthetic_audiobook_isbn_reason_report("absent")
+        if name == "isbn"
+        else MetadataReport.from_json(frozen["report"])
+    )
     profile = MetadataPolicyProfile.from_data(json.loads(frozen["profile"]))
     policy = ResolvedMetadataPolicy.from_data(json.loads(frozen["policy"]))
+    proposal = evaluate_report(
+        report, policy.resolved_id, human_review_destinations(policy)
+    )
     repository = open_repository(tmp_path / "retained.sqlite", cross_thread=True)
     try:
         repository.enter_shadow_preview(1)
         _activate_profile(repository, profile, policy, report.target.library)
-        case = _publish_case(repository, report, proposal)
-        assert case["review_case_id"] == frozen["outcome_row"][1]
-        yield repository, frozen, policy, report, proposal
+        admitted = _publish_case(repository, report, proposal)
+        case, packet, _, _ = repository._persisted_shadow_sources(
+            admitted["review_case_id"], include_policy_ignored=True
+        )
+        digest = _PRIOR_F20_QUALIFICATION_MANIFESTS[-2][0]
+        assert digest != shadow_outcome.F20_QUALIFICATION_CANDIDATE_SHA256
+        assert digest != _PRIOR_F20_QUALIFICATION_MANIFESTS[-1][0]
+        with patch.object(shadow_outcome, "F20_QUALIFICATION_CANDIDATE_SHA256", digest):
+            outcome = ShadowOutcomeSet.create(
+                case,
+                metadata.decide_shadow_packet(packet),
+                policy,
+                2,
+                report,
+                proposal,
+                media_kind=case.media_kind,
+            )
+        # Ephemeral current-schema fixture with a historical binding; the frozen
+        # predecessor documents above remain untouched and are never migrated.
+        current = {
+            **frozen,
+            "outcome_row": [
+                outcome.outcome_set_id,
+                outcome.review_case_id,
+                outcome.report_id,
+                outcome.proposal_set_id,
+                outcome.resolved_policy_id,
+                outcome.source_decision_set_id,
+                3,
+                outcome.to_json(),
+            ],
+        }
+        yield repository, current, policy, report, proposal
     finally:
         repository.close()
 

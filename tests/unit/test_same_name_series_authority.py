@@ -9,6 +9,7 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _automatic_decision_value,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.application.metadata_report import admitted_audiobook_identity
 from mechanical_librarian.application.review_web import InspectCurrentReviewCase
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.metadata_policy import human_review_destinations
@@ -125,6 +126,22 @@ def test_real_series_association_and_title_witness_remain_authoritative(
                 "title_layout": "preserve",
             },
         )
+        if media == "audiobook" and variant == "no_local_title":
+            assert not admitted_audiobook_identity(report)
+            assert case_id is None
+            results = {
+                value.destination.value: value
+                for value in evaluate_report(report).results
+            }
+            assert results["title"].outcome.value == "ineligible"
+            assert results["series"].outcome.value == "ineligible"
+            assert repository._connection.execute(
+                "SELECT count(*) FROM automatic_decisions"
+            ).fetchone() == (0,)
+            assert repository.pending_field_effect_decision_documents(10) == ()
+            return
+        if media == "audiobook" and variant != "wrong_author":
+            assert admitted_audiobook_identity(report)
         outcomes = ShadowOutcomeSet.from_json(
             repository.persist_shadow_outcome(case_id, 4)
         )
@@ -184,7 +201,7 @@ def test_actual_base_proposal_and_store_refuse_without_mutation(media, kind):
     report = MetadataReport.from_json(
         canonical_json(json.loads((root / f"{media}-{kind}-report.json").read_text()))
     )
-    assert evaluate_report(report).policy_version == "fixed-conservative-v32"
+    assert evaluate_report(report).policy_version == "fixed-conservative-v33"
     with pytest.raises(ProposalValueError):
         ProposalSet.from_json(
             canonical_json(

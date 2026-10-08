@@ -1195,23 +1195,78 @@ def test_an_audiobook_with_retrieved_covers_builds_no_cover_packet() -> None:
     assert [] == dispatches
 
 
+@pytest.mark.parametrize("recording", [True, False], ids=["recording", "work"])
 def test_an_audiobook_consideration_dispatches_no_observer(
     case: _Case,
+    recording: bool,
 ) -> None:
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        admitted_audiobook_identity,
+    )
+    from mechanical_librarian.domain.proposal_set import audiobook_review_scope
+    from tests.support.audiobook_synopsis import synopsis_report
+
     service, document, dispatches, proposal = _audiobook_case()
 
+    original_report = MetadataReport.from_json(document)
+    report = original_report
+    if not recording:
+        work = synopsis_report()
+        report = MetadataReport.create(
+            target=work.target,
+            file=work.file,
+            local_claims=work.local_claims,
+            local_reasons=work.local_reasons,
+            providers=work.providers,
+            audio=work.audio,
+            cover_sources=original_report.cover_sources,
+        )
+        document = report.to_json()
+    assert admitted_audiobook_identity(report) is recording
+    assert audiobook_review_scope(report) == ("recording" if recording else "work")
     projected = service.ensure("review_case_" + "e" * 64, document, proposal)
 
     assert [] == dispatches
     assert "unavailable" == projected["reviewer_status"]
-    assert [] == projected["candidates"]
+    if recording:
+        assert len(projected["candidates"]) == 2
+        for candidate in projected["candidates"]:
+            assert candidate["state"] == "excluded"
+            assert candidate["manual_eligible"] is True
+            assert candidate["selectable"] is False
+            assert candidate["identity"]["outcome"] == "unknown"
+            assert "unbound_provider_identity" in candidate["identity"]["reasons"]
+            assert candidate["observation"] is None
+            service.validate_decision(
+                "review_case_" + "e" * 64,
+                projected["consideration_id"],
+                "accept",
+                {"kind": "cover", "value": candidate["artifact_id"]},
+            )
+        assert projected["policy"]["status"] == "abstained"
+        assert projected["policy"]["recommended_candidate_reference"] is None
+    else:
+        assert projected["candidates"] == []
+        assert projected["ready"] is False
+        artifact = original_report.cover_sources[0].artifact
+        assert artifact is not None
+        with pytest.raises(CoverConsiderationError, match="invalid_choice"):
+            service.validate_decision(
+                "review_case_" + "e" * 64,
+                projected["consideration_id"],
+                "accept",
+                {
+                    "kind": "cover",
+                    "value": artifact.artifact_id,
+                },
+            )
     persisted = json.loads(
         cast("_Store", service._store).current["review_case_" + "e" * 64]
     )
-    assert persisted["packet_document"] is None
+    assert (persisted["packet_document"] is not None) is recording
     assert persisted["observation_document"] is None
-    assert persisted["identity_document"] is None
-    assert persisted["policy_report_document"] is None
+    assert (persisted["identity_document"] is not None) is recording
+    assert (persisted["policy_report_document"] is not None) is recording
     # The same evidence on the ebook path still packets and still observes.
     assert case.service.ensure(
         "review_case_" + "f" * 64, case.report.to_json(), case.proposal
@@ -1389,31 +1444,8 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
             tuple(c["reference"] for c in packet["candidates"]),
             fixture["profile"].encode(),
         )
-    database = tmp_path / "history.sqlite"
-    repository = open_repository(database)
-    from mechanical_librarian.domain.proposal_set import evaluate_report
-
-    report = MetadataReport.from_json(fixture["report"])
-    repository.publish(report, lambda: True)
-    proposals = evaluate_report(report)
-    repository.publish_proposal(proposals)
-    assert (
-        json.loads(repository.admit_review_case(proposals))["review_case_id"]
-        == prior["review_case_id"]
-    )
-    repository.record_cover_consideration(
-        raw,
-        review_case_id=prior["review_case_id"],
-        report_id=prior["report_id"],
-        replay_digest=prior["replay_digest"],
-        supersedes_id=None,
-        occurred_at=10,
-    )
-    repository.close()
-    repository = open_repository(database, create=False)
-    assert (
-        repository.current_cover_consideration_document(prior["review_case_id"]) == raw
-    )
+    store = _Store()
+    store.current[prior["review_case_id"]] = raw
     model = "mistralai/ministral-3b-2512"
     profile = openrouter_cover_profile(model)
     dispatches = []
@@ -1423,7 +1455,7 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
         return _observer_result(*args)
 
     service = CoverConsiderationService(
-        repository,
+        store,
         read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
         read_preview_digest=case.payload_by_preview.__getitem__,
         clock=lambda: 11,
@@ -1433,6 +1465,7 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
         reviewer_identity=lambda: (1, "openrouter", model, profile),
         reviewer_revision_current=lambda revision: revision == 1,
     )
+    assert service.project_historical(raw)["current"] is False
     current = service.ensure(
         prior["review_case_id"], fixture["report"], fixture["proposal"]
     )
@@ -1443,8 +1476,60 @@ def test_base_produced_observation_reopens_and_current_semantics_create_one_succ
     )
     assert replay["consideration_id"] == current["consideration_id"]
     assert len(dispatches) == 1
-    assert repository._connection.execute(
-        "SELECT document FROM cover_considerations WHERE consideration_id=?",
-        (prior["consideration_id"],),
-    ).fetchone() == (raw,)
+    assert store.events == [
+        {"kind": "superseded", "occurred_at": 11},
+        {"kind": "automatic_prepared", "occurred_at": 11},
+    ]
+    assert CoverConsideration(raw).data == prior
+
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+
+    database = tmp_path / "history.sqlite"
+    repository = open_repository(database)
+    report = MetadataReport.from_json(fixture["report"])
+    repository.publish(report, lambda: True)
+    proposals = evaluate_report(report)
+    repository.publish_proposal(proposals)
+    admitted = json.loads(repository.admit_review_case(proposals))
+    current_case_id = admitted["review_case_id"]
+    assert current_case_id != prior["review_case_id"]
+    from mechanical_librarian.domain.review_case import ReviewCase
+
+    review_case = ReviewCase.create(proposals, report)
+    cover_proposal = next(
+        field for field in review_case.proposals if field["destination"] == "cover"
+    )
+    service = CoverConsiderationService(
+        repository,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=case.payload_by_preview.__getitem__,
+        clock=lambda: 12,
+        reviewer_dispatch=lambda: ReviewerDispatch(
+            1, "openrouter", model, profile, reviewer
+        ),
+        reviewer_identity=lambda: (1, "openrouter", model, profile),
+        reviewer_revision_current=lambda revision: revision == 1,
+    )
+    fresh = service.ensure(current_case_id, fixture["report"], cover_proposal)
+    assert fresh["supersedes_id"] is None
+    document = repository.current_cover_consideration_document(current_case_id)
+    assert len(dispatches) == 2
+    repository.close()
+    repository = open_repository(database, create=False)
+    assert repository.current_cover_consideration_document(current_case_id) == document
+    service = CoverConsiderationService(
+        repository,
+        read_preview=lambda artifact, _variant: case.payload_by_artifact[artifact],
+        read_preview_digest=case.payload_by_preview.__getitem__,
+        clock=lambda: 13,
+        reviewer_dispatch=lambda: ReviewerDispatch(
+            1, "openrouter", model, profile, reviewer
+        ),
+        reviewer_identity=lambda: (1, "openrouter", model, profile),
+        reviewer_revision_current=lambda revision: revision == 1,
+    )
+    replay = service.ensure(current_case_id, fixture["report"], cover_proposal)
+    assert replay["consideration_id"] == fresh["consideration_id"]
+    assert len(dispatches) == 2
+    assert repository.current_cover_consideration_document(current_case_id) == document
     repository.close()

@@ -717,7 +717,8 @@ describe('ReviewApiClient', () => {
       ],
     ) =>
       mapCaseDetail({
-        schema_version: 'review-case-detail-v4',
+        schema_version: 'review-case-detail-v5',
+        audiobook_review_scope: null,
         recording_identity_basis: null,
         review_case_id: 'case-1',
         current: true,
@@ -770,7 +771,8 @@ describe('ReviewApiClient', () => {
 
   it('requires exact creator corroboration source lists in case-detail responses', () => {
     const response = (corroboration_sources: unknown) => ({
-      schema_version: 'review-case-detail-v4',
+      schema_version: 'review-case-detail-v5',
+      audiobook_review_scope: null,
       recording_identity_basis: null,
       review_case_id: 'case-1',
       current: true,
@@ -835,7 +837,8 @@ describe('ReviewApiClient', () => {
   it('uses Unicode code point bounds for readable case identity', () => {
     const astral = '📚'
     const response = (target: Record<string, unknown>) => ({
-      schema_version: 'review-case-detail-v4',
+      schema_version: 'review-case-detail-v5',
+      audiobook_review_scope: null,
       recording_identity_basis: null,
       review_case_id: 'case-1',
       current: true,
@@ -902,7 +905,8 @@ describe('ReviewApiClient', () => {
       ...overrides,
     })
     const response = (fields: readonly unknown[]) => ({
-      schema_version: 'review-case-detail-v4',
+      schema_version: 'review-case-detail-v5',
+      audiobook_review_scope: null,
       recording_identity_basis: null,
       review_case_id: 'case-1',
       current: true,
@@ -2410,7 +2414,8 @@ describe('mapReportDetail', () => {
     provider_evidence: [],
     provider_evidence_truncated: false,
     report_id: `report_${'a'.repeat(64)}`,
-    schema_version: 'review-report-detail-v4',
+    schema_version: 'review-report-detail-v5',
+    audiobook_review_scope: null,
     recording_identity_basis: null,
     title: 'Recorded work',
     ...overrides,
@@ -2423,7 +2428,9 @@ describe('mapReportDetail', () => {
       candidate: 'recording-1',
     }
     expect(
-      mapReportDetail(detail({ recording_identity_basis: basis })).recordingIdentityBasis,
+      mapReportDetail(
+        detail({ recording_identity_basis: basis, audiobook_review_scope: 'recording' }),
+      ).recordingIdentityBasis,
     ).toEqual(basis)
     expect(mapReportDetail(detail()).recordingIdentityBasis).toBeNull()
     for (const value of [
@@ -2437,6 +2444,33 @@ describe('mapReportDetail', () => {
     ]) {
       expect(() => mapReportDetail(detail({ recording_identity_basis: value }))).toThrow(ApiError)
     }
+  })
+
+  it('requires a consistent closed audiobook review scope', () => {
+    expect(mapReportDetail(detail({ audiobook_review_scope: 'work' })).audiobookReviewScope).toBe(
+      'work',
+    )
+    expect(
+      mapReportDetail(detail({ audiobook_review_scope: 'recording' })).audiobookReviewScope,
+    ).toBe('recording')
+    for (const value of [undefined, '', 'edition', {}, true]) {
+      expect(() => mapReportDetail(detail({ audiobook_review_scope: value }))).toThrow(ApiError)
+    }
+    expect(() =>
+      mapReportDetail(detail({ media_kind: 'epub', audiobook_review_scope: 'work' })),
+    ).toThrow(ApiError)
+    expect(() =>
+      mapReportDetail(
+        detail({
+          audiobook_review_scope: 'work',
+          recording_identity_basis: {
+            basis: 'chapter_runtime_and_structure',
+            provider: 'Audnexus',
+            candidate: 'recording-1',
+          },
+        }),
+      ),
+    ).toThrow(ApiError)
   })
 
   it('maps the media-health section and refuses an older report detail', () => {

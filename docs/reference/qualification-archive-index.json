@@ -185,6 +185,16 @@
       "docs/reference/f20-rich-metadata-qualification-current.json": "c9d22773fa7dfe3f1bb7b13bc4926c1573092d29b69b3e677cd58bb50d114f8d",
       "docs/reference/f46-audiobook-qualification-current.json": "6083fd2b6a4af6eb21b961170022d7368743e1971decb780b0c75f9983592923"
     },
+    "85cd6578323f6868612697493a0240f603e80008": {
+      "docs/reference/f19a-qualification-current.json": "71723a27d599fb2c76cead177c24d621b09663bba3422efa6a8b024c0cff9993",
+      "docs/reference/f20-rich-metadata-qualification-current.json": "a11589cd5fcb66986b2d091868089d9058a80f0724ca4864bd633f64448e24a7",
+      "docs/reference/f46-audiobook-qualification-current.json": "7051972acf2008dd1508d8ed2df2feeb2d015cbea9c825beac808a27b7573e9f"
+    },
+    "8622790c289fb1ca270f655ab1bcb1518d9517d7": {
+      "docs/reference/f19a-qualification-current.json": "b777b40228418d4702489123b1e3eaf9923d409aadb8d78ea858bdaa9d46a8de",
+      "docs/reference/f20-rich-metadata-qualification-current.json": "96fca6a4d5b81018bf6b47d249b4fbd7d6e1786d8e023e9177f31f58e08c3938",
+      "docs/reference/f46-audiobook-qualification-current.json": "5312012e90dd3a3be9a32c920c51183448a2693e5bed01786d82d86635085fd0"
+    },
     "911eae3f14718f8c61cae8de6f610df8c795683f": {
       "docs/reference/f19a-qualification-current.json": "cfc1b4580936488a5c3a977299a0746724adbc242a171bc364076199f189af03",
       "docs/reference/f20-rich-metadata-qualification-current.json": "29b5fe1fe67b7f55cb8d524e99c719cb9fc6b27c9fdeba196d21ea175a14d759",
@@ -204,6 +214,11 @@
       "docs/reference/f19a-qualification-current.json": "32e9fd987b3152b61c8501d8e03a61aa084f4ed16776eac531cc338bda7d1d0e",
       "docs/reference/f20-rich-metadata-qualification-current.json": "d2775c664d900d3ad47a8759b7c3580425e096fd9c57a6b1f46274854f7f0c94",
       "docs/reference/f46-audiobook-qualification-current.json": "9d308b2c7bf2bc3283388c52407700243a97cdb8ec23f1bc597c3da8f5a5bd4a"
+    },
+    "ab9500862adea9210b70aa74586ca221a4e04034": {
+      "docs/reference/f19a-qualification-current.json": "d255ae2296cfe3c26b1e0e5882c68925612c99c738bcc30fa9c361a64f813198",
+      "docs/reference/f20-rich-metadata-qualification-current.json": "de11f8b2eea74107389ca8e08fd93c8a30b6aaf1f36c1fc0c49685d55efc4cbd",
+      "docs/reference/f46-audiobook-qualification-current.json": "28b01d7995ca59b4ed6e0fde77ee56c36a03919bc63b830f32cb89d31dd2ef1f"
     },
     "b1b2799ba031d198ac3c49bb8099560afc984656": {
       "docs/reference/f19a-qualification-current.json": "25f528f76d3b07211a9003c68fb1622afae637a45f53a34f15d2aa6089076ca8",

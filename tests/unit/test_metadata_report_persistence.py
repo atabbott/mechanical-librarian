@@ -664,7 +664,16 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
         (Path(__file__).parents[1] / "fixtures/cover-authority-v2.json").read_text()
     )
     path = tmp_path / "prior-shadow.sqlite"
+    predecessor = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/proposal_predecessors/fixed-conservative-v32.json"
+        ).read_text()
+    )
     with monkeypatch.context() as old:
+        old.setattr(
+            persistence_schema, "_PROPOSAL_SETS_SQL", predecessor["proposal_sets_ddl"]
+        )
         # Reconstruct the frozen producer's reviewer table too; never update
         # its historical inventory digest to the current schema.
         old.setattr(
@@ -2240,7 +2249,16 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
         with pytest.raises(ValueError):
             parser(fixture[key])
     path = tmp_path / "prior-title.sqlite"
+    predecessor = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/proposal_predecessors/fixed-conservative-v32.json"
+        ).read_text()
+    )
     with monkeypatch.context() as old:
+        old.setattr(
+            persistence_schema, "_PROPOSAL_SETS_SQL", predecessor["proposal_sets_ddl"]
+        )
         old.setattr(
             persistence_schema,
             "_SHADOW_DECISION_OUTCOMES_SQL",

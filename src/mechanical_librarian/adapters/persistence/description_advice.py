@@ -14,6 +14,9 @@ from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
 )
+from mechanical_librarian.domain.audiobook_corroboration import (
+    admitted_audiobook_identity,
+)
 from mechanical_librarian.domain.description_advice import (
     DESCRIPTION_INSTRUCTION,
     DESCRIPTION_OUTPUT_SCHEMA,
@@ -25,6 +28,7 @@ from mechanical_librarian.domain.description_advice import (
     description_digest,
     description_document,
 )
+from mechanical_librarian.domain.metadata_report import MetadataReport
 
 
 class SQLiteDescriptionAdviceRepository(ConnectionScoped):
@@ -670,6 +674,15 @@ class SQLiteDescriptionAdviceRepository(ConnectionScoped):
                 (review_case_id,),
             ).fetchone()
             if lineage is None or active is not None or not self._task_configured():
+                raise ValueError("description retry unavailable")
+            report_row = self._connection.execute(
+                "SELECT m.document FROM review_cases c JOIN metadata_reports m ON m.report_id=c.report_id WHERE c.review_case_id=?",
+                (review_case_id,),
+            ).fetchone()
+            if report_row is None:
+                raise ValueError("description retry unavailable")
+            report = MetadataReport.from_json(report_row[0])
+            if report.audio is not None and not admitted_audiobook_identity(report):
                 raise ValueError("description retry unavailable")
             request_description_preparation(
                 self._connection, now, review_case_id=review_case_id, retry=True

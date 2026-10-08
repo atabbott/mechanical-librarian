@@ -1506,3 +1506,78 @@ it('keeps the draft after a real stale envelope and binds explicit repreview to 
     expected_active_generation: 3,
   })
 })
+
+it('counts a manual availability change without an elected value', async () => {
+  const user = userEvent.setup()
+  const field = {
+    field: 'description_fill',
+    option: 'safe_plain_text',
+    target_state: 'missing',
+    current_value: null,
+    desired_value: null,
+    qualified_value: null,
+    outcome: 'abstain',
+    reason: 'policy_ignored',
+    narrowed_for_target: false,
+  }
+  const policyCommand = vi.fn(async (path: string) =>
+    path === 'preview'
+      ? {
+          active_policy_id: 'policy-active',
+          policy_id: 'policy-reviewed',
+          schema_version: 'metadata-policy-preview-v1',
+          active_generation: 1,
+          libraries: [
+            {
+              library: 'Audio',
+              affected_categories: ['description_fill'],
+              comparisons: [
+                {
+                  media_kind: 'audiobook',
+                  fields: [
+                    {
+                      active: { ...field, reason: 'manual_review_required' },
+                      draft: field,
+                      active_destination: 'automatic',
+                      draft_destination: 'ignore',
+                      changed: true,
+                    },
+                  ],
+                },
+              ],
+              cases_total: 1,
+              cases_truncated: false,
+              current_unapplied_count: 1,
+              resolved_policy_id: 'resolved-policy',
+              cases: [
+                {
+                  fields: [field],
+                  proposal_set_id: 'proposal-work',
+                  report_id: 'report-work',
+                  resolved_policy_id: 'resolved-policy',
+                  work_label: 'Synthetic Journey',
+                },
+              ],
+            },
+          ],
+        }
+      : { policy_id: 'policy-reviewed', schema_version: 'metadata-policy-profile-v3' },
+  )
+  const http: ReviewHttp = {
+    ...createHttp(),
+    policyCommand: <T,>(path: string) => policyCommand(path) as Promise<T>,
+  }
+  renderRoute('/policy?section=curation', http)
+  const description = await screen.findByRole('region', { name: 'Description' })
+  await user.click(within(description).getByRole('button', { name: 'Ignore' }))
+  await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
+  expect(
+    await screen.findByText('Policy change', { selector: '.cm-policy-impact > b' }),
+  ).toBeVisible()
+  expect(
+    screen.getByText(
+      'Ebooks: 0 sampled works · 0 changed fields · Audiobooks: 1 sampled work · 1 changed field',
+    ),
+  ).toBeVisible()
+  expect(screen.queryByText('No policy-caused changes in this sample')).toBeNull()
+})

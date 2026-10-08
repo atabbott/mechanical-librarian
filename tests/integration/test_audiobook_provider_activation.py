@@ -1023,7 +1023,7 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
             assert repository._connection.execute(
                 f"SELECT count(*) FROM {table}"
             ).fetchone() == (0,)
-        if runtime in {"malformed", "cut", "wrong_work", "wrong_author"}:
+        if runtime in {"wrong_work", "wrong_author"}:
             assert state == ("complete", "complete", "evidence_only")
             assert recording_identity_basis(report) is None
             assert (
@@ -1036,7 +1036,8 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
         assert state[:2] == ("proposal", "queued")
         basis = recording_identity_basis(report)
         assert (basis is not None) is (
-            runtime == "absent" or origin not in {"legacy", "promoted"}
+            runtime not in {"malformed", "cut"}
+            and (runtime == "absent" or origin not in {"legacy", "promoted"})
         )
         replay = MetadataReport.from_json(
             repository.get_proposal_input(report.report_id)
@@ -1049,15 +1050,23 @@ def test_local_asin_chapter_runtime_fallback_reaches_an_owner_case(
         envelope = json.loads(repository.get_review_case(admission["review_case_id"]))
         assert envelope["current"] is True
         case = ReviewCase.create_from_data(envelope["case"])
-        assert "narrators" in {p["destination"] for p in case.actionable}
-        narrator = next(p for p in case.proposals if p["destination"] == "narrators")
+        work_only = runtime in {"malformed", "cut"}
+        destination = "description" if work_only else "narrators"
+        if work_only:
+            assert {p["destination"] for p in case.actionable} <= {
+                "description",
+                "genres",
+            }
+            assert basis is None
+        assert destination in {p["destination"] for p in case.actionable}
+        narrator = next(p for p in case.proposals if p["destination"] == destination)
         proposal_id = narrator["proposal_id"]
         assert isinstance(proposal_id, str)
         decision = HumanDecision.create(
             case,
             proposal_id=proposal_id,
             target_fingerprint=case.target_fingerprint,
-            destination="narrators",
+            destination=destination,
             actor="owner",
             outcome="accept",
             selected_value=narrator["result"]["alternatives"][0]["value"],

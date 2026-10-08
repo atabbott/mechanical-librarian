@@ -466,7 +466,7 @@ def test_audio_creator_roles_and_target_only_binding_close_exact_citations():
         file=base.file,
         local_claims=base.local_claims + creators + (target_claim,),
         local_reasons=base.local_reasons,
-        providers=(),
+        providers=base.providers,
         audio=base.audio,
     )
     proposal = evaluate_report(report)

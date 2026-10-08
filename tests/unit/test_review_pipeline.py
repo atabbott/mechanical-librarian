@@ -11978,3 +11978,42 @@ def test_supervisor_wait_for_drain_retains_borrowed_dependencies(timeout: bool) 
     assert pipeline.events[-2:] == ["on_stop", "close"]
     supervisor.stop()
     assert pipeline.events.count("on_stop") == pipeline.events.count("close") == 1
+
+
+def test_work_only_advice_stage_never_calls_secondary_preparation(tmp_path):
+    from contextlib import closing
+
+    from tests.support.audiobook_synopsis import synopsis_report
+
+    report = synopsis_report()
+    with closing(open_repository(tmp_path / "work.sqlite")) as repository:
+        repository.publish(report, lambda: True)
+        stages = _proposal_stages(lambda *_: pytest.fail("proposal dispatch"))
+        action = PipelineAction(
+            "action-1",
+            "scan-1",
+            "projection",
+            1,
+            "primary",
+            "audio",
+            "library-id",
+            _PRODUCER,
+            1,
+            "a" * 64,
+            "item-1",
+            "b" * 64,
+            0,
+            report_id=report.report_id,
+            source_fingerprint="c" * 64,
+        )
+        with (
+            patch.object(
+                stages, "prepare_cover", side_effect=AssertionError("cover dispatch")
+            ),
+            patch.object(
+                stages,
+                "_prepare_description",
+                side_effect=AssertionError("description dispatch"),
+            ),
+        ):
+            stages.prepare_advice(repository, action)

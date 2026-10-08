@@ -1,5 +1,13 @@
 # Upgrades and compatibility
 
+#1166 enables source-bound audiobook description/genre owner review without
+recording admission. **Clean rebuild required** for `fixed-conservative-v33`,
+including empty predecessor proposal tables. No migration or historical-document
+resealing is supplied. Only case/report detail wire versions advance to v5 with
+required-nullable review scope; stored document shapes stay unchanged. F19a/F20/F46
+source bindings rotate with their existing permission sets and measurements.
+
+
 #1140 rotates F19a, F20 and F46 exact-current bindings because their semantic
 sources include browse orchestration. **Clean rebuild required** for predecessor
 derived application stores. Schema shapes, shadow decision policy v20 and the
@@ -9,7 +17,7 @@ decodable history without current authority; no adoption or migration is supplie
 Mechanical Librarian remains pre-release. Ordinary startup accepts only absent
 state or the exact current state and never silently rewrites an older schema.
 The current build uses `metadata-report-v49`, `proposal-set-v8` under
-`fixed-conservative-v32`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
+`fixed-conservative-v33`, `shadow-review-packet-v9`, `shadow-outcome-set-v10`,
 and `deterministic-shadow-decision-policy-v20`. #1077 removes only the image
 retrieval prerequisite from ebook ISBN election and rotates exact-current bindings. **Clean rebuild required**
 for every predecessor application database; startup refuses it before mutation.

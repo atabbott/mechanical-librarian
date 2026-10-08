@@ -77,10 +77,12 @@ guarded work, history, and recovery.
 
 - Normal deployment is one Linux container, one persistent volume, read-only
   media mounts, and one web port.
-- Audiobookshelf ebook and audiobook libraries are the planned first-release
-  target; the current installed discovery and review pipeline supports ebook
-  libraries only. Application metadata and cover effects use supported service
-  APIs only.
+- The installed discovery and review pipeline supports Audiobookshelf ebook
+  and audiobook libraries. Recording-admitted audiobooks retain their qualified
+  field behavior; supported book-level descriptions and genres also permit owner
+  review while the recording remains unresolved. That work-only route grants no
+  automatic, cover or other-field authority. Application metadata and cover
+  effects use supported service APIs only.
 - Metadata work is field-local, target-shaped, persisted before execution, and
   idempotent. Automatic outcomes must be qualified, deterministic, and visible
   in history.

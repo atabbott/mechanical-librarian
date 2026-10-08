@@ -114,9 +114,6 @@ from mechanical_librarian.application.cover_policy import (  # noqa: E402
 from mechanical_librarian.bootstrap import (  # noqa: E402
     contained_reviewer as reviewer_binding,
 )
-from tests.support.metadata_report_doubles import (  # noqa: E402
-    single_track_audio_facts,
-)
 
 
 def _animated_preview() -> bytes:
@@ -3600,16 +3597,17 @@ def _audiobook_cover_source(
 
 
 def _audiobook_report(sources: tuple[CoverSource, ...]) -> MetadataReport:
+    from tests.support.audiobook_reports import admitted_audiobook_report
+
+    base = admitted_audiobook_report()
     return MetadataReport.create(
-        target=TargetFacts(
-            "synthetic", "books", "item", default_target_fields("Synthetic title")
-        ),
-        file=FileFacts(0, "a" * 64, "b" * 64, "m4b"),
-        local_claims=(),
-        local_reasons=("no_local_audio_claims",),
-        providers=(),
+        target=base.target,
+        file=base.file,
+        local_claims=base.local_claims,
+        local_reasons=base.local_reasons,
+        providers=base.providers,
+        audio=base.audio,
         cover_sources=tuple(sorted(sources, key=lambda value: value.source_id)),
-        audio=single_track_audio_facts(),
     )
 
 

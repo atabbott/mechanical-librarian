@@ -780,7 +780,10 @@ function WorkEvidence({ detailUrl }: { detailUrl: string }) {
   return (
     <section className="library-work-evidence" aria-label="Recorded evidence">
       <h3>Recorded evidence</h3>
-      <RecordingIdentityBasis value={data.recordingIdentityBasis} />
+      <RecordingIdentityBasis
+        value={data.recordingIdentityBasis}
+        scope={data.audiobookReviewScope}
+      />
       {data.evidence.length === 0 ? (
         <p role="status">No local evidence was recorded for this work.</p>
       ) : (
@@ -4354,10 +4357,13 @@ export default function LibraryPage({
               ) : (
                 <p>This work has no fields requiring a decision.</p>
               )}
-              {detail.data.recordingIdentityBasis ? (
+              {detail.data.recordingIdentityBasis || detail.data.audiobookReviewScope === 'work' ? (
                 <section aria-label="Whole-work context">
                   <h3>Whole-work context</h3>
-                  <RecordingIdentityBasis value={detail.data.recordingIdentityBasis} />
+                  <RecordingIdentityBasis
+                    value={detail.data.recordingIdentityBasis}
+                    scope={detail.data.audiobookReviewScope}
+                  />
                 </section>
               ) : null}
               {contextualFields.length ? (

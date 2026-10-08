@@ -249,6 +249,12 @@ def test_current_authority_and_predecessor_refusal_without_history(
     cover_fixture = json.loads(
         (Path(__file__).parents[1] / "fixtures/cover-authority-v2.json").read_text()
     )
+    proposal_fixture = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/proposal_predecessors/fixed-conservative-v32.json"
+        ).read_text()
+    )
     old_path = tmp_path / "prior.sqlite"
     with monkeypatch.context() as old_schema:
         # Preserve the frozen producer's full schema inventory, including its
@@ -267,6 +273,9 @@ def test_current_authority_and_predecessor_refusal_without_history(
             schema,
             "_SHADOW_DECISION_OUTCOMES_SQL",
             fixture["shadow_decision_outcomes_sql"],
+        )
+        old_schema.setattr(
+            schema, "_PROPOSAL_SETS_SQL", proposal_fixture["proposal_sets_ddl"]
         )
         with closing(open_repository(old_path)) as repository:
             rows = repository._connection.execute(

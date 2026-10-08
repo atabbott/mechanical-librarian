@@ -291,3 +291,58 @@ def test_report_and_pointer_recheck_are_the_final_queries_before_insert() -> Non
         assert relevant[1].startswith("SELECT report_id FROM current_metadata_reports")
         assert relevant[2].startswith("INSERT INTO proposal_sets")
         repository.close()
+
+
+@pytest.mark.parametrize("populated", (False, True))
+def test_actual_v32_baseline_table_refuses_before_rows_without_mutation(
+    tmp_path, monkeypatch, populated
+):
+    import hashlib
+
+    capsule = json.loads(
+        (
+            Path(__file__).parents[1]
+            / "support/proposal_predecessors/fixed-conservative-v32.json"
+        ).read_text()
+    )
+    path = tmp_path / "baseline-table.sqlite"
+    repository = open_repository(path)
+    report = _report("Title", "b" * 64)
+    assert report.report_id == capsule["report_id"]
+    assert (
+        hashlib.sha256(report.to_json().encode()).hexdigest()
+        == capsule["report_sha256"]
+    )
+    repository.publish(report, lambda: True)
+    repository.close()
+    with sqlite3.connect(path) as connection:
+        # Reconstruct only the actual predecessor table over unchanged scaffolding.
+        connection.execute("PRAGMA writable_schema=ON")
+        connection.execute(
+            "UPDATE sqlite_master SET sql=? WHERE name='proposal_sets'",
+            (capsule["proposal_sets_ddl"],),
+        )
+        connection.execute("PRAGMA writable_schema=OFF")
+    with sqlite3.connect(path) as connection:
+        if populated:
+            document = capsule["proposal_document"]
+            proposal = json.loads(document)
+            connection.execute(
+                "INSERT INTO proposal_sets VALUES (?,?,?,?)",
+                (
+                    "proposal_set_" + capsule["proposal_sha256"],
+                    report.report_id,
+                    proposal["policy_version"],
+                    document,
+                ),
+            )
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    before = path.read_bytes()
+
+    def reject_row_parse(*args, **kwargs):
+        pytest.fail("baseline schema must refuse before proposal row validation")
+
+    monkeypatch.setattr(ProposalSet, "from_json", reject_row_parse)
+    with pytest.raises(MetadataReportError):
+        open_repository(path)
+    assert path.read_bytes() == before

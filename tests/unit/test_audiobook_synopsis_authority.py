@@ -21,7 +21,9 @@ from mechanical_librarian.domain.rich_metadata_preview import (
     project_audiobook_automatic_decision_value,
 )
 from tests.support.audiobook_reports import publish_audiobook_preview
-from tests.support.audiobook_synopsis import synopsis_report
+from tests.support.audiobook_synopsis import (
+    recording_synopsis_report as synopsis_report,
+)
 from tests.support.field_effects import effects as effects
 
 
@@ -802,9 +804,255 @@ def test_current_detail_does_not_offer_unadmitted_audiobook_synopsis(tmp_path, s
             },
         )
     )
-    path = tmp_path / "markers.sqlite"
-    with closing(open_repository(path)) as repository:
-        case, _ = publish_audiobook_preview(
+    from mechanical_librarian.domain.proposal_set import (
+        audiobook_review_scope,
+        evaluate_report,
+    )
+
+    assert audiobook_review_scope(report) is None
+    with closing(open_repository(tmp_path / "markers.sqlite")) as repository:
+        repository.publish(report, lambda: True)
+        proposal = evaluate_report(report)
+        assert not any(result.alternatives for result in proposal.results)
+        repository.publish_proposal(proposal)
+        assert json.loads(repository.admit_review_case(proposal))["status"] == "no_case"
+
+
+@pytest.mark.parametrize("destination", ("description", "genres"))
+@pytest.mark.parametrize(
+    "guard", (None, "missing_consent", "consent", "target", "source", "readback")
+)
+def test_work_owner_choice_uses_persisted_guarded_effect(effects, destination, guard):
+    from mechanical_librarian.application.field_effects import GuardedApplicationError
+    from mechanical_librarian.application.review_web import RecordHumanDecision
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        admitted_audiobook_identity,
+    )
+    from mechanical_librarian.domain.human_decision import HumanDecision
+    from mechanical_librarian.domain.proposal_set import (
+        audiobook_review_scope,
+        evaluate_report,
+    )
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_product_lookup_report,
+    )
+    from tests.support.field_effects import CAPABILITY
+
+    report = synthetic_audiobook_product_lookup_report(
+        (
+            {
+                "asin": "B000000001",
+                "title": "Synthetic Journey",
+                "authors": [{"name": "Example Author"}],
+                "summary": "A voyage reveals a hidden city.",
+                "genres": [{"type": "genre", "name": "Adventure"}],
+            },
+        )
+    )
+    assert not admitted_audiobook_identity(report)
+    assert audiobook_review_scope(report) == "work"
+    proposal = evaluate_report(report)
+    assert {r.destination.value for r in proposal.results if r.alternatives} == {
+        "description",
+        "genres",
+    }
+    repository = effects.repository
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    field = next(
+        f
+        for f in InspectCurrentReviewCase(repository).run(case_id)["fields"]
+        if f["destination"] == destination
+    )
+    RecordHumanDecision(repository, clock=lambda: 10).run(
+        case_id,
+        proposal_id=field["proposal_id"],
+        target_fingerprint=field["target_fingerprint"],
+        destination=destination,
+        actor="owner",
+        outcome="accept",
+        selected_value=field["proposed_values"][0],
+        idempotency_key="work-review-effect",
+    )
+    decision = HumanDecision.from_json(
+        repository._connection.execute(
+            "SELECT document FROM human_decisions WHERE destination=?", (destination,)
+        ).fetchone()[0]
+    )
+    assert decision.application == "apply"
+    authority = PersistedFieldEffectAuthority(repository)
+    snapshot = authority.resolve(decision)
+    if guard != "missing_consent":
+        repository.grant_field_effect_consents(
+            snapshot.connection, (snapshot.library,), (destination,), 11
+        )
+    service = effects.persisted_service(repository, effects.target, authority)
+    arguments = dict(
+        connection=snapshot.connection,
+        library=snapshot.library,
+        work_id=snapshot.work_id,
+        destination=destination,
+        pre_value=snapshot.pre_value,
+        desired_value=snapshot.decision_value,
+        target_fingerprint=snapshot.target_fingerprint,
+        target_version=snapshot.target_version,
+        dependency_digests=snapshot.dependency_digests,
+        capability_digest=CAPABILITY,
+    )
+    if guard == "missing_consent":
+        with pytest.raises(GuardedApplicationError, match="consent"):
+            service.plan(decision, **arguments)
+        assert repository._connection.execute(
+            "SELECT count(*) FROM field_effects"
+        ).fetchone() == (0,)
+        return
+    planned = service.plan(decision, **arguments)
+    assert planned is not None
+    assert planned.plan.authority.origin == "human"
+    effects.target.seed(planned.plan)
+    if guard == "target":
+        effects.target.drift(
+            planned.plan,
+            "Changed by owner" if destination == "description" else ["Different genre"],
+        )
+    elif guard == "consent":
+        repository.revoke_field_effect_consent(
+            planned.plan.consent.consent_id, effects.clock()
+        )
+    elif guard == "source":
+        from dataclasses import replace
+
+        from mechanical_librarian.domain.metadata_report import (
+            MetadataReport,
+            TargetDestination,
+            TargetField,
+            TargetFieldState,
+        )
+
+        successor = MetadataReport.create(
+            target=replace(
+                report.target,
+                fields=tuple(
+                    TargetField(
+                        field.destination, TargetFieldState.VALUE, "New source snapshot"
+                    )
+                    if field.destination is TargetDestination.DESCRIPTION
+                    else field
+                    for field in report.target.fields
+                ),
+            ),
+            file=report.file,
+            local_claims=report.local_claims,
+            local_reasons=report.local_reasons,
+            providers=report.providers,
+            audio=report.audio,
+        )
+        repository.publish(successor, lambda: True, expected_current=report.report_id)
+    elif guard == "readback":
+        effects.target.fail_read_after_apply_for.add(planned.plan.plan_id)
+    before = dict(effects.target._values)
+    applied = service.apply(planned.plan.plan_id)
+    if guard == "target":
+        assert (applied.state, applied.failure) == ("stale", "target_changed")
+        assert effects.target._values == before
+    elif guard == "consent":
+        assert (applied.state, applied.failure) == ("superseded", "consent_revoked")
+        assert effects.target._values == before
+    elif guard == "source":
+        assert (applied.state, applied.failure) == ("stale", "authority")
+        assert effects.target._values == before
+    elif guard == "readback":
+        assert (applied.state, applied.failure) == ("reconciling", "target_failure")
+        effects.target.fail_read_after_apply_for.clear()
+        effects.target.fail_reads_for.clear()
+        assert service.apply(planned.plan.plan_id).state == "verified"
+    else:
+        assert applied.state == "verified"
+        assert service.apply(planned.plan.plan_id).state == "verified"
+        changed = {
+            key
+            for key, value in effects.target._values.items()
+            if before.get(key) != value
+        }
+        assert changed == {
+            (snapshot.connection, snapshot.library, snapshot.work_id, destination)
+        }
+    repository.close()
+    effects.repository = open_repository(effects.database_path)
+    assert decision.to_json() in effects.repository.get_review_case_decisions(case_id)
+    assert effects.repository.get_field_effect(planned.plan.plan_id) is not None
+
+
+@pytest.mark.parametrize(
+    "identity",
+    ("exact", "wrong_title", "wrong_author", "incomplete_authors", "variant"),
+)
+def test_work_source_cannot_borrow_another_candidates_identity(identity):
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from tests.support.audiobook_reports import (
+        synthetic_audiobook_product_lookup_report,
+    )
+
+    products: tuple[dict[str, object], ...] = (
+        {
+            "asin": "B000000001",
+            "title": "Synthetic Journey",
+            "authors": [{"name": "Example Author"}],
+            "summary": "Supported synopsis.",
+        },
+        {
+            "asin": "B000000002",
+            "title": {
+                "wrong_title": "Different Story",
+                "variant": "Synthetic Journey (Abridged)",
+            }.get(identity, "Synthetic Journey"),
+            "authors": []
+            if identity == "incomplete_authors"
+            else [
+                {
+                    "name": "Other Author"
+                    if identity == "wrong_author"
+                    else "Example Author"
+                }
+            ],
+            "summary": "Other source synopsis.",
+            "genres": [{"type": "genre", "name": "Adventure"}],
+        },
+    )
+    report = synthetic_audiobook_product_lookup_report(products)
+    proposal = evaluate_report(report)
+    fields = {result.destination.value: result for result in proposal.results}
+    descriptions = {
+        alternative.value.value for alternative in fields["description"].alternatives
+    }
+    assert "Supported synopsis." in descriptions
+    assert ("Other source synopsis." in descriptions) is (identity == "exact")
+    assert bool(fields["genres"].alternatives) is (identity == "exact")
+    assert all(
+        not result.alternatives
+        for result in proposal.results
+        if result.destination.value not in {"description", "genres"}
+    )
+
+
+@pytest.mark.parametrize("destination", ("automatic", "ask", "ignore"))
+def test_work_policy_has_no_automatic_decisions_or_effects(tmp_path, destination):
+    from mechanical_librarian.domain.shadow_outcome import ShadowOutcomeSet
+    from tests.support.audiobook_synopsis import synopsis_report as work_report
+
+    with closing(open_repository(tmp_path / "work.sqlite")) as repository:
+        report = work_report()
+        from mechanical_librarian.domain.proposal_set import (
+            audiobook_review_scope,
+            evaluate_report,
+        )
+
+        assert audiobook_review_scope(report) == "work"
+        assert not next(
+            r for r in evaluate_report(report).results if r.destination.value == "tags"
+        ).alternatives
+        case_id, policy = publish_audiobook_preview(
             repository,
             report,
             ("tags", "description_fill"),
@@ -812,16 +1060,151 @@ def test_current_detail_does_not_offer_unadmitted_audiobook_synopsis(tmp_path, s
                 "tags": "fill_empty",
                 "description_fill": "safe_plain_text",
             },
+            selected_destinations={"description_fill": destination},
         )
-        repository.persist_shadow_outcome(case, 4)
-    with closing(open_repository(path)) as repository:
-        field = next(
-            f
-            for f in InspectCurrentReviewCase(repository).run(case)["fields"]
-            if f["destination"] == "description"
+        assert dict(policy.destinations)["tags"] == "automatic"
+        assert dict(policy.options)["tags"] == "fill_empty"
+        if destination == "ignore":
+            assert case_id is None
+            stored = json.loads(
+                repository._connection.execute(
+                    "SELECT document FROM proposal_sets"
+                ).fetchone()[0]
+            )
+            result = next(
+                r for r in stored["results"] if r["destination"] == "description"
+            )
+            assert result["alternatives"] == []
+            assert result["reasons"] == ["policy_ignored"]
+        else:
+            outcome = ShadowOutcomeSet.from_json(
+                repository.persist_shadow_outcome(case_id, 4)
+            )
+            field = next(f for f in outcome.outcomes if f.destination == "description")
+            assert field.policy_destination == "ask"
+            assert field.disposition == "manual"
+            assert repository.get_review_case_decisions(case_id) == ()
+        assert repository.pending_field_effect_decision_documents(100) == ()
+        assert repository._connection.execute(
+            "SELECT count(*) FROM automatic_decisions"
+        ).fetchone() == (0,)
+
+
+def test_work_scope_blocks_secondary_inputs_before_collaborators(tmp_path):
+    from mechanical_librarian.application.cover_packets import prepare_cover_packet
+    from mechanical_librarian.domain.description_advice import (
+        DescriptionAdviceInput,
+        DescriptionPreferences,
+    )
+    from tests.support.audiobook_synopsis import synopsis_report as work_report
+
+    report = work_report()
+    with pytest.raises(ValueError, match="recording admission"):
+        DescriptionAdviceInput.from_report(report, DescriptionPreferences())
+    with pytest.raises(ValueError, match="recording admission"):
+        prepare_cover_packet(
+            report.to_json(), lambda *_: pytest.fail("work-only cover read")
         )
-        assert field["decision_actions"] == []
-        assert field["proposed_values"] == []
-        assert field["editable"] is False
-        assert isinstance(field["automatic_withheld_reason"], str)
-        assert field["automatic_withheld_reason"]
+
+
+def test_work_scope_wire_contract_and_direct_retry_refusal(effects, monkeypatch):
+    from pydantic import ValidationError
+
+    from mechanical_librarian.application.review_web import _report_detail
+    from mechanical_librarian.domain.proposal_set import evaluate_report
+    from mechanical_librarian.interfaces.web.app import (
+        _CaseDetailResponse,
+        _ReportDetailResponse,
+    )
+    from tests.support.audiobook_synopsis import synopsis_report as work_report
+
+    report = work_report()
+    repository = effects.repository
+    proposal = evaluate_report(report)
+    repository.publish(report, lambda: True)
+    repository.publish_proposal(proposal)
+    case_id = json.loads(repository.admit_review_case(proposal))["review_case_id"]
+    case = InspectCurrentReviewCase(repository).run(case_id)
+    # Transport enrichment when no field application is configured.
+    for field in case["fields"]:
+        field["effect_capability"] = "unavailable"
+    case["writes_consented"] = False
+    recorded = _report_detail(report.to_data(), report)
+    for model, value in (
+        (_CaseDetailResponse, case),
+        (_ReportDetailResponse, recorded),
+    ):
+        assert model.model_validate(value).audiobook_review_scope == "work"
+        assert value["recording_identity_basis"] is None
+        missing = dict(value)
+        del missing["audiobook_review_scope"]
+        with pytest.raises(ValidationError):
+            model.model_validate(missing)
+        malformed_values: tuple[object, ...] = ("edition", True, {}, 1)
+        for malformed in malformed_values:
+            with pytest.raises(ValidationError):
+                model.model_validate({**value, "audiobook_review_scope": malformed})
+        with pytest.raises(ValidationError):
+            model.model_validate(
+                {
+                    **value,
+                    "recording_identity_basis": {
+                        "basis": "chapter_runtime_and_structure",
+                        "provider": "source",
+                        "candidate": "recording",
+                    },
+                }
+            )
+        ebook = dict(value)
+        if model is _CaseDetailResponse:
+            target = ebook["target"]
+            assert isinstance(target, dict)
+            ebook["target"] = {**target, "media_kind": "epub"}
+        else:
+            ebook["media_kind"] = "epub"
+        with pytest.raises(ValidationError):
+            model.model_validate(ebook)
+    from unittest.mock import Mock
+
+    from mechanical_librarian.adapters.persistence.field_effect_validation import (
+        _automatic_decision_value,
+        _validate_automatic_decision_authority,
+    )
+    from mechanical_librarian.application.cover_consideration import (
+        CoverConsiderationService,
+    )
+    from mechanical_librarian.application.review_application import (
+        ReviewApplicationError,
+        prepare_cover_consideration,
+    )
+    from mechanical_librarian.domain.field_effect import FieldEffectError
+
+    cover = Mock(spec=CoverConsiderationService)
+    cover.current.side_effect = AssertionError("work-only cover lookup")
+    for retry in (False, True):
+        with pytest.raises(ReviewApplicationError, match="unavailable"):
+            prepare_cover_consideration(
+                InspectCurrentReviewCase(repository),
+                cover,
+                case_id,
+                serialized=lambda call: call(),
+                retry=retry,
+            )
+    cover.current.assert_not_called()
+    # Neither reconstruction entry point may inspect a forged authority before
+    # refusing the report's work-only scope.
+    forged = Mock()
+    type(forged).target = property(lambda _: pytest.fail("forged authority read"))
+    for reconstruct in (
+        _automatic_decision_value,
+        _validate_automatic_decision_authority,
+    ):
+        with pytest.raises(FieldEffectError, match="authority_binding"):
+            reconstruct(forged, forged, report, proposal, forged)
+    store = repository.description_advice_store()
+    monkeypatch.setattr(store, "_task_configured", lambda: True)
+    with pytest.raises(ValueError, match="description retry unavailable"):
+        store.request_retry(case_id, 11)
+    assert repository._connection.execute(
+        "SELECT count(*) FROM description_preparation_pending"
+    ).fetchone() == (0,)

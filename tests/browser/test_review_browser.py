@@ -371,6 +371,7 @@ def _server(
     automatic_fixture: bool = False,
     refusal_fixture: bool = False,
     synopsis_fixture: str | None = None,
+    work_review_fixture: bool = False,
     synopsis_destination: str = "automatic",
     ebook_synopsis: bool = False,
     isbn_fixture: bool = False,
@@ -793,12 +794,68 @@ def _server(
             report, isbn_policy.resolved_id, human_review_destinations(isbn_policy)
         )
         repository.persist_shadow_outcome(case_id, 4)
+    elif work_review_fixture:
+        from mechanical_librarian.domain.proposal_set import audiobook_review_scope
+        from tests.support.audiobook_reports import (
+            synthetic_audiobook_product_lookup_report,
+        )
+
+        report = synthetic_audiobook_product_lookup_report(
+            tuple(
+                {
+                    "asin": f"B00000000{index}",
+                    "title": "Synthetic Journey",
+                    "authors": [{"name": "Example Author"}],
+                    "summary": summary,
+                    "genres": [
+                        {"type": "genre", "name": genre}
+                        for genre in (
+                            "Adventure",
+                            "Historical Fiction",
+                            "Sea Stories",
+                            "Exploration",
+                        )
+                    ],
+                }
+                for index, summary in enumerate(
+                    (
+                        "A voyage reveals a hidden city.",
+                        "A librarian follows a forgotten expedition across a distant archipelago. "
+                        "The letters left behind describe the lives of sailors, the rituals of "
+                        "island communities, and a city whose history has been deliberately "
+                        "concealed. As storms close the shipping routes, she must decide which "
+                        "account to trust and whether the discoveries belong in the archive or "
+                        "with the people who preserved them.",
+                    ),
+                    1,
+                )
+            )
+        )
+        assert audiobook_review_scope(report) == "work"
+        assert (
+            len(
+                next(
+                    result
+                    for result in evaluate_report(report).results
+                    if result.destination.value == "description"
+                ).alternatives
+            )
+            == 2
+        )
+        repository.publish(report, lambda: True)
+        proposal_set = evaluate_report(report)
+        repository.publish_proposal(proposal_set)
+        case_id = json.loads(repository.admit_review_case(proposal_set))[
+            "review_case_id"
+        ]
     elif synopsis_fixture is not None:
         from mechanical_librarian.domain.metadata_policy import (
             human_review_destinations,
         )
         from tests.support.audiobook_reports import publish_audiobook_preview
-        from tests.support.audiobook_synopsis import synopsis_report
+        from tests.support.audiobook_synopsis import (
+            recording_synopsis_report as synopsis_report,
+        )
 
         if ebook_synopsis:
             from tests.support.ebook_synopsis import (
@@ -1426,6 +1483,7 @@ def _server(
         isbn_fixture
         or isbn_title_fixture is not None
         or synopsis_fixture is not None
+        or work_review_fixture
         or language_fixture is not None
         or genre_fixture is not None
         or series_fixture is not None
@@ -1453,12 +1511,17 @@ def _server(
         session_store=session_store,
         clock=lambda: 1_000,
         close_repository=True,
-        policy_libraries=((report.target.library, None),) if refusal_fixture else (),
+        policy_libraries=(
+            ((report.target.library, None),)
+            if refusal_fixture or work_review_fixture
+            else ()
+        ),
         field_application=(
             _BrowserActivityApplication()
             if not isbn_fixture
             and isbn_title_fixture is None
             and synopsis_fixture is None
+            and not work_review_fixture
             and language_fixture is None
             and genre_fixture is None
             and series_fixture is None
@@ -7612,6 +7675,65 @@ def test_same_name_series_owner_journey(media, destination):
                 expect(
                     page.get_by_role("article").filter(has_text=title).first
                 ).to_be_visible()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        browser.close()
+
+
+def test_audiobook_work_owner_journey():
+    with tempfile.TemporaryDirectory() as directory, sync_playwright() as playwright:
+        root = Path(directory)
+        root.chmod(0o700)
+        password = root / "owner.hash"
+        password.write_text(PasswordHasher().hash(_PASSWORD))
+        password.chmod(0o600)
+        browser = playwright.chromium.launch(headless=True)
+        context = browser.new_context(viewport={"width": 390, "height": 844})
+        page = context.new_page()
+        with (
+            closing(ReservedPort()) as port,
+            _server(
+                database=root / "work.sqlite",
+                hash_path=password,
+                certificate=root / "unused",
+                key=root / "unused",
+                port=port,
+                transport_mode="http",
+                work_review_fixture=True,
+            ) as (origin, case_id),
+            _closing_context(context),
+        ):
+            _login(page, origin)
+            page.goto(f"{origin}/library?lens=all&preview={case_id}&field=description")
+            expect(
+                page.get_by_role("region", name="Book-level evidence")
+            ).to_contain_text("The exact recording remains unresolved.")
+            choice = page.get_by_role(
+                "button",
+                name="Choose proposed value: A voyage reveals a hidden city.",
+                exact=True,
+            )
+            choice.focus()
+            choice.press("Space")
+            expect(choice).to_have_attribute("aria-pressed", "true")
+            page.reload()
+            expect(choice).to_have_attribute("aria-pressed", "true")
+            page.get_by_role("link", name="Evidence", exact=True).click()
+            expect(
+                page.get_by_role("region", name="Book-level evidence")
+            ).to_be_visible()
+            page.get_by_role("link", name="History", exact=True).click()
+            expect(
+                page.get_by_text("To A voyage reveals a hidden city.", exact=True)
+            ).to_be_visible()
+            page.get_by_role("link", name="Activity", exact=True).click()
+            page.get_by_role(
+                "heading", name="Activity and recovery", exact=True
+            ).wait_for()
+            expect(
+                page.get_by_role("article")
+                .filter(has_text="Owner choice")
+                .filter(has_text="Description")
+            ).to_be_visible()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
         browser.close()
 

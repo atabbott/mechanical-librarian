@@ -915,6 +915,20 @@ def _cast_report(
     return d.MetadataReport.from_json(r.to_json())
 
 
+def _cast_references(report):
+    return tuple(
+        sorted(
+            {
+                claim.reference
+                for observation in report.providers
+                for candidate in p._plausible_narrator_candidates(report, observation)
+                for claim in candidate.claims
+                if claim.kind is d.ClaimKind.CONTRIBUTOR and claim.role == "narrator"
+            }
+        )
+    )
+
+
 @pytest.mark.parametrize(
     "third",
     [
@@ -934,9 +948,9 @@ def test_all_plausible_products_must_supply_complete_equal_cast(
     result = next(
         x for x in proposal.results if x.destination is d.TargetDestination.NARRATORS
     )
-    refs = tuple(
-        sorted({ref for a in result.alternatives for ref in a.evidence_references})
-    )
+    refs = _cast_references(r)
+    assert not result.alternatives
+    assert not m.admitted_audiobook_identity(r)
     expected = third == [{"name": "Example Narrator"}]
     assert p.narrator_candidate_set_agrees(r, refs) is expected
     assert not any(
@@ -947,12 +961,9 @@ def test_all_plausible_products_must_supply_complete_equal_cast(
     packet = ShadowReviewPacket.create(ReviewCase.create(proposal, r), proposal, r)
     packet = ShadowReviewPacket.from_json(packet.to_json(), r, proposal)
     decisions = decide_shadow_packet(packet).decisions
-    assert (
-        any(
-            x.destination == "narrators" and x.recommendation == "recommend_candidate"
-            for x in decisions
-        )
-        is expected
+    assert not any(
+        x.destination == "narrators" and x.recommendation == "recommend_candidate"
+        for x in decisions
     )
     if expected:
         assert len(refs) == 3
@@ -988,16 +999,17 @@ def test_explicit_incompatible_language_keeps_review_candidate_but_not_cast_vote
         d.recording_variant_conflict(excluded, r.local_claims, r.target.current_title)
         == "recording_language_conflict"
     )
-    assert len(result.alternatives) == 1
-    assert not any(
-        x.reference in result.alternatives[0].evidence_references
-        for x in excluded.claims
-    )
+    refs = _cast_references(r)
+    assert len(refs) == 2
+    assert p.narrator_candidate_set_agrees(r, refs)
+    assert not any(x.reference in refs for x in excluded.claims)
+    assert not result.alternatives
+    assert not m.admitted_audiobook_identity(r)
     packet = ShadowReviewPacket.create(ReviewCase.create(proposal, r), proposal, r)
     decisions = decide_shadow_packet(
         ShadowReviewPacket.from_json(packet.to_json(), r, proposal)
     ).decisions
-    assert any(
+    assert not any(
         x.destination == "narrators" and x.recommendation == "recommend_candidate"
         for x in decisions
     )
@@ -1007,12 +1019,21 @@ def test_incompatible_product_canonical_id_cannot_block_plausible_cast() -> None
     r = _cast_report(
         [{"name": "Different Reader"}], third_language="de", third_first=True
     )
+    refs = _cast_references(r)
+    assert len(refs) == 2 and p.narrator_candidate_set_agrees(r, refs)
+    assert refs == _cast_references(
+        _cast_report([{"name": "Different Reader"}], third_language="de")
+    )
+    assert not m.admitted_audiobook_identity(r)
     proposal = p.evaluate_report(r)
+    assert not next(
+        x for x in proposal.results if x.destination is d.TargetDestination.NARRATORS
+    ).alternatives
     packet = ShadowReviewPacket.create(ReviewCase.create(proposal, r), proposal, r)
     decisions = decide_shadow_packet(
         ShadowReviewPacket.from_json(packet.to_json(), r, proposal)
     ).decisions
-    assert any(
+    assert not any(
         x.destination == "narrators" and x.recommendation == "recommend_candidate"
         for x in decisions
     )
@@ -1099,11 +1120,9 @@ def test_actual_work_producer_language_controls_recording_cast(
         for value in p.evaluate_report(report).results
         if value.destination is d.TargetDestination.NARRATORS
     )
-    references = {
-        reference
-        for value in result.alternatives
-        for reference in value.evidence_references
-    }
+    assert not result.alternatives
+    assert not m.admitted_audiobook_identity(report)
+    references = set(_cast_references(report))
     narrator_references = {
         claim.reference
         for claim in candidate.claims

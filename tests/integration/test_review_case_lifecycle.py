@@ -387,6 +387,9 @@ def test_multiline_incumbent_description_persists_and_applies(
     from mechanical_librarian.adapters.library_services.audiobookshelf_item import (
         AudiobookshelfItemReader,
     )
+    from mechanical_librarian.domain.audiobook_corroboration import (
+        admitted_audiobook_identity,
+    )
     from mechanical_librarian.domain.field_effect import field_value_version
     from mechanical_librarian.domain.metadata_report import TargetDestination
     from tests.support.audiobookshelf_targets import synthetic_audio_file
@@ -400,9 +403,10 @@ def test_multiline_incumbent_description_persists_and_applies(
     root.mkdir(mode=0o700)
     current = f" \tFirst paragraph.{newline}{newline}Second paragraph.\t "
     desired = "A different description from local metadata."
-    metadata = {"title": "Current title", "description": current}
+    metadata: dict[str, object] = {"title": "Current title", "description": current}
     media: dict[str, object] = {"metadata": metadata}
     if media_kind == "audiobook":
+        metadata.update(title="Project Hail Mary", authors=[{"name": "Andy Weir"}])
         media["audioFiles"] = [synthetic_audio_file("book.m4b")]
     else:
         media["ebookFile"] = {
@@ -434,6 +438,7 @@ def test_multiline_incumbent_description_persists_and_applies(
     snapshot = reader.read("item-1")
     assert snapshot.media_kind == media_kind
     audio = single_track_audio_facts() if media_kind == "audiobook" else None
+    admitted = admitted_audiobook_report() if audio else None
     report = MetadataReport.create(
         target=TargetFacts("primary", "ebooks", "item-1", snapshot.fields),
         file=FileFacts(
@@ -442,14 +447,18 @@ def test_multiline_incumbent_description_persists_and_applies(
             "b" * 64,
             "m4b" if audio else "epub",
         ),
-        local_claims=(
+        local_claims=(*admitted.local_claims, _local_description(desired))
+        if admitted
+        else (
             consensus_local_title("Candidate title"),
             _local_description(desired),
         ),
         local_reasons=("opening_matter_title",),
-        providers=(),
+        providers=admitted.providers if admitted else (),
         audio=audio,
     )
+    if audio:
+        assert admitted_audiobook_identity(report)
     assert MetadataReport.from_json(report.to_json()) == report
     repository = open_repository(root / "reviews.sqlite")
     repository.publish(report, lambda: True)

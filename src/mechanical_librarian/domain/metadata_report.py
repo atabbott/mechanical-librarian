@@ -6117,3 +6117,8 @@ __all__ = [
     "stable_reference",
     "validate_observed_title",
 ]
+
+
+def discovery_lane_identity(payload: dict[str, object]) -> str:
+    """Bind discovery and retained-evidence admission to the same lane payload."""
+    return "lane_" + hashlib.sha256(canonical_json(payload).encode()).hexdigest()

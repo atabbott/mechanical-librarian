@@ -452,6 +452,13 @@ An audiobook is reviewed through the same rail as an ebook, with Narrators and
 ASIN among its ordered fields, and its decisions apply through the same guarded
 path
 ([ADR-0071](../architecture/decisions/0071-book-media-guarded-application.md)).
+When only the book is supported, the same Library/detail view explains that the
+recording is unresolved and offers supported description and genre choices only.
+Sources retain their provenance; Keep and Accept use the existing owner workflow.
+Automatic, other fields, covers and authored descriptions gain no authority from
+this work-only scope. Consent, stale-source/target refusal, verified application
+and Activity history remain the existing guarded path (#1166).
+
 Narrators is a written field on both media. A decision retained from before
 audiobook writes existed still reads as recorded and not applied, in those
 words beside the decision it describes. A prepared audiobook that produced no

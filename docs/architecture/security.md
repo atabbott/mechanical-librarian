@@ -1811,3 +1811,14 @@ Scalar incumbent election reuses the compiled citation-bound keep action; it
 adds no admission exception or permission. Material conflicts, owner-final,
 Ask/Ignore, pause, suspension, currentness and all effect guards remain intact.
 Shadow policy v20 requires a clean rebuild, with no migration or adoption.
+
+### Work-only audiobook review (#1166)
+
+Work-only scope is recomputed from the bound report, never accepted as a client
+permission. Each description/genre source must independently establish the full
+work relationship. Recording remains unresolved; other fields are masked before
+combinations, and automatic reconstruction, covers and authored-description
+preparation/retry remain unavailable. Explicit owner choices reuse exact-current
+binding, library consent, backup readiness, target comparison, supported service
+writes, read-back verification and durable reconciliation. No provider or reviewer
+receives credentials or write authority through this route.

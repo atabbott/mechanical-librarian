@@ -7,6 +7,8 @@ the option-specific retained-evidence checks needed for manual preview.
 
 from __future__ import annotations
 
+from mechanical_librarian.domain.audiobook_corroboration import admitted_audiobook_identity
+
 import re
 from dataclasses import dataclass
 from typing import Final, TypeGuard, cast
@@ -285,6 +287,8 @@ def _project(
     report: MetadataReport,
     retained_claims: dict[str, _RetainedClaim],
 ) -> RichFieldPreview:
+    if report.audio is not None and not admitted_audiobook_identity(report) and destination == "automatic":
+        destination = "ask"
     current = _data_value(target.value)
     if field == "explicit" and option == "unsupported":
         return RichFieldPreview(
