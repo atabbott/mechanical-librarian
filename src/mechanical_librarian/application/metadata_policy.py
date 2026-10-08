@@ -521,6 +521,7 @@ def preview_policy(
                                         }
                                         == {"ask", "automatic"}
                                         and before.field in {"genres", "tags"}
+                                        and audiobook_review_scope(report) != "work"
                                         and any(
                                             projected.outcome == "no_op"
                                             and projected.reason == "target_preserved"

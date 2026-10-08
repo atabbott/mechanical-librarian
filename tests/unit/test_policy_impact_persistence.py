@@ -811,9 +811,9 @@ def test_real_activation_api_rejects_aba_and_requires_preview_generation(tmp_pat
 
 
 @pytest.mark.parametrize(
-    "field,active_route,draft_route,available,recording,changed",
+    "field,active_route,draft_route,available,recording,populated,changed",
     [
-        (field, active, draft, available, False, changed)
+        (field, active, draft, available, False, False, changed)
         for field in ("description_fill", "genres")
         for active, draft, available, changed in (
             ("automatic", "ignore", True, True),
@@ -825,20 +825,33 @@ def test_real_activation_api_rejects_aba_and_requires_preview_generation(tmp_pat
             ("ignore", "ask", False, False),
         )
     ]
-    + [("description_fill", "automatic", "ignore", True, True, True)],
+    + [("description_fill", "automatic", "ignore", True, True, False, True)]
+    + [
+        ("genres", active, draft, True, recording, True, recording)
+        for active, draft in (("automatic", "ask"), ("ask", "automatic"))
+        for recording in (False, True)
+    ],
 )
 def test_work_manual_availability_is_policy_impact(
-    tmp_path, field, active_route, draft_route, available, recording, changed
+    tmp_path, field, active_route, draft_route, available, recording, populated, changed
 ):
+    from dataclasses import replace
+
     from argon2 import PasswordHasher
     from fastapi.testclient import TestClient
 
     from mechanical_librarian.application.configuration import ReviewWebConfiguration
     from mechanical_librarian.application.metadata_policy import preview_policy
+    from mechanical_librarian.domain.human_decision import decision_actions
     from mechanical_librarian.domain.metadata_policy import (
         DEFAULT_OPTIONS,
         MetadataPolicyProfile,
         resolve_policy,
+    )
+    from mechanical_librarian.domain.metadata_report import (
+        TargetDestination,
+        TargetField,
+        TargetFieldState,
     )
     from mechanical_librarian.domain.proposal_set import audiobook_review_scope
     from tests.support.audiobook_reports import (
@@ -856,7 +869,9 @@ def test_work_manual_availability_is_policy_impact(
                 "title": "Synthetic Journey",
                 "authors": [{"name": "Example Author"}],
                 "summary": summary if available or field != "description_fill" else "",
-                "genres": [{"type": "genre", "name": genre}]
+                "genres": [
+                    {"type": "genre", "name": "Adventure" if populated else genre}
+                ]
                 if available or field != "genres"
                 else [],
                 **({"runtimeLengthMin": 970} if recording else {}),
@@ -874,6 +889,27 @@ def test_work_manual_availability_is_policy_impact(
         ),
         recording_runtime="58200.000" if recording else None,
     )
+    if populated:
+        source = report
+        report = MetadataReport.create(
+            target=replace(
+                source.target,
+                fields=tuple(
+                    TargetField(
+                        TargetDestination.GENRES, TargetFieldState.VALUE, ("Mystery",)
+                    )
+                    if value.destination is TargetDestination.GENRES
+                    else value
+                    for value in source.target.fields
+                ),
+            ),
+            file=source.file,
+            local_claims=source.local_claims,
+            local_reasons=source.local_reasons,
+            providers=source.providers,
+            cover_sources=source.cover_sources,
+            audio=source.audio,
+        )
     assert audiobook_review_scope(report) == ("recording" if recording else "work")
     builtin = MetadataPolicyProfile.builtin()
 
@@ -919,7 +955,34 @@ def test_work_manual_availability_is_policy_impact(
             if value.active.field == field
         )
         assert comparison.changed is changed
-        if recording:
+        if populated:
+            assert dict(active.options)["genres"] == "fill_empty"
+            for value in (comparison.active, comparison.draft):
+                assert (
+                    value.outcome,
+                    value.reason,
+                    value.desired_value,
+                    value.source_candidate_id,
+                ) == ("no_op", "target_preserved", ("Mystery",), None)
+            draft_resolution = resolve_policy(draft, report.target.library)
+            following = evaluate_report(
+                report,
+                draft_resolution.resolved_id,
+                dict(draft_resolution.destinations),
+            )
+            previous_genre, following_genre = (
+                next(
+                    result
+                    for result in compiled.results
+                    if result.destination is TargetDestination.GENRES
+                )
+                for compiled in (proposal, following)
+            )
+            assert previous_genre.alternatives == following_genre.alternatives
+            assert decision_actions(
+                {"result": previous_genre.to_data()}
+            ) == decision_actions({"result": following_genre.to_data()})
+        elif recording:
             assert comparison.active.outcome == "projected"
             assert comparison.active.desired_value == "A voyage reveals a hidden city."
             assert comparison.active.source_candidate_id is not None
