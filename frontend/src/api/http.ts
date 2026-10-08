@@ -2519,7 +2519,7 @@ export const mapActivity = (value: unknown): ActivityDisplayView => {
             'quota_exhausted',
             'transient',
           ].includes(reason) ||
-          (position > 0 && failureReasons[position - 1]! > reason),
+          (position > 0 && (failureReasons[position - 1] ?? '') > reason),
       )
     )
       throw new ApiError(502, 'invalid_provider_recovery_failure_reasons')
