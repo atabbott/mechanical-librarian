@@ -91,8 +91,12 @@ jobs:
           diff -r "$RUNNER_TEMP/frontend-build-a" "$RUNNER_TEMP/frontend-build-b"
           git diff --exit-code
 
+      # The hosted runner has four cores and the tier is CPU-bound, so it runs
+      # as four worker processes, each taking the next test file as it frees
+      # up. Counts and verdict are those a serial run reports; run serially it
+      # took about seventeen minutes of this job's twenty-five.
       - name: Run the fast source tier
-        run: uv run python scripts/run_test_tier.py fast
+        run: uv run python scripts/run_test_tier.py fast --workers 4
 
   exact-installed:
     runs-on: ubuntu-24.04
@@ -239,7 +243,9 @@ jobs:
       - name: Run the protected browser tier
         env:
           ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
-        run: uv run python scripts/run_test_tier.py browser
+        # Four workers, as in `fast-source`. The browser tier divides by test
+        # function rather than by file, because one file holds most of it.
+        run: uv run python scripts/run_test_tier.py browser --workers 4
 
   container-image:
     runs-on: ubuntu-24.04

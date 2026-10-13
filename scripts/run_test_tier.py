@@ -10,9 +10,11 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from pathlib import Path
@@ -108,6 +110,9 @@ _PYTEST_ARGUMENTS = (
     "-p",
     "no:cacheprovider",
 )
+# The tiers `--workers` may divide. The others either already run as bounded
+# partitions of their own or execute through the installed distribution.
+_PARALLEL_TIERS = ("fast", "browser")
 _RUN_EXIT_CODES = frozenset((pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED))
 # The shape `unittest.TestResult` is handed a failure in, spelled out
 # because typeshed keeps its own alias private.
@@ -125,6 +130,12 @@ _SubTestInfo = (
 @dataclass(frozen=True, slots=True)
 class TestCohort:
     discoveries: tuple[tuple[str, str], ...]
+    # How `--workers` divides the cohort between processes. A file is the
+    # natural unit: module and class fixtures stay inside one process, exactly
+    # as a serial run scopes them. The browser cohort is four files, one of
+    # which holds most of its time, so it divides by test function instead,
+    # which keeps every parameter set of one function in one process.
+    parallel_unit: str = "file"
 
 
 COHORTS = {
@@ -135,7 +146,9 @@ COHORTS = {
             ("tests/architecture", "test_*.py"),
         )
     ),
-    "browser": TestCohort(discoveries=(("tests/browser", "test_*.py"),)),
+    "browser": TestCohort(
+        discoveries=(("tests/browser", "test_*.py"),), parallel_unit="function"
+    ),
     "slow": TestCohort(discoveries=(("tests/slow", "test_*.py"),)),
     # The hosted `container-image` job runs exactly the probe cases against
     # the binary extracted from the image it just built (#929). The file stays
@@ -577,6 +590,7 @@ class _CohortSession:
         self._records: list[_PhaseRecord] = []
         self._assertions: dict[tuple[str, str], bool] = {}
         self.identifiers: tuple[str, ...] = ()
+        self.node_targets: dict[str, str] = {}
         self.import_failed = False
         self.identity_collision = False
         self.refused: str | None = None
@@ -680,6 +694,13 @@ class _CohortSession:
             config.hook.pytest_deselected(items=excluded)
         items[:] = _in_load_tests_order(items, ordered)
         self._identities = {item.nodeid: _case_identity(item) for item in items}
+        # A node id is relative to the rootdir pytest inferred, which a worker
+        # started elsewhere need not share, so a unit names its cases through
+        # the collected file's own absolute path instead.
+        self.node_targets = {
+            item.nodeid: f"{item.path}::{item.nodeid.partition('::')[2]}"
+            for item in items
+        }
         # unittest never runs `setUpClass` for a class it was told to skip; it
         # records one skip against each method instead, so the class-level rule
         # must not claim those the way it claims a `SkipTest` raised inside a
@@ -806,9 +827,11 @@ def _drive_pytest(
     session: _CohortSession,
     *,
     collect_only: bool,
+    targets: tuple[str, ...] | None = None,
 ) -> pytest.ExitCode | int:
     _verify_pytest_environment()
-    targets = cohort_targets(root, name)
+    if targets is None:
+        targets = cohort_targets(root, name)
     if not targets:
         raise RuntimeError("empty test cohort")
     arguments = [*_PYTEST_ARGUMENTS, *targets]
@@ -853,7 +876,40 @@ def cohort_manifest(root: Path, name: str) -> dict[str, object]:
     }
 
 
-def run_cohort(root: Path, name: str, test_timeout_seconds: int | None = None) -> bool:
+@dataclass(frozen=True, slots=True)
+class _CohortResult:
+    """What one execution found, before it is reported as a tier verdict.
+
+    A serial tier produces exactly one. A parallel tier produces one per work
+    unit inside each worker and merges them, so both modes reach the same
+    reporting through the same fields.
+    """
+
+    identifiers: tuple[str, ...]
+    engine_ok: bool
+    tests_run: int
+    failures: int
+    errors: int
+    unexpected_successes: int
+    skipped: frozenset[str]
+    failed_test_ids: frozenset[str]
+    tracebacks: tuple[tuple[str, str], ...]
+
+
+def _execute_cohort(
+    root: Path,
+    name: str,
+    test_timeout_seconds: int | None = None,
+    *,
+    targets: tuple[str, ...] | None = None,
+) -> _CohortResult:
+    """Run a cohort, or the explicit `targets` of one work unit, in-process.
+
+    A work unit is a slice, so it may legitimately hold no case -- a file whose
+    only module skips at import, say. Emptiness is the whole cohort's property
+    and is refused by whoever sees the whole cohort.
+    """
+
     session = _CohortSession()
     stopped = threading.Event()
     reporter = threading.Thread(
@@ -863,37 +919,57 @@ def run_cohort(root: Path, name: str, test_timeout_seconds: int | None = None) -
     )
     reporter.start()
     try:
-        outcome = _drive_pytest(root, name, session, collect_only=False)
+        outcome = _drive_pytest(
+            root, name, session, collect_only=False, targets=targets
+        )
     finally:
         stopped.set()
         reporter.join(timeout=2)
+    partial = targets is not None
     if session.refused is not None:
         raise RuntimeError(session.refused)
     if session.import_failed:
         raise RuntimeError("test_cohort_import_failed")
     if session.identity_collision:
         raise RuntimeError("test_cohort_identity_collision")
-    if not session.identifiers:
+    if not session.identifiers and not partial:
         raise RuntimeError("empty test cohort")
-    if outcome not in _RUN_EXIT_CODES:
+    completed: tuple[pytest.ExitCode, ...] = (pytest.ExitCode.OK,)
+    if partial:
+        completed += (pytest.ExitCode.NO_TESTS_COLLECTED,)
+    if outcome not in _RUN_EXIT_CODES and outcome not in completed:
         raise RuntimeError("test_cohort_run_failed")
     session.account()
+    return _CohortResult(
+        identifiers=session.identifiers,
+        engine_ok=outcome in completed,
+        tests_run=session.tests_run,
+        failures=session.failures,
+        errors=session.errors,
+        unexpected_successes=session.unexpected_successes,
+        skipped=frozenset(session.skipped),
+        failed_test_ids=frozenset(session.failed_test_ids),
+        tracebacks=tuple(session.tracebacks),
+    )
+
+
+def _report_cohort(name: str, result: _CohortResult) -> bool:
     # pytest's exit code alone is not the tier's verdict. A non-strict `xfail`
     # that passes leaves it `OK` while the run holds an unexpected success, and
     # unittest refused to call such a run successful. The tier passes only when
     # the engine and the runner's own accounting both find nothing.
     if (
-        outcome == pytest.ExitCode.OK
-        and not session.failed_test_ids
-        and not session.unexpected_successes
+        result.engine_ok
+        and not result.failed_test_ids
+        and not result.unexpected_successes
     ):
         print(
             json.dumps(
                 {
                     "schema": "test-tier-result-v1",
-                    "skipped": len(session.skipped),
+                    "skipped": len(result.skipped),
                     "status": "passed",
-                    "tests_run": session.tests_run,
+                    "tests_run": result.tests_run,
                     "tier": name,
                 },
                 sort_keys=True,
@@ -901,20 +977,20 @@ def run_cohort(root: Path, name: str, test_timeout_seconds: int | None = None) -
             )
         )
         return True
-    tracebacks = tuple(sorted(session.tracebacks))
+    tracebacks = tuple(sorted(result.tracebacks))
     _report_failure_tracebacks(name, tracebacks)
     print(
         json.dumps(
             {
-                "errors": session.errors,
-                "failed_test_ids": sorted(session.failed_test_ids),
-                "failures": session.failures,
+                "errors": result.errors,
+                "failed_test_ids": sorted(result.failed_test_ids),
+                "failures": result.failures,
                 "reason": "test_tier_failed",
                 "schema": "test-tier-result-v1",
                 "status": "failed",
-                "tests_run": session.tests_run,
+                "tests_run": result.tests_run,
                 "tier": name,
-                "unexpected_successes": session.unexpected_successes,
+                "unexpected_successes": result.unexpected_successes,
             },
             sort_keys=True,
             separators=(",", ":"),
@@ -922,6 +998,225 @@ def run_cohort(root: Path, name: str, test_timeout_seconds: int | None = None) -
         file=sys.stderr,
     )
     return False
+
+
+def run_cohort(root: Path, name: str, test_timeout_seconds: int | None = None) -> bool:
+    return _report_cohort(name, _execute_cohort(root, name, test_timeout_seconds))
+
+
+def _parallel_units(
+    root: Path, name: str
+) -> tuple[tuple[tuple[str, ...], ...], tuple[str, ...] | None]:
+    """Divide a cohort into work units, largest expected first.
+
+    A file unit is complete by construction: every file `cohort_targets`
+    names is exactly one unit. A function unit is a slice of a collected
+    file, so the identities collection found are returned beside the units,
+    and the merged run must account for exactly those.
+
+    Units start in descending expected size because a free worker takes the
+    next unit as soon as it finishes one, so a large unit started last would
+    run alone at the end. File size stands in for run time, which nothing
+    records; a function unit is sized by its parameter sets.
+    """
+
+    targets = cohort_targets(root, name)
+    if not targets:
+        raise RuntimeError("empty test cohort")
+    if COHORTS[name].parallel_unit == "file":
+        ordered = sorted(
+            targets, key=lambda target: (-Path(target).stat().st_size, target)
+        )
+        return tuple((target,) for target in ordered), None
+    session = _CohortSession()
+    outcome = _drive_pytest(root, name, session, collect_only=True)
+    if session.refused is not None:
+        raise RuntimeError(session.refused)
+    if session.import_failed or outcome != pytest.ExitCode.OK:
+        raise RuntimeError("test_cohort_import_failed")
+    if session.identity_collision:
+        raise RuntimeError("test_cohort_identity_collision")
+    if not session.identifiers:
+        raise RuntimeError("empty test cohort")
+    groups: dict[str, list[str]] = {}
+    for target in session.node_targets.values():
+        groups.setdefault(target.partition("[")[0], []).append(target)
+    units = sorted(groups.values(), key=lambda unit: -len(unit))
+    return tuple(tuple(unit) for unit in units), session.identifiers
+
+
+def _run_worker_unit(
+    root: Path,
+    name: str,
+    targets: tuple[str, ...],
+    result_path: Path,
+    test_timeout_seconds: int | None,
+) -> None:
+    """Run one work unit and record what it found for the coordinating tier.
+
+    A refusal is recorded rather than raised, so the coordinator reports the
+    reason the unit actually hit instead of only that a worker failed.
+    """
+
+    record: dict[str, object]
+    try:
+        result = _execute_cohort(root, name, test_timeout_seconds, targets=targets)
+    except RuntimeError as error:
+        record = {"reason": str(error)}
+    else:
+        record = {
+            "engine_ok": result.engine_ok,
+            "errors": result.errors,
+            "failed_test_ids": sorted(result.failed_test_ids),
+            "failures": result.failures,
+            "identifiers": list(result.identifiers),
+            "skipped": sorted(result.skipped),
+            "tests_run": result.tests_run,
+            "tracebacks": [list(pair) for pair in result.tracebacks],
+            "unexpected_successes": result.unexpected_successes,
+        }
+    record["schema"] = "test-tier-worker-v1"
+    result_path.write_text(
+        json.dumps(record, sort_keys=True, separators=(",", ":")), encoding="utf-8"
+    )
+
+
+def _spawn_worker_unit(
+    root: Path,
+    name: str,
+    targets: tuple[str, ...],
+    result_path: Path,
+    test_timeout_seconds: int | None,
+) -> dict[str, object]:
+    """Run one unit in a fresh interpreter and read back its record.
+
+    Each unit gets its own process, so no module, fixture or global a unit
+    leaves behind can reach another, and the unit's own stall and deadline
+    diagnostics reach this tier's standard error unchanged. A worker that
+    leaves no record -- a deadline hard-exit, a crash -- refuses the tier.
+    """
+
+    command = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        name,
+        "--worker-result",
+        str(result_path),
+    ]
+    if test_timeout_seconds is not None:
+        command.extend(("--test-timeout-seconds", str(test_timeout_seconds)))
+    for target in targets:
+        command.extend(("--worker-target", target))
+    subprocess.run(
+        command,
+        cwd=root,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        check=False,
+    )
+    try:
+        record = json.loads(result_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"reason": "test_tier_worker_exited"}
+    if not isinstance(record, dict) or record.get("schema") != "test-tier-worker-v1":
+        return {"reason": "test_tier_worker_exited"}
+    return record
+
+
+def _merge_worker_records(
+    records: list[dict[str, object]],
+    expected: tuple[str, ...] | None,
+) -> _CohortResult:
+    """Combine every unit's record into the one result a serial run reports.
+
+    A refusal in any unit refuses the tier, first unit first so the reason is
+    deterministic. Identities must stay unique across units, the cohort must
+    be non-empty as a whole, and a function split must account for exactly
+    the cases its collection found -- otherwise a unit dropped or duplicated
+    cases and the counts would describe some other cohort.
+    """
+
+    for record in records:
+        if "reason" in record:
+            raise RuntimeError(str(record["reason"]))
+    identifiers = [
+        str(identifier)
+        for record in records
+        for identifier in _sequence(record["identifiers"])
+    ]
+    if len(set(identifiers)) != len(identifiers):
+        raise RuntimeError("test_cohort_identity_collision")
+    if not identifiers:
+        raise RuntimeError("empty test cohort")
+    if expected is not None and sorted(identifiers) != sorted(expected):
+        raise RuntimeError("test_cohort_partition_invalid")
+    return _CohortResult(
+        identifiers=tuple(sorted(identifiers)),
+        engine_ok=all(record["engine_ok"] is True for record in records),
+        tests_run=sum(_count(record["tests_run"]) for record in records),
+        failures=sum(_count(record["failures"]) for record in records),
+        errors=sum(_count(record["errors"]) for record in records),
+        unexpected_successes=sum(
+            _count(record["unexpected_successes"]) for record in records
+        ),
+        skipped=frozenset(
+            str(value) for record in records for value in _sequence(record["skipped"])
+        ),
+        failed_test_ids=frozenset(
+            str(value)
+            for record in records
+            for value in _sequence(record["failed_test_ids"])
+        ),
+        tracebacks=tuple(
+            (str(pair[0]), str(pair[1]))
+            for record in records
+            for pair in (_sequence(value) for value in _sequence(record["tracebacks"]))
+        ),
+    )
+
+
+def _sequence(value: object) -> list[object]:
+    if not isinstance(value, list):
+        raise RuntimeError("test_tier_worker_exited")
+    return value
+
+
+def _count(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise RuntimeError("test_tier_worker_exited")
+    return value
+
+
+def run_cohort_in_parallel(
+    root: Path,
+    name: str,
+    workers: int,
+    test_timeout_seconds: int | None = None,
+) -> bool:
+    """Run a cohort across `workers` processes and report it as one tier.
+
+    The verdict, counts and failure diagnostics are the ones a serial run of
+    the same cohort reports; only the wall-clock time differs.
+    """
+
+    _verify_pytest_environment()
+    units, expected = _parallel_units(root, name)
+    with tempfile.TemporaryDirectory(prefix="ml-tier-") as scratch:
+        records_directory = Path(scratch)
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            records = list(
+                pool.map(
+                    lambda numbered: _spawn_worker_unit(
+                        root,
+                        name,
+                        numbered[1],
+                        records_directory / f"unit-{numbered[0]}.json",
+                        test_timeout_seconds,
+                    ),
+                    enumerate(units),
+                )
+            )
+    return _report_cohort(name, _merge_worker_records(records, expected))
 
 
 def _exception_line_offset(encoded: bytes) -> int | None:
@@ -1198,7 +1493,26 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source-sha")
     parser.add_argument("--slow-part", choices=("remaining", "owner-browser"))
     parser.add_argument("--test-timeout-seconds", type=int)
+    parser.add_argument("--workers", type=int)
+    # Internal: one work unit of a `--workers` run, spawned by the runner.
+    parser.add_argument("--worker-result", help=argparse.SUPPRESS)
+    parser.add_argument("--worker-target", action="append", help=argparse.SUPPRESS)
     arguments = parser.parse_args(argv)
+    if arguments.workers is not None and (
+        arguments.workers < 2 or arguments.tier not in _PARALLEL_TIERS or arguments.list
+    ):
+        parser.error(
+            "--workers requires fast or browser execution and at least two workers"
+        )
+    if (arguments.worker_result is None) != (arguments.worker_target is None) or (
+        arguments.worker_result is not None
+        and (
+            arguments.tier not in _PARALLEL_TIERS
+            or arguments.list
+            or arguments.workers is not None
+        )
+    ):
+        parser.error("worker execution is internal to --workers")
     if arguments.test_timeout_seconds is not None and (
         arguments.test_timeout_seconds <= 0
         or arguments.tier != "fast"
@@ -1215,8 +1529,21 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("a tier is required unless --list names the inventory")
         print(json.dumps(tier_inventory(), sort_keys=True, separators=(",", ":")))
         return 0
+    if arguments.worker_result is not None:
+        _run_worker_unit(
+            root,
+            arguments.tier,
+            tuple(arguments.worker_target),
+            Path(arguments.worker_result),
+            arguments.test_timeout_seconds,
+        )
+        return 0
     try:
-        if arguments.slow_part is not None:
+        if arguments.workers is not None:
+            passed = run_cohort_in_parallel(
+                root, arguments.tier, arguments.workers, arguments.test_timeout_seconds
+            )
+        elif arguments.slow_part is not None:
             _verify_slow_partition(root)
             passed = run_cohort(root, f"slow-{arguments.slow_part}")
         elif arguments.tier == "complete":

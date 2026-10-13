@@ -27,6 +27,7 @@ from scripts.run_test_tier import (
     _TEST_TRACEBACK_HEAD_BYTES,
     COHORTS,
     _CohortSession,
+    _merge_worker_records,
     _retained_traceback,
     _verify_slow_partition,
     cohort_manifest,
@@ -34,6 +35,7 @@ from scripts.run_test_tier import (
     collect_cohort,
     main,
     run_cohort,
+    run_cohort_in_parallel,
 )
 
 _FAILURE_SUMMARY_KEYS = {
@@ -1680,3 +1682,186 @@ def test_slow_partition_refuses_real_collection_membership_fault(fault: str) -> 
     ):
         with pytest.raises(RuntimeError, match="^slow_partition_invalid$"):
             _verify_slow_partition(root)
+
+
+_PARALLEL_MODULES = (
+    "import unittest\n"
+    "\n"
+    "class First(unittest.TestCase):\n"
+    "    def test_passing(self) -> None:\n"
+    "        pass\n"
+    "\n"
+    "    def test_failing(self) -> None:\n"
+    "        self.fail('first must be reported')\n",
+    "import pytest\n"
+    "\n"
+    "@pytest.mark.parametrize('value', (1, 2, 3))\n"
+    "def test_values(value: int) -> None:\n"
+    "    assert value < 3\n"
+    "\n"
+    "@pytest.mark.skip(reason='skipped on purpose')\n"
+    "def test_skipped() -> None:\n"
+    "    pass\n",
+    "def test_erroring() -> None:\n    raise ValueError('an error, not a failure')\n",
+    "import unittest\n"
+    "\n"
+    "class Fourth(unittest.TestCase):\n"
+    "    def test_passing(self) -> None:\n"
+    "        pass\n",
+)
+
+
+def _tier_streams(run: Any) -> tuple[bool, dict[str, Any], str]:
+    summary = StringIO()
+    narrative = StringIO()
+    with redirect_stderr(summary), redirect_stdout(narrative):
+        passed = run()
+    stream = narrative if passed else summary
+    decoded: dict[str, Any] = json.loads(stream.getvalue().strip().splitlines()[-1])
+    tracebacks = narrative.getvalue() if not passed else ""
+    return passed, decoded, tracebacks
+
+
+@pytest.mark.parametrize("tier", ("fast", "browser"))
+def test_parallel_workers_report_exactly_what_a_serial_run_reports(
+    tmp_path: Path, tier: str
+) -> None:
+    """Dividing a cohort between workers changes its wall time and nothing else.
+
+    `fast` divides by file and `browser` by test function, so both unit kinds
+    are proved against the serial verdict, counts, failed identities, skips
+    and traceback stream of the same real cohort.
+    """
+
+    targets = tuple(
+        target for body in _PARALLEL_MODULES for target in _module(tmp_path, body)
+    )
+    with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+        serial = _tier_streams(lambda: run_cohort(Path.cwd(), tier))
+        parallel = _tier_streams(lambda: run_cohort_in_parallel(Path.cwd(), tier, 3))
+    assert serial[0] is False
+    assert serial[1]["tests_run"] == 8
+    assert serial[1]["failures"] == 2
+    assert serial[1]["errors"] == 1
+    assert parallel == serial
+
+
+def test_parallel_workers_pass_a_passing_cohort_with_its_skips(
+    tmp_path: Path,
+) -> None:
+    targets = tuple(
+        target
+        for body in (_PARALLEL_MODULES[3], "def test_one() -> None:\n    pass\n")
+        for target in _module(tmp_path, body)
+    )
+    with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+        passed, summary, _ = _tier_streams(
+            lambda: run_cohort_in_parallel(Path.cwd(), "fast", 2)
+        )
+    assert passed is True
+    assert summary == {
+        "schema": "test-tier-result-v1",
+        "skipped": 0,
+        "status": "passed",
+        "tests_run": 2,
+        "tier": "fast",
+    }
+
+
+def test_a_unit_that_cannot_import_refuses_the_parallel_tier(tmp_path: Path) -> None:
+    targets = tuple(
+        target
+        for body in (_PARALLEL_MODULES[3], "import a_module_that_is_not_there\n")
+        for target in _module(tmp_path, body)
+    )
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        pytest.raises(RuntimeError, match="^test_cohort_import_failed$"),
+    ):
+        run_cohort_in_parallel(Path.cwd(), "fast", 2)
+
+
+def test_a_worker_that_leaves_no_record_refuses_the_parallel_tier(
+    tmp_path: Path,
+) -> None:
+    # A worker that hard-exits -- the deadline's `os._exit`, a crash -- writes
+    # no record, and the tier must not read its absence as an empty unit.
+    targets = _module(tmp_path, "import os\nos._exit(3)\n")
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        pytest.raises(RuntimeError, match="^test_tier_worker_exited$"),
+    ):
+        run_cohort_in_parallel(Path.cwd(), "fast", 2)
+
+
+def _worker_record(*identifiers: str) -> dict[str, object]:
+    return {
+        "engine_ok": True,
+        "errors": 0,
+        "failed_test_ids": [],
+        "failures": 0,
+        "identifiers": list(identifiers),
+        "schema": "test-tier-worker-v1",
+        "skipped": [],
+        "tests_run": len(identifiers),
+        "tracebacks": [],
+        "unexpected_successes": 0,
+    }
+
+
+def test_merged_units_refuse_duplicates_omissions_and_emptiness() -> None:
+    complete = [_worker_record("a.one"), _worker_record("a.two")]
+    assert _merge_worker_records(complete, ("a.one", "a.two")).tests_run == 2
+    with pytest.raises(RuntimeError, match="^test_cohort_identity_collision$"):
+        _merge_worker_records([_worker_record("a.one"), _worker_record("a.one")], None)
+    with pytest.raises(RuntimeError, match="^test_cohort_partition_invalid$"):
+        _merge_worker_records([_worker_record("a.one")], ("a.one", "a.two"))
+    with pytest.raises(RuntimeError, match="^empty test cohort$"):
+        _merge_worker_records([_worker_record()], None)
+    # The first refusing unit names the reason, whatever later units found.
+    with pytest.raises(RuntimeError, match="^test_cohort_import_failed$"):
+        _merge_worker_records(
+            [
+                _worker_record("a.one"),
+                {"reason": "test_cohort_import_failed"},
+                {"reason": "test_tier_worker_exited"},
+            ],
+            None,
+        )
+    malformed = _worker_record("a.one")
+    malformed["tests_run"] = True
+    with pytest.raises(RuntimeError, match="^test_tier_worker_exited$"):
+        _merge_worker_records([malformed], None)
+
+
+@pytest.mark.parametrize(
+    "args",
+    (
+        ["fast", "--workers", "1"],
+        ["slow", "--workers", "4"],
+        ["fast", "--workers", "4", "--list"],
+        ["fast", "--worker-result", "record.json"],
+        ["fast", "--worker-target", "tests/unit/test_package.py"],
+        [
+            "slow",
+            "--worker-result",
+            "record.json",
+            "--worker-target",
+            "tests/slow/test_audio_probe.py",
+        ],
+    ),
+)
+def test_workers_option_refuses_tiers_it_cannot_divide(args: list[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 2
+
+
+def test_the_gate_divides_the_fast_and_browser_tiers_into_four_workers() -> None:
+    workflow = (
+        Path(__file__).parents[2] / ".github/workflows/public-gate.yml"
+    ).read_text(encoding="utf-8")
+    assert "run: uv run python scripts/run_test_tier.py fast --workers 4\n" in workflow
+    assert (
+        "run: uv run python scripts/run_test_tier.py browser --workers 4\n" in workflow
+    )

@@ -4429,6 +4429,7 @@ def _activity_read_after_short_delete_journal_convoy(
     reader_c.configure_activity_page_reader()
     writer_ready = threading.Event()
     writer_committed = threading.Event()
+    first_attempt = threading.Event()
     writer_errors: list[BaseException] = []
     attempts = [0]
     projection = reader_c._field_effect_activity
@@ -4436,6 +4437,7 @@ def _activity_read_after_short_delete_journal_convoy(
 
     def counted(*arguments, **keywords):
         attempts[0] += 1
+        first_attempt.set()
         return original(*arguments, **keywords)
 
     def pending_writer() -> None:
@@ -4456,6 +4458,10 @@ def _activity_read_after_short_delete_journal_convoy(
             connection.close()
 
     def release_reader() -> None:
+        # The convoy is held from the first attempt, not from when this thread
+        # started: on a loaded runner the read can begin later than any fixed
+        # delay, find the lock already gone, and never need the retry.
+        first_attempt.wait(5)
         time.sleep(0.2)
         reader_a._connection.rollback()
 

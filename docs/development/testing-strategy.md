@@ -39,7 +39,9 @@ uv run ruff check src tests scripts            # run before any test
 uv run mypy src tests scripts
 
 uv run python scripts/run_test_tier.py fast    # unit, focused integration,
-                                               # static architecture
+                                               # static architecture; add
+                                               # --workers N to run N files
+                                               # at a time, as the gate does
 
 python3 scripts/qualify_exact_artifact.py \    # wheel identity, RECORD
   --source-sha "$(git rev-parse HEAD)" \       # integrity, installed console,
@@ -237,6 +239,19 @@ the pinned `ffprobe` for the probe tier, and never starts or pushes it.
 The `fast-source` job has a 25-minute deadline covering toolchain and dependency
 setup as well as qualification. This operational margin preserves every check
 and test; it is not a runtime guarantee for the fast tier.
+
+`fast-source` and `protected-browser` run their tiers with `--workers 4`. Run
+serially, the fast tier took about seventeen minutes and the browser tier about
+ten, and every merge waits on the slowest job. Each worker is a fresh
+interpreter that takes the next work unit as it frees up, largest first: a test
+file for `fast`, and a test function with all its parameter sets for
+`browser`, whose time sits mostly in one file. The coordinating runner merges
+the units into the same `test-tier-result-v1` line and traceback stream a
+serial run produces, refuses the tier when any unit refuses or leaves no
+record, and refuses a function split whose units do not account for exactly
+the cases its collection found. A file unit also isolates each file from every
+other, which a serial run does not; a test that passes only after another file
+has run is a defect either way.
 
 `protected-browser` restores the Chromium payload from a cache keyed on the
 installed Playwright version and saves it only after
