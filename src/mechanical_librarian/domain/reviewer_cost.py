@@ -46,6 +46,7 @@ class ReviewerCostEstimate(_Closed):
     distinct_images: Count
     total_cost_usd: Price
     per_1000_usd: Price
+    measured_run: MeasuredRun
 
     @field_validator("total_cost_usd", "per_1000_usd")
     @classmethod
@@ -74,14 +75,11 @@ def per_thousand(total: str, attempts: int) -> Decimal:
 
 
 class ReviewerCostEvidence(_Closed):
-    schema_version: Literal["reviewer-cost-evidence-v1"]
-    measured_run: MeasuredRun | None
+    schema_version: Literal["reviewer-cost-evidence-v2"]
     models: Annotated[tuple[ReviewerCostEstimate, ...], Field(max_length=100)]
 
     @model_validator(mode="after")
     def unique_complete_rows(self) -> ReviewerCostEvidence:
-        if bool(self.models) != (self.measured_run is not None) or len(
-            {(row.model, row.task) for row in self.models}
-        ) != len(self.models):
+        if len({(row.model, row.task) for row in self.models}) != len(self.models):
             raise ValueError("invalid measured evidence")
         return self

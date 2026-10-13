@@ -230,6 +230,13 @@ def test_composed_real_reports_packets_dispatch_capture_and_read_only(
         (row["task"], row["requests_completed"], row["per_1000_usd"])
         for row in result["public_evidence"]["models"]
     ] == [("cover", 2, "10.00"), ("description", 2, "10.00")]
+    evidence = result["public_evidence"]
+    assert set(evidence) == {"schema_version", "models"}
+    assert evidence["schema_version"] == "reviewer-cost-evidence-v2"
+    assert {
+        (row["measured_run"]["source_head"], row["measured_run"]["cohort_sha256"])
+        for row in evidence["models"]
+    } == {("a" * 40, "b" * 64)}
     assert [row[0] for row in exchanges] == ["GET", "GET", "POST"] * 4
     assert all(
         (directory / f"attempt-{index}" / "final-response.txt").is_file()

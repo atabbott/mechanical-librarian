@@ -1384,6 +1384,9 @@
             "title": "Distinct Images",
             "type": "integer"
           },
+          "measured_run": {
+            "$ref": "#/components/schemas/MeasuredRun"
+          },
           "model": {
             "maxLength": 256,
             "minLength": 3,
@@ -1452,7 +1455,8 @@
           "works",
           "distinct_images",
           "total_cost_usd",
-          "per_1000_usd"
+          "per_1000_usd",
+          "measured_run"
         ],
         "title": "ReviewerCostEstimate",
         "type": "object"
@@ -1460,16 +1464,6 @@
       "ReviewerCostEvidence": {
         "additionalProperties": false,
         "properties": {
-          "measured_run": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/MeasuredRun"
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
           "models": {
             "items": {
               "$ref": "#/components/schemas/ReviewerCostEstimate"
@@ -1479,14 +1473,13 @@
             "type": "array"
           },
           "schema_version": {
-            "const": "reviewer-cost-evidence-v1",
+            "const": "reviewer-cost-evidence-v2",
             "title": "Schema Version",
             "type": "string"
           }
         },
         "required": [
           "schema_version",
-          "measured_run",
           "models"
         ],
         "title": "ReviewerCostEvidence",

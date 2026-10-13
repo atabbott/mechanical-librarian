@@ -63,25 +63,28 @@ def test_all_modules_import_outside_checkout_without_creating_state() -> None:
     assert created_entries == []
 
 
-def test_installed_reviewer_cost_resource_preserves_accepted_description_phase() -> (
-    None
-):
+def test_installed_reviewer_cost_resource_ships_per_run_luna_rows() -> None:
     from importlib.resources import files
 
     from mechanical_librarian.domain.reviewer_cost import ReviewerCostEvidence
 
     evidence = ReviewerCostEvidence.model_validate_json(
         files("mechanical_librarian")
-        .joinpath("resources/reviewer-cost-evidence-v1.json")
+        .joinpath("resources/reviewer-cost-evidence-v2.json")
         .read_bytes()
     )
-    assert evidence.measured_run is not None
-    assert (
-        evidence.measured_run.source_head == "4f9264a1e8759d55a40bb58129ab0820d9bfe142"
+    assert [(row.model, row.task) for row in evidence.models] == [
+        ("openai/gpt-6-luna", "description"),
+        ("openai/gpt-6-luna", "cover"),
+    ]
+    description, cover = evidence.models
+    assert description.measured_run.source_head == (
+        "4f9264a1e8759d55a40bb58129ab0820d9bfe142"
     )
-    assert len(evidence.models) == 1
-    row = evidence.models[0]
-    assert (row.model, row.task) == ("openai/gpt-6-luna", "description")
-    assert row.requests_attempted == row.requests_completed == 50
-    assert row.requests_failed == 0
-    assert row.per_1000_usd == "0.1713055000"
+    assert description.requests_attempted == description.requests_completed == 50
+    assert description.requests_failed == 0
+    assert description.per_1000_usd == "0.1713055000"
+    assert cover.measured_run.source_head == "3ac47aea8cd97364b1d2ebda935d455209debebb"
+    assert cover.requests_attempted == cover.requests_completed == 100
+    assert cover.requests_failed == 0
+    assert cover.per_1000_usd == "0.636415000"
