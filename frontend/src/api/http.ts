@@ -1706,30 +1706,25 @@ const costPrice = (value: unknown): value is string =>
 const mapCostEvidence = (value: unknown): void => {
   if (
     !record(value) ||
-    !exactKeys(value, ['schema_version', 'measured_run', 'models']) ||
-    value.schema_version !== 'reviewer-cost-evidence-v1' ||
+    !exactKeys(value, ['schema_version', 'models']) ||
+    value.schema_version !== 'reviewer-cost-evidence-v2' ||
     !Array.isArray(value.models) ||
     value.models.length > 100
   )
     throw new ApiError(502, 'invalid_cost_evidence')
-  const run = value.measured_run
-  if (
-    (run === null) !== (value.models.length === 0) ||
-    (run !== null &&
-      (!record(run) ||
-        !exactKeys(run, ['source_head', 'cohort_sha256', 'observed_at']) ||
-        typeof run.source_head !== 'string' ||
-        !/^[0-9a-f]{40}$/.test(run.source_head) ||
-        typeof run.cohort_sha256 !== 'string' ||
-        !/^[0-9a-f]{64}$/.test(run.cohort_sha256) ||
-        !Number.isSafeInteger(run.observed_at) ||
-        Number(run.observed_at) < 0))
-  )
-    throw new ApiError(502, 'invalid_cost_evidence')
   const seen = new Set<string>()
   for (const row of value.models) {
+    const run = record(row) ? row.measured_run : undefined
     if (
       !record(row) ||
+      !record(run) ||
+      !exactKeys(run, ['source_head', 'cohort_sha256', 'observed_at']) ||
+      typeof run.source_head !== 'string' ||
+      !/^[0-9a-f]{40}$/.test(run.source_head) ||
+      typeof run.cohort_sha256 !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(run.cohort_sha256) ||
+      !Number.isSafeInteger(run.observed_at) ||
+      Number(run.observed_at) < 0 ||
       !exactKeys(row, [
         'model',
         'task',
@@ -1741,6 +1736,7 @@ const mapCostEvidence = (value: unknown): void => {
         'distinct_images',
         'total_cost_usd',
         'per_1000_usd',
+        'measured_run',
       ]) ||
       typeof row.model !== 'string' ||
       !openRouterModel.test(row.model) ||

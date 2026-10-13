@@ -37,7 +37,7 @@ const csrf = {
 const reviewerAccessPayload = (overrides: Record<string, unknown> = {}) => ({
   schema_version: 'reviewer-access-view-v2',
   cover_metadata: null,
-  cost_evidence: { schema_version: 'reviewer-cost-evidence-v1', measured_run: null, models: [] },
+  cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -2927,8 +2927,7 @@ it.each([null, '0', '0.000001'])(
       mapReviewerAccess({
         ...value,
         cost_evidence: {
-          schema_version: 'reviewer-cost-evidence-v1',
-          measured_run: null,
+          schema_version: 'reviewer-cost-evidence-v2',
           models: [],
           private: 'forbidden',
         },
@@ -2936,6 +2935,36 @@ it.each([null, '0', '0.000001'])(
     ).toThrow()
   },
 )
+
+it('admits per-row cost runs and refuses a missing row run or a top-level run', () => {
+  const run = { source_head: 'a'.repeat(40), cohort_sha256: 'b'.repeat(64), observed_at: 1 }
+  const row = {
+    model: 'openai/gpt-6-luna',
+    task: 'cover',
+    requests_selected: 100,
+    requests_attempted: 100,
+    requests_completed: 100,
+    requests_failed: 0,
+    works: 100,
+    distinct_images: 270,
+    total_cost_usd: '0.063641500',
+    per_1000_usd: '0.636415000',
+    measured_run: run,
+  }
+  const evidence = (cost_evidence: unknown) =>
+    mapReviewerAccess(reviewerAccessPayload({ cost_evidence }))
+  const valid = { schema_version: 'reviewer-cost-evidence-v2', models: [row] }
+  expect(evidence(valid).cost_evidence).toEqual(valid)
+  const missing = Object.fromEntries(Object.entries(row).filter(([key]) => key !== 'measured_run'))
+  for (const invalid of [
+    { ...valid, models: [missing] },
+    { ...valid, models: [{ ...row, measured_run: null }] },
+    { ...valid, models: [{ ...row, measured_run: { ...run, source_head: 'A'.repeat(40) } }] },
+    { ...valid, measured_run: run },
+    { ...valid, schema_version: 'reviewer-cost-evidence-v1' },
+  ])
+    expect(() => evidence(invalid)).toThrow(new ApiError(502, 'invalid_cost_evidence'))
+})
 
 describe('preparation scan identity', () => {
   const active = {

@@ -159,7 +159,7 @@ class OpenRouterRecommendation(_Closed):
 def _cost_evidence() -> ReviewerCostEvidence:
     payload = (
         files("mechanical_librarian")
-        .joinpath("resources/reviewer-cost-evidence-v1.json")
+        .joinpath("resources/reviewer-cost-evidence-v2.json")
         .read_bytes()
     )
     if len(payload) > 262144:

@@ -55,18 +55,19 @@ could exceed either. Preliminary smoke runs are separate: six paid successes
 ($0.002389755), two contained successes and one local pre-dispatch setup failure.
 They are excluded from all collection totals and distributions here.
 
-The [native 50-description evidence](../reference/reviewer-cost-evidence-v1.json)
-is packaged for Settings: $0.1713055000 per 1,000 attempted description
-requests. Setup is cover-only and remains unmeasured; other model/task estimates
+The [packaged evidence](../reference/reviewer-cost-evidence-v2.json) carries
+the native 50-description row for Settings: $0.1713055000 per 1,000 attempted
+description requests. Its Luna cover row comes from the
+[later cover run](#later-luna-cover-run-2026-10-13); other model/task estimates
 remain unavailable in the application.
-The [native 71-MiMo continuation evidence](../reference/reviewer-cost-cover-continuation-v1.json)
+The [native 71-MiMo continuation evidence](../reference/reviewer-cost-cover-continuation-v2.json)
 is documentation-only: $0.8084875774647887323943661972 per 1,000 cover requests
 on that continuation subset, not a whole-cohort comparison. Each retains its
 own cohort digest and observation time. The native `works` field counts input
 report indices (50 and 71), not distinct literary works. Cost denominators are
 attempted requests, never images or successful outputs alone.
 
-The closed evidence format admits one measured run. Different phases are not
+Each evidence row carries its own measured run. Different phases are not
 combined under invented provenance. The original mixed run remains incomplete,
 even though all 91 Luna covers succeeded with known cost $0.066307675. All MiMo
 attempts together have known cost $0.0745531138 across 91 known-charge outcomes
@@ -226,3 +227,14 @@ admitted abstention. Correlated variants and paired works remain in the counts.
 | series_styling | series_branded: 43, standalone: 51 |
 | thumbnail_legibility | legible: 94 |
 | tie_in_branding | absent: 88, present: 6 |
+
+## Later Luna cover run (2026-10-13)
+
+A separate complete run measured `openai/gpt-6-luna` covers: 100 requests over
+100 reports, 50 audiobook and 50 ebook cover-eligible current reports drawn
+deterministically from a retained closed full-library snapshot. It sent 270
+distinct images. Every request completed with a known charge and none failed:
+$0.0636415 in total, $0.636415 per 1,000 attempted cover requests. The
+measurement tool at that source emitted the earlier single-run evidence shape;
+the row is restated unchanged, with its own run provenance, in the packaged
+evidence.

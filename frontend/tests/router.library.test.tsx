@@ -3818,8 +3818,7 @@ describe('Library route', () => {
             schema_version: 'reviewer-access-view-v2',
             cover_metadata: null,
             cost_evidence: {
-              schema_version: 'reviewer-cost-evidence-v1',
-              measured_run: null,
+              schema_version: 'reviewer-cost-evidence-v2',
               models: [],
             },
             revision: 9,

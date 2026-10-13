@@ -3,8 +3,10 @@
 This owner-run, report-only tool supports the separately authorized collection
 in #1060. Software delivery does not authorize paid calls or use of a live
 library. Ordinary application reads never run it. The [bounded collection report](reviewer-collection-report.md) records accepted
-measurements and their limitations. Packaged evidence contains only the complete
-50-description phase; the separate cover continuation remains documentation-only.
+measurements and their limitations. Packaged evidence admits rows from separate
+complete runs, each carrying its own run provenance: the 50-description phase
+and the later 100-request Luna cover run. The MiMo cover continuation remains
+documentation-only.
 
 Use an owner-private copy of an exact-current, closed report database and its
 retained cover artifact directory. Do not use an active database: the read-only
@@ -104,6 +106,6 @@ cost denominator. Per-1,000 cost is total known charges divided by attempted
 requests times 1,000, never images or successful outputs. Threshold stops and
 unknown or interrupted attempts retain private incomplete evidence only.
 Do not copy private capture files into the repository. The closed public model
-admits only run provenance and aggregate model/task rows; public documentation
+admits only aggregate model/task rows, each with its run provenance; public documentation
 and the packaged JSON must be byte-identical. Publishing measurements is a
 separate reviewed action, not a tool side effect.
