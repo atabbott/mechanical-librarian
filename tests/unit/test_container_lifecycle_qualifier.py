@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
 import subprocess
 from pathlib import Path
 from types import ModuleType
@@ -66,3 +68,34 @@ def test_first_run_partial_volume_creation_enters_owned_cleanup(
 
     assert set(removed) == created
     assert len(removed) == len(created)
+
+
+def test_recovery_identity_expects_the_dockerfile_runtime_python(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    qualifier = _qualifier()
+    dockerfile = (Path(__file__).parents[2] / "Dockerfile").read_text()
+    runtime = re.search(r"^FROM python:(\S+)-slim-bookworm@\S+$", dockerfile, re.M)
+    assert runtime is not None
+    assert qualifier._runtime_python(dockerfile) == runtime[1]
+
+    def proof(arguments: list[str], *, capture: bool = True) -> str:
+        del arguments, capture
+        return json.dumps({"python": "3.0.0", "installed_origin": True})
+
+    monkeypatch.setattr(qualifier, "_run", proof)
+    with pytest.raises(
+        qualifier.QualificationError, match="recovery_runtime_identity_mismatch"
+    ):
+        qualifier._qualify_retained_recovery("image", "run", runtime[1])
+
+
+@pytest.mark.parametrize("count", [0, 2])
+def test_runtime_python_pin_requires_one_final_stage(count: int) -> None:
+    qualifier = _qualifier()
+    runtime = "FROM python:3.14.8-slim-bookworm@sha256:" + "0" * 64
+    dockerfile = "\n".join([runtime + " AS build", *[runtime] * count])
+    with pytest.raises(
+        qualifier.QualificationError, match="runtime_python_pin_unsupported"
+    ):
+        qualifier._runtime_python(dockerfile)

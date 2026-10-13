@@ -153,6 +153,19 @@ def _git_blob(source_sha: str, path: str) -> bytes:
     return completed.stdout
 
 
+def _runtime_python(dockerfile: str) -> str:
+    """Read the final runtime stage's exact Python pin; Renovate bumps it."""
+    pattern = r"FROM python:([0-9]+\.[0-9]+\.[0-9]+)-slim-bookworm@sha256:[0-9a-f]{64}"
+    versions = [
+        match[1]
+        for line in dockerfile.splitlines()
+        if (match := re.fullmatch(pattern, line)) is not None
+    ]
+    if len(versions) != 1:
+        raise QualificationError("runtime_python_pin_unsupported")
+    return versions[0]
+
+
 def _owned(kind: str, name: str, run_id: str) -> bool:
     command = {
         "container": [
@@ -848,7 +861,9 @@ def _qualify_first_run(
         _remove_owned("volume", data_volume, run_id)
 
 
-def _qualify_retained_recovery(image: str, run_id: str) -> dict[str, object]:
+def _qualify_retained_recovery(
+    image: str, run_id: str, python: str
+) -> dict[str, object]:
     """Run native kill/preservation fixtures against this image's installed code."""
     import pytest
 
@@ -896,10 +911,7 @@ def _qualify_retained_recovery(image: str, run_id: str) -> dict[str, object]:
         ]
     )
     identity = json.loads(proof.splitlines()[0])
-    if (
-        identity.get("python") != "3.14.7"
-        or identity.get("installed_origin") is not True
-    ):
+    if identity.get("python") != python or identity.get("installed_origin") is not True:
         raise QualificationError("recovery_runtime_identity_mismatch")
     return {
         **identity,
@@ -964,6 +976,7 @@ def main() -> None:
     if shutil.which("docker") is None or shutil.which("openssl") is None:
         raise QualificationError("qualification_dependency_unavailable")
 
+    python = _runtime_python(_git_blob(source_sha, "Dockerfile").decode())
     script_digest = _sha256(Path(__file__))
     run_id = uuid.uuid4().hex
     suffix = f"{source_sha[:12]}-{run_id[:12]}"
@@ -1266,7 +1279,7 @@ def main() -> None:
             second_hash = _sha256(second)
         if first_hash != second_hash:
             raise QualificationError("container_restart_state_changed")
-        retained_recovery = _qualify_retained_recovery(image, run_id)
+        retained_recovery = _qualify_retained_recovery(image, run_id, python)
         first_run = {
             "https": _qualify_first_run(image, run_id, suffix),
             "http": _qualify_first_run(image, run_id, suffix + "-http", scheme="http"),

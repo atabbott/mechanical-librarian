@@ -294,6 +294,24 @@ def test_unreviewed_partition_and_exclusions_refuse(mutation):
         records.source_bindings(ROOT, provenance, overrides)
 
 
+@pytest.mark.parametrize("name", ["Dockerfile", ".github/workflows/public-gate.yml"])
+def test_managed_build_declarations_are_outside_the_inventory(name):
+    provenance = json.loads((ROOT / records.PROVENANCE).read_bytes())
+    assert name not in provenance["source_classification"]
+    assert name not in provenance["source_bindings"]
+    provenance["source_classification"][name] = "provenance"
+    with pytest.raises(ValueError, match="requires explicit review"):
+        records.source_bindings(ROOT, provenance)
+
+
+@pytest.mark.parametrize(
+    "name", [".github/renovate.json", "tests/unit/test_public_gate_contract.py"]
+)
+def test_bound_source_edit_drifts(name):
+    with pytest.raises(ValueError, match="source binding drift"):
+        records.verify(overrides={name: (ROOT / name).read_bytes() + b"\n"})
+
+
 def test_evidence_and_predecessor_references_are_not_authority():
     for name, _, _ in records.RECORDS.values():
         record = json.loads((ROOT / records.REFERENCE / name).read_bytes())
