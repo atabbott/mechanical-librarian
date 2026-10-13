@@ -6,9 +6,11 @@ paths, domains, credentials, media, database snapshots, or unredacted reports.
 
 ## Reading
 
-Required before any change: this file, [PRODUCT.md](PRODUCT.md) for the product
-boundary, [CONTRIBUTING.md](CONTRIBUTING.md) for what merging actually proves,
-and [testing and quality strategy](docs/development/testing-strategy.md).
+Required before any change: this file and [PRODUCT.md](PRODUCT.md) for the
+product boundary. Read [testing and quality strategy](docs/development/testing-strategy.md)
+when designing executable changes, choosing proof, or running validation, and
+[CONTRIBUTING.md](CONTRIBUTING.md) when planning delivery. Read both before
+publication: together they establish what merging actually proves.
 
 Everything else is reference, read when the work reaches it and not before.
 [Security and threat model](docs/architecture/security.md) is the authority for

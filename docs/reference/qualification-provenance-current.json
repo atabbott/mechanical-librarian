@@ -164,8 +164,8 @@
   "self_binding": "This provenance document has no self hash. Exact artifact receipts bind final commit and payload, not this source record.",
   "source_bindings": {
     ".github/renovate.json": "73410ae39e3bf61dd070c43b12b754bcb92d505660828947500f5243965ae64b",
-    "AGENTS.md": "14b2ce31053c1d832592e1507b051ec6fcf93f1e816cb7e3d56c857197045804",
-    "CHANGELOG.md": "cd29830b1fd48cac1695089c2eac7247e485a9211e4663a3dee5460d5e079542",
+    "AGENTS.md": "5082e5a52f671caba825bb92cdb47bfc99abbe054e5c4309174c9adc59eb9df2",
+    "CHANGELOG.md": "f906a7467e83a76496ebccd4480ab4d4d92eadeac84305cc1694a5c4e6a235e8",
     "CONTRIBUTING.md": "c57b0ac08c7ab42e438227a428bdc7ed562194596a80aaa908709473a06fe9e7",
     "README.md": "3e229e43335d39199d97979f271c44ca3973de5515506dc137e85d63e1070d1d",
     "docs/architecture/decisions/0021-coherent-bibliographic-combinations.md": "1fc08c98c404d1e085330804c342e59e65c6f6bea1b478f3b5679ada07831533",
