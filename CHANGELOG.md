@@ -1,11 +1,5 @@
 # Changelog
 
-- A sole confirmed ebook cover remains available for owner review when sibling
-  acquisition times out. Automatic cover replacement distinguishes a known
-  empty target from an unverified incumbent and replaces a confirmed incumbent
-  only with a strict rank upgrade. Existing installs require a clean rebuild.
-  (#999)
-
 ## Unreleased
 
 - Cover considerations retain exact canonical report references instead of duplicate
@@ -384,6 +378,12 @@
   dimensions when another source has the same preview bytes. Library attention
   now follows live provider recovery, and a successful replacement after a
   stale comparison clears that comparison's recovery notice. (#999)
+
+- A sole confirmed ebook cover remains available for owner review when sibling
+  acquisition times out. Automatic cover replacement distinguishes a known
+  empty target from an unverified incumbent and replaces a confirmed incumbent
+  only with a strict rank upgrade. Existing installs require a clean rebuild.
+  (#999)
 
 - Equivalent local description evidence no longer replaces an eligible
   provider's exact text or makes a qualified automatic fill disappear. Source
