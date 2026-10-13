@@ -944,7 +944,16 @@ def _apply(
     clock: int,
     origin: str = "human",
 ) -> dict[str, object]:
-    placeholder = type("Plan", (), {"work_id": item, "destination": destination})()
+    # A pre-plan read has no subtitle companion for the target to observe.
+    placeholder = type(
+        "Plan",
+        (),
+        {
+            "work_id": item,
+            "destination": destination,
+            "subtitle_plan": lambda _self: None,
+        },
+    )()
     try:
         before = target.read(placeholder)
     except FieldEffectError as error:
@@ -1015,7 +1024,11 @@ def _apply(
 
 def _stable_cover_observation(target, item: str) -> None:
     """Wait only for the disposable service's prior write to become observable."""
-    placeholder = type("Plan", (), {"work_id": item, "destination": "cover"})()
+    placeholder = type(
+        "Plan",
+        (),
+        {"work_id": item, "destination": "cover", "subtitle_plan": lambda _self: None},
+    )()
     deadline = time.monotonic() + 20
     previous = None
     while time.monotonic() < deadline:

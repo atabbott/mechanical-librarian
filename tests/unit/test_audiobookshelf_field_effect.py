@@ -816,3 +816,12 @@ def test_description_formatting_drift_is_not_an_effect_precondition_match(
     assert observed.value != plan.pre_value
     assert case.target.apply(plan).outcome == "conflict"
     assert not any(request.method == "PATCH" for request in case.requests)
+
+
+def test_qualification_pre_plan_reads_reach_the_real_target(case: _Case) -> None:
+    # The canary waits for a stable cover through the adapter's own
+    # observation, which also asks the plan for a subtitle companion (#1183).
+    from scripts.qualify_audiobookshelf_field_effect import _stable_cover_observation
+
+    _stable_cover_observation(case.target, "item-1")
+    assert sum(request.method == "GET" for request in case.requests) >= 2
