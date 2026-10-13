@@ -41,6 +41,20 @@ Worker startup, recovery and scheduling retain background classification. Artifa
 recovery borrows that same coordinator for its retained-attempt update and reference
 reads, releasing admission for filesystem inspection and cleanup.
 
+That connection lock is also what keeps a shared cross-thread connection live
+(#1020). The application connection registers Python SQL functions
+(`ml_casefold`, `ml_cover_consideration_current`). CPython evaluates a statement
+holding the SQLite connection mutex and retakes the GIL to call such a function,
+while binding a parameter takes that mutex with the GIL held. Two threads using
+one connection at once can therefore deadlock the whole process. Every statement
+runs under its connection's serialization lock instead of using per-thread
+connections or moving those functions out of SQL. This keeps one physical owner
+and SQL-side search and cover currentness, at the cost that any unserialized
+statement on a shared connection reintroduces the hang.
+`tests/integration/test_shared_connection_serialization.py` runs concurrent
+review reads and guarded writes in a child process under a deadline and fails on
+any statement executed without the lock.
+
 [ADR-0082](decisions/0082-runtime-activity-facts.md) adds a root-owned, 64 MiB
 serialized Activity fact store borrowed by those query-only readers. Initial
 composition completes before readiness. Every new borrower scans exact scalar and
