@@ -120,6 +120,7 @@ from mechanical_librarian.interfaces.web.react_assets import (
 IMAGES = {
     "2.26.0": "ghcr.io/advplyr/audiobookshelf:2.26.0@sha256:16685fbba37a21d403f5390b907d286e15b3086d26527269b4ad785f71f571e5",
     "2.36.0": "ghcr.io/advplyr/audiobookshelf:2.36.0@sha256:180acad33d69c99ed208676465d8edcb268fa46967735579a7810859885b1a8e",
+    "2.37.1": "ghcr.io/advplyr/audiobookshelf:2.37.1@sha256:581d68b2a6fc7ebf58d81c878a9f387cbbc0d88ac9d37b298b9cee10168af85b",
 }
 OWNERSHIP_LABEL = "org.mechanical-librarian.qualification-run"
 
