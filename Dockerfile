@@ -113,8 +113,8 @@ RUN set -eu; \
       source/codex-be6e8eac029b183056b7e4402879f15d2c85f61b.tar.gz \
       > metadata/SHA256SUMS
 
-FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63 AS build
-COPY --from=ghcr.io/astral-sh/uv:0.12.13@sha256:b485bd65cc2cf1c9a93b3554012c9c3778cf7b1b5fd3d3096ce9e1226c97e1e6 /uv /usr/local/bin/uv
+FROM python:3.14.8-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83 AS build
+COPY --from=ghcr.io/astral-sh/uv:0.12.23@sha256:61d393e44e249f2e4b526b6c7ddcecce245946826e608e11c93ad4f5bba55b21 /uv /usr/local/bin/uv
 WORKDIR /build
 COPY pyproject.toml setup.py uv.lock README.md LICENSE ./
 COPY scripts/build_frontend.py ./scripts/build_frontend.py
@@ -133,7 +133,7 @@ RUN /opt/mechanical-librarian/bin/python scripts/generate_contained_reviewer_pro
     && chown 65532:65532 /reviewer-proof/profile.json \
     && chmod 0400 /reviewer-proof/profile.json
 
-FROM python:3.14.7-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63
+FROM python:3.14.8-slim-bookworm@sha256:48b13b003dda20b16f9442b8475aa05fe21bf6579a8c881db92ffb4d8fd20f83
 COPY --from=probe-build /usr/local/bin/ffprobe /usr/local/bin/ffprobe
 RUN /usr/local/bin/ffprobe -version \
     && groupadd --system --gid 65532 librarian \
