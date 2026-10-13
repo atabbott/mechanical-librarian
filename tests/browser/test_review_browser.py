@@ -8109,8 +8109,10 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
         ),
         openrouter=ReviewerEngineStatus(engine="openrouter", state="unconfigured"),
     )
-    assert len(access.cost_evidence.models) == 1
-    assert access.cost_evidence.models[0].per_1000_usd == "0.1713055000"
+    assert [(row.task, row.per_1000_usd) for row in access.cost_evidence.models] == [
+        ("description", "0.1713055000"),
+        ("cover", "0.636415000"),
+    ]
     with tempfile.TemporaryDirectory() as directory:
         root = Path(directory)
         root.chmod(0o700)
@@ -8148,7 +8150,9 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                         "About $0.1713 per 1,000 description review requests (estimate)."
                     )
                     cover = page.get_by_role("region", name="Optional cover reviewer")
-                    expect(cover).to_contain_text("Not measured for this model.")
+                    expect(cover).to_contain_text(
+                        "About $0.6364 per 1,000 cover review requests (estimate)."
+                    )
                     expect(adviser).not_to_contain_text("1790929488")
                     expect(adviser).not_to_contain_text("2026")
                     assert page.evaluate(
@@ -8197,7 +8201,9 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                 ):
                     page.goto(origin)
                     expect(
-                        page.get_by_text("Request cost: not measured for this model.")
+                        page.get_by_text(
+                            "About $0.6364 per 1,000 cover review requests (estimate)."
+                        )
                     ).to_be_visible()
                     expect(
                         page.get_by_text(
