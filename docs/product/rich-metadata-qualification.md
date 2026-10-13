@@ -26,6 +26,9 @@ provenance-only file requires reclassification. All three families share the
 semantic partition. Mixed `review_web.py`, `interfaces/web/app.py` and
 `field_effect_activity.py` remain semantic even for copy edits. Frontend copy
 and provenance changes still require applicable behavior, security and build proof.
+Renovate-managed build declarations (`Dockerfile`, `.github/workflows/public-gate.yml`)
+are dependency build provenance outside the inventory, as ADR-0076 treats the
+frontend manifests; their contract tests and the remote gates prove them.
 The package inventory includes non-Python resources: the setup/frontend
 `settings_vocabulary.json` is explicitly provenance-only. Only the exact `py.typed`
 marker and `__pycache__/*.pyc` bytecode are omitted. Frontend runtime assets and
