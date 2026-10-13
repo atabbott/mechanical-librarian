@@ -248,7 +248,7 @@
     "scripts/audit_sqlite_row_deltas.py": "f4d14606f3aff0915f3f467d197f7cf37296c3b18b1dcf4a369d6fdb283d52a0",
     "scripts/build_frontend.py": "d982370a14490fff44c57baafc9ffad781a0cd24e2b30e5a9f51b66507aacccd",
     "scripts/generate_contained_reviewer_profile.py": "b578726526ec74d325228084a4a79ac390abce5847387bfd2b8a3f1fdf7fa6e2",
-    "scripts/qualify_audiobookshelf_field_effect.py": "b75c04e589c8e105bf0d83b4ea44f449af7fd9c2bee62a3c5ac775b173f6384c",
+    "scripts/qualify_audiobookshelf_field_effect.py": "3b2d86e315a42c3b188b4b6cdf8006e77d6acae4c6fc991a0a467aa71fed9109",
     "scripts/qualify_container_lifecycle.py": "8d269b5c48525af9870a8d0052ada2d0644b7d891b9513df2d2fc9c2a6f248cf",
     "scripts/qualify_exact_artifact.py": "41610f1a09296d3b6518b23ec160a360ea910b33d0c35408255bc5d5e2357050",
     "scripts/qualify_provider_evidence_replay.py": "a69299f02c07951a1468a5b7926fbde25e48f75073785ad71445effd3be36129",
