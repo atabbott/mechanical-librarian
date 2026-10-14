@@ -12,7 +12,16 @@ import {
   useRouter,
   useRouterState,
 } from '@tanstack/react-router'
-import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import {
+  Suspense,
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
 
 import type { createMemoryHistory } from '@tanstack/react-router'
 import { ApiError, BuildMismatchError, SessionExpiredError } from './api/http'
@@ -754,6 +763,15 @@ const ThemeControl = () => {
   )
 }
 
+// A route showing a retained read is not yet loaded, so the shell holds its announcement.
+const RetainingContext = createContext<(retaining: boolean) => void>(() => undefined)
+const useAnnounceRetaining = (retaining: boolean) => {
+  const setRetaining = useContext(RetainingContext)
+  useLayoutEffect(() => {
+    setRetaining(retaining)
+    return () => setRetaining(false)
+  }, [setRetaining, retaining])
+}
 const Shell = () => {
   const shell = useRef<HTMLDivElement>(null)
   const masthead = useRef<HTMLElement>(null)
@@ -776,6 +794,7 @@ const Shell = () => {
   const path = new URL(navigation.href, window.location.origin).pathname
   const title = routeTitle(path)
   const [mismatch, setMismatch] = useState(false)
+  const [retaining, setRetaining] = useState(false)
   const [shellError, setShellError] = useState('')
   useEffect(() => {
     const listener = () => setMismatch(true)
@@ -902,7 +921,7 @@ const Shell = () => {
         </div>
       </header>
       <p className="navigation-status" role="status" aria-live="polite">
-        {navigation.status === 'idle' ? `${title} loaded` : `Loading ${title}`}
+        {navigation.status === 'idle' && !retaining ? `${title} loaded` : `Loading ${title}`}
       </p>
       {shellError ? (
         <p className="shell-error" role="alert">
@@ -918,7 +937,9 @@ const Shell = () => {
       ) : null}
       <main id="main-content" ref={main} tabIndex={-1} aria-busy={navigation.status !== 'idle'}>
         <Suspense fallback={<RoutePending title={title} />}>
-          <Outlet />
+          <RetainingContext.Provider value={setRetaining}>
+            <Outlet />
+          </RetainingContext.Provider>
         </Suspense>
       </main>
     </div>
@@ -982,6 +1003,7 @@ const LibraryRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
   const query = useRetainedQuery(libraryQuery(http, search))
+  useAnnounceRetaining(query.isPlaceholderData)
   return (
     <LibraryPage
       data={query.data}
@@ -996,6 +1018,7 @@ const AttentionRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const search = attentionRoute.useSearch()
   const query = useRetainedQuery(attentionQuery(http, search))
+  useAnnounceRetaining(query.isPlaceholderData)
   return (
     <div className="attention-route" aria-busy={query.isPlaceholderData || undefined}>
       <AttentionPage
@@ -1012,6 +1035,7 @@ const DiagnosticRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const search = normalizeDetailSearch(detailRoute.useSearch())
   const detail = useRetainedQuery(detailQuery(http, reviewCaseId))
+  useAnnounceRetaining(detail.isPlaceholderData)
   const backSearch = normalizeLibrarySearch({ ...search, preview: reviewCaseId })
   const problem =
     detail.error instanceof ApiError && detail.error.code === 'not_found'

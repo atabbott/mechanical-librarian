@@ -2128,11 +2128,18 @@ describe('Library route', () => {
       expect(list).toHaveAttribute('aria-busy', 'true')
       expect(screen.getByRole('button', { name: /^First page\./u })).toBeVisible()
       expect(screen.queryByText('Loading works…')).toBeNull()
-      expect(screen.getByText('1 total')).toBeVisible()
+      expect(screen.getByText('1 total')).toHaveAttribute('aria-busy', 'true')
+      const announced = document.querySelector('.navigation-status')
+      expect(announced).toHaveTextContent('Loading Library')
       expect(next).toHaveAttribute('aria-disabled', 'true')
       // The retained page's cursor belongs to the key the URL just left.
       await user.click(next)
       expect(router.state.location.search.cursor).toBe('page-2')
+      // So may its rows, which the settled page may not contain.
+      const retainedRow = screen.getByRole('button', { name: /^First page\./u })
+      expect(retainedRow).toHaveAttribute('aria-disabled', 'true')
+      await user.click(retainedRow)
+      expect(router.state.location.search).toEqual({ lens: 'all', cursor: 'page-2' })
       await act(async () =>
         reads
           .get('page-2')
@@ -2144,6 +2151,30 @@ describe('Library route', () => {
       expect(screen.queryByRole('button', { name: /^First page\./u })).toBeNull()
       expect(list).not.toHaveAttribute('aria-busy')
       expect(next).not.toHaveAttribute('aria-disabled')
+      expect(announced).toHaveTextContent('Library loaded')
+    })
+
+    it('keeps the retained rows grouped as their own lens until the newer lens settles', async () => {
+      let settle: (view: LibraryView) => void = () => undefined
+      const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
+        search.lens === 'all'
+          ? page('Grouped work')
+          : new Promise<LibraryView>((resolve) => (settle = resolve)),
+      )
+      const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+      await screen.findByRole('button', { name: /^Grouped work\./u })
+      const groups = () =>
+        [...document.querySelectorAll('.library-provider-group h3')].map((h) => h.textContent)
+      const shown = groups()
+      expect(shown).toEqual(['Provider evidence complete'])
+      await act(async () =>
+        router.navigate({ to: '/library', search: { lens: 'no_attention_needed' } }),
+      )
+      expect(document.querySelector('.library-work-list')).toHaveAttribute('aria-busy', 'true')
+      expect(groups()).toEqual(shown)
+      await act(async () => settle({ ...page('Clear work'), lens: 'no_attention_needed' }))
+      await screen.findByRole('button', { name: /^Clear work\./u })
+      expect(groups()).toEqual([])
     })
 
     it('lets no late Library navigation pull the owner back once another route is loading', async () => {

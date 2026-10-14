@@ -174,12 +174,14 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
   const { http } = useReviewContext()
   const search = normalizeDetailSearch(detailRoute.useSearch())
   const { reviewCaseId } = detailRoute.useParams()
+  // Diagnostics belong to the case on screen, which a retained read keeps
+  // after the URL has moved to the next case.
   const evidence = useInfiniteQuery({
-    queryKey: ['review-case', reviewCaseId, 'evidence'],
+    queryKey: ['review-case', data.id, 'evidence'],
     initialPageParam: undefined as string | undefined,
     queryFn: (queryContext) =>
       http.getEvidence(
-        reviewCaseId,
+        data.id,
         queryContext.pageParam,
         queryContext.signal,
         queryWorkClass(queryContext),
@@ -190,9 +192,9 @@ export default function DetailPage({ data }: { data: CaseDetailView }) {
     enabled: data.current && search.subview === 'evidence',
   })
   const history = useQuery({
-    queryKey: ['review-case', reviewCaseId, 'history'],
+    queryKey: ['review-case', data.id, 'history'],
     queryFn: (queryContext) =>
-      http.getHistory(reviewCaseId, queryContext.signal, queryWorkClass(queryContext)),
+      http.getHistory(data.id, queryContext.signal, queryWorkClass(queryContext)),
     staleTime: 30_000,
     retry: false,
     enabled: data.current && search.subview === 'history',

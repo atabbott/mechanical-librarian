@@ -520,9 +520,22 @@ describe('Library review ownership', () => {
               ? Promise.reject(new ApiError(503, 'unavailable'))
               : detail,
       ),
+      getEvidence: vi.fn(async (id: string) => ({
+        items: [
+          {
+            destinations: ['title'],
+            observation: `${id} observation`,
+            role: 'external_observation' as const,
+            source: 'Synthetic source',
+          },
+        ],
+        missingLineageCount: 0,
+        sourceLedger: [],
+      })),
     }
     const { router } = renderRoute('/review/case-1?lens=all&subview=evidence', http)
     expect(await screen.findByRole('heading', { level: 1, name: 'A Book' })).toBeVisible()
+    expect(await screen.findByText('case-1 observation')).toBeVisible()
     const route = document.querySelector('.diagnostic-route')
     const open = (reviewCaseId: string) =>
       router.navigate({
@@ -534,8 +547,13 @@ describe('Library review ownership', () => {
     await open('case-2')
     await waitFor(() => expect(route).toHaveAttribute('aria-busy', 'true'))
     expect(screen.getByRole('heading', { level: 1, name: 'A Book' })).toBeVisible()
+    // The next case's evidence never appears under the retained case's heading.
+    expect(screen.getByText('case-1 observation')).toBeVisible()
+    expect(screen.queryByText('case-2 observation')).toBeNull()
     settle({ ...detail, id: 'case-2', title: 'Another Book' })
     expect(await screen.findByRole('heading', { level: 1, name: 'Another Book' })).toBeVisible()
+    expect(await screen.findByText('case-2 observation')).toBeVisible()
+    expect(screen.queryByText('case-1 observation')).toBeNull()
     expect(screen.queryByRole('heading', { level: 1, name: 'A Book' })).toBeNull()
     expect(route).not.toHaveAttribute('aria-busy')
 

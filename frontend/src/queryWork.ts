@@ -258,7 +258,8 @@ export function invalidateBackgroundQueries(
 
 /**
  * Warm a read the owner is about to make as background work, deduplicated by
- * the cache. A required read of the same key later promotes or reuses it.
+ * the cache. A required read of the same key later promotes or reuses it. A key
+ * something already reads is not warmed: its observers, refreshes and holds own it.
  */
 export function prefetchBackgroundQuery<TQueryFnData, TError, TData, TQueryKey extends QueryKey>(
   client: QueryClient,
@@ -266,6 +267,7 @@ export function prefetchBackgroundQuery<TQueryFnData, TError, TData, TQueryKey e
 ): void {
   const defaulted = client.defaultQueryOptions(options)
   const query = client.getQueryCache().build(client, defaulted)
+  if (query.getObserversCount() > 0) return
   const staleTime =
     typeof defaulted.staleTime === 'function' ? defaulted.staleTime(query) : defaulted.staleTime
   if (query.state.fetchStatus !== 'idle' || !query.isStaleByTime(staleTime)) return

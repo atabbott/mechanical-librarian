@@ -3095,6 +3095,8 @@ export default function LibraryPage({
     })
   }
   const select = async (work: LibraryWorkView) => {
+    // A retained row may not be on the page the URL now names.
+    if (retained) return
     if (work.reviewCaseId) {
       selectCase(work.reviewCaseId)
       return
@@ -3427,7 +3429,7 @@ export default function LibraryPage({
           ) : null}
           <div className="library-works-heading">
             <h2 id="library-works-title">Works</h2>
-            <span role="status" aria-live="polite">
+            <span role="status" aria-live="polite" aria-busy={retained || undefined}>
               {data
                 ? `${String(data.counts.all)} total`
                 : failed
@@ -3544,8 +3546,9 @@ export default function LibraryPage({
                 const terminalFailure = work.preparation !== null && !work.reviewCaseId && !evidence
                 const group = providerGroup(work)
                 const previousWork = works[index - 1]
+                // Grouping follows the lens these rows were read for, not a retained URL's.
                 const showGroup =
-                  search.lens !== 'no_attention_needed' &&
+                  data.lens !== 'no_attention_needed' &&
                   (!previousWork || providerGroup(previousWork) !== group)
                 const summary = providerSummary(work.preparationOutcomes)
                 const summaryId = summary ? `provider-summary-${work.id}` : undefined
@@ -3620,6 +3623,7 @@ export default function LibraryPage({
                           type="button"
                           className={`library-work-row${selectedWorkRow ? ' active' : ''}`}
                           aria-current={selectedWorkRow ? 'true' : undefined}
+                          aria-disabled={retained || undefined}
                           aria-label={`${work.title}. ${authorLine(work)}. ${status}`}
                           aria-describedby={
                             [preparationId, summaryId].filter(Boolean).join(' ') || undefined
