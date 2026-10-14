@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Settings keeps one draft across seven sections with true per-section counts, a
+  shared review-and-save tray, Discard all, and validation that reaches hidden
+  sections. Policy and Settings share segmented controls, disclosures, counts and
+  the tray; reviewer models get labelled pickers and per-book cost examples (#1034).
+
 - Reloads and return visits reuse the browser's private copy of the review
   application and of cover previews instead of downloading them again, and the
   application is served precompressed. The shell and every other API response
