@@ -507,6 +507,51 @@ describe('Library review ownership', () => {
     expect(screen.queryByText(/503|Review API request failed/u)).toBeNull()
   })
 
+  it('keeps the previous case busy on the diagnostic route until the next read settles', async () => {
+    let settle: (view: CaseDetailView) => void = () => undefined
+    const http = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async (id: string) =>
+        id === 'case-2'
+          ? new Promise<CaseDetailView>((resolve) => (settle = resolve))
+          : id === 'case-4'
+            ? new Promise<CaseDetailView>(() => undefined)
+            : id === 'case-3'
+              ? Promise.reject(new ApiError(503, 'unavailable'))
+              : detail,
+      ),
+    }
+    const { router } = renderRoute('/review/case-1?lens=all&subview=evidence', http)
+    expect(await screen.findByRole('heading', { level: 1, name: 'A Book' })).toBeVisible()
+    const route = document.querySelector('.diagnostic-route')
+    const open = (reviewCaseId: string) =>
+      router.navigate({
+        to: '/review/$reviewCaseId',
+        params: { reviewCaseId },
+        search: { lens: 'all', subview: 'evidence' },
+      })
+
+    await open('case-2')
+    await waitFor(() => expect(route).toHaveAttribute('aria-busy', 'true'))
+    expect(screen.getByRole('heading', { level: 1, name: 'A Book' })).toBeVisible()
+    settle({ ...detail, id: 'case-2', title: 'Another Book' })
+    expect(await screen.findByRole('heading', { level: 1, name: 'Another Book' })).toBeVisible()
+    expect(screen.queryByRole('heading', { level: 1, name: 'A Book' })).toBeNull()
+    expect(route).not.toHaveAttribute('aria-busy')
+
+    await open('case-3')
+    expect(
+      await screen.findByRole('heading', { name: 'Work diagnostics are unavailable.' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
+    expect(document.querySelector('.diagnostic-route')).not.toHaveAttribute('aria-busy')
+
+    // The failure cleared the case, so the next pending read cannot revive it.
+    await open('case-4')
+    expect(await screen.findByRole('heading', { name: 'Loading work diagnostics…' })).toBeVisible()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
+  })
+
   it('opens an Attention field directly in its selected Library preview', async () => {
     const attention: AttentionView = {
       total: 1,
