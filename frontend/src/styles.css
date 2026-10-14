@@ -84,7 +84,9 @@ main { width:min(100%,98rem); margin:auto; padding:clamp(1rem,3vw,2.6rem); outli
 /* Retained content stays in place while a newer read for another key is busy.
    Dimming changes no layout; at .7 ink text keeps at least 5.8:1 in both themes. */
 .library-works-heading > [role='status'], .library-work-list, .library-pager, .attention-queue-item, .attention-groups, .diagnostic-route > :not(.diagnostic-back-to-work) { transition:opacity .12s ease; }
-.library-works-heading > [aria-busy='true'], .library-work-list[aria-busy='true'], .library-pager[aria-busy='true'], .attention-rail[aria-busy='true'] > .attention-queue-item, .attention-route[aria-busy='true'] .attention-groups, .diagnostic-route[aria-busy='true'] > :not(.diagnostic-back-to-work) { opacity:.7; }
+.library-work-list[aria-busy='true'], .library-pager[aria-busy='true'], .attention-rail[aria-busy='true'] > .attention-queue-item, .attention-route[aria-busy='true'] .attention-groups, .diagnostic-route[aria-busy='true'] > :not(.diagnostic-back-to-work) { opacity:.7; }
+/* The count is soft text, which keeps 4.8:1 in light theme only at .9. */
+.library-works-heading > [aria-busy='true'] { opacity:.9; }
 .library-work-row { display:grid; width:100%; min-width:0; grid-template-columns:42px minmax(0,1fr); align-items:center; gap:.75rem; min-height:104px; padding:.7rem; border:1px solid transparent; border-radius:.65rem; color:var(--ink); background:transparent; font:inherit; text-align:left; cursor:pointer; }
 .library-work-row:hover { border-color:var(--line-strong); background:color-mix(in srgb,var(--surface) 60%,var(--page)); }
 .library-work-row.active { border-color:var(--accent); border-width:2px; padding:calc(.7rem - 1px); background:var(--accent-soft); }
