@@ -1857,11 +1857,9 @@ def test_workers_option_refuses_tiers_it_cannot_divide(args: list[str]) -> None:
     assert error.value.code == 2
 
 
-def test_the_gate_divides_the_fast_and_browser_tiers_into_four_workers() -> None:
+def test_the_gate_divides_the_fast_tier_into_four_workers() -> None:
     workflow = (
         Path(__file__).parents[2] / ".github/workflows/public-gate.yml"
     ).read_text(encoding="utf-8")
     assert "run: uv run python scripts/run_test_tier.py fast --workers 4\n" in workflow
-    assert (
-        "run: uv run python scripts/run_test_tier.py browser --workers 4\n" in workflow
-    )
+    assert "run: uv run python scripts/run_test_tier.py browser\n" in workflow

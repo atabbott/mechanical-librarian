@@ -240,9 +240,11 @@ The `fast-source` job has a 25-minute deadline covering toolchain and dependency
 setup as well as qualification. This operational margin preserves every check
 and test; it is not a runtime guarantee for the fast tier.
 
-`fast-source` and `protected-browser` run their tiers with `--workers 4`. Run
-serially, the fast tier took about seventeen minutes and the browser tier about
-ten, and every merge waits on the slowest job. Each worker is a fresh
+`fast-source` runs its tier with `--workers 4`; run serially it took about
+seventeen minutes, and every merge waits on the slowest job. `protected-browser`
+stays serial: it finishes well before `fast-source`, and four Chromium workers
+on the hosted runner broke timing-bound browser tests. `--workers` still
+divides the browser tier for local runs. Each worker is a fresh
 interpreter that takes the next work unit as it frees up, largest first: a test
 file for `fast`, and a test function with all its parameter sets for
 `browser`, whose time sits mostly in one file. The coordinating runner merges

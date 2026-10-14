@@ -243,9 +243,9 @@ jobs:
       - name: Run the protected browser tier
         env:
           ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
-        # Four workers, as in `fast-source`. The browser tier divides by test
-        # function rather than by file, because one file holds most of it.
-        run: uv run python scripts/run_test_tier.py browser --workers 4
+        # Serial: this job finishes well before `fast-source`, and four
+        # Chromium workers on the hosted runner broke timing-bound tests.
+        run: uv run python scripts/run_test_tier.py browser
 
   container-image:
     runs-on: ubuntu-24.04

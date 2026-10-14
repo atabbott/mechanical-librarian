@@ -4407,6 +4407,29 @@ def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
     assert activity_result["sqlite_errorname"] == "SQLITE_BUSY"
 
 
+def _await_pending_writer(database_path: Path) -> None:
+    """Wait until the writer's commit holds PENDING, so new reads are refused.
+
+    ``writer_ready`` fires before ``commit()`` is called; until the commit
+    takes PENDING a fresh read still succeeds, so a loaded runner could read
+    on the first attempt and never exercise the busy retry.
+    """
+
+    deadline = time.monotonic() + 5
+    while True:
+        probe = sqlite3.connect(database_path, timeout=0, isolation_level=None)
+        try:
+            probe.execute("SELECT 1 FROM field_effects LIMIT 1").fetchone()
+        except sqlite3.OperationalError as error:
+            if "locked" in str(error):
+                return
+            raise
+        finally:
+            probe.close()
+        assert time.monotonic() < deadline, "the writer never reached PENDING"
+        time.sleep(0.005)
+
+
 def _activity_read_after_short_delete_journal_convoy(
     effects: _EffectEnvironment,
     plan: FieldEffectOperation,
@@ -4478,6 +4501,7 @@ def _activity_read_after_short_delete_journal_convoy(
             ).fetchone()
             writer.start()
             assert writer_ready.wait(1)
+            _await_pending_writer(effects.database_path)
             release.start()
             started = time.monotonic()
             result = call(reader_c)
