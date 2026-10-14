@@ -39,6 +39,12 @@ _BIDI_CONTROLS = frozenset(
         0x2069,
     }
 )
+_FORBIDDEN_CODEPOINTS = re.compile(
+    "[\x00-\x1f\x7f-\x9f\ud800-\udfff\u2028\u2029\ufdd0-\ufdef"
+    + "".join(map(chr, sorted(_BIDI_CONTROLS)))
+    + "".join(chr(plane << 16 | low) for plane in range(17) for low in (0xFFFE, 0xFFFF))
+    + "]"
+)
 _CREDENTIAL_PATTERN = re.compile(
     r"(?i)(?:"
     r"\bauthorization\s*:\s*(?:bearer|basic)\s+\S+"
@@ -90,7 +96,7 @@ def validate_text(value: object, label: str, maximum: int) -> str:
         or len(value.encode("utf-8", errors="surrogatepass")) > maximum * 4
     ):
         raise EvidenceValueError(f"{label} exceeds its size limit")
-    if any(_forbidden_codepoint(ord(character)) for character in value):
+    if _FORBIDDEN_CODEPOINTS.search(value):
         raise EvidenceValueError(f"{label} contains forbidden control or Unicode text")
     return value
 
@@ -124,9 +130,8 @@ def validate_incumbent_description(value: object, label: str, maximum: int) -> s
     ):
         raise EvidenceValueError(f"{label} exceeds its size limit")
     controls = value.replace("\r\n", "\n").strip(" \t\n")
-    if controls != controls.strip() or any(
-        _forbidden_codepoint(ord(character))
-        for character in controls.replace("\n", " ")
+    if controls != controls.strip() or _FORBIDDEN_CODEPOINTS.search(
+        controls.replace("\n", " ")
     ):
         raise EvidenceValueError(f"{label} contains forbidden control or Unicode text")
     _validate_projection_safety(value.strip(" \t\r\n"), label)
@@ -171,10 +176,7 @@ def replace_forbidden_codepoints(value: str) -> str:
     still refuses it whole if anything else about it is inadmissible.
     """
 
-    return "".join(
-        REPLACEMENT_CHARACTER if _forbidden_codepoint(ord(character)) else character
-        for character in value
-    )
+    return _FORBIDDEN_CODEPOINTS.sub(REPLACEMENT_CHARACTER, value)
 
 
 def validate_role_projection(value: object, label: str = "contributor role") -> str:
@@ -275,18 +277,6 @@ def ensure_unique(values: Iterable[object], label: str) -> None:
     materialized = tuple(values)
     if len(materialized) != len(set(materialized)):
         raise EvidenceValueError(f"{label} must not contain duplicates")
-
-
-def _forbidden_codepoint(codepoint: int) -> bool:
-    return (
-        codepoint < 0x20
-        or 0x7F <= codepoint <= 0x9F
-        or 0xD800 <= codepoint <= 0xDFFF
-        or codepoint in _BIDI_CONTROLS
-        or codepoint in {0x2028, 0x2029}
-        or 0xFDD0 <= codepoint <= 0xFDEF
-        or codepoint & 0xFFFF in {0xFFFE, 0xFFFF}
-    )
 
 
 def _credential_shaped(value: str) -> bool:
