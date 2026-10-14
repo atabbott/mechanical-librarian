@@ -77,6 +77,9 @@ def test_wheel_carries_the_built_react_assets_and_neither_carries_source_maps(
 ) -> None:
     wheel_names, sdist_names = distribution
     assert any("interfaces/web/react_assets/assets/" in name for name in wheel_names)
+    # Precompressed siblings ship beside every hashed asset they encode.
+    for suffix in (".js.br", ".js.gz", ".css.br", ".css.gz"):
+        assert any(name.endswith(suffix) for name in wheel_names)
     assert any(
         name.endswith("mechanical_librarian/interfaces/web/settings_vocabulary.json")
         for name in wheel_names

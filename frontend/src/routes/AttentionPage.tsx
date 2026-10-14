@@ -1,5 +1,5 @@
 import { Link, useNavigate } from '@tanstack/react-router'
-import type { SyntheticEvent } from 'react'
+import type { MouseEvent, SyntheticEvent } from 'react'
 
 import type { AttentionItemView, AttentionView } from '../api/http'
 import { useRouteReadyFocus } from '../focus'
@@ -20,10 +20,13 @@ const groupItems = (items: readonly AttentionItemView[]) => {
 
 export default function AttentionPage({
   data,
+  retained,
   failed,
   retry,
 }: {
   data: AttentionView | undefined
+  /** `data` is the previous key's result, shown busy until the URL's own read settles. */
+  retained: boolean
   failed: boolean
   retry: () => void
 }) {
@@ -37,6 +40,10 @@ export default function AttentionPage({
     void navigate({ search: q ? { q } : {} })
   }
   const groups = groupItems(data?.items ?? [])
+  // Retained links stay focusable, but their cursor and items belong to the key the URL left.
+  const holdRetained = (event: MouseEvent) => {
+    if (retained) event.preventDefault()
+  }
   return (
     <div className="attention-page">
       <header className="attention-header" tabIndex={-1} data-route-focus>
@@ -107,6 +114,8 @@ export default function AttentionPage({
                     <Link
                       className="attention-field-row"
                       key={`${item.id}:${item.destination}`}
+                      aria-disabled={retained || undefined}
+                      onClick={holdRetained}
                       to="/library"
                       search={{
                         lens: 'all',
@@ -147,7 +156,12 @@ export default function AttentionPage({
         {data ? (
           <footer className="attention-pager">
             {data.nextCursor ? (
-              <Link to="/attention" search={{ ...search, cursor: data.nextCursor }}>
+              <Link
+                to="/attention"
+                search={{ ...search, cursor: data.nextCursor }}
+                aria-disabled={retained || undefined}
+                onClick={holdRetained}
+              >
                 Next page →
               </Link>
             ) : (

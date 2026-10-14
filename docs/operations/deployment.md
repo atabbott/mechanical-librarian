@@ -188,11 +188,14 @@ remains a separate release authority and is not part of this support contract.
 
 The image build has an exact pinned Node 24.21.0/npm 11.19.0 stage that
 regenerates browser DTOs from the committed OpenAPI document and emits the
-validated React asset bundle. The Python build admits only that bundle, and the
-final image contains neither Node/npm nor frontend source, generated DTOs,
-`node_modules`, Vite metadata, or source maps. Library, Attention, review detail,
-Policy, and Activity use that one persistent shell; `/login` remains the small
-server-rendered authentication page.
+validated React asset bundle, with Brotli and gzip siblings for each hashed
+script and stylesheet recorded in its manifest. The server negotiates those
+encodings and lets the browser keep hashed assets as private immutable
+responses, while the shell stays uncacheable. The Python build admits only
+that bundle, and the final image contains neither Node/npm nor frontend source,
+generated DTOs, `node_modules`, Vite metadata, or source maps. Library,
+Attention, review detail, Policy, and Activity use that one persistent shell;
+`/login` remains the small server-rendered authentication page.
 
 The normal container composes the supported Audiobookshelf guarded target, but
 remains report-only until the owner completes the authenticated, library-scoped

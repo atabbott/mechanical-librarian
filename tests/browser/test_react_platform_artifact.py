@@ -2421,7 +2421,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
             subtitle_policy.get_by_role("combobox", name="Subtitle representation")
         ).to_have_text("Fill only when empty")
         capture_visual_proof("policy-subtitle-automatic")
-        page.locator(".cm-policy-finish").get_by_text(
+        page.locator(".cm-finish-tray").get_by_text(
             "Draft matches the active policy", exact=True
         ).wait_for()
         page.locator(".cm-policy-mode summary").click()

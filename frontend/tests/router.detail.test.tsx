@@ -507,6 +507,69 @@ describe('Library review ownership', () => {
     expect(screen.queryByText(/503|Review API request failed/u)).toBeNull()
   })
 
+  it('keeps the previous case busy on the diagnostic route until the next read settles', async () => {
+    let settle: (view: CaseDetailView) => void = () => undefined
+    const http = {
+      ...createHttp(),
+      getCaseDetail: vi.fn(async (id: string) =>
+        id === 'case-2'
+          ? new Promise<CaseDetailView>((resolve) => (settle = resolve))
+          : id === 'case-4'
+            ? new Promise<CaseDetailView>(() => undefined)
+            : id === 'case-3'
+              ? Promise.reject(new ApiError(503, 'unavailable'))
+              : detail,
+      ),
+      getEvidence: vi.fn(async (id: string) => ({
+        items: [
+          {
+            destinations: ['title'],
+            observation: `${id} observation`,
+            role: 'external_observation' as const,
+            source: 'Synthetic source',
+          },
+        ],
+        missingLineageCount: 0,
+        sourceLedger: [],
+      })),
+    }
+    const { router } = renderRoute('/review/case-1?lens=all&subview=evidence', http)
+    expect(await screen.findByRole('heading', { level: 1, name: 'A Book' })).toBeVisible()
+    expect(await screen.findByText('case-1 observation')).toBeVisible()
+    const route = document.querySelector('.diagnostic-route')
+    const open = (reviewCaseId: string) =>
+      router.navigate({
+        to: '/review/$reviewCaseId',
+        params: { reviewCaseId },
+        search: { lens: 'all', subview: 'evidence' },
+      })
+
+    await open('case-2')
+    await waitFor(() => expect(route).toHaveAttribute('aria-busy', 'true'))
+    expect(screen.getByRole('heading', { level: 1, name: 'A Book' })).toBeVisible()
+    // The next case's evidence never appears under the retained case's heading.
+    expect(screen.getByText('case-1 observation')).toBeVisible()
+    expect(screen.queryByText('case-2 observation')).toBeNull()
+    settle({ ...detail, id: 'case-2', title: 'Another Book' })
+    expect(await screen.findByRole('heading', { level: 1, name: 'Another Book' })).toBeVisible()
+    expect(await screen.findByText('case-2 observation')).toBeVisible()
+    expect(screen.queryByText('case-1 observation')).toBeNull()
+    expect(screen.queryByRole('heading', { level: 1, name: 'A Book' })).toBeNull()
+    expect(route).not.toHaveAttribute('aria-busy')
+
+    await open('case-3')
+    expect(
+      await screen.findByRole('heading', { name: 'Work diagnostics are unavailable.' }),
+    ).toBeVisible()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
+    expect(document.querySelector('.diagnostic-route')).not.toHaveAttribute('aria-busy')
+
+    // The failure cleared the case, so the next pending read cannot revive it.
+    await open('case-4')
+    expect(await screen.findByRole('heading', { name: 'Loading work diagnostics…' })).toBeVisible()
+    expect(screen.queryByRole('heading', { level: 1, name: 'Another Book' })).toBeNull()
+  })
+
   it('opens an Attention field directly in its selected Library preview', async () => {
     const attention: AttentionView = {
       total: 1,
@@ -581,6 +644,59 @@ describe('Library review ownership', () => {
       { cursor: 'later-page' },
       expect.any(AbortSignal),
       'foreground',
+    )
+  })
+
+  it('keeps a retained Attention page visible but inert until the newer search settles', async () => {
+    const item = (id: string, title: string) => ({
+      id,
+      destination: 'title',
+      title,
+      authors: [],
+      library: 'Books',
+      mediaKind: 'ebook',
+      classificationReason: 'This field needs your review.',
+      notices: [],
+      provenance: [],
+      workAttentionCount: 1,
+    })
+    let settle: (view: AttentionView) => void = () => undefined
+    const http = {
+      ...createHttp(),
+      getAttention: vi.fn(async (search: { q?: string }) =>
+        search.q
+          ? new Promise<AttentionView>((resolve) => (settle = resolve))
+          : { total: 7, nextCursor: 'old-page-2', items: [item('case-old', 'Old result')] },
+      ),
+    }
+    const user = userEvent.setup()
+    const { router } = renderRoute('/attention', http)
+    expect(await screen.findByRole('heading', { name: 'Old result' })).toBeVisible()
+    await user.type(screen.getByLabelText('Search title, author, library, or media'), 'new{Enter}')
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'new' }))
+
+    const route = document.querySelector('.attention-route')
+    expect(route).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('heading', { name: 'Old result' })).toBeVisible()
+    expect(screen.getByText('7')).toBeVisible()
+    const next = screen.getByRole('link', { name: 'Next page →' })
+    const row = screen.getByRole('link', { name: /Open exact field/u })
+    expect(next).toHaveAttribute('aria-disabled', 'true')
+    expect(row).toHaveAttribute('aria-disabled', 'true')
+    await user.click(next)
+    next.focus()
+    await user.keyboard('{Enter}')
+    expect(next).toHaveFocus()
+    await user.click(row)
+    expect(router.state.location.pathname).toBe('/attention')
+    expect(router.state.location.search).toEqual({ q: 'new' })
+
+    settle({ total: 1, items: [item('case-new', 'New result')] })
+    expect(await screen.findByRole('heading', { name: 'New result' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Old result' })).toBeNull()
+    expect(route).not.toHaveAttribute('aria-busy')
+    expect(screen.getByRole('link', { name: /Open exact field/u })).not.toHaveAttribute(
+      'aria-disabled',
     )
   })
 

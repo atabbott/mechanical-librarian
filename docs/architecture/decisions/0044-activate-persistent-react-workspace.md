@@ -59,6 +59,9 @@ authentication, currentness, policy, effect, persistence, and mutation
 authority. The restrictive self-only CSP, private/no-store caching, exact
 Origin and Host checks, secure cookie, CSRF, idempotency, optimistic
 concurrency, and hostile-text rendering boundaries remain in force.
+Amended 2026-10-14 (#1193): content-hashed review bundles and digest-addressed
+cover previews are now cached `private, max-age=31536000, immutable`; every
+other response keeps `no-store`.
 
 A corrupt or mismatched installed bundle produces one stable owner-rebuild
 state and never an automatic reload loop. Missing chunks permit at most one

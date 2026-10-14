@@ -1,6 +1,6 @@
-import { lazy } from 'react'
+import { lazyRouteComponent } from '@tanstack/react-router'
 
-import type { ComponentType } from 'react'
+import type { ReactNode } from 'react'
 
 const stateKey = '__ml_chunk_retry_build'
 const buildPattern = /^[0-9a-f]{64}$/
@@ -84,5 +84,18 @@ export const reloadCurrentApplication = (
 }
 
 export const recoverableLazy = <Properties extends object>(
-  load: () => Promise<{ default: ComponentType<Properties> }>,
-) => lazy(() => loadRouteChunk(load))
+  load: () => Promise<{ default: (properties: Properties) => ReactNode }>,
+  runtime: ChunkRecoveryRuntime = browserRuntime,
+) => {
+  const component = lazyRouteComponent(() => loadRouteChunk(load, undefined, runtime))
+  const fill = component.preload
+  // Intent only warms the chunk. A failure is left to the render path, which
+  // alone may spend the one recovery reload, so hovering a link can never
+  // reload the page out from under an unsaved draft.
+  component.preload = () =>
+    load().then(
+      () => fill?.(),
+      () => undefined,
+    )
+  return component
+}

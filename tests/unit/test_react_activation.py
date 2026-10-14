@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import hashlib
 import json
 import os
@@ -20,16 +21,26 @@ from tests.support.review_cases import _report
 from tests.support.review_web_doubles import FakeReviewRepository
 from tests.unit.review_app_fixture import create_transport_test_app
 
+_SCRIPT = b"window.reviewReady=true;"
+_SCRIPT_PATH = "/assets/review-app/assets/index-deadbeef.js"
 
-def _write_bundle(root: Path) -> str:
+
+def _write_bundle(
+    root: Path, *, digest: str = "deadbeef", script: bytes = _SCRIPT
+) -> str:
     values = {
         "index.html": (
             b'<!doctype html><html><body><div id="root"></div>'
-            b'<script src="/assets/review-app/assets/index-deadbeef.js"></script>'
-            b"</body></html>"
+            b'<script src="/assets/review-app/assets/index-'
+            + digest.encode()
+            + b'.js"></script></body></html>'
         ),
-        "assets/index-deadbeef.js": b"window.reviewReady=true;",
-        "assets/index-deadbeef.css": b":root{color-scheme:light}",
+        f"assets/index-{digest}.js": script,
+        # Sibling bytes are opaque to the server; a marked payload stands in
+        # for Brotli output that the standard library cannot produce.
+        f"assets/index-{digest}.js.br": b"brotli:" + script,
+        f"assets/index-{digest}.js.gz": gzip.compress(script, mtime=0),
+        f"assets/index-{digest}.css": b":root{color-scheme:light}",
     }
     records: list[dict[str, object]] = []
     for path, payload in values.items():
@@ -40,6 +51,10 @@ def _write_bundle(root: Path) -> str:
             {
                 "kind": "shell"
                 if path == "index.html"
+                else "br"
+                if path.endswith(".br")
+                else "gzip"
+                if path.endswith(".gz")
                 else ("style" if path.endswith(".css") else "script"),
                 "path": path,
                 "sha256": hashlib.sha256(payload).hexdigest(),
@@ -72,7 +87,7 @@ def _write_bundle(root: Path) -> str:
 class _Case:
     """The temporary tree, repository and client a `setUp` used to carry."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, digest: str = "deadbeef", script: bytes = _SCRIPT) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         root = Path(self.temporary.name)
         password_hash = root / "owner.hash"
@@ -87,7 +102,7 @@ class _Case:
         asset_root = root / "assets"
         asset_root.mkdir()
         self.asset_root = asset_root
-        self.identity = _write_bundle(asset_root)
+        self.identity = _write_bundle(asset_root, digest=digest, script=script)
         configuration = ReviewWebConfiguration(
             tls_certificate_file="/synthetic/review.crt",
             tls_private_key_file="/synthetic/review.key",
@@ -230,3 +245,123 @@ def test_deep_corrupt_manifest_is_one_stable_workspace_recovery(case: _Case) -> 
     assert second.status_code == 503
     assert first.text == second.text
     assert "Review workspace unavailable" in first.text
+
+
+def _raw(case: _Case, path: str, **headers: str) -> tuple[int, dict[str, str], bytes]:
+    """Read undecoded bytes so the negotiated encoding itself is asserted."""
+    with case.client.stream("GET", path, headers=headers) as response:
+        return (
+            response.status_code,
+            dict(response.headers),
+            b"".join(response.iter_raw()),
+        )
+
+
+def test_hashed_assets_are_private_immutable_and_negotiated(case: _Case) -> None:
+    script_sha = hashlib.sha256(_SCRIPT).hexdigest()
+    gzip_sha = hashlib.sha256(gzip.compress(_SCRIPT, mtime=0)).hexdigest()
+    for accept_encoding, encoding, body in (
+        ("gzip, deflate, br, zstd", "br", b"brotli:" + _SCRIPT),
+        ("gzip, br;q=0", "gzip", gzip.compress(_SCRIPT, mtime=0)),
+        ("identity", None, _SCRIPT),
+    ):
+        status, headers, raw = _raw(
+            case, _SCRIPT_PATH, **{"Accept-Encoding": accept_encoding}
+        )
+        assert status == 200
+        assert raw == body
+        assert headers.get("content-encoding") == encoding
+        assert headers["content-type"].startswith("text/javascript")
+        assert headers["cache-control"] == "private, max-age=31536000, immutable"
+        assert headers["vary"] == "Accept-Encoding"
+        assert headers["etag"] == '"' + hashlib.sha256(body).hexdigest() + '"'
+        # The trust-boundary headers are untouched by the cache exception.
+        assert headers["x-content-type-options"] == "nosniff"
+        assert headers["x-frame-options"] == "DENY"
+        assert headers["referrer-policy"] == "no-referrer"
+        assert headers["cross-origin-opener-policy"] == "same-origin"
+        assert "frame-ancestors 'none'" in headers["content-security-policy"]
+        assert headers["strict-transport-security"] == "max-age=31536000"
+
+    status, headers, raw = _raw(
+        case,
+        _SCRIPT_PATH,
+        **{"Accept-Encoding": "gzip", "If-None-Match": f'W/"x", "{gzip_sha}"'},
+    )
+    assert (status, raw) == (304, b"")
+    assert headers["etag"] == f'"{gzip_sha}"'
+    assert headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert headers["vary"] == "Accept-Encoding"
+    assert "content-encoding" not in headers
+    assert headers["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in headers["content-security-policy"]
+    # A tag for another representation of the same path is not a match.
+    mismatched = _raw(
+        case,
+        _SCRIPT_PATH,
+        **{"Accept-Encoding": "identity", "If-None-Match": f'"{gzip_sha}"'},
+    )
+    assert mismatched[0] == 200
+    assert mismatched[1]["etag"] == f'"{script_sha}"'
+    unlisted = _raw(case, _SCRIPT_PATH, **{"If-None-Match": '"a", W/"b"'})
+    assert (unlisted[0], unlisted[2] != b"") == (200, True)
+    status, headers, raw = _raw(
+        case, _SCRIPT_PATH, **{"Accept-Encoding": "identity", "If-None-Match": "*"}
+    )
+    assert (status, raw) == (304, b"")
+    assert headers["etag"] == f'"{script_sha}"'
+    assert headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert headers["vary"] == "Accept-Encoding"
+    assert headers["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in headers["content-security-policy"]
+
+    # Siblings are reachable only by negotiation, never by their own path.
+    for sibling in (_SCRIPT_PATH + ".br", _SCRIPT_PATH + ".gz"):
+        refused = case.client.get(sibling)
+        assert refused.status_code == 404
+        assert refused.headers["cache-control"] == "no-store, private"
+    style = case.client.get("/assets/review-app/assets/index-deadbeef.css")
+    assert style.headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert "content-encoding" not in style.headers
+
+
+def test_shell_and_api_responses_stay_uncacheable(case: _Case) -> None:
+    unauthenticated = case.client.get("/library", follow_redirects=False)
+    assert unauthenticated.headers["cache-control"] == "no-store, private"
+    _login(case)
+    shell = case.client.get("/library")
+    assert shell.status_code == 200
+    assert shell.headers["cache-control"] == "no-store, private"
+    assert "etag" not in shell.headers
+    api = case.client.get(f"/api/v1/review-cases/{case.case_id}")
+    assert api.status_code == 200
+    assert api.headers["cache-control"] == "no-store, private"
+    # A route cannot borrow the exception by naming a near miss of it.
+    missing = case.client.get("/assets/review-app/assets/other.js")
+    assert missing.headers["cache-control"] == "no-store, private"
+
+
+def test_rebuilt_bundle_never_serves_an_earlier_hashed_path(case: _Case) -> None:
+    earlier = _raw(case, _SCRIPT_PATH, **{"Accept-Encoding": "identity"})
+    rebuilt = _Case(digest="cafef00d", script=b"window.rebuilt=true;")
+    try:
+        assert rebuilt.identity != case.identity
+        stale = _raw(
+            rebuilt,
+            _SCRIPT_PATH,
+            **{"Accept-Encoding": "identity", "If-None-Match": earlier[1]["etag"]},
+        )
+        assert stale[0] == 404
+        assert stale[1]["cache-control"] == "no-store, private"
+        assert b"window.re" not in stale[2]
+
+        _login(rebuilt)
+        shell = rebuilt.client.get("/library")
+        assert shell.headers["cache-control"] == "no-store, private"
+        assert "/assets/review-app/assets/index-cafef00d.js" in shell.text
+        assert "index-deadbeef" not in shell.text
+        current = rebuilt.client.get("/assets/review-app/assets/index-cafef00d.js")
+        assert current.status_code == 200
+        assert current.content == b"window.rebuilt=true;"
+    finally:
+        rebuilt.close()

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.resources import files
 from pathlib import Path
 from typing import Protocol
@@ -13,8 +13,11 @@ from typing import Protocol
 _BUILD_IDENTITY = re.compile(r"^[0-9a-f]{64}$")
 _CSRF_TOKEN = re.compile(r"^[A-Za-z0-9_-]{32,128}$")
 _ASSET_PATH = re.compile(
-    r"^(?:index\.html|assets/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.(?:css|js))$"
+    r"^(?:index\.html|assets/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.(?:css|js)(?:\.br|\.gz)?)$"
 )
+# Precompressed siblings, in serving preference; each kind is its Content-Encoding.
+_ENCODINGS = {"br": ".br", "gzip": ".gz"}
+_REFUSED_WEIGHT = re.compile(r"\s*q\s*=\s*0(?:\.0{0,3})?\s*")
 _MAX_MANIFEST_BYTES = 65_536
 _MAX_ASSETS = 128
 _MAX_ASSET_BYTES = 4_194_304
@@ -51,8 +54,12 @@ class ReactAssetBundle:
     entry: str
     assets: tuple[ReactAsset, ...]
     _root: _AssetRoot
+    # Bytes already checked against the manifest; served without rehashing.
+    _verified: dict[str, bytes] = field(default_factory=dict, repr=False, compare=False)
 
     def read(self, path: str) -> bytes:
+        if path in self._verified:
+            return self._verified[path]
         selected = next((asset for asset in self.assets if asset.path == path), None)
         if selected is None:
             raise ReactAssetError("asset_not_found")
@@ -62,7 +69,33 @@ class ReactAssetBundle:
             or hashlib.sha256(payload).hexdigest() != selected.sha256
         ):
             raise ReactAssetError("asset_corrupt")
+        self._verified[path] = payload
         return payload
+
+    @property
+    def unverified_siblings(self) -> tuple[str, ...]:
+        """Sibling paths never held, so served as identity; a build refuses them."""
+        return tuple(
+            asset.path
+            for asset in self.assets
+            if asset.kind in _ENCODINGS and asset.path not in self._verified
+        )
+
+    def negotiate(self, path: str, accept_encoding: str) -> tuple[ReactAsset, bytes]:
+        """Select a verified sibling the client accepts, else the identity asset."""
+        accepted = {
+            coding.strip()
+            for coding, _, weight in (
+                part.partition(";") for part in accept_encoding.lower().split(",")
+            )
+            if _REFUSED_WEIGHT.fullmatch(weight) is None
+        }
+        for coding, suffix in _ENCODINGS.items():
+            if coding in accepted and path + suffix in self._verified:
+                sibling = next(a for a in self.assets if a.path == path + suffix)
+                return sibling, self._verified[sibling.path]
+        payload = self.read(path)
+        return next(asset for asset in self.assets if asset.path == path), payload
 
     def shell_html(self, csrf_token: str) -> str:
         if _CSRF_TOKEN.fullmatch(csrf_token) is None:
@@ -174,7 +207,7 @@ def load_react_asset_bundle(
             or _BUILD_IDENTITY.fullmatch(item["sha256"]) is None
             or type(item["size"]) is not int
             or not 0 < item["size"] <= _MAX_ASSET_BYTES
-            or item["kind"] not in {"shell", "script", "style"}
+            or item["kind"] not in {"shell", "script", "style", *_ENCODINGS}
         ):
             raise ReactAssetError("manifest_invalid")
         if (item["path"] == "index.html") != (item["kind"] == "shell"):
@@ -182,6 +215,11 @@ def load_react_asset_bundle(
         if item["path"].endswith(".css") != (item["kind"] == "style"):
             raise ReactAssetError("manifest_invalid")
         if item["path"].endswith(".js") != (item["kind"] == "script"):
+            raise ReactAssetError("manifest_invalid")
+        if any(
+            item["path"].endswith(suffix) != (item["kind"] == coding)
+            for coding, suffix in _ENCODINGS.items()
+        ):
             raise ReactAssetError("manifest_invalid")
         seen.add(item["path"])
         total += item["size"]
@@ -192,6 +230,10 @@ def load_react_asset_bundle(
         "index.html" not in seen
         or total > _MAX_TOTAL_BYTES
         or [asset.path for asset in assets] != sorted(seen)
+        or any(
+            asset.kind in _ENCODINGS and asset.path.rsplit(".", 1)[0] not in seen
+            for asset in assets
+        )
     ):
         raise ReactAssetError("manifest_invalid")
 
@@ -210,7 +252,13 @@ def load_react_asset_bundle(
         value["build_identity"], value["entry"], tuple(assets), root
     )
     for asset in bundle.assets:
-        bundle.read(asset.path)
+        try:
+            bundle.read(asset.path)
+        except (OSError, ReactAssetError):
+            # A missing or corrupt sibling is never held, so it is never served;
+            # its identity asset is. A bad identity asset still fails closed.
+            if asset.kind not in _ENCODINGS:
+                raise
     return bundle
 
 

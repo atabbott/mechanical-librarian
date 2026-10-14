@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Settings keeps one draft across seven sections with true per-section counts, a
+  shared review-and-save tray, Discard all, and validation that reaches hidden
+  sections. Policy and Settings share segmented controls, disclosures, counts and
+  the tray; reviewer models get labelled pickers and per-book cost examples (#1034).
+
+- Library and Attention keep their current rows in place, dimmed and marked
+  busy, while the next page, lens or search loads, and never show rows from a
+  read that has been superseded or failed. Hovering or focusing paging, lenses
+  and works prefetches them as background work (#1192).
+
+- Reloads and return visits reuse the browser's private copy of the review
+  application and of cover previews instead of downloading them again, and the
+  application is served precompressed. The shell and every other API response
+  remain uncacheable (#1193).
+
 - Settings and setup show a measured Luna cover estimate of about $0.6364 per
   1,000 review requests. Reviewer cost evidence now records its measured run on
   each row, so rows from separate complete runs ship together truthfully (#1180).
