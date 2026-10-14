@@ -165,6 +165,8 @@ def _validate_bundle(source_root: Path, root: Path) -> None:
         sys.modules[specification.name] = module
         specification.loader.exec_module(module)
         bundle = module.load_react_asset_bundle(root)
+        if bundle.unverified_siblings:
+            raise FrontendBuildError("frontend_bundle_invalid")
         if isinstance(root, Path):
             expected = {
                 "review-assets-v1.json",

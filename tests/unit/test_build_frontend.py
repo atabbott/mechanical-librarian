@@ -8,9 +8,14 @@ from unittest.mock import patch
 import pytest
 from scripts.build_frontend import (
     FrontendBuildError,
+    _validate_bundle,
     build_frontend,
     toolchain_versions,
 )
+
+from tests.unit.test_react_assets import _write_bundle
+
+ROOT = Path(__file__).parents[2]
 
 
 def _manifest(root: Path) -> Path:
@@ -112,3 +117,13 @@ def test_actual_version_subprocess_refuses_a_mismatched_executable(
     monkeypatch.setenv("PATH", str(bin_path) + os.pathsep + os.environ["PATH"])
     with pytest.raises(FrontendBuildError, match=f"frontend_{tool}_version_invalid"):
         build_frontend(tmp_path, tmp_path / "out")
+
+
+def test_build_refuses_a_bundle_with_an_unverifiable_sibling(tmp_path: Path) -> None:
+    _write_bundle(tmp_path, encoded=True)
+    _validate_bundle(ROOT, tmp_path)
+    # The server would fall back to identity; the build must not ship it.
+    (tmp_path / "assets/index-deadbeef.js.gz").write_bytes(b"corrupt")
+
+    with pytest.raises(FrontendBuildError, match="frontend_bundle_invalid"):
+        _validate_bundle(ROOT, tmp_path)
