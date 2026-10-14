@@ -303,6 +303,17 @@ def test_hashed_assets_are_private_immutable_and_negotiated(case: _Case) -> None
     )
     assert mismatched[0] == 200
     assert mismatched[1]["etag"] == f'"{script_sha}"'
+    unlisted = _raw(case, _SCRIPT_PATH, **{"If-None-Match": '"a", W/"b"'})
+    assert (unlisted[0], unlisted[2] != b"") == (200, True)
+    status, headers, raw = _raw(
+        case, _SCRIPT_PATH, **{"Accept-Encoding": "identity", "If-None-Match": "*"}
+    )
+    assert (status, raw) == (304, b"")
+    assert headers["etag"] == f'"{script_sha}"'
+    assert headers["cache-control"] == "private, max-age=31536000, immutable"
+    assert headers["vary"] == "Accept-Encoding"
+    assert headers["x-content-type-options"] == "nosniff"
+    assert "frame-ancestors 'none'" in headers["content-security-policy"]
 
     # Siblings are reachable only by negotiation, never by their own path.
     for sibling in (_SCRIPT_PATH + ".br", _SCRIPT_PATH + ".gz"):

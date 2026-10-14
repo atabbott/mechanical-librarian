@@ -4134,10 +4134,12 @@ def _register_html_routes(
             "ETag": f'"{served.sha256}"',
             "Vary": "Accept-Encoding",
         }
-        if headers["ETag"] in {
+        tags = {
             tag.strip().removeprefix("W/")
             for tag in request.headers.get("if-none-match", "").split(",")
-        }:
+        }
+        # RFC 9110 13.1.2: `*` matches because the selected representation exists.
+        if "*" in tags or headers["ETag"] in tags:
             return Response(status_code=304, headers=headers)
         if served.path != asset_path:
             headers["Content-Encoding"] = served.kind
