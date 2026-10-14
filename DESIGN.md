@@ -247,8 +247,9 @@ wider than 320px.
 
 The system is flat by default. Depth comes first from paper-toned surface
 changes and one-pixel rules. Ambient shadow is reserved for genuinely floating
-or consequential layers: the preparation popover, sticky Policy impact tray,
-Policy notebook, dialogs, focused skip link, and compact sticky Policy picker.
+or consequential layers: the preparation popover, sticky Policy and Settings
+finish trays, Policy notebook, dialogs, focused skip link, and compact sticky
+Policy picker.
 Translucent sticky surfaces use a restrained 12px backdrop blur.
 
 ### Shadow Vocabulary
@@ -377,6 +378,11 @@ decision. Activity uses a denser ruled ledger: state and owner authority appear
 before filterable event rows, and expanded evidence stays attached to its
 event. At compact widths both surfaces preserve document order rather than
 compressing their desktop columns.
+
+Settings shares the notebook's controls rather than restyling copies:
+segmented Off/On choices, dropdowns, native disclosures, change-count badges
+and the inset finish tray are the same components on both pages. Each page
+keeps its own draft, validation and save.
 
 ## Do's and Don'ts
 

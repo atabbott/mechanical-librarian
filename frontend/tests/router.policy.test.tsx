@@ -556,7 +556,7 @@ describe('Policy route', () => {
     ).toBeVisible()
     const failure = screen.getByRole('alert')
     expect(failure).toHaveFocus()
-    expect(failure.closest('.cm-policy-finish')).not.toBeNull()
+    expect(failure.closest('.cm-finish-tray')).not.toBeNull()
     expect(screen.getAllByRole('alert')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Validate and preview' }))
     expect(
@@ -1070,22 +1070,23 @@ it('saves description preferences independently next to Cover guidance and keeps
   }))
   renderRoute('/policy?section=curation', http)
   const region = await screen.findByRole('region', { name: 'Description advice' })
-  const marketing = await within(region).findByRole('checkbox', {
-    name: 'Remove marketing material',
-  })
-  expect(marketing).toBeChecked()
-  expect(
-    within(region).getByRole('checkbox', { name: 'Remove sales figures and bestseller boasts' }),
-  ).toBeChecked()
-  expect(
-    within(region).getByRole('checkbox', { name: 'Remove pull quotes and author praise' }),
-  ).toBeChecked()
-  expect(
-    within(region).getByRole('checkbox', { name: 'Automatically apply ready description advice' }),
-  ).not.toBeChecked()
+  const choice = (name: string, value: 'Off' | 'On') =>
+    within(within(region).getByRole('group', { name })).getByRole('button', { name: value })
+  await within(region).findByRole('group', { name: 'Remove marketing material' })
+  for (const name of [
+    'Remove marketing material',
+    'Remove sales figures and bestseller boasts',
+    'Remove pull quotes and author praise',
+  ])
+    expect(choice(name, 'On')).toHaveAttribute('aria-pressed', 'true')
+  expect(choice('Automatically apply ready description advice', 'Off')).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
   expect(screen.getByRole('region', { name: 'Cover' }).nextElementSibling).toBe(region)
   expect(region.nextElementSibling).toHaveAccessibleName('ASIN')
-  await userEvent.setup().click(marketing)
+  await userEvent.setup().click(choice('Remove marketing material', 'Off'))
+  expect(within(region).getByText('Changed')).toBeVisible()
   expect(within(region).getByRole('status')).toHaveTextContent(
     'Policy draft changes are saved separately',
   )
@@ -1111,8 +1112,8 @@ it('shows locked description cleanup preferences without enabling edits', async 
   const http = createHttp()
   http.getSettings = vi.fn(async () => view('file'))
   renderRoute('/policy?section=curation', http)
-  const marketing = await screen.findByRole('checkbox', { name: 'Remove marketing material' })
-  expect(marketing).toBeDisabled()
+  const marketing = await screen.findByRole('group', { name: 'Remove marketing material' })
+  for (const button of within(marketing).getAllByRole('button')) expect(button).toBeDisabled()
   expect(screen.getByRole('button', { name: 'Save description preferences' })).toBeDisabled()
   expect(
     screen.getByText('These preferences are managed by deployment configuration.'),
