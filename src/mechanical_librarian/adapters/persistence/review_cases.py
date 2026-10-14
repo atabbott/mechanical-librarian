@@ -41,7 +41,7 @@ import json
 import re
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
@@ -92,8 +92,10 @@ from mechanical_librarian.domain.proposal_set import (
 )
 from mechanical_librarian.domain.review_browse import (
     ReviewBrowseValueError,
-    browse_case_and_report,
+    browse_case,
+    browse_case_with_id,
     browse_report,
+    require_admitted_lineage,
 )
 from mechanical_librarian.domain.review_case import (
     ReviewAdmissionIncompatibleError,
@@ -119,6 +121,12 @@ class ReviewLibraryPage:
     rows: tuple[tuple[str | None, str], ...]
     total: int
     attention_total: int
+    # Each row's case (with its identity) and report as this read validated
+    # them, None for a terminal row, so a projection of the same read uses them
+    # rather than parsing the same bytes again (#1202).
+    envelopes: tuple[
+        tuple[dict[str, object] | None, str | None, dict[str, object]] | None, ...
+    ] = field(default=(), compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -682,6 +690,9 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             ):
                 raise MetadataReportError("review library count is invalid")
             values: list[tuple[str | None, str]] = []
+            envelopes: list[
+                tuple[dict[str, object] | None, str | None, dict[str, object]] | None
+            ] = []
             for row in rows:
                 if (
                     len(row) != 10
@@ -709,6 +720,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                         and terminal.get("schema_version") == "review-terminal-work-v1"
                     ):
                         values.append((None, _canonical_json(terminal)))
+                        envelopes.append(None)
                         continue
                 lineage = (row[3], row[4], row[5])
                 report = browse_report(row[1])
@@ -725,6 +737,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     if row[0] is not None:
                         raise MetadataReportError("review browse row disagrees")
                     values.append((None, row[1]))
+                    envelopes.append((None, None, report))
                     continue
                 if row[0] is None:
                     if row[6] not in {
@@ -735,10 +748,16 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     }:
                         raise MetadataReportError("review browse row disagrees")
                     values.append((None, row[1]))
+                    envelopes.append((None, None, report))
                     continue
-                browse_case_and_report(row[0], row[1], row[2])
+                # The report above is this row's; only the case is still unread.
+                case, case_id = browse_case_with_id(row[0])
+                require_admitted_lineage(case, report, row[2])
                 values.append((row[0], row[1]))
-            return ReviewLibraryPage(tuple(values), total, attention_total)
+                envelopes.append((case, case_id, report))
+            return ReviewLibraryPage(
+                tuple(values), total, attention_total, tuple(envelopes)
+            )
         except (
             sqlite3.Error,
             MetadataReportError,
@@ -916,6 +935,8 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             if type(total) is not int or total < 0:
                 raise MetadataReportError("review attention count is invalid")
             values = []
+            documents: tuple[str, str] | None = None
+            envelope: tuple[dict[str, object], dict[str, object]]
             for row in rows:
                 if (
                     len(row) != 10
@@ -934,7 +955,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                     continue
                 if type(row[0]) is not str or type(row[1]) is not str:
                     raise MetadataReportError("review attention field is invalid")
-                browse_case_and_report(row[0], row[1], row[2])
+                # A work's attentive fields are adjacent rows of the same two
+                # documents: read them once, and prove each row's lineage.
+                if (row[0], row[1]) != documents:
+                    envelope = browse_case(row[0]), browse_report(row[1])
+                    documents = row[0], row[1]
+                require_admitted_lineage(*envelope, row[2])
                 case_document, report_document = row[0], row[1]
                 if (
                     type(row[2]) is not str

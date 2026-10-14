@@ -149,13 +149,20 @@ def browse_case_and_report(
     """Prove one case still binds its admitted proposal and source report."""
     case = browse_case(case_document)
     report = browse_report(report_document)
+    require_admitted_lineage(case, report, admitted_proposal_set_id)
+    return case, report
+
+
+def require_admitted_lineage(
+    case: dict[str, object], report: dict[str, object], admitted_proposal_set_id: str
+) -> None:
+    """Prove read envelopes still bind the admitted proposal and source report."""
     _require_lineage(case, report)
     if (
         type(admitted_proposal_set_id) is not str
         or case["proposal_set_id"] != admitted_proposal_set_id
     ):
         raise ReviewBrowseValueError("review browse lineage disagrees")
-    return case, report
 
 
 def _require_lineage(case: dict[str, object], report: dict[str, object]) -> None:
@@ -387,4 +394,5 @@ __all__ = [
     "case_browse_facts",
     "library_report_facts",
     "provider_lane_facts",
+    "require_admitted_lineage",
 ]

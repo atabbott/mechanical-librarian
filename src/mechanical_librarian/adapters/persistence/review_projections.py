@@ -74,10 +74,6 @@ from mechanical_librarian.domain.metadata_report import (
     ReportValueError,
 )
 from mechanical_librarian.domain.proposal_set import ProposalSet
-from mechanical_librarian.domain.review_browse import (
-    browse_case_with_id,
-    browse_report,
-)
 from mechanical_librarian.domain.review_case import (
     ReviewCase,
     ReviewCaseValueError,
@@ -97,7 +93,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         require_staged_shadow_projection_current: Callable[[str, PipelineAction], None],
         get_review_case: Callable[[str], str],
         get_review_case_source_report: Callable[[str], MetadataReport],
-        get_review_case_decisions: Callable[[str], tuple[str, ...]],
+        get_review_case_decisions: Callable[[str, str | None], tuple[str, ...]],
         get_review_case_history: Callable[[str, int], tuple[dict[str, object], ...]],
         description_advice: Callable[[str], dict[str, object] | None],
         current_cover_consideration_document: Callable[[str], str | None],
@@ -230,7 +226,11 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             case_document = self.get_review_case(review_case_id)
             report = self.get_review_case_source_report(review_case_id)
             policy = self.current_resolved_metadata_policy(report.target.library)
-            decision_documents = self.get_review_case_decisions(review_case_id)
+            # The same read of the same case: its decisions are proved
+            # against the document validated above, not a second read (#1202).
+            decision_documents = self.get_review_case_decisions(
+                review_case_id, case_document
+            )
             source_documents = self._automatic_source_outcome_documents(review_case_id)
             snapshot = CurrentReviewCaseSnapshot(
                 description_advice=self.description_advice(review_case_id),
@@ -445,7 +445,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     int,
                 ]
             ] = []
-            for case_document, report_document in page.rows:
+            for (case_document, report_document), envelope in zip(
+                page.rows, page.envelopes, strict=True
+            ):
                 if (
                     case_document is None
                     and '"schema_version":"review-terminal-work-v1"' in report_document
@@ -454,7 +456,10 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         (case_document, report_document, (), (), (), (), None, 0)
                     )
                     continue
-                report = browse_report(report_document)
+                # The page read validated these envelopes from these bytes.
+                if envelope is None:
+                    raise MetadataReportError("review library is unavailable")
+                case, case_id, report = envelope
                 target = report["target"]
                 if type(target) is not dict:
                     raise MetadataReportError("review library is unavailable")
@@ -488,13 +493,6 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         }
                     )
                 )
-                case_with_id = (
-                    None
-                    if case_document is None
-                    else browse_case_with_id(case_document)
-                )
-                case = None if case_with_id is None else case_with_id[0]
-                case_id = None if case_with_id is None else case_with_id[1]
                 projected_rows.append(
                     (
                         case_document,
