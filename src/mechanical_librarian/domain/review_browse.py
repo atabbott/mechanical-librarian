@@ -2,9 +2,17 @@
 
 Canonical write boundaries and the work detail perform complete semantic
 validation. Library and Attention rows are projected from these bounded facts,
-which read every field a row renders under that field's canonical rule and read
-nothing a row does not render (#1191). Consecutive Attention fields with exactly
-equal document strings share that read within one repository page only.
+which verify each document's content address and read every field a row renders
+under that field's canonical rule (#1191). With the content addresses verified,
+every rendered value is byte-identical to what the canonical writer validated at
+write time. What a row no longer re-checks is the canonical parser's
+internal-consistency rules (format/audio section agreement, provider
+status/candidate agreement, inactive-provider inputs), non-canonical
+serialisation of the stored report and proposal text, and sub-documents the row
+never renders: those can only diverge through a canonical-writer defect or an
+out-of-band storage edit, and detail and every write path still parse
+canonically. Consecutive Attention fields with exactly equal document strings
+share that read within one repository page only.
 """
 
 from __future__ import annotations
@@ -27,13 +35,19 @@ from mechanical_librarian.domain.metadata_report import (
     TargetDestination,
     TargetFacts,
     _request_accounting,
+    report_content_address,
 )
-from mechanical_librarian.domain.proposal_set import _result_from_data
+from mechanical_librarian.domain.proposal_set import (
+    MAX_PROPOSAL_BYTES,
+    MEDIA_KINDS,
+    PROPOSAL_SCHEMA,
+    _result_from_data,
+    proposal_set_content_address,
+)
 from mechanical_librarian.domain.review_case import (
     MAX_REVIEW_CASE_BYTES,
     REVIEW_CASE_SCHEMA,
     proposal_manual_requirements,
-    proposal_media_kind,
 )
 from mechanical_librarian.domain.validation import closed_document, literal
 
@@ -66,6 +80,15 @@ _CASE = closed_document(
     "relationships",
     "proposal_document",
     schema_version=literal(REVIEW_CASE_SCHEMA),
+)
+_PROPOSAL = closed_document(
+    "media_kind",
+    "policy_version",
+    "relationships",
+    "report",
+    "resolved_policy_id",
+    "results",
+    schema_version=literal(PROPOSAL_SCHEMA),
 )
 
 
@@ -180,27 +203,35 @@ class CaseBrowseFacts:
     target: dict[str, object]
     target_fingerprint: str
     file_identity: str
-    proposal_document: str
+    media_kind: str
     proposals: tuple[dict[str, object], ...]
 
-    @property
-    def media_kind(self) -> str:
-        return proposal_media_kind(self.proposal_document)
+
+def _provider_lanes(
+    authority: str | None,
+    logical_requests: int,
+    query_kind: ProviderQueryKind,
+    status: ProviderStatus,
+    lanes: tuple[tuple[ProviderQueryKind, ProviderStatus], ...],
+) -> tuple[ProviderLaneFacts, ...]:
+    """State a provider's lanes; one with no lanes states its own query."""
+    return tuple(
+        ProviderLaneFacts(authority, logical_requests, kind.value, state.value)
+        for kind, state in lanes or ((query_kind, status),)
+    )
 
 
 def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]:
     """State a parsed report's provider lanes in the browse vocabulary."""
     return tuple(
-        ProviderLaneFacts(
+        lane
+        for provider in report.providers
+        for lane in _provider_lanes(
             provider.authority,
             provider.request_accounting.logical_requests,
-            kind.value,
-            status.value,
-        )
-        for provider in report.providers
-        for kind, status in (
-            tuple((lane.kind, lane.status) for lane in provider.lanes)
-            or ((provider.query_kind, provider.status),)
+            provider.query_kind,
+            provider.status,
+            tuple((lane.kind, lane.status) for lane in provider.lanes),
         )
     )
 
@@ -208,12 +239,17 @@ def provider_lane_facts(report: MetadataReport) -> tuple[ProviderLaneFacts, ...]
 def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
     """Read what a browse row renders from a report, and nothing else.
 
-    The target and file are reconstructed by their own canonical readers. Each
-    provider lane's authority, kinds, statuses and request count are checked
-    against the enums and bounds the canonical provider reader applies to them;
-    its candidates, evidence and diagnostics are not rendered and not read.
+    The report must carry its own content address, so every value read here is
+    the one the canonical writer validated. The target and file are then
+    reconstructed by their own canonical readers, and each provider lane's
+    authority, kinds, statuses and request count are checked against the enums
+    and bounds the canonical provider reader applies to them; its candidates,
+    evidence and diagnostics are not rendered and not read.
     """
     try:
+        identity = {key: value for key, value in report.items() if key != "report_id"}
+        if report["report_id"] != report_content_address(identity):
+            raise ValueError
         target = TargetFacts.from_data(report["target"])
         file = FileFacts(**cast("dict[str, Any]", report["file"]))
         providers = report["providers"]
@@ -235,17 +271,16 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
                 or type(provider["lanes"]) is not list
             ):
                 raise ValueError
-            pairs = [
+            pairs = tuple(
                 (ProviderQueryKind(lane["kind"]), ProviderStatus(lane["status"]))
                 for lane in provider["lanes"]
-            ]
+            )
             if any(lane_kind not in PROVIDER_LANE_KINDS for lane_kind, _ in pairs):
                 raise ValueError
             lanes.extend(
-                ProviderLaneFacts(
-                    authority, requests.logical_requests, value.value, state.value
+                _provider_lanes(
+                    authority, requests.logical_requests, kind, status, pairs
                 )
-                for value, state in pairs or [(kind, status)]
             )
         return LibraryReportFacts(report["report_id"], target, file, tuple(lanes))
     except (KeyError, TypeError, ValueError) as error:
@@ -255,9 +290,12 @@ def library_report_facts(report: dict[str, object]) -> LibraryReportFacts:
 def case_browse_facts(case: dict[str, object], review_case_id: str) -> CaseBrowseFacts:
     """Project a case's proposals from its own results, as `review_proposals` does.
 
-    Every result is read by the canonical result reader, so each rendered
-    outcome, reason and evidence reference is refused exactly as there. The
-    proposal document is not reconstructed and no proposal identity is
+    The case must name its proposal document by that document's content
+    address, and the document must carry the case's report binding and exactly
+    its results, so every value read here is the one the canonical writer
+    validated. Every result is read by the canonical result reader, so each
+    rendered outcome, reason and evidence reference is refused exactly as
+    there. The proposal set is not reconstructed and no proposal identity is
     computed: no browse row renders one.
     """
     try:
@@ -276,6 +314,19 @@ def case_browse_facts(case: dict[str, object], review_case_id: str) -> CaseBrows
             or any(type(value) is not str for value in strings)
         ):
             raise ValueError
+        proposal = _object(cast(str, case["proposal_document"]), MAX_PROPOSAL_BYTES)
+        if (
+            not _PROPOSAL(proposal)
+            or case["proposal_set_id"] != proposal_set_content_address(proposal)
+            or proposal["report"]
+            != {
+                "report_id": case["report_id"],
+                "target_fingerprint": case["target_fingerprint"],
+            }
+            or proposal["results"] != results
+            or proposal["media_kind"] not in MEDIA_KINDS
+        ):
+            raise ValueError
         parsed = tuple(_result_from_data(result) for result in results)
         if tuple(value.destination for value in parsed) != tuple(
             TargetDestination
@@ -290,7 +341,7 @@ def case_browse_facts(case: dict[str, object], review_case_id: str) -> CaseBrows
             target,
             cast(str, case["target_fingerprint"]),
             cast(str, case["file_identity"]),
-            cast(str, case["proposal_document"]),
+            proposal["media_kind"],
             tuple(
                 {
                     "destination": result["destination"],
@@ -311,6 +362,8 @@ def browse_case_facts_and_report(
 ) -> tuple[CaseBrowseFacts, LibraryReportFacts]:
     """Read one case and its report for a browse row, in agreement."""
     case, review_case_id = browse_case_with_id(case_document)
+    if canonical_json(case) != case_document:
+        raise ReviewBrowseValueError("review browse case is invalid")
     report = browse_report(report_document)
     _require_lineage(case, report)
     return case_browse_facts(case, review_case_id), library_report_facts(report)

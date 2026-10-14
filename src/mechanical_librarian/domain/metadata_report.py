@@ -3624,8 +3624,7 @@ class MetadataReport:
                 for observation in self.audio.observations
             ):
                 raise ReportValueError("audio observation cites an unknown candidate")
-        expected = f"report_{hashlib.sha256(canonical_json(self._identity_data()).encode('utf-8')).hexdigest()}"
-        if self.report_id != expected:
+        if self.report_id != report_content_address(self._identity_data()):
             raise ReportValueError("report identity is inconsistent")
         if len(self.to_json().encode("utf-8")) > MAX_REPORT_BYTES:
             raise ReportValueError("report exceeds its byte limit")
@@ -3701,11 +3700,8 @@ class MetadataReport:
             audio,
         )
         data.pop("report_id")
-        identity = (
-            f"report_{hashlib.sha256(canonical_json(data).encode('utf-8')).hexdigest()}"
-        )
         return cls(
-            identity,
+            report_content_address(data),
             target,
             file,
             local_claims,
@@ -5185,6 +5181,12 @@ def _comparison_value(kind: ClaimKind, value: str) -> str:
     return normalize_title(value).casefold()
 
 
+def report_content_address(identity_data: dict[str, object]) -> str:
+    """The report id that a report's data, without that id, addresses."""
+    digest = hashlib.sha256(canonical_json(identity_data).encode("utf-8"))
+    return f"report_{digest.hexdigest()}"
+
+
 def _report_data(
     report_id: str,
     target: TargetFacts,
@@ -6072,6 +6074,7 @@ __all__ = [
     "SUPPORTED_FILE_FORMATS",
     "PROVIDER_AUTHORITIES",
     "PROVIDER_LANE_KINDS",
+    "report_content_address",
     "CLAIM_BASES",
     "AudioFacts",
     "MetadataReport",

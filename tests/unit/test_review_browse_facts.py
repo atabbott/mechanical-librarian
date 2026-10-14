@@ -21,14 +21,21 @@ from mechanical_librarian.application.review_web import (
     _case_and_report,
     _library_item,
 )
+from mechanical_librarian.domain.human_decision import HumanDecision, decision_actions
 from mechanical_librarian.domain.identifiers import canonical_json
 from mechanical_librarian.domain.metadata_report import (
+    PROVIDER_AUTHORITIES,
     MetadataReport,
     ProviderLaneObservation,
+    ProviderStatus,
     ReportValueError,
     TargetDestination,
+    report_content_address,
 )
-from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.proposal_set import (
+    evaluate_report,
+    proposal_set_content_address,
+)
 from mechanical_librarian.domain.review_browse import (
     CaseBrowseFacts,
     LibraryReportFacts,
@@ -39,7 +46,11 @@ from mechanical_librarian.domain.review_browse import (
     library_report_facts,
     provider_lane_facts,
 )
-from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
+from mechanical_librarian.domain.review_case import (
+    ReviewCase,
+    ReviewCaseValueError,
+    proposal_media_kind,
+)
 from tests.support.audiobook_reports import corroborated_audiobook_report
 from tests.support.owner_responsiveness import OwnerResponsivenessFixture
 from tests.support.proposal_evidence import (
@@ -56,6 +67,16 @@ Pair = tuple[dict[str, Any], dict[str, Any]]
 # Both documents are reconstructed completely, the four lineage facts are
 # compared on the typed values, and the rendered facts are read off the typed
 # objects, the provider lanes by the loop `_provider_outcomes` used to run.
+#
+# The posture the equality below holds to: with the content addresses
+# verified, every rendered value is byte-identical to what the canonical writer
+# validated at write time. What browse no longer re-checks per row is the
+# canonical parser's internal-consistency rules (format/audio section
+# agreement, provider status/candidate agreement, inactive-provider inputs),
+# non-canonical serialisation of the stored report and proposal text, and
+# sub-documents the row never renders: those can only diverge through a
+# canonical-writer defect or an out-of-band storage edit, and detail and every
+# write path still parse canonically.
 def _canonical_report_facts(report: MetadataReport) -> LibraryReportFacts:
     return LibraryReportFacts(
         report.report_id,
@@ -100,7 +121,7 @@ def _canonical_pair(
             case.target,
             case.target_fingerprint,
             case.file_identity,
-            case.proposal_document,
+            proposal_media_kind(case.proposal_document),
             tuple(
                 {key: value for key, value in proposal.items() if key != "proposal_id"}
                 for proposal in case.proposals
@@ -131,10 +152,39 @@ _REPORTS: dict[str, Callable[[], MetadataReport]] = {
 }
 
 
+def _human_decisions(case_document: str | None) -> tuple[str, ...]:
+    try:
+        case = ReviewCase.from_json(cast(str, case_document))
+    except (ReviewCaseValueError, TypeError):
+        return ()  # A refused case has no decision a writer could have bound.
+    return tuple(
+        HumanDecision.create(
+            case,
+            proposal_id=str(proposal["proposal_id"]),
+            target_fingerprint=case.target_fingerprint,
+            destination=str(proposal["destination"]),
+            actor="owner",
+            outcome="keep_current",
+            selected_value=None,
+            idempotency_key=f"browse-equality-{index:04d}",
+            occurred_at=100 + index,
+        ).to_json()
+        for index, proposal in enumerate(
+            [
+                value
+                for value in case.proposals
+                if "keep_current" in decision_actions(value)
+            ][:2]
+        )
+    )
+
+
 def _library_rows(case_document: str | None, report_document: str):
     terminal = _terminal_document("unreadable_media", "track_3")
+    decided = _human_decisions(case_document)
     return (
         (case_document, report_document, (), (), (), (), None, 2),
+        (case_document, report_document, decided, (), (), (), None, 1),
         (case_document, report_document, (), ("title",), ("cover",), (), None, 0),
         (case_document, report_document, (), (), (), ("authors",), terminal, 1),
         (None, report_document, (), (), (), (), None, 0),
@@ -191,7 +241,7 @@ def test_narrow_pages_equal_the_canonical_pages_byte_for_byte(name: str) -> None
     narrow = _pages(case_document, report_document)
     assert narrow == _canonical_pages(case_document, report_document)
     page = json.loads(narrow)
-    assert len(page["library"]["items"]) == 5
+    assert len(page["library"]["items"]) == 6
     assert page["attention"]["items"]
 
 
@@ -214,6 +264,24 @@ def _redigest(pair: Pair) -> Pair:
     return case, report
 
 
+def _reseal(pair: Pair) -> Pair:
+    """Give a changed pair the content addresses a canonical writer would."""
+    case, report = _redigest(pair)
+    report["report_id"] = report_content_address(
+        {key: value for key, value in report.items() if key != "report_id"}
+    )
+    proposal = json.loads(case["proposal_document"])
+    proposal["report"] = {
+        "report_id": report["report_id"],
+        "target_fingerprint": case["target_fingerprint"],
+    }
+    proposal["results"] = case["results"]
+    case["report_id"] = report["report_id"]
+    case["proposal_document"] = canonical_json(proposal)
+    case["proposal_set_id"] = proposal_set_content_address(proposal)
+    return case, report
+
+
 def _provider(report: dict[str, object]) -> dict[str, object]:
     return report["providers"][0]
 
@@ -232,7 +300,7 @@ def _alternative(case: dict[str, object]) -> dict[str, object]:
 
 def _title(pair: Pair) -> Pair:
     pair[1]["target"]["fields"][0]["value"] = 42
-    return _redigest(pair)
+    return pair
 
 
 def _accounting(pair: Pair) -> Pair:
@@ -248,8 +316,10 @@ def _set(path: Callable[[Pair], dict[str, Any]], key: str, value: object):
     return change
 
 
-# Each mutation breaks one rendered value; each document stays canonical JSON
-# inside its closed envelope, so only the field rule can refuse it.
+# Each mutation breaks one rendered value and is then resealed, so both
+# documents stay canonical JSON inside their closed envelopes and every content
+# address and lineage fact agrees: the narrow read can refuse it only on the
+# rendered field's own rule.
 _RENDERED: dict[str, tuple[str, Callable[[Pair], Pair]]] = {
     "target title": ("plain", _title),
     "provider status": (
@@ -287,9 +357,13 @@ _RENDERED: dict[str, tuple[str, Callable[[Pair], Pair]]] = {
 }
 
 
-def _mutated(name: str, change: Callable[[Pair], Pair]) -> tuple[str, str]:
+def _mutated(
+    name: str, change: Callable[[Pair], Pair], *, reseal: bool = True
+) -> tuple[str, str]:
     case_document, report_document = _documents(_REPORTS[name]())
     case, report = change((json.loads(case_document), json.loads(report_document)))
+    if reseal:
+        case, report = _reseal((case, report))
     return canonical_json(case), canonical_json(report)
 
 
@@ -302,7 +376,7 @@ def test_a_malformed_rendered_value_refuses_exactly_as_canonical(field: str) -> 
         assert refused.value.code == "unavailable"
     with pytest.raises(ReviewBrowseValueError) as bounded:
         browse_case_facts_and_report(case_document, report_document)
-    # The field rule refused it, not the envelope or the lineage check.
+    # A reader refused it, not the envelope or the lineage check.
     assert str(bounded.value) in {
         "review browse case is invalid",
         "review browse report is invalid",
@@ -313,19 +387,98 @@ def test_a_malformed_rendered_value_refuses_exactly_as_canonical(field: str) -> 
         assert refused.value.code == "unavailable"
 
 
+def _retitle(pair: Pair) -> Pair:
+    pair[1]["target"]["fields"][0]["value"] = "Another Title"
+    return _redigest(pair)
+
+
+def _other_status(current: str) -> str:
+    return next(status.value for status in ProviderStatus if status.value != current)
+
+
+def _flip_status(read: Callable[[Pair], dict[str, Any]]):
+    def change(pair: Pair) -> Pair:
+        read(pair)["status"] = _other_status(read(pair)["status"])
+        return pair
+
+    return change
+
+
+def _swap_authority(pair: Pair) -> Pair:
+    provider = _provider(pair[1])
+    provider["authority"] = sorted(
+        cast("set[str]", PROVIDER_AUTHORITIES - {None, provider["authority"]})
+    )[0]
+    return pair
+
+
+def _flip_media_kind(pair: Pair) -> Pair:
+    proposal = json.loads(pair[0]["proposal_document"])
+    proposal["media_kind"] = (
+        "audiobook" if proposal["media_kind"] == "ebook" else "ebook"
+    )
+    pair[0]["proposal_document"] = canonical_json(proposal)
+    return pair
+
+
+# Each probe changes a rendered value to another well-formed one without
+# resealing, so each document is canonical JSON inside its closed envelope but
+# no longer carries the content address its writer gave it.
+_INCONSISTENT: dict[str, tuple[str, Callable[[Pair], Pair]]] = {
+    "retitled target": ("plain", _retitle),
+    "file format": ("plain", _set(lambda pair: pair[1]["file"], "format", "m4b")),
+    "provider status": ("decoration", _flip_status(lambda pair: _provider(pair[1]))),
+    "lane status": ("lanes", _flip_status(lambda pair: _first_lane(pair[1]))),
+    "provider authority": ("decoration", _swap_authority),
+    "proposal media kind": ("plain", _flip_media_kind),
+    "result reasons": (
+        "plain",
+        _set(lambda pair: pair[0]["results"][0], "reasons", ["Not A Reason"]),
+    ),
+}
+
+
+@pytest.mark.parametrize("probe", _INCONSISTENT)
+def test_a_well_formed_inconsistent_value_refuses_as_canonical(probe: str) -> None:
+    name, change = _INCONSISTENT[probe]
+    case_document, report_document = _mutated(name, change, reseal=False)
+    for read in (_case_and_report, _canonical_pair):
+        with pytest.raises(ReviewWebError) as refused:
+            read(case_document, report_document)
+        assert refused.value.code == "unavailable"
+    for pages in (_pages, _canonical_pages):
+        with pytest.raises(ReviewWebError) as refused:
+            pages(case_document, report_document)
+        assert refused.value.code == "unavailable"
+
+
+def test_a_non_canonical_case_text_refuses_as_canonical() -> None:
+    case_document, report_document = _documents(_report())
+    spaced = json.dumps(json.loads(case_document), sort_keys=True, ensure_ascii=False)
+    for read in (_case_and_report, _canonical_pair):
+        with pytest.raises(ReviewWebError, match="unavailable"):
+            read(spaced, report_document)
+
+
 def test_a_malformed_unrendered_value_is_the_admitted_difference() -> None:
     case_document, report_document = _documents(_REPORTS["audiobook"]())
-    report = json.loads(report_document)
-    candidate = _provider(report)["candidates"][0]
-    candidate["identity"] = "not-an-identity"
-    corrupted = canonical_json(report)
+
+    def corrupt(pair: Pair) -> Pair:
+        _provider(pair[1])["candidates"][0]["identity"] = "not-an-identity"
+        return pair
+
+    corrupted_case, corrupted = _mutated("audiobook", corrupt)
     with pytest.raises(ReviewWebError):
-        _canonical_pair(case_document, corrupted)
-    # The narrow read never opens the candidate, so the row renders exactly what
-    # the canonical read rendered before the corruption.
-    assert _pages(case_document, corrupted) == _canonical_pages(
+        _canonical_pair(corrupted_case, corrupted)
+    # Resealed, the corruption is one only a canonical-writer defect or an
+    # out-of-band edit could store. The narrow read never opens the candidate,
+    # so the row renders what the canonical read rendered before it, under the
+    # resealed case's identity.
+    old_id = browse_case_facts_and_report(case_document, report_document)[0]
+    new_id = browse_case_facts_and_report(corrupted_case, corrupted)[0]
+    assert _pages(corrupted_case, corrupted) == _canonical_pages(
         case_document, report_document
-    )
+    ).replace(old_id.review_case_id, new_id.review_case_id)
 
 
 def test_lineage_disagreement_still_refuses() -> None:

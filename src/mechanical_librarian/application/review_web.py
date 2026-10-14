@@ -2744,6 +2744,7 @@ def _library_item(
         case, report = _case_and_report(case_document, report_document)
     decisions: set[str] = set()
     automatic_outcomes: dict[str, str] = {}
+    canonical_case: ReviewCase | None = None
     for document in decision_documents:
         if (
             json.loads(document).get("schema_version")
@@ -2759,7 +2760,9 @@ def _library_item(
             assert case_document is not None
             # A human decision binds a proposal identity, which only the
             # canonical case carries, so this row is validated against it.
-            decision.validate_for(ReviewCase.from_json(case_document))
+            if canonical_case is None:
+                canonical_case = ReviewCase.from_json(case_document)
+            decision.validate_for(canonical_case)
             decisions.add(decision.destination)
         else:
             destination = str(automatic["destination"])
@@ -2942,7 +2945,7 @@ def _attention_item(
         "item": report.target.item,
         "library": report.target.library,
         "media_kind": report.file.format,
-        "notices": result["reasons"],
+        "notices": list(result["reasons"]),
         "provenance": sorted(
             {
                 reference
