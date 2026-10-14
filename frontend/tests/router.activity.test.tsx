@@ -1732,6 +1732,25 @@ describe('Activity route', () => {
     expect(page).toHaveFocus()
   })
 
+  it('lets no pending Activity search pull the owner back once another route is loading', async () => {
+    const { router } = renderRoute('/activity', createHttp())
+    const search = await screen.findByRole('searchbox', { name: 'Search activity' })
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(search, { target: { value: 'late' } })
+      await act(async () => {
+        const leaving = router.navigate({ to: '/settings', search: { group: 'connection' } })
+        // Activity is still painted while the Settings route loads.
+        vi.advanceTimersByTime(250)
+        await leaving
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    expect(router.state.location.pathname).toBe('/settings')
+    expect(router.state.location.search).toEqual({ group: 'connection' })
+  })
+
   it('does not let an unmounted Activity focus callback target a fresh Activity route', async () => {
     const frames = new Map<number, FrameRequestCallback>()
     let nextFrame = 1

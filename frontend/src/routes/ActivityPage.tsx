@@ -622,6 +622,8 @@ export default function ActivityPage({ initial }: { initial: ActivityView }) {
     if (queryCommit.current !== null) window.clearTimeout(queryCommit.current)
     queryCommit.current = window.setTimeout(() => {
       queryCommit.current = null
+      // Activity stays painted while the next route's code loads, but no longer owns the URL.
+      if (router.latestLocation.pathname !== '/activity') return
       changeSearch({ q: value || undefined }, 'search')
     }, 150)
   }
