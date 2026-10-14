@@ -186,6 +186,9 @@ nearest KiB.
 | Current pointer/projection | `current_cover_considerations` | 2,019 R / 356 KiB | cover preparation; cover readers | One current candidate per live case makes supersession/retry bounded while preserving packet history. |
 | Current pointer/projection | `review_case_field_facts` | 32,448 R / 3,568 KiB | insert trigger from `review_cases`; Library/Attention count/page and admission readers | #802's derived current facts, including owner actionability, replace repeated case-document JSON walks. Open-time equivalence validation rejects drift. |
 | Current pointer/projection | `shadow_outcome_field_facts` | 15,196 R / 3,660 KiB | insert trigger from `shadow_decision_outcomes`; Library/Attention and policy readers | #802's derived disposition facts replace repeated outcome-document JSON walks. Open-time equivalence validation rejects drift. |
+| Current pointer/projection | `metadata_report_browse_facts` | added after the snapshot (#1199) | insert trigger from `metadata_reports`; Library/Attention/search candidate and count readers | One row per report holds the folded title order key, format and folded format, and the provider-limited flag, so candidate clauses never read a report document. Open-time equivalence validation rejects drift. |
+| Current pointer/projection | `metadata_report_browse_authors` | added after the snapshot (#1199) | insert trigger from `metadata_reports`; search readers | One row per distinct folded author keeps author search an exact per-value `LIKE` instead of a joined string. Open-time equivalence validation rejects drift. |
+| Current pointer/projection | `proposal_set_browse_facts` | added after the snapshot (#1199) | insert trigger from `proposal_sets`; Library/Attention policy-ask candidate and count readers | One row per proposal holds its resolved policy id, so the policy-ask clause joins policy resolutions without parsing a proposal document per candidate. Open-time equivalence validation rejects drift. |
 | Operational/recovery | `review_preparation_scans` | 3 R / 4 KiB | discovery scheduling/completion; pipeline activity readers | One scan is the bounded discovery lifecycle parent, distinct from its many item work rows. |
 | Operational/recovery | `review_preparation_work` | 2,053 R / 1,740 KiB | claim, advance, complete and fail pipeline actions; latest-work and recovery readers | Restart, attempt, fair claim and per-item state require a mutable work row; it is not audit history. |
 | Operational/recovery | `review_preparation_absences` | 0 R / 4 KiB | discovery confirmation; pipeline transition reader | Bounded staged absence prevents an incomplete scan from tombstoning a lineage. |
@@ -206,6 +209,7 @@ nearest KiB.
 | Control/configuration | `field_effect_authorities` | 0 R / 4 KiB | authority revocation/currentness; effect claim reader | Mutable authority witness for a decision after its immutable decision document is recorded. |
 | Control/configuration | `field_effect_consents` | 0 R / 4 KiB | owner consent grant/revoke; effect claim reader | Consent is separately revocable and library scoped. |
 | Control/configuration | `field_effect_manual_holds` | 0 R / 4 KiB | owner-decision return/release; pipeline/effect readers | Manual hold controls automatic return independently of policy or consent. |
+| Control/configuration | `browse_fact_identity` | added after the snapshot (#1199) | schema creation only; open-time browse-fact validation | Singleton records the Unicode version the browse facts were folded under; open refuses any other version. |
 | Control/configuration | `reviewer_access` | not present in retained pre-F31 snapshot | reviewer-access repository; setup, Settings and dispatch readers | Singleton owns the exact optional task-to-engine/model mapping independently of deployment profile authority. |
 | Security/credential | `reviewer_access_secrets` | not present in retained pre-F31 snapshot | reviewer-access repository only | Write-only OpenRouter credential state is separated from its public presence and selection document. |
 
@@ -225,7 +229,7 @@ column label: `I` names current open-time integrity
 (`schema._validate_schema_contents`, including exact object, foreign-key and
 `integrity_check` validation), while `A` entries describe deleted qualification
 code and grant no current adoption path. Current canonical documents and the
-two derived fact relations are checked by the executable open-time validators.
+five derived fact relations are checked by the executable open-time validators.
 This matrix was cross-checked against the persistence code graph and the named
 source symbols at the time of the audit.
 
@@ -257,8 +261,11 @@ source symbols at the time of the audit.
 | `metadata_policy_state` | `metadata_policy.activate_metadata_policy`, `enter_shadow_preview`, `activate_qualified_automatic` | policy routes and all policy currentness reads | `schema._validate_metadata_policy_documents` |
 | `metadata_policy_transition_items` | `metadata_policy.activate_metadata_policy` and transition settlement | policy activation status | FK/state checks; no owner-visible standalone DTO |
 | `metadata_policy_transitions` | `metadata_policy.activate_metadata_policy` and refresh | policy activation status and Activity | FK/state checks |
+| `metadata_report_browse_authors` | `metadata_reports_project_browse_facts` trigger | `review_sql._REVIEW_SEARCH_SQL` | `_validate_review_field_facts` reconstructs it |
+| `metadata_report_browse_facts` | `metadata_reports_project_browse_facts` trigger | `review_cases` Library/Attention page and count SQL, `review_sql` search and count | `_validate_review_field_facts` reconstructs it |
 | `metadata_report_cover_references` | `reports.publish` | cover artifact/packet readers | report publication verifies the complete reference set |
 | `metadata_reports` | `reports.publish` | `review_projections`, `reports.get`, Activity | `_validate_report_row`; adoption parses every canonical report |
+| `proposal_set_browse_facts` | `proposal_sets_project_browse_facts` trigger | `review_cases` Library/Attention page and count SQL through `review_sql._browse_scalar_sql` | `_validate_review_field_facts` reconstructs it |
 | `proposal_sets` | `proposal_sets.publish_proposal` | `proposal_sets.get_proposal`; admission | `_validate_proposal_row`; adoption parses canonical proposal documents |
 | `provider_recovery_outbox` | `recovery_outbox.enqueue`, `complete_provider_recovery_outbox` | no direct owner DTO; recovery runner drain | `_validate_provider_recovery_outbox_row` on open and drain |
 | `review_case_field_facts` | `review_cases_project_field_facts` trigger | `review_projections` and `review_cases` Library/Attention SQL | `_validate_review_field_facts` and adoption reconstruct it |
@@ -311,8 +318,11 @@ column are module-local persistence symbols.
 | `metadata_policy_state` | `activate_metadata_policy`; `enter_shadow_preview`; `activate_qualified_automatic` | policy currentness/activation | policy routes; `field_effect_activity` | `S,_validate_metadata_policy_documents` | `D` |
 | `metadata_policy_transition_items` | activation/settlement | transition restart | — | `S`, FK/state | `D` |
 | `metadata_policy_transitions` | activation/refresh | transition restart/status | policy status; `field_effect_activity` | `S`, FK/state | `D` |
+| `metadata_report_browse_authors` | `metadata_reports_project_browse_facts` trigger | — | `review_sql` search | `S,F` | — |
+| `metadata_report_browse_facts` | `metadata_reports_project_browse_facts` trigger | — | `review_cases` Library/Attention/search | `S,F` | — |
 | `metadata_report_cover_references` | `reports.publish` | cover packet assembly | cover artifact readers | `S`, complete set | `D` |
 | `metadata_reports` | `reports.publish` | `reports.get`, activity | `review_projections` | `S,_validate_report_row` | `D,C` |
+| `proposal_set_browse_facts` | `proposal_sets_project_browse_facts` trigger | — | `review_cases` Library/Attention | `S,F` | — |
 | `proposal_sets` | `proposal_sets.publish_proposal` | admission/policy | `proposal_sets.get_proposal` | `S,_validate_proposal_row` | `D,C` |
 | `provider_recovery_outbox` | `recovery_outbox.enqueue`, complete | recovery drain | — | `S,_validate_provider_recovery_outbox_row` | `D` |
 | `review_case_field_facts` | `review_cases_project_field_facts` trigger | admission predicates | `review_projections` Library/Attention | `S,F` | `F` |
@@ -487,6 +497,8 @@ own closed checks and/or domain-document validation.
 | `human_decision_events` | `human_decisions`, `review_cases` |
 | `metadata_policy_state`, `metadata_policy_transitions` | `metadata_policy_drafts` |
 | `metadata_policy_transition_items` | `metadata_policy_transitions`, `metadata_reports`, `review_preparation_work` |
+| `metadata_report_browse_facts`, `metadata_report_browse_authors` | `metadata_reports` |
+| `proposal_set_browse_facts` | `proposal_sets` |
 | `metadata_report_cover_references`, `proposal_sets` | `metadata_reports` |
 | `provider_recovery_outbox` | `proposal_sets`, `metadata_reports`, `review_cases` |
 | `review_cases` | `proposal_sets`, `metadata_reports` |
@@ -515,13 +527,18 @@ tables: `metadata_reports`, `metadata_report_cover_references`, `proposal_sets`,
 `metadata_policy_drafts`, `review_cases`, `review_case_transitions`,
 `human_decisions`, `human_decision_events`, `cover_considerations`,
 `cover_consideration_events`, `automatic_decisions`, `field_effect_events`,
-`field_effect_no_changes`, and `shadow_decision_outcomes`. Two additional
-after-insert triggers, `review_cases_project_field_facts` and
-`shadow_outcomes_project_field_facts`, populate #802's derived facts in the
-same transaction as their canonical documents. Open-time validation compares
-both derived relations to their canonical JSON, so a partial write, manual
-alteration, or interrupted projection fails closed rather than exposing stale
-owner-visible truth.
+`field_effect_no_changes`, and `shadow_decision_outcomes`. Four additional
+after-insert triggers, `review_cases_project_field_facts`,
+`shadow_outcomes_project_field_facts` and #1199's
+`metadata_reports_project_browse_facts` and
+`proposal_sets_project_browse_facts`, populate the derived facts in the
+same transaction as their canonical documents. The report trigger folds with
+`ml_casefold`, so a connection that has not registered it cannot insert a
+report. Open-time validation compares the derived relations to their canonical
+JSON, so a partial write, manual alteration, or interrupted projection fails
+closed rather than exposing stale owner-visible truth. Which browse-fact rows it
+compares, and what is refused at open rather than on read, is stated once in
+[Schema admission](security.md#schema-admission).
 
 ## Required separations
 
@@ -540,6 +557,8 @@ same-transaction, reconstructible read projection; no cluster is `redundant`.
 | transitions / lineages / packages | Required | package cutover | all members atomic | package/lineage validation | cutover key | lineage pointer | transition only |
 | cases / case facts | View-derived | insert trigger | same insert | open-time equivalence | case identity | — | case document |
 | shadow outcomes / shadow facts | View-derived | insert trigger | same insert | open-time equivalence | outcome identity | — | outcome document |
+| reports / report browse facts and authors | View-derived | insert trigger | same insert | open-time equivalence | report identity | — | report document |
+| proposals / proposal browse facts | View-derived | insert trigger | same insert | open-time equivalence | proposal identity | — | proposal document |
 | shadow outcomes / automatic decisions | Required | each authority command | local command | reread authority | decision key | — | both immutable facts |
 | human decisions / events | Required | `record_human_decision` | same command | history reread | decision key | decision only | event/history |
 | decisions / no-change / effect plans | Required | each state command | command scope | plan/action recovery | plan/action keys | decision authority | events/no-change |

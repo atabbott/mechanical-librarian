@@ -522,6 +522,13 @@ def test_only_the_exact_seeded_schema_is_an_initialization_predecessor() -> None
     assert not store.is_exact_schema_only()
 
 
+def test_a_changed_browse_fact_identity_is_not_the_seeded_schema() -> None:
+    connection, store = _real_store()
+    connection.execute("UPDATE browse_fact_identity SET unicode_version='0.0.0'")
+
+    assert not store.is_exact_schema_only()
+
+
 def test_setup_write_rollback_cannot_discard_a_returned_owner_session(
     tmp_path: Path,
 ) -> None:

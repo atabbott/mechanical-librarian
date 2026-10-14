@@ -452,6 +452,7 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
         assert tables == [
             ("automatic_decisions",),
             ("automatic_safety_state",),
+            ("browse_fact_identity",),
             ("cover_consideration_events",),
             ("cover_considerations",),
             ("cover_selection_authorities",),
@@ -484,10 +485,13 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("metadata_policy_state",),
             ("metadata_policy_transition_items",),
             ("metadata_policy_transitions",),
+            ("metadata_report_browse_authors",),
+            ("metadata_report_browse_facts",),
             ("metadata_report_cover_references",),
             ("metadata_reports",),
             ("owner_setting_secrets",),
             ("owner_settings",),
+            ("proposal_set_browse_facts",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
             ("review_case_field_facts",),
@@ -702,6 +706,15 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             fixture["shadow_decision_outcomes_sql"],
         )
         with closing(open_repository(path)) as repository:
+            # The producer predates #1199's report browse facts.
+            repository._connection.executescript(
+                "DROP TRIGGER metadata_reports_project_browse_facts;"
+                "DROP TABLE metadata_report_browse_authors;"
+                "DROP TABLE metadata_report_browse_facts;"
+                "DROP TRIGGER proposal_sets_project_browse_facts;"
+                "DROP TABLE proposal_set_browse_facts;"
+                "DROP TABLE browse_fact_identity;"
+            )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
             ).fetchall()
@@ -928,7 +941,13 @@ def test_exact_schema_isolates_unselected_history_and_validates_selected_rows_an
         repository.close()
         connection = sqlite3.connect(path)
         connection.execute("DROP TRIGGER metadata_reports_no_update")
-        document = "{}"
+        # `other` is a current Library row, so its browse facts are checked at
+        # open (#1199): this edit keeps them, and a fact-changing one refuses
+        # open. Historical isolation is in
+        # test_unselected_historical_report_tamper_does_not_block_open.
+        payload = json.loads(other.to_json())
+        del payload["field_results"]
+        document = json.dumps(payload, separators=(",", ":"), sort_keys=True)
         connection.execute(
             "UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?",
             (document, hashlib.sha256(document.encode()).hexdigest(), other.report_id),
@@ -941,6 +960,50 @@ def test_exact_schema_isolates_unselected_history_and_validates_selected_rows_an
         with pytest.raises(MetadataReportError):
             repository.get(other.report_id)
         repository.close()
+
+
+def _tamper_report_document(path: Path, report_id: str, document: str) -> None:
+    connection = sqlite3.connect(path)
+    connection.execute("DROP TRIGGER metadata_reports_no_update")
+    connection.execute(
+        "UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?",
+        (document, hashlib.sha256(document.encode()).hexdigest(), report_id),
+    )
+    connection.execute(persistence_schema._NO_UPDATE_SQL)
+    connection.commit()
+    connection.close()
+
+
+@pytest.mark.parametrize("document", ["{}", "not json"])
+def test_unselected_historical_report_tamper_does_not_block_open(document: str) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        repository = open_repository(path)
+        historical = synthetic_report()
+        successor = synthetic_report("Successor")
+        repository.publish(historical, lambda: True)
+        repository.publish(successor, lambda: True, historical.report_id)
+        repository.close()
+        _tamper_report_document(path, historical.report_id, document)
+        repository = open_repository(path)
+        assert repository.get(successor.report_id) == successor.to_json()
+        with pytest.raises(MetadataReportError):
+            repository.get(historical.report_id)
+        repository.close()
+
+
+def test_participating_report_fact_tamper_refuses_open() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        path = Path(directory) / "reports.sqlite"
+        repository = open_repository(path)
+        current = synthetic_report()
+        repository.publish(current, lambda: True)
+        repository.close()
+        _tamper_report_document(path, current.report_id, "{}")
+        with pytest.raises(
+            MetadataReportError, match="^database is unavailable or incompatible$"
+        ):
+            open_repository(path)
 
 
 def test_selected_corrupt_pointer_blocks_only_its_publication_without_mutation() -> (
@@ -2285,6 +2348,15 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             fixture["shadow_decision_outcomes_sql"],
         )
         with closing(open_repository(path)) as repository:
+            # The producer predates #1199's report browse facts.
+            repository._connection.executescript(
+                "DROP TRIGGER metadata_reports_project_browse_facts;"
+                "DROP TABLE metadata_report_browse_authors;"
+                "DROP TABLE metadata_report_browse_facts;"
+                "DROP TRIGGER proposal_sets_project_browse_facts;"
+                "DROP TABLE proposal_set_browse_facts;"
+                "DROP TABLE browse_fact_identity;"
+            )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
             ).fetchall()

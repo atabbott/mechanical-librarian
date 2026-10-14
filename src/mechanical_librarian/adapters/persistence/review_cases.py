@@ -57,6 +57,7 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _POLICY_ASK_ATTENTION_SQL,
+    _REPORT_BROWSE_FACTS_JOIN_SQL,
     _REVIEW_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
@@ -65,6 +66,8 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _terminal_library_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _proposal_browse_fact_pair,
+    _require_equal_facts,
     _validate_report_row,
     _validated_report_row,
 )
@@ -174,6 +177,13 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 or _validate_proposal_row(proposal_row) != proposal_set.to_json()
             ):
                 raise MetadataReportError("review proposal is unavailable")
+            # Admission can bind a stored proposal again, making its browse
+            # facts readable, so they are checked as open checks them (#1199).
+            _require_equal_facts(
+                self._connection,
+                (_proposal_browse_fact_pair("=:key"),),
+                parameters={"key": proposal_set.proposal_set_id},
+            )
             report_row = self._connection.execute(
                 "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (proposal_set.report_id,),
@@ -612,12 +622,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             rows = self._connection.execute(
                 "WITH "
                 + _terminal_library_sql(attached)
-                + ", report_scalars AS MATERIALIZED (SELECT mr.report_id,"
-                "json_extract(mr.document,'$.target.fields[0].value') AS title,"
-                "json_extract(mr.document,'$.file.format') AS format "
-                "FROM metadata_reports mr JOIN (SELECT DISTINCT report_id "
-                "FROM current_review_packages) participating USING(report_id)),"
-                "candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
+                + ",candidates AS MATERIALIZED (SELECT rc.review_case_id AS case_id,"
                 "mr.report_id,"
                 "CASE WHEN "
                 "rc.proposal_set_id=ml.proposal_set_id AND rc.report_id=ml.report_id "
@@ -627,27 +632,18 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "CASE WHEN "
                 + _browse_scalar_sql(_REVIEW_ATTENTION_SQL)
                 + " THEN 1 ELSE 0 END AS attention,"
-                # A report's provider lanes are current evidence, not a
-                # second workflow state. Aggregate-only observations have no
-                # lanes, so the LEFT JOIN falls back to their own status.
                 # Provider completeness matters only inside the attention
                 # group: the no-attention lens remains alphabetical.
-                "CASE WHEN EXISTS(SELECT 1 FROM json_each(mr.document,'$.providers') provider "
-                "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 "
-                "WHERE COALESCE(json_extract(lane.value,'$.status'),"
-                "json_extract(provider.value,'$.status')) IN ("
-                "'authentication','authorization','rate_limited','unavailable',"
-                "'incomplete','malformed','oversized','candidate_limit_exceeded',"
-                "'query_limit_exceeded')) THEN 1 ELSE 0 END AS provider_limited,"
-                "ml_casefold(COALESCE(scalars.title,'')) AS title_order,"
+                "facts.provider_limited AS provider_limited,"
+                "facts.title_key AS title_order,"
                 "COALESCE(rc.review_case_id,'') AS case_order,"
                 "NULL AS work_id,NULL AS attempt,NULL AS stage,NULL AS failure_root,"
                 "NULL AS recovery_attempt,NULL AS failure_code, NULL AS display_title,"
                 "NULL AS display_authors,NULL AS display_format "
                 + _CURRENT_LIBRARY_FROM_SQL
-                + " JOIN report_scalars scalars ON scalars.report_id=mr.report_id "
-                " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
-                + _browse_scalar_sql(_REVIEW_SEARCH_SQL)
+                + _REPORT_BROWSE_FACTS_JOIN_SQL
+                + "WHERE COALESCE(c.outcome,'')<>'tombstoned'"
+                + _REVIEW_SEARCH_SQL
                 + terminal_union
                 + "),totals AS (SELECT count(*) AS total,COALESCE(sum(attention),0) "
                 "AS attention_total FROM candidates),page AS MATERIALIZED (SELECT "
@@ -846,17 +842,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             query, pattern = _review_search_pattern(search)
             cover_authority = self._current_cover_authority()
             rows = self._connection.execute(
-                "WITH report_scalars AS MATERIALIZED (SELECT mr.report_id,"
-                "json_extract(mr.document,'$.target.fields[0].value') AS title,"
-                "json_extract(mr.document,'$.file.format') AS format "
-                "FROM metadata_reports mr JOIN (SELECT DISTINCT rc.report_id "
-                "FROM current_review_packages c JOIN review_cases rc "
-                "ON rc.review_case_id=c.review_case_id) participating USING(report_id)),"
-                "search_matches AS MATERIALIZED (SELECT "
+                "WITH search_matches AS MATERIALIZED (SELECT "
                 "c.connection_name,c.library_name,c.item_id "
                 + _CURRENT_REVIEW_FROM_SQL
-                + " JOIN report_scalars scalars ON scalars.report_id=mr.report_id WHERE 1"
-                + _browse_scalar_sql(_REVIEW_SEARCH_SQL)
+                + _REPORT_BROWSE_FACTS_JOIN_SQL
+                + "WHERE 1"
+                + _REVIEW_SEARCH_SQL
                 + "),candidates AS MATERIALIZED (SELECT rc.review_case_id AS review_case_id,"
                 "mr.report_id AS report_id,CASE WHEN "
                 "rc.proposal_set_id=c.proposal_set_id AND rc.report_id=c.report_id "
@@ -866,11 +857,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 + _browse_scalar_sql(_REVIEW_FIELD_ATTENTION_SQL)
                 + _browse_scalar_sql(_EPUB_INAPPLICABLE_ATTENTION_SQL)
                 + " THEN 1 ELSE 0 END AS attention,"
-                "ml_casefold(COALESCE(scalars.title,'')) "
+                "facts.title_key "
                 "AS title_order,c.library_name AS library_name,c.item_id AS item_id "
                 + _CURRENT_REVIEW_FROM_SQL
-                + " JOIN report_scalars scalars ON scalars.report_id=mr.report_id "
-                " JOIN review_case_field_facts result "
+                + _REPORT_BROWSE_FACTS_JOIN_SQL
+                + "JOIN review_case_field_facts result "
                 "ON result.review_case_id=rc.review_case_id "
                 "WHERE (c.connection_name,c.library_name,c.item_id) IN "
                 "(SELECT connection_name,library_name,item_id FROM search_matches)"
@@ -992,10 +983,11 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             row = self._connection.execute(
                 "SELECT count(*) "
                 + _CURRENT_REVIEW_FROM_SQL
-                + " JOIN review_case_field_facts result "
+                + _REPORT_BROWSE_FACTS_JOIN_SQL
+                + "JOIN review_case_field_facts result "
                 "ON result.review_case_id=rc.review_case_id WHERE "
-                + _REVIEW_FIELD_ATTENTION_SQL
-                + _EPUB_INAPPLICABLE_ATTENTION_SQL
+                + _browse_scalar_sql(_REVIEW_FIELD_ATTENTION_SQL)
+                + _browse_scalar_sql(_EPUB_INAPPLICABLE_ATTENTION_SQL)
                 + _REVIEW_SEARCH_SQL,
                 (
                     *cover_authority,

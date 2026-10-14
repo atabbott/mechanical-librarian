@@ -23,7 +23,11 @@ from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
 
 from mechanical_librarian.adapters.persistence.binding import _LinuxDatabaseBinding
-from mechanical_librarian.adapters.persistence.schema import _validate_report_row
+from mechanical_librarian.adapters.persistence.schema import (
+    _report_browse_fact_pairs,
+    _require_equal_facts,
+    _validate_report_row,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -189,6 +193,14 @@ class SQLiteReportRepository(ConnectionScoped):
                             raise MetadataReportError(
                                 "persisted report cover references conflict"
                             )
+                        # Reselecting a stored report makes its browse facts
+                        # readable again, so they are checked as open checks a
+                        # participating row's (#1199).
+                        _require_equal_facts(
+                            self._connection,
+                            _report_browse_fact_pairs("=:key"),
+                            parameters={"key": report.report_id},
+                        )
                     self._connection.execute(
                         "INSERT INTO current_metadata_reports(connection_name,library_name,item_id,file_identity,report_id) VALUES(?,?,?,?,?) "
                         "ON CONFLICT(connection_name,library_name,item_id,file_identity) DO UPDATE SET report_id=excluded.report_id",

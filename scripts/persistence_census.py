@@ -25,8 +25,10 @@ from urllib.parse import quote
 
 from mechanical_librarian.adapters.persistence.review_sql import (
     _CURRENT_REVIEW_FROM_SQL,
+    _REPORT_BROWSE_FACTS_JOIN_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
     _REVIEW_SEARCH_SQL,
+    _browse_scalar_sql,
 )
 
 # The report statements are imported rather than copied so the census always
@@ -41,9 +43,10 @@ _HOT_STATEMENTS: dict[str, str] = {
     "attention_field_count": (
         "SELECT count(*) "
         + _CURRENT_REVIEW_FROM_SQL
-        + " JOIN review_case_field_facts result "
+        + _REPORT_BROWSE_FACTS_JOIN_SQL
+        + "JOIN review_case_field_facts result "
         "ON result.review_case_id=rc.review_case_id WHERE "
-        + _REVIEW_FIELD_ATTENTION_SQL
+        + _browse_scalar_sql(_REVIEW_FIELD_ATTENTION_SQL)
         + _REVIEW_SEARCH_SQL
     ),
     "library_work_counts": report_sql._LIBRARY_WORK_COUNTS_SQL,

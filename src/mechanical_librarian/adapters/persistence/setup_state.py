@@ -16,6 +16,7 @@ from mechanical_librarian.adapters.persistence.owner_settings import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _SETUP_AUTOMATIC_SAFETY_ROW,
+    _SETUP_BROWSE_FACT_IDENTITY_ROW,
     _SETUP_FIELD_EFFECT_CONTROL_ROW,
     _SETUP_POLICY_DRAFT_ROW,
     _SETUP_POLICY_STATE_ROW,
@@ -36,6 +37,7 @@ _SETUP_ROW_TABLES = frozenset(
         "metadata_policy_state",
         "metadata_policy_transitions",
         "automatic_safety_state",
+        "browse_fact_identity",
         "field_effect_control",
         "owner_setting_secrets",
         "owner_settings",
@@ -580,6 +582,10 @@ class SetupStateStore(ConnectionScoped):
         if "field_effect_control" in tables and self._connection.execute(
             "SELECT singleton,paused,updated_at FROM field_effect_control"
         ).fetchall() != [_SETUP_FIELD_EFFECT_CONTROL_ROW]:
+            return False
+        if "browse_fact_identity" in tables and self._connection.execute(
+            "SELECT singleton,unicode_version FROM browse_fact_identity"
+        ).fetchall() != [_SETUP_BROWSE_FACT_IDENTITY_ROW]:
             return False
         if "review_preparation_control" in tables and self._connection.execute(
             "SELECT singleton,paused,claim_sequence,first_boot_acknowledged,last_library,circuit_failures,"
