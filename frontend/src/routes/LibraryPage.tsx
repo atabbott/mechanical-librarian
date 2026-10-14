@@ -2094,6 +2094,7 @@ export default function LibraryPage({
   pending,
   failed,
   retry,
+  onRailRetaining,
 }: {
   data: LibraryView | undefined
   /** `data` is the previous key's result, shown busy until the URL's own read settles. */
@@ -2101,6 +2102,8 @@ export default function LibraryPage({
   pending: boolean
   failed: boolean
   retry: () => void
+  /** Reports whether the attention rail is showing a retained queue. */
+  onRailRetaining?: (retaining: boolean) => void
 }) {
   const works = useMemo(() => data?.works ?? [], [data?.works])
   // Retained rows stay visible, but selection resolves only against the URL's own result.
@@ -2493,6 +2496,10 @@ export default function LibraryPage({
   useEffect(() => {
     showingAttention.current = attentionQuery.data !== undefined
   })
+  useLayoutEffect(
+    () => onRailRetaining?.(attentionQuery.isPlaceholderData),
+    [onRailRetaining, attentionQuery.isPlaceholderData],
+  )
   const attention = useMemo(
     () => ({
       ...attentionQuery,
@@ -2813,9 +2820,11 @@ export default function LibraryPage({
           id: selectedReviewCaseId,
           fields: fields.filter((field) => field.humanDecision !== null),
           priorAttention: new Set(
-            (activeQueueIndex < 0 ? [] : attentionItems.slice(0, activeQueueIndex + 1)).map(
-              (item) => `${item.id}:${item.destination}`,
-            ),
+            // A retained rail is the previous search's queue, not a prefix of the next one.
+            (activeQueueIndex < 0 || attention.isPlaceholderData
+              ? []
+              : attentionItems.slice(0, activeQueueIndex + 1)
+            ).map((item) => `${item.id}:${item.destination}`),
           ),
           identity: retained,
         })
@@ -3185,7 +3194,7 @@ export default function LibraryPage({
     if (cursor && !retained) prefetchOnIntent(libraryQuery(http, { ...search, cursor }))
   }
   const workIntent = (work: LibraryWorkView) => {
-    if (work.reviewCaseId) prefetchOnIntent(detailQuery(http, work.reviewCaseId))
+    if (work.reviewCaseId && !retained) prefetchOnIntent(detailQuery(http, work.reviewCaseId))
   }
   const lensIntent = (lens: LibrarySearch['lens']) =>
     prefetchOnIntent(libraryQuery(http, { lens, ...(search.q ? { q: search.q } : {}) }))

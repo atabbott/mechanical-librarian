@@ -1003,11 +1003,13 @@ const LibraryRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
   const query = useRetainedQuery(libraryQuery(http, search))
-  useAnnounceRetaining(query.isPlaceholderData)
+  const [railRetaining, setRailRetaining] = useState(false)
+  useAnnounceRetaining(query.isPlaceholderData || railRetaining)
   return (
     <LibraryPage
       data={query.data}
       retained={query.isPlaceholderData}
+      onRailRetaining={setRailRetaining}
       pending={query.isPending}
       failed={query.isError}
       retry={() => void query.refetch()}
