@@ -56,8 +56,8 @@ def test_pattern_matches_exactly_the_forbidden_codepoints() -> None:
 _FORBIDDEN_SAMPLES = (
     "\x00",
     "\x7f",
-    "‮",
-    "﷐",
+    "\u202e",
+    "\ufdd0",
     "\U0010ffff",
     chr(0xD800),
     chr(0xDFFF),
@@ -78,7 +78,7 @@ def test_forbidden_codepoint_is_refused_anywhere_in_text(
 
 @pytest.mark.parametrize("validator", (validate_text, validate_incumbent_description))
 def test_text_without_forbidden_codepoints_is_admitted(validator) -> None:
-    value = "Café 語 \U0001f600 � �\U0001fffd"
+    value = "Café 語 \U0001f600 \ufffd \ufffd\U0001fffd"
     assert validator(value, "label", 256) == value
 
 
@@ -96,9 +96,26 @@ def test_text_bounds_precede_the_codepoint_check(value: str, message: str) -> No
     assert str(raised.value) == message
 
 
+@pytest.mark.parametrize(
+    "value,message",
+    (
+        ("a" * 257 + "\x00", "label exceeds its size limit"),
+        (" \t\n", "label must be non-empty text"),
+    ),
+)
+def test_description_bounds_precede_the_codepoint_check(
+    value: str, message: str
+) -> None:
+    with pytest.raises(EvidenceValueError) as raised:
+        validate_incumbent_description(value, "label", 256)
+    assert str(raised.value) == message
+
+
 def test_replacement_substitutes_each_forbidden_codepoint() -> None:
-    value = "\x00a‮b" + chr(0xD800) + chr(0xDFFF) + "c\U0010ffff￾"
-    assert replace_forbidden_codepoints(value) == "�a�b��c��"
-    clean = "Café 語 \U0001f600"
+    value = "\x00a\u202eb" + chr(0xD800) + chr(0xDFFF) + "c\U0010ffff\ufffe"
+    assert (
+        replace_forbidden_codepoints(value) == "\ufffda\ufffdb\ufffd\ufffdc\ufffd\ufffd"
+    )
+    clean = "Café\u00a0語 \U0001f600"
     assert replace_forbidden_codepoints(clean) == clean
     assert replace_forbidden_codepoints("") == ""
