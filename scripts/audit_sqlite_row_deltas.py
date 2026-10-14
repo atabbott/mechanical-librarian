@@ -12,6 +12,7 @@ import pytest
 
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
+    _register_casefold,
     _validate_schema,
 )
 
@@ -62,6 +63,7 @@ def run() -> int:
                     )
                 }
                 if set(baseline).issubset(tables):
+                    _register_casefold(self)
                     _validate_schema(self)
                     name = self.execute("PRAGMA database_list").fetchone()[2]
                     states[current, name] = {

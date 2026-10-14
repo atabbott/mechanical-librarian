@@ -25,6 +25,9 @@ from mechanical_librarian.adapters.field_effect_authority import (
     PersistedFieldEffectAuthority,
 )
 from mechanical_librarian.adapters.persistence.metadata_reports import open_repository
+from mechanical_librarian.adapters.persistence.schema import (
+    _REPORT_BROWSE_FACTS_INSERT_SQL,
+)
 from mechanical_librarian.adapters.providers.audible_catalog_metadata import (
     _candidate as _audible_candidate,
 )
@@ -1113,6 +1116,8 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
             ).fetchone()
         )
         values[columns.index("document")] = "{invalid"
+        # Out-of-band corruption bypasses the browse-fact projection (#1199).
+        root._connection.execute("DROP TRIGGER metadata_reports_project_browse_facts")
         root._connection.execute("PRAGMA ignore_check_constraints=ON")
         root._connection.execute(
             "INSERT OR REPLACE INTO metadata_reports VALUES ("
@@ -1120,6 +1125,7 @@ def test_configured_reader_serialized_facts_preserve_public_activity(
             + ")",
             values,
         )
+        root._connection.execute(_REPORT_BROWSE_FACTS_INSERT_SQL)
         root._connection.commit()
         root._connection.execute("PRAGMA ignore_check_constraints=OFF")
         assert admitted.activity(range_days=90) == canonical.activity(range_days=90)

@@ -320,6 +320,7 @@ def _connect_read_only(
     connection = sqlite3.connect(uri, uri=True, isolation_level=None)
     try:
         _validate_connection_binding(connection, sqlite_path, descriptor)
+        _register_casefold(connection)
         connection.execute("PRAGMA query_only=ON")
         connection.execute("PRAGMA busy_timeout=0")
         return connection

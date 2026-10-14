@@ -383,10 +383,14 @@ def test_independent_connections_never_mix_document_and_secret_snapshots(
 
 
 def test_exact_predecessor_empty_reviewer_table_is_rejected_without_mutation():
-    from mechanical_librarian.adapters.persistence.schema import _validate_schema
+    from mechanical_librarian.adapters.persistence.schema import (
+        _register_casefold,
+        _validate_schema,
+    )
     from mechanical_librarian.application.metadata_report import MetadataReportError
 
     connection = sqlite3.connect(":memory:", isolation_level=None)
+    _register_casefold(connection)
     _create_schema(connection)
     _validate_schema(connection)
     connection.execute("DROP TABLE reviewer_access")
