@@ -1700,48 +1700,68 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
         + _CURRENT_REVIEW_FROM_SQL
         + ") "
     )
-    reports = " IN (SELECT id FROM participating_reports)"
-    proposals = " IN (SELECT id FROM participating_proposals)"
-    report_expected = (
-        "SELECT mr.report_id,"
-        + _report_browse_fact_values_sql("mr.document")
-        + " FROM metadata_reports mr WHERE mr.report_id"
-        + reports
+    _require_equal_facts(
+        connection,
+        (
+            (review_expected, review_actual),
+            (shadow_expected, shadow_actual),
+            *_report_browse_fact_pairs(" IN (SELECT id FROM participating_reports)"),
+            _proposal_browse_fact_pair(" IN (SELECT id FROM participating_proposals)"),
+        ),
+        participating,
     )
-    report_actual = (
-        "SELECT report_id,title_key,format,format_key,provider_limited "
-        "FROM metadata_report_browse_facts WHERE report_id" + reports
+
+
+def _report_browse_fact_pairs(key: str) -> tuple[tuple[str, str], ...]:
+    """A report's fact and author pairs, both sides restricted by `key`."""
+    return (
+        (
+            "SELECT mr.report_id,"
+            + _report_browse_fact_values_sql("mr.document")
+            + " FROM metadata_reports mr WHERE mr.report_id"
+            + key,
+            "SELECT report_id,title_key,format,format_key,provider_limited "
+            "FROM metadata_report_browse_facts WHERE report_id" + key,
+        ),
+        (
+            "SELECT mr.report_id,"
+            + _report_browse_author_values_sql("metadata_reports mr,", "mr.document")
+            + " AND mr.report_id"
+            + key,
+            "SELECT report_id,author_key FROM metadata_report_browse_authors "
+            "WHERE report_id" + key,
+        ),
     )
-    author_expected = (
-        "SELECT mr.report_id,"
-        + _report_browse_author_values_sql("metadata_reports mr,", "mr.document")
-        + " AND mr.report_id"
-        + reports
-    )
-    author_actual = (
-        "SELECT report_id,author_key FROM metadata_report_browse_authors "
-        "WHERE report_id" + reports
-    )
-    proposal_expected = (
+
+
+def _proposal_browse_fact_pair(key: str) -> tuple[str, str]:
+    """A proposal's fact pair, both sides restricted by `key`."""
+    return (
         "SELECT proposal_set_id,"
         + _proposal_browse_fact_value_sql("document")
         + " FROM proposal_sets WHERE proposal_set_id"
-        + proposals
-    )
-    proposal_actual = (
+        + key,
         "SELECT proposal_set_id,resolved_policy_id FROM proposal_set_browse_facts "
-        "WHERE proposal_set_id" + proposals
+        "WHERE proposal_set_id" + key,
     )
-    for expected, actual in (
-        (review_expected, review_actual),
-        (shadow_expected, shadow_actual),
-        (report_expected, report_actual),
-        (author_expected, author_actual),
-        (proposal_expected, proposal_actual),
-    ):
+
+
+def _require_equal_facts(
+    connection: sqlite3.Connection,
+    pairs: tuple[tuple[str, str], ...],
+    prefix: str = "",
+    parameters: dict[str, str] | None = None,
+) -> None:
+    """Refuse unless each pair's two sides hold exactly the same rows.
+
+    Open runs it over every participating row; publication and admission run
+    it over the one report or proposal they make current again (#1199).
+    """
+    for expected, actual in pairs:
         mismatch = connection.execute(
-            participating + "SELECT 1 FROM (" + expected + " EXCEPT " + actual + ") "
-            "UNION ALL SELECT 1 FROM (" + actual + " EXCEPT " + expected + ") LIMIT 1"
+            prefix + "SELECT 1 FROM (" + expected + " EXCEPT " + actual + ") "
+            "UNION ALL SELECT 1 FROM (" + actual + " EXCEPT " + expected + ") LIMIT 1",
+            parameters or {},
         ).fetchone()
         if mismatch is not None:
             raise MetadataReportError("database is unavailable or incompatible")

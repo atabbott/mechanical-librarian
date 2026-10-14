@@ -66,6 +66,8 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _terminal_library_sql,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _proposal_browse_fact_pair,
+    _require_equal_facts,
     _validate_report_row,
     _validated_report_row,
 )
@@ -175,6 +177,13 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 or _validate_proposal_row(proposal_row) != proposal_set.to_json()
             ):
                 raise MetadataReportError("review proposal is unavailable")
+            # Admission can bind a stored proposal again, making its browse
+            # facts readable, so they are checked as open checks them (#1199).
+            _require_equal_facts(
+                self._connection,
+                (_proposal_browse_fact_pair("=:key"),),
+                parameters={"key": proposal_set.proposal_set_id},
+            )
             report_row = self._connection.execute(
                 "SELECT report_id,connection_name,library_name,item_id,file_identity,content_digest,schema_version,document_digest,document FROM metadata_reports WHERE report_id=?",
                 (proposal_set.report_id,),

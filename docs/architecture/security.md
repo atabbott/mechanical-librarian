@@ -956,9 +956,12 @@ malformed targeted content fails closed. Unselected history stays isolated and
 is refused only when a read selects it. The rows Library, Attention and search
 can select are the exception (#1199): open compares their report and proposal
 browse facts with their documents, so a malformed or fact-changing
-participating row refuses the database at open, and an edit bypassing
-`metadata_reports_no_update` after open is refused where the row renders and at
-the next open. The facts are bound to the interpreter's
+participating row refuses the database at open. Publication that makes a
+stored report current again, and admission that binds a stored proposal again,
+compare that one row's facts inside their transaction and roll back on a
+difference, so reselected history cannot render unchecked facts. An edit
+bypassing `metadata_reports_no_update` after open is refused where the row
+renders and at the next open. The facts are bound to the interpreter's
 `unicodedata.unidata_version`, so a Python upgrade that changes it is an upgrade
 event: open refuses with a clean-rebuild-required message and never repairs or
 re-derives at startup. Recovery uses clean current state plus

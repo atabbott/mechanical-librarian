@@ -931,6 +931,90 @@ def test_unselected_historical_proposal_tamper_does_not_block_open(
         repository.close()
 
 
+def _tamper_history(database: Path, statement: str, key: str) -> None:
+    connection = sqlite3.connect(database)
+    assert connection.execute(statement, (key,)).rowcount == 1
+    connection.commit()
+    connection.close()
+
+
+def _current_package(database: Path) -> list[tuple[object, ...]]:
+    connection = sqlite3.connect(database)
+    try:
+        return connection.execute(
+            "SELECT proposal_set_id,report_id,outcome FROM current_review_packages"
+        ).fetchall()
+    finally:
+        connection.close()
+
+
+def test_reselecting_a_report_with_tampered_facts_refuses_and_commits_nothing(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    historical = _edge_report(1, "Ab", authors=("Cd",))
+    successor = _edge_report(1, "Successor")
+    _publish(repository, historical, propose=False)
+    repository.publish(successor, lambda: True, historical.report_id)
+    repository.close()
+    _tamper_history(
+        database,
+        "UPDATE metadata_report_browse_facts SET title_key='zzz tampered' "
+        "WHERE report_id=?",
+        historical.report_id,
+    )
+    before = _current_package(database)
+    repository = open_repository(database, create=False)
+    try:
+        with pytest.raises(
+            MetadataReportError, match="^database is unavailable or incompatible$"
+        ):
+            repository.publish(historical, lambda: True, successor.report_id)
+        assert repository.count_current_review_cases("zzz", _LABELS) == (0, 0)
+    finally:
+        repository.close()
+    assert _current_package(database) == before
+
+
+def test_readmitting_a_proposal_with_tampered_facts_refuses_and_commits_nothing(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    historical = _edge_report(1, "Ab")
+    successor = _edge_report(1, "Successor")
+    _publish(repository, historical)
+    repository.publish(successor, lambda: True, historical.report_id)
+    proposal = evaluate_report(historical)
+    repository.close()
+    _tamper_history(
+        database,
+        "UPDATE proposal_set_browse_facts SET resolved_policy_id='tampered' "
+        "WHERE proposal_set_id=?",
+        proposal.proposal_set_id,
+    )
+    repository = open_repository(database, create=False)
+    try:
+        repository.publish(historical, lambda: True, successor.report_id)
+        repository.publish_proposal(proposal)
+        before = repository._connection.execute(
+            "SELECT * FROM current_review_case_lineages"
+        ).fetchall()
+        with pytest.raises(
+            MetadataReportError, match="^database is unavailable or incompatible$"
+        ):
+            repository.admit_review_case(proposal)
+        assert (
+            repository._connection.execute(
+                "SELECT * FROM current_review_case_lineages"
+            ).fetchall()
+            == before
+        )
+    finally:
+        repository.close()
+
+
 _DROP_BROWSE_FACTS_SQL = (
     "DROP TRIGGER metadata_reports_project_browse_facts;"
     "DROP TABLE metadata_report_browse_authors;"
