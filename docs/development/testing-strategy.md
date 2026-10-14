@@ -229,12 +229,12 @@ Every pull-request candidate runs independent required `fast-source` (with its
 recombined: the former serial exact-installed workflow exhausted its 825-second
 subprocess deadline on four consecutive candidates, including after internal
 sharding. No runner-only aggregate job is maintained; the trusted delivery
-controller must observe all three exact-head results. The same workflow runs on
+controller must observe all six exact-head results. The same workflow runs on
 push to `main`, so every merged commit is verified and two individually green
 candidates cannot break `main` together in silence. Each job checks out
 `github.event.pull_request.head.sha || github.sha`, so exact-head semantics hold
-on both events, and only pull-request work is cancelled by a superseding head. A
-fourth `container-image` job builds the shipped image at that same revision, so
+on both events, and only pull-request work is cancelled by a superseding head. An
+seventh `container-image` job builds the shipped image at that same revision, so
 a Dockerfile regression fails the gate; it loads the image solely to extract
 the pinned `ffprobe` for the probe tier, and never starts or pushes it.
 
@@ -255,11 +255,12 @@ unbalances the shards; it never drops or repeats a file. Refresh it with
 `uv run python scripts/run_test_tier.py fast --workers 4 --record-timings`.
 
 `protected-browser` stays serial: four Chromium workers on one hosted runner
-broke timing-bound browser tests and saved little time. `--workers` still divides the browser tier for
-local runs. Each worker is a fresh
+broke timing-bound browser tests and saved little time. `--workers` still
+divides the browser tier for local runs. Each worker is a fresh
 interpreter that takes the next work unit as it frees up, largest first: a test
-file for `fast`, and a test function with all its parameter sets for
-`browser`, whose time sits mostly in one file. The coordinating runner merges
+file for `fast`, and for `browser`, whose time sits mostly in one file,
+whole test functions dealt into at most one unit per worker for each file, so a
+module fixture runs at most once per worker per file. The coordinating runner merges
 the units into the same `test-tier-result-v1` line and traceback stream a
 serial run produces, refuses the tier when any unit refuses or leaves no
 record, and refuses a function split whose units do not account for exactly

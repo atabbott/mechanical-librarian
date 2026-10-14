@@ -135,8 +135,10 @@ class TestCohort:
     # How `--workers` divides the cohort between processes. A file is the
     # natural unit: module and class fixtures stay inside one process, exactly
     # as a serial run scopes them. The browser cohort is four files, one of
-    # which holds most of its time, so it divides by test function instead,
-    # which keeps every parameter set of one function in one process.
+    # which holds most of its time, so it divides each file's test functions
+    # into at most one unit per worker instead. Every parameter set of one
+    # function stays in one process, and a module fixture, such as the
+    # Chromium payload verification, runs at most once per worker per file.
     parallel_unit: str = "file"
 
 
@@ -1007,7 +1009,7 @@ def run_cohort(root: Path, name: str, test_timeout_seconds: int | None = None) -
 
 
 def _parallel_units(
-    root: Path, name: str
+    root: Path, name: str, workers: int = 1
 ) -> tuple[tuple[tuple[str, ...], ...], tuple[str, ...] | None]:
     """Divide a cohort into work units, largest expected first.
 
@@ -1019,7 +1021,9 @@ def _parallel_units(
     Units start in descending expected size because a free worker takes the
     next unit as soon as it finishes one, so a large unit started last would
     run alone at the end. File units are put in recorded-time order later,
-    by `_shard_units`; a function unit is sized by its parameter sets.
+    by `_shard_units`. A function unit holds whole test functions of one
+    file, dealt largest first to the smallest of at most `workers` units for
+    that file, and is sized by its parameter sets.
     """
 
     targets = cohort_targets(root, name)
@@ -1040,10 +1044,21 @@ def _parallel_units(
         raise RuntimeError("test_cohort_identity_collision")
     if not session.identifiers:
         raise RuntimeError("empty test cohort")
-    groups: dict[str, list[str]] = {}
+    functions: dict[str, list[str]] = {}
     for target in session.node_targets.values():
-        groups.setdefault(target.partition("[")[0], []).append(target)
-    units = sorted(groups.values(), key=lambda unit: -len(unit))
+        functions.setdefault(target.partition("[")[0], []).append(target)
+    files: dict[str, list[list[str]]] = {}
+    for function, members in functions.items():
+        files.setdefault(function.partition("::")[0], []).append(members)
+    units: list[list[str]] = []
+    for members_by_function in files.values():
+        chunks: list[list[str]] = [
+            [] for _ in range(min(workers, len(members_by_function)))
+        ]
+        for members in sorted(members_by_function, key=lambda m: (-len(m), m[0])):
+            min(chunks, key=len).extend(members)
+        units.extend(chunks)
+    units.sort(key=lambda unit: (-len(unit), unit[0]))
     return tuple(tuple(unit) for unit in units), session.identifiers
 
 
@@ -1269,11 +1284,11 @@ def run_cohort_in_parallel(
     The verdict, counts and failure diagnostics are the ones a serial run of
     the same cohort reports; only the wall-clock time differs. With `shard`,
     only that shard's file units run, and the report covers just those. With
-    `record_timings`, each unit's wall time replaces the recorded table.
+    `record_timings`, each unit's wall time replaces the recorded table once the run passes.
     """
 
     _verify_pytest_environment()
-    units, expected = _parallel_units(root, name)
+    units, expected = _parallel_units(root, name, workers)
     if COHORTS[name].parallel_unit == "file":
         units = _shard_units(root, units, *(shard or (1, 1)))
     seconds = [0.0] * len(units)
@@ -1297,9 +1312,12 @@ def run_cohort_in_parallel(
                     lambda position: timed(position, Path(scratch)), range(len(units))
                 )
             )
-    if record_timings:
+    passed = _report_cohort(name, _merge_worker_records(records, expected))
+    # Only a complete, passing run is representative: a crashed, refused or
+    # failing unit would leave a partial time that unbalances later shards.
+    if record_timings and passed:
         _write_recorded_seconds(root, units, seconds)
-    return _report_cohort(name, _merge_worker_records(records, expected))
+    return passed
 
 
 def _exception_line_offset(encoded: bytes) -> int | None:

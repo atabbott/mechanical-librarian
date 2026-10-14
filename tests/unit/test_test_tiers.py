@@ -1731,7 +1731,7 @@ def test_parallel_workers_report_exactly_what_a_serial_run_reports(
 ) -> None:
     """Dividing a cohort between workers changes its wall time and nothing else.
 
-    `fast` divides by file and `browser` by test function, so both unit kinds
+    `fast` divides by file and `browser` by test functions, so both unit kinds
     are proved against the serial verdict, counts, failed identities, skips
     and traceback stream of the same real cohort.
     """
@@ -1933,6 +1933,60 @@ def test_recording_timings_times_every_unit_of_the_run(tmp_path: Path) -> None:
     assert root == Path.cwd()
     assert sorted(units) == sorted((target,) for target in targets)
     assert len(seconds) == 2 and all(value > 0 for value in seconds)
+
+
+def test_a_failing_run_leaves_the_recorded_timings_alone(tmp_path: Path) -> None:
+    # A failing or truncated unit's time is not representative, so it must
+    # never replace the table later shards balance on.
+    targets = tuple(
+        target
+        for body in (
+            "def test_one() -> None:\n    pass\n",
+            "def test_two() -> None:\n    assert False\n",
+        )
+        for target in _module(tmp_path, body)
+    )
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._write_recorded_seconds") as write,
+    ):
+        passed, _, _ = _tier_streams(
+            lambda: run_cohort_in_parallel(Path.cwd(), "fast", 2, record_timings=True)
+        )
+    assert passed is False
+    write.assert_not_called()
+
+
+def test_a_worker_crash_leaves_the_recorded_timings_alone(tmp_path: Path) -> None:
+    targets = _module(tmp_path, "import os\nos._exit(3)\n")
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._write_recorded_seconds") as write,
+        pytest.raises(RuntimeError, match="^test_tier_worker_exited$"),
+    ):
+        run_cohort_in_parallel(Path.cwd(), "fast", 2, record_timings=True)
+    write.assert_not_called()
+
+
+def test_browser_units_split_each_file_into_at_most_one_unit_per_worker(
+    tmp_path: Path,
+) -> None:
+    # A module fixture runs once per process, so a file split finer than the
+    # worker count would repeat it, as the Chromium payload hash would.
+    body = "".join(f"def test_{index}() -> None:\n    pass\n" for index in range(7))
+    targets = tuple(target for _ in range(2) for target in _module(tmp_path, body))
+    with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+        units, expected = _parallel_units(Path.cwd(), "browser", 3)
+    assert expected is not None and len(expected) == 14
+    assert sorted(member for unit in units for member in unit) == sorted(
+        f"{target}::test_{index}" for target in targets for index in range(7)
+    )
+    by_file: dict[str, list[int]] = {}
+    for unit in units:
+        files = {member.partition("::")[0] for member in unit}
+        assert len(files) == 1
+        by_file.setdefault(files.pop(), []).append(len(unit))
+    assert sorted(by_file.values()) == [[3, 2, 2], [3, 2, 2]]
 
 
 def test_the_gate_divides_the_fast_tier_into_four_sharded_jobs() -> None:
