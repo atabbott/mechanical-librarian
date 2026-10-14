@@ -242,6 +242,7 @@ def test_encoded_siblings_negotiate_in_preference_order() -> None:
             asset, payload = bundle.negotiate(path, accept_encoding)
             return asset.kind, payload
 
+        assert bundle.unverified_siblings == ()
         assert served("gzip, deflate, br, zstd") == ("br", b"brotli:" + _SCRIPT)
         assert served("GZIP") == ("gzip", gzip.compress(_SCRIPT, mtime=0))
         assert served("br;q=0, gzip;q=0.5") == ("gzip", gzip.compress(_SCRIPT, mtime=0))
@@ -268,6 +269,7 @@ def test_unverifiable_sibling_falls_back_to_identity(damage: str) -> None:
         asset, payload = bundle.negotiate("assets/index-deadbeef.js", "br")
 
         assert (asset.kind, payload) == ("script", _SCRIPT)
+        assert bundle.unverified_siblings == ("assets/index-deadbeef.js.br",)
         assert bundle.negotiate("assets/index-deadbeef.js", "br, gzip")[0].kind == (
             "gzip"
         )

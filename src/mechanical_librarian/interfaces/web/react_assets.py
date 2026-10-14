@@ -72,6 +72,15 @@ class ReactAssetBundle:
         self._verified[path] = payload
         return payload
 
+    @property
+    def unverified_siblings(self) -> tuple[str, ...]:
+        """Sibling paths never held, so served as identity; a build refuses them."""
+        return tuple(
+            asset.path
+            for asset in self.assets
+            if asset.kind in _ENCODINGS and asset.path not in self._verified
+        )
+
     def negotiate(self, path: str, accept_encoding: str) -> tuple[ReactAsset, bytes]:
         """Select a verified sibling the client accepts, else the identity asset."""
         accepted = {
