@@ -953,15 +953,17 @@ fails closed before mutation, and is never migrated, imported, preserved, or
 passed through a compatibility parser. Persisted content is validated when a
 read selects it and when a selected report participates in publication;
 malformed targeted content fails closed. Unselected history stays isolated and
-is refused only when a read selects it. The rows Library, Attention and search
-can select are the exception (#1199): open compares their report and proposal
-browse facts with their documents, so a malformed or fact-changing
-participating row refuses the database at open. Publication that makes a
-stored report current again, and admission that binds a stored proposal again,
-compare that one row's facts inside their transaction and roll back on a
-difference, so reselected history cannot render unchecked facts. An edit
-bypassing `metadata_reports_no_update` after open is refused where the row
-renders and at the next open. The facts are bound to the interpreter's
+is refused only when a read selects it. Browse facts are the exception
+(#1199): open compares the report and proposal facts with their documents for
+every row a current review package, a current review-case lineage (and the
+case it names) or a current report lineage points at, so a malformed or
+fact-changing row behind any of those pointers refuses the database at open.
+Publication that makes a stored report current again, and admission that binds
+a stored proposal again, compare that one row's facts inside their transaction
+and roll back on a difference, so moving a pointer never brings an unchecked
+fact into row selection or counts. An edit bypassing
+`metadata_reports_no_update` after open is refused where the row renders and at
+the next open. The facts are bound to the interpreter's
 `unicodedata.unidata_version`, so a Python upgrade that changes it is an upgrade
 event: open refuses with a clean-rebuild-required message and never repairs or
 re-derives at startup. Recovery uses clean current state plus

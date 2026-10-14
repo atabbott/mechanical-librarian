@@ -905,6 +905,68 @@ def test_open_refuses_facts_folded_under_another_unicode_version(
     assert database.read_bytes() == before
 
 
+def _supersede(
+    repository: SQLiteMetadataReportRepository,
+    historical: MetadataReport,
+    successor: MetadataReport,
+) -> None:
+    """Admit a successor, so no package or lineage points at the history."""
+    repository.publish(successor, lambda: True, historical.report_id)
+    proposal = evaluate_report(successor)
+    repository.publish_proposal(proposal)
+    repository.admit_review_case(proposal)
+
+
+@pytest.mark.parametrize(
+    "tamper",
+    (
+        "UPDATE metadata_report_browse_facts SET title_key='zzz tampered' "
+        "WHERE report_id=:report",
+        "UPDATE proposal_set_browse_facts SET resolved_policy_id='tampered' "
+        "WHERE proposal_set_id=:proposal",
+    ),
+)
+def test_open_refuses_tampered_facts_staged_only_in_a_lineage(
+    tmp_path: Path, tamper: str
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    older = _edge_report(1, "Ab")
+    staged = _edge_report(1, "Staged")
+    _publish(repository, older, propose=False)
+    repository.publish(staged, lambda: True, older.report_id)
+    proposal = evaluate_report(staged)
+    repository.publish_proposal(proposal)
+    repository.admit_review_case(proposal)
+    repository.close()
+    connection = sqlite3.connect(database)
+    # The package rewinds to the older report-only row, leaving the staged
+    # report and proposal reachable only through the lineage pointers a
+    # preparation copy promotes without a check.
+    connection.execute(
+        "UPDATE current_review_packages SET proposal_set_id=NULL,report_id=?,"
+        "review_case_id=NULL,checkpoint=NULL,outcome='report_only'",
+        (older.report_id,),
+    )
+    connection.commit()
+    connection.close()
+    open_repository(database, create=False).close()
+    connection = sqlite3.connect(database)
+    assert (
+        connection.execute(
+            tamper,
+            {"report": staged.report_id, "proposal": proposal.proposal_set_id},
+        ).rowcount
+        == 1
+    )
+    connection.commit()
+    connection.close()
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ):
+        open_repository(database, create=False)
+
+
 def test_unselected_historical_proposal_tamper_does_not_block_open(
     tmp_path: Path,
 ) -> None:
@@ -913,7 +975,7 @@ def test_unselected_historical_proposal_tamper_does_not_block_open(
     historical = _edge_report(1, "Ab")
     successor = _edge_report(1, "Successor")
     _publish(repository, historical)
-    repository.publish(successor, lambda: True, historical.report_id)
+    _supersede(repository, historical, successor)
     repository.close()
     connection = sqlite3.connect(database)
     connection.execute("DROP TRIGGER proposal_sets_no_update")
@@ -985,7 +1047,7 @@ def test_readmitting_a_proposal_with_tampered_facts_refuses_and_commits_nothing(
     historical = _edge_report(1, "Ab")
     successor = _edge_report(1, "Successor")
     _publish(repository, historical)
-    repository.publish(successor, lambda: True, historical.report_id)
+    _supersede(repository, historical, successor)
     proposal = evaluate_report(historical)
     repository.close()
     _tamper_history(

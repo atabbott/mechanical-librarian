@@ -1685,20 +1685,29 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
         "automatic_destination,policy_category FROM shadow_outcome_field_facts"
     )
     # Browse facts are compared only for the rows Library, Attention and search
-    # can select, through the statements' own FROM fragments: unselected
-    # history stays isolated until a read selects it (#1199).
-    # Each set is materialized once per statement, not once per side.
+    # can select, through the statements' own FROM fragments, and for the
+    # staged lineage pointers the preparation pipeline copies into a package
+    # without a check. Unselected history stays isolated until a read selects
+    # it (#1199). Each set is materialized once per statement, not once per side.
     library = _CURRENT_LIBRARY_FROM_SQL + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
+    staged_case = (
+        " FROM current_review_case_lineages staged "
+        "JOIN review_cases rc ON rc.review_case_id=staged.review_case_id"
+    )
     participating = (
         "WITH participating_reports(id) AS MATERIALIZED (SELECT mr.report_id "
         + library
         + " UNION SELECT mr.report_id "
         + _CURRENT_REVIEW_FROM_SQL
-        + "),participating_proposals(id) AS MATERIALIZED (SELECT rc.proposal_set_id "
+        + " UNION SELECT report_id FROM current_review_case_lineages"
+        " UNION SELECT rc.report_id" + staged_case + " UNION SELECT report_id "
+        "FROM current_metadata_report_lineages"
+        "),participating_proposals(id) AS MATERIALIZED (SELECT rc.proposal_set_id "
         + library
         + " UNION SELECT rc.proposal_set_id "
         + _CURRENT_REVIEW_FROM_SQL
-        + ") "
+        + " UNION SELECT proposal_set_id FROM current_review_case_lineages"
+        " UNION SELECT rc.proposal_set_id" + staged_case + ") "
     )
     _require_equal_facts(
         connection,
