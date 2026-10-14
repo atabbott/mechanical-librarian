@@ -853,10 +853,6 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "rc.proposal_set_id=c.proposal_set_id AND rc.report_id=c.report_id "
                 "THEN rc.proposal_set_id ELSE NULL END AS proposal_set_id,"
                 "result.destination AS destination,"
-                "CASE WHEN "
-                + _browse_scalar_sql(_REVIEW_FIELD_ATTENTION_SQL)
-                + _browse_scalar_sql(_EPUB_INAPPLICABLE_ATTENTION_SQL)
-                + " THEN 1 ELSE 0 END AS attention,"
                 "facts.title_key "
                 "AS title_order,c.library_name AS library_name,c.item_id AS item_id "
                 + _CURRENT_REVIEW_FROM_SQL
@@ -865,10 +861,15 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
                 "ON result.review_case_id=rc.review_case_id "
                 "WHERE (c.connection_name,c.library_name,c.item_id) IN "
                 "(SELECT connection_name,library_name,item_id FROM search_matches)"
+                # A filter, not a column (#1202): only attentive fields are
+                # materialized, and the planner may test the cheap terms first.
+                " AND "
+                + _browse_scalar_sql(_REVIEW_FIELD_ATTENTION_SQL)
+                + _browse_scalar_sql(_EPUB_INAPPLICABLE_ATTENTION_SQL)
                 + "),attentive AS MATERIALIZED (SELECT review_case_id,report_id,"
                 "proposal_set_id,destination,count(*) OVER (PARTITION BY review_case_id) "
                 "AS attention_count,title_order,library_name,item_id "
-                "FROM candidates WHERE attention=1),totals AS (SELECT count(*) AS total "
+                "FROM candidates),totals AS (SELECT count(*) AS total "
                 "FROM attentive),page AS MATERIALIZED (SELECT 1 AS present,* "
                 "FROM attentive" + " ORDER BY "
                 "title_order,library_name,item_id,destination,review_case_id "
