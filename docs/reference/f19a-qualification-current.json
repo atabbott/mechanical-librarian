@@ -22,7 +22,7 @@
   "predecessor": {
     "path": "docs/reference/f19a-qualification-current.json",
     "sha256": "d4b8558617dbfeff19d8078baf31ba4d000e4d560b277e27bbeaab69b865ca5d",
-    "source_sha": "306db17907ba415e84cbcc4c283a97d22ff8d3d9"
+    "source_sha": "42d120dfe458b7719a38cfaf3ad587936b313cfe"
   },
   "provenance": "qualification-provenance-current.json",
   "schema": "qualification-current-v1"

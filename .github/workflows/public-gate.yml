@@ -91,8 +91,127 @@ jobs:
           diff -r "$RUNNER_TEMP/frontend-build-a" "$RUNNER_TEMP/frontend-build-b"
           git diff --exit-code
 
-      - name: Run the fast source tier
-        run: uv run python scripts/run_test_tier.py fast
+      # The fast tier is split into four shards, one per job: run serially it
+      # took about sixteen minutes here, and four worker processes on one
+      # hosted runner cut that by little more than one.
+      # This job runs shard 1; `fast-source-2` to `fast-source-4` run the
+      # rest. Every shard computes the same split from recorded file times.
+      - name: Run the fast source tier, shard 1 of 4
+        run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 1/4
+
+  fast-source-2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.8"
+
+      # The distribution tests build the wheel, which builds the frontend.
+      - name: Install the exact frontend toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the manifest-pinned npm
+        run: npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./frontend/package.json").engines.npm')"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          version: "0.12.23"
+
+      - name: Install locked development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run the fast source tier, shard 2 of 4
+        run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 2/4
+
+  fast-source-3:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.8"
+
+      # The distribution tests build the wheel, which builds the frontend.
+      - name: Install the exact frontend toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the manifest-pinned npm
+        run: npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./frontend/package.json").engines.npm')"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          version: "0.12.23"
+
+      - name: Install locked development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run the fast source tier, shard 3 of 4
+        run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 3/4
+
+  fast-source-4:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Check out the exact revision
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+
+      - name: Install Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.14.8"
+
+      # The distribution tests build the wheel, which builds the frontend.
+      - name: Install the exact frontend toolchain
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.21.0"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install the manifest-pinned npm
+        run: npm install --global --ignore-scripts --no-audit --no-fund "npm@$(node -p 'require("./frontend/package.json").engines.npm')"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          version: "0.12.23"
+
+      - name: Install locked development dependencies
+        run: uv sync --locked --all-groups
+
+      - name: Run the fast source tier, shard 4 of 4
+        run: uv run python scripts/run_test_tier.py fast --workers 2 --shard 4/4
 
   exact-installed:
     runs-on: ubuntu-24.04
@@ -239,6 +358,8 @@ jobs:
       - name: Run the protected browser tier
         env:
           ML_REACT_ASSET_DIR: ${{ runner.temp }}/react-assets
+        # Serial: four Chromium workers on one hosted runner broke
+        # timing-bound tests and saved little time.
         run: uv run python scripts/run_test_tier.py browser
 
   container-image:

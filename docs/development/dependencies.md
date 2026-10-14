@@ -180,7 +180,7 @@ repository-authored synthetic structures.
   artifacts; the browser's own release inventory is a qualification input and a
   future release-SBOM concern, not runtime content.
 
-  Existing Playwright version updates may auto-merge after all five required
+  Existing Playwright version updates may auto-merge after all eight required
   checks pass, including protected-browser payload verification. The repository
   Renovate policy governs majors as well as minor and patch updates.
 - **Coverage** (Apache-2.0, compatible with `AGPL-3.0-or-later`) traces line and
@@ -370,8 +370,9 @@ qualification; local frontend builds validate the actual executables against it.
 
 The weekly schedule limits new branches. Behind-main branches refresh and
 requalify outside that window. GitHub requires a pull request current with
-main and all five checks: `fast-source`, `exact-installed`,
-`protected-browser`, `container-image`, and `dependency-audit`. Pending,
+main and all eight checks: `fast-source`, `fast-source-2`, `fast-source-3`,
+`fast-source-4`, `exact-installed`, `protected-browser`, `container-image`,
+and `dependency-audit`. Pending,
 failed or stale checks block merging. Renovate has no bypass or direct main
 write authority. A compatibility failure stays open for a manual fix or a
 reviewed revert; tests and safety gates are never weakened to admit an update.
