@@ -196,8 +196,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         owns_authority: bool = False,
     ) -> None:
         super().__init__(connection)
-        # Any repository may publish a report, and that insert derives its
-        # browse facts through this fold (#1199).
+        # Production opens already register the fold (#1199); repeating it
+        # here lets directly constructed repositories, mainly in tests, insert
+        # reports safely.
         _register_casefold(connection)
         self._setup_serialization_lock = RLock()
         self._browse_failure_lock = RLock()

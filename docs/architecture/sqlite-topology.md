@@ -209,6 +209,7 @@ nearest KiB.
 | Control/configuration | `field_effect_authorities` | 0 R / 4 KiB | authority revocation/currentness; effect claim reader | Mutable authority witness for a decision after its immutable decision document is recorded. |
 | Control/configuration | `field_effect_consents` | 0 R / 4 KiB | owner consent grant/revoke; effect claim reader | Consent is separately revocable and library scoped. |
 | Control/configuration | `field_effect_manual_holds` | 0 R / 4 KiB | owner-decision return/release; pipeline/effect readers | Manual hold controls automatic return independently of policy or consent. |
+| Control/configuration | `browse_fact_identity` | added after the snapshot (#1199) | schema creation only; open-time browse-fact validation | Singleton records the Unicode version the browse facts were folded under; open refuses any other version. |
 | Control/configuration | `reviewer_access` | not present in retained pre-F31 snapshot | reviewer-access repository; setup, Settings and dispatch readers | Singleton owns the exact optional task-to-engine/model mapping independently of deployment profile authority. |
 | Security/credential | `reviewer_access_secrets` | not present in retained pre-F31 snapshot | reviewer-access repository only | Write-only OpenRouter credential state is separated from its public presence and selection document. |
 
@@ -533,12 +534,11 @@ after-insert triggers, `review_cases_project_field_facts`,
 `proposal_sets_project_browse_facts`, populate the derived facts in the
 same transaction as their canonical documents. The report trigger folds with
 `ml_casefold`, so a connection that has not registered it cannot insert a
-report. Open-time validation compares every derived relation to its canonical
+report. Open-time validation compares the derived relations to their canonical
 JSON, so a partial write, manual alteration, or interrupted projection fails
-closed rather than exposing stale owner-visible truth. Candidate clauses read
-those facts, not documents: an edit that bypasses an immutability trigger after
-open is refused where the row renders, which still reads and validates its
-document, and at the next open, not by a read that never renders it.
+closed rather than exposing stale owner-visible truth. Which browse-fact rows it
+compares, and what is refused at open rather than on read, is stated once in
+[Schema admission](security.md#schema-admission).
 
 ## Required separations
 

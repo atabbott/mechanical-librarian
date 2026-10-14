@@ -364,7 +364,10 @@ Renovate requests GitHub-native squash auto-merge for existing admitted
 managed dependency updates: major, minor, patch, pre-1.0, runtime, build tools,
 Action references, image tags/digests, pinning and lockfile maintenance. Each
 logical Node, Python, uv and npm tool has one group spanning its native manager
-declarations. The parity tests refuse incomplete updates. npm is installed
+declarations. The parity tests refuse incomplete updates. A Python update that
+changes `unicodedata.unidata_version` requires a clean rebuild of the report
+database ([Schema admission](../architecture/security.md#schema-admission)).
+npm is installed
 explicitly from the canonical frontend manifest in CI, Docker and local Linux
 qualification; local frontend builds validate the actual executables against it.
 

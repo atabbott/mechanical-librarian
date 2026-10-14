@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import unicodedata
 from dataclasses import replace
 from pathlib import Path
 
@@ -52,6 +53,7 @@ from mechanical_librarian.domain.metadata_report import (
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
 from tests.support.audiobook_reports import admitted_audiobook_report
+from tests.support.provider_recovery_rail import provider_failure_report
 from tests.support.review_cases import _report
 
 # --- Equality oracle: the statements as they read before #1199 (verbatim). ---
@@ -463,6 +465,27 @@ def _edge_report(
     )
 
 
+def _lane_limited_report(index: int, title: str) -> MetadataReport:
+    """A provider whose aggregate is CANDIDATES while one of its lanes is limited."""
+    source = provider_failure_report()
+    provider = source.providers[0]
+    lanes = tuple(
+        replace(lane, status=ProviderStatus.RATE_LIMITED)
+        if lane.status is ProviderStatus.UNAVAILABLE
+        else lane
+        for lane in provider.lanes
+    )
+    return MetadataReport.create(
+        target=TargetFacts(
+            "primary", "ebooks", f"work-{index:04d}", default_target_fields(title)
+        ),
+        file=FileFacts(0, f"{index + 1:064x}", f"{index + 5001:064x}"),
+        local_claims=source.local_claims,
+        local_reasons=source.local_reasons,
+        providers=(replace(provider, lanes=lanes),),
+    )
+
+
 def _publish(
     repository: SQLiteMetadataReportRepository,
     report: MetadataReport,
@@ -499,6 +522,7 @@ def _edge_repository(root: Path) -> SQLiteMetadataReportRepository:
     for report in works:
         _publish(repository, report)
     _publish(repository, _edge_report(14, "Report only Straße"), propose=False)
+    _publish(repository, _lane_limited_report(15, "Lane limited"))
     # A successor makes the first report historical: the browse reads only
     # the current package's report, never every report.
     _publish(repository, replace_title(works[2], "ﬁnal successor"))
@@ -578,7 +602,7 @@ def test_edge_library_pages_counts_and_searches_equal_the_document_statements(
         # case-less, report-only, superseded and audiobook rows, and both
         # provider groups inside attention.
         everything = repository.read_current_library_page(None, 100, 0, None)
-        assert everything.total == 20
+        assert everything.total == 21
         assert 0 < everything.attention_total < everything.total
         assert sum(case is None for case, _ in everything.rows) >= 5
         compared = sum(
@@ -716,9 +740,11 @@ def test_report_insert_projects_exact_folded_facts(tmp_path: Path) -> None:
                 "facts.provider_limited FROM metadata_report_browse_facts facts "
                 "JOIN (SELECT report_id,item_id AS target_item FROM metadata_reports) mr "
                 "USING(report_id) WHERE mr.target_item IN "
-                "('work-0000','work-0001','work-0007','recording-0')"
+                "('work-0000','work-0001','work-0007','work-0015','recording-0')"
             )
         )
+        # A limited lane under a CANDIDATES aggregate is still limited.
+        assert facts["work-0015"] == ("lane limited", "epub", "epub", 1)
         assert facts["work-0000"] == ("strasse und weg", "epub", "epub", 0)
         assert facts["work-0001"] == ("σίσυφοσ", "epub", "epub", 1)
         assert facts["work-0007"] == ("", "epub", "epub", 0)
@@ -808,15 +834,15 @@ def test_connection_without_casefold_writes_and_validates_nothing(
     open_repository(database, create=False).close()
 
 
-def test_a_different_casefold_writes_facts_that_open_refuses(tmp_path: Path) -> None:
+def test_a_different_casefold_writes_facts_that_open_refuses(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     database = tmp_path / "application.sqlite3"
-    open_repository(database).close()
-    connection = sqlite3.connect(database)
-    connection.execute("PRAGMA foreign_keys=ON")
-    connection.create_function("ml_casefold", 1, lambda value: value)
-    connection.execute(_INSERT_REPORT_SQL, _report_row(_edge_report(1, "Upper Case")))
-    connection.commit()
-    connection.close()
+    with monkeypatch.context() as patched:
+        patched.setattr(schema, "_review_casefold", lambda value: value)
+        repository = open_repository(database)
+        _publish(repository, _edge_report(1, "Upper Case"), propose=False)
+        repository.close()
     with pytest.raises(
         MetadataReportError, match="database is unavailable or incompatible"
     ):
@@ -855,12 +881,63 @@ def test_restart_refuses_browse_facts_that_disagree_with_reports(
         open_repository(database, create=False)
 
 
+def test_open_refuses_facts_folded_under_another_unicode_version(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    _publish(repository, _edge_report(1, "Ab"))
+    repository.close()
+    connection = sqlite3.connect(database)
+    assert connection.execute(
+        "SELECT unicode_version FROM browse_fact_identity"
+    ).fetchall() == [(unicodedata.unidata_version,)]
+    connection.execute("UPDATE browse_fact_identity SET unicode_version='15.0.0-other'")
+    connection.commit()
+    connection.close()
+    before = database.read_bytes()
+    with pytest.raises(
+        MetadataReportError,
+        match="^database browse facts were folded under a different Unicode "
+        "version; a clean rebuild is required$",
+    ):
+        open_repository(database, create=False)
+    assert database.read_bytes() == before
+
+
+def test_unselected_historical_proposal_tamper_does_not_block_open(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "application.sqlite3"
+    repository = open_repository(database)
+    historical = _edge_report(1, "Ab")
+    successor = _edge_report(1, "Successor")
+    _publish(repository, historical)
+    repository.publish(successor, lambda: True, historical.report_id)
+    repository.close()
+    connection = sqlite3.connect(database)
+    connection.execute("DROP TRIGGER proposal_sets_no_update")
+    connection.execute(
+        "UPDATE proposal_sets SET document='not json' WHERE report_id=?",
+        (historical.report_id,),
+    )
+    connection.execute(schema._PROPOSAL_NO_UPDATE_SQL)
+    connection.commit()
+    connection.close()
+    repository = open_repository(database, create=False)
+    try:
+        assert repository.count_current_review_cases(None, _LABELS)[0] == 1
+    finally:
+        repository.close()
+
+
 _DROP_BROWSE_FACTS_SQL = (
     "DROP TRIGGER metadata_reports_project_browse_facts;"
     "DROP TABLE metadata_report_browse_authors;"
     "DROP TABLE metadata_report_browse_facts;"
     "DROP TRIGGER proposal_sets_project_browse_facts;"
     "DROP TABLE proposal_set_browse_facts;"
+    "DROP TABLE browse_fact_identity;"
 )
 
 

@@ -22,6 +22,7 @@ import hashlib
 import json
 import sqlite3
 import sys
+import unicodedata
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from urllib.parse import quote
@@ -44,6 +45,10 @@ from mechanical_librarian.adapters.persistence.owner_settings import (
 )
 from mechanical_librarian.adapters.persistence.preparation_presentation import (
     validate_preparation_presentation,
+)
+from mechanical_librarian.adapters.persistence.review_sql import (
+    _CURRENT_LIBRARY_FROM_SQL,
+    _CURRENT_REVIEW_FROM_SQL,
 )
 from mechanical_librarian.application.cover_consideration import (
     cover_consideration_currentness_document,
@@ -163,6 +168,16 @@ _REPORT_BROWSE_FACTS_INSERT_SQL = (
     "SELECT DISTINCT NEW.report_id,"
     + _report_browse_author_values_sql("", "NEW.document")
     + "; END"
+)
+
+
+# The fold is `str.casefold`, whose mapping is the interpreter's Unicode
+# database, so the facts are bound to the version they were folded under. Open
+# refuses any other version: a clean rebuild re-derives them (#1199).
+_BROWSE_FACT_IDENTITY_SQL = (
+    "CREATE TABLE browse_fact_identity (singleton INTEGER PRIMARY KEY NOT NULL "
+    "CHECK(singleton=1), unicode_version TEXT NOT NULL "
+    "CHECK(length(unicode_version) BETWEEN 1 AND 32))"
 )
 
 
@@ -801,6 +816,7 @@ _SETUP_POLICY_TRANSITION_ROW = (
 _SETUP_REVIEW_CONTROL_ROW = (1, 0, 0, 0, None, 0, 0, 0)
 _SETUP_AUTOMATIC_SAFETY_ROW = (1, 0, None, "[]", 0)
 _SETUP_FIELD_EFFECT_CONTROL_ROW = (1, 0, 0)
+_SETUP_BROWSE_FACT_IDENTITY_ROW = (1, unicodedata.unidata_version)
 
 
 _DESCRIPTION_ADVICE_TABLES = {
@@ -844,6 +860,11 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_PROPOSAL_SETS_SQL)
     connection.execute(_PROPOSAL_BROWSE_FACTS_SQL)
     connection.execute(_PROPOSAL_BROWSE_FACTS_INSERT_SQL)
+    connection.execute(_BROWSE_FACT_IDENTITY_SQL)
+    connection.execute(
+        "INSERT INTO browse_fact_identity(singleton,unicode_version) VALUES(?,?)",
+        _SETUP_BROWSE_FACT_IDENTITY_ROW,
+    )
     connection.execute(_METADATA_POLICY_DRAFTS_SQL)
     connection.execute(
         "INSERT INTO metadata_policy_drafts(policy_id,document) VALUES(?,?)",
@@ -1181,6 +1202,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "reviewer_access_secrets", _REVIEWER_ACCESS_SECRETS_SQL),
             ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
             ("table", "proposal_set_browse_facts", _PROPOSAL_BROWSE_FACTS_SQL),
+            ("table", "browse_fact_identity", _BROWSE_FACT_IDENTITY_SQL),
             ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
             ("table", "review_cases", _REVIEW_CASES_SQL),
             ("table", "review_case_field_facts", _REVIEW_CASE_FIELD_FACTS_SQL),
@@ -1632,6 +1654,16 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
 
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
     """Require every reconstructible browse fact to equal its canonical JSON."""
+    identity = connection.execute(
+        "SELECT unicode_version FROM browse_fact_identity"
+    ).fetchall()
+    if len(identity) != 1:
+        raise MetadataReportError("database is unavailable or incompatible")
+    if identity[0][0] != unicodedata.unidata_version:
+        raise MetadataReportError(
+            "database browse facts were folded under a different Unicode version; "
+            "a clean rebuild is required"
+        )
     review_expected = (
         "SELECT rc.review_case_id,"
         + _review_case_field_fact_values_sql("rc.document")
@@ -1652,26 +1684,53 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
         "SELECT outcome_set_id,review_case_id,destination,disposition,"
         "automatic_destination,policy_category FROM shadow_outcome_field_facts"
     )
+    # Browse facts are compared only for the rows Library, Attention and search
+    # can select, through the statements' own FROM fragments: unselected
+    # history stays isolated until a read selects it (#1199).
+    # Each set is materialized once per statement, not once per side.
+    library = _CURRENT_LIBRARY_FROM_SQL + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
+    participating = (
+        "WITH participating_reports(id) AS MATERIALIZED (SELECT mr.report_id "
+        + library
+        + " UNION SELECT mr.report_id "
+        + _CURRENT_REVIEW_FROM_SQL
+        + "),participating_proposals(id) AS MATERIALIZED (SELECT rc.proposal_set_id "
+        + library
+        + " UNION SELECT rc.proposal_set_id "
+        + _CURRENT_REVIEW_FROM_SQL
+        + ") "
+    )
+    reports = " IN (SELECT id FROM participating_reports)"
+    proposals = " IN (SELECT id FROM participating_proposals)"
     report_expected = (
         "SELECT mr.report_id,"
         + _report_browse_fact_values_sql("mr.document")
-        + " FROM metadata_reports mr"
+        + " FROM metadata_reports mr WHERE mr.report_id"
+        + reports
     )
     report_actual = (
         "SELECT report_id,title_key,format,format_key,provider_limited "
-        "FROM metadata_report_browse_facts"
+        "FROM metadata_report_browse_facts WHERE report_id" + reports
     )
-    author_expected = "SELECT mr.report_id," + _report_browse_author_values_sql(
-        "metadata_reports mr,", "mr.document"
+    author_expected = (
+        "SELECT mr.report_id,"
+        + _report_browse_author_values_sql("metadata_reports mr,", "mr.document")
+        + " AND mr.report_id"
+        + reports
     )
-    author_actual = "SELECT report_id,author_key FROM metadata_report_browse_authors"
+    author_actual = (
+        "SELECT report_id,author_key FROM metadata_report_browse_authors "
+        "WHERE report_id" + reports
+    )
     proposal_expected = (
         "SELECT proposal_set_id,"
         + _proposal_browse_fact_value_sql("document")
-        + " FROM proposal_sets"
+        + " FROM proposal_sets WHERE proposal_set_id"
+        + proposals
     )
     proposal_actual = (
-        "SELECT proposal_set_id,resolved_policy_id FROM proposal_set_browse_facts"
+        "SELECT proposal_set_id,resolved_policy_id FROM proposal_set_browse_facts "
+        "WHERE proposal_set_id" + proposals
     )
     for expected, actual in (
         (review_expected, review_actual),
@@ -1681,7 +1740,7 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
         (proposal_expected, proposal_actual),
     ):
         mismatch = connection.execute(
-            "SELECT 1 FROM (" + expected + " EXCEPT " + actual + ") "
+            participating + "SELECT 1 FROM (" + expected + " EXCEPT " + actual + ") "
             "UNION ALL SELECT 1 FROM (" + actual + " EXCEPT " + expected + ") LIMIT 1"
         ).fetchone()
         if mismatch is not None:

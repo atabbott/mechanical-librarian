@@ -233,10 +233,8 @@ complete domain validator and projects its field facts in the same transaction.
 Library, Attention, search and their counts choose candidates from report and
 proposal browse facts (#1199): SQL over already-admitted documents, with no new input,
 folded through the deterministic `ml_casefold` (`str.casefold`, as the query is).
-A connection without that function cannot insert a report, and open refuses
-facts that differ from their documents. An edit that bypasses
-`metadata_reports_no_update` after open is therefore refused where the row
-renders and at the next open, not by a read that never renders it.
+A connection without that function cannot insert a report; what open validates
+is stated under [Schema admission](#schema-admission).
 
 A claimed stage retains its already-validated repository connection, without an open
 transaction, until its separate durable transition; composed report, proposal,
@@ -954,8 +952,16 @@ An earlier schema, an extra object, altered SQL, or a failed integrity check
 fails closed before mutation, and is never migrated, imported, preserved, or
 passed through a compatibility parser. Persisted content is validated when a
 read selects it and when a selected report participates in publication;
-malformed targeted content fails closed, and unrelated historical rows are not
-a whole-database semantic preflight. Recovery uses clean current state plus
+malformed targeted content fails closed. Unselected history stays isolated and
+is refused only when a read selects it. The rows Library, Attention and search
+can select are the exception (#1199): open compares their report and proposal
+browse facts with their documents, so a malformed or fact-changing
+participating row refuses the database at open, and an edit bypassing
+`metadata_reports_no_update` after open is refused where the row renders and at
+the next open. The facts are bound to the interpreter's
+`unicodedata.unidata_version`, so a Python upgrade that changes it is an upgrade
+event: open refuses with a clean-rebuild-required message and never repairs or
+re-derives at startup. Recovery uses clean current state plus
 catalogue refresh, fresh manifest creation, or supported report regeneration.
 This is the narrower runtime application of ADR-0013's repository-wide
 pre-release clean-schema rule; it does not limit that rule to database state.
