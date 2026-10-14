@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState } from 'react'
 
 import { DescriptionReviewerSettings } from './DescriptionReviewerSettings'
+import { ModelPicker } from './ModelPicker'
 import { coverReviewerLabel } from '../labels'
 import { ApiError } from '../api/http'
 import type {
@@ -452,49 +453,27 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
         <div className="settings-field-row">
           <div>
             <h4>OpenRouter</h4>
-            <p>Choose a vision model that currently supports strict structured output.</p>
-            <p>{view.free_tier_caveat}</p>
+            <p>A vision model with strict structured output reviews each book’s covers.</p>
             <p>{view.data_use_caveat}</p>
-            <p>Recommended advisory cover reviewer:</p>
-            <ul className="settings-reviewer-suggestions">
-              {view.recommendations.map((recommendation) => (
-                <li key={recommendation}>
-                  <button type="button" onClick={() => setModel(recommendation)}>
-                    Use {coverReviewerLabel(recommendation)}
-                  </button>
-                  <small>Paid; cover observations remain advisory.</small>
-                </li>
-              ))}
-            </ul>
-            <p>Catalogue-capability-only free option:</p>
-            <ul className="settings-reviewer-suggestions">
-              {view.candidates.map((candidate) => (
-                <li key={candidate.model}>
-                  <button type="button" onClick={() => setModel(candidate.model)}>
-                    Use {candidate.model}
-                  </button>
-                  <small>
-                    {candidate.tier}; catalogue capability only, not yet qualified
-                    {candidate.requests_per_minute === null
-                      ? null
-                      : ` — ${String(candidate.requests_per_minute)} RPM; ${candidate.requests_per_day ?? ''} RPD`}
-                  </small>
-                </li>
-              ))}
-            </ul>
           </div>
           <div className="settings-field-control">
-            <label htmlFor="reviewer-openrouter-model">Model ID</label>
-            <input
+            <ModelPicker
               id="reviewer-openrouter-model"
-              value={model}
-              placeholder={
-                view.mapping?.engine === 'openrouter' ? view.mapping.model : 'provider/model'
-              }
-              maxLength={256}
-              onChange={(event) => setModel(event.currentTarget.value)}
+              label="Cover model"
+              value={effectiveModel}
+              onChange={setModel}
+              models={[
+                ...view.recommendations.map((recommendation) => ({
+                  model: recommendation,
+                  note: 'Recommended. Paid; observations remain advice.',
+                })),
+                ...view.candidates.map((candidate) => ({
+                  model: candidate.model,
+                  note: `${candidate.tier === 'free' ? 'Free' : candidate.tier}; listed by OpenRouter as capable, not yet qualified here.${candidate.requests_per_minute === null ? '' : ` ${view.free_tier_caveat}`}`,
+                })),
+              ]}
             />
-            <label htmlFor="reviewer-openrouter-key">API key</label>
+            <label htmlFor="reviewer-openrouter-key">OpenRouter API key</label>
             <input
               id="reviewer-openrouter-key"
               type="password"
@@ -596,7 +575,7 @@ export const ReviewerAccessPanel = ({ http }: { http: ReviewHttp }) => {
                 <dt>Model</dt>
                 <dd>
                   {disclosedCoverModel === ''
-                    ? 'None yet. Enter a model ID above; it is checked for image, text and structured output when you validate.'
+                    ? 'None yet. Choose a model above; it is checked for image, text and structured output when you validate.'
                     : disclosedCoverModel}
                 </dd>
               </div>

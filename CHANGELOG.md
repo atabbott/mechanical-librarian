@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Settings keeps one draft across seven sections with true per-section counts, a
+  shared review-and-save tray, Discard all, and validation that reaches hidden
+  sections. Policy and Settings share segmented controls, disclosures, counts and
+  the tray; reviewer models get labelled pickers and per-book cost examples (#1034).
+
 - Settings and setup show a measured Luna cover estimate of about $0.6364 per
   1,000 review requests. Reviewer cost evidence now records its measured run on
   each row, so rows from separate complete runs ship together truthfully (#1180).

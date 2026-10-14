@@ -598,12 +598,31 @@ interface undo action.
 ## Settings route
 
 `/settings` is a lazy authenticated primary destination alongside Library,
-Policy, and Activity. It groups Connection, Providers,
-Libraries, Automation & limits, Reviewer, Server, and Appearance without
-moving cover-policy ownership out of Policy. The selected group is the closed
-`?group=` URL state, so Back and Forward restore it. At 884 pixels and above a
-settings index remains beside the active paper-like page; at 390 and 320 pixels
-a labelled native selector replaces that index.
+Policy, and Activity. It has seven sections: Audiobookshelf, Libraries,
+Metadata sources, Reviewer, Background work, Access and diagnostics, and
+Appearance, without moving cover-policy ownership out of Policy. The selected
+section is the closed `?group=` URL state, so Back and Forward restore it; the
+retired `automation` and `server` values open Background work. Above 700 pixels
+a section index with per-section change counts stays beside the active page; at
+700 pixels and below a labelled compact selector carrying the same counts
+replaces it, so every width has exactly one.
+
+The page edits one draft of the whole document. Moving between sections keeps
+every edit; a count and a changed-row mark clear when a value returns to its
+saved value, and indirect changes count too (turning a source off removes it
+from its libraries). An inset bottom tray, shared with Policy, appears only
+while something is unsaved and reserves its own height. It names the affected
+sections, lists before/after values under Review changes (each linking back to
+its control, opening any closed section or disclosure), and offers Discard all
+and one Save settings. Secret values never enter that list. Save validates the
+whole draft, including sections not on screen, and takes the owner to the
+first invalid value. A save rejected as stale reloads the newer saved settings
+and keeps the draft on top; an edit that was also changed elsewhere takes the
+newer value and the tray says how many did. Reviewer sign-in, validation and
+test actions take effect immediately, are labelled as such, and are not part
+of Save settings or Discard all. Each reviewer task has a purpose-labelled
+model picker with an explicit custom entry and an example cost per 1,000 books
+for the exact model, stated as not measured when it is.
 
 Successful store-managed changes are confirmed once at page level as saved and
 in use. Only deployment-managed fields carry a per-field deployment consequence.

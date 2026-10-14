@@ -2,6 +2,8 @@ import { ReviewerCost } from './ReviewerCost'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
+import { ModelPicker } from './ModelPicker'
+
 import type { DescriptionModelMetadata, ReviewHttp, ReviewerAccessView } from '../api/http'
 
 export const DescriptionReviewerSettings = ({
@@ -147,17 +149,19 @@ export const DescriptionReviewerSettings = ({
           </p>
         </div>
         <div className="settings-field-control">
-          <label htmlFor="description-openrouter-model">OpenRouter description model</label>
-          <input
+          <ModelPicker
             id="description-openrouter-model"
+            label="Description model"
             value={model}
             disabled={busy}
-            onChange={(event) => {
-              setModel(event.target.value)
+            models={view.cost_evidence.models
+              .filter((row) => row.task === 'description')
+              .map((row) => ({ model: row.model, note: 'Measured for description advice.' }))}
+            onChange={(next) => {
+              setModel(next)
               setMetadata(null)
               test.reset()
             }}
-            autoComplete="off"
           />
           <label htmlFor="description-openrouter-key">Shared OpenRouter API key</label>
           <input

@@ -61,6 +61,20 @@ const reviewerView: ReviewerAccessView = {
   data_use_caveat: 'Cover previews are sent to OpenRouter and its selected provider.',
 }
 
+// Chooses a model, or the custom entry, from a reviewer model picker.
+const pickModel = async (
+  user: ReturnType<typeof userEvent.setup>,
+  picker: string,
+  name: string,
+) => {
+  await user.click(screen.getByRole('combobox', { name: picker }))
+  await user.click(screen.getByRole('option', { name }))
+}
+
+// The pressed-button choice inside a named segmented control.
+const segment = (group: string, choice: string) =>
+  within(screen.getByRole('group', { name: group })).getByRole('button', { name: choice })
+
 describe('settings API field validation vocabulary', () => {
   it('matches the generated boundary at exact and unusual values', () => {
     expect(settingsEndpointValid('not a URL but API-valid')).toBe(true)
@@ -114,13 +128,9 @@ describe('owner settings route', () => {
       add.click()
       add.click()
     })
-    expect(
-      screen.getByRole('checkbox', { name: 'Provider state Enable open library' }),
-    ).toBeVisible()
-    expect(
-      screen.getAllByRole('checkbox', { name: 'Provider state Enable open library' }),
-    ).toHaveLength(1)
-    expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toBeVisible()
+    expect(segment('Use Open Library', 'Off')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getAllByRole('group', { name: 'Use Open Library' })).toHaveLength(1)
+    expect(screen.getByRole('textbox', { name: 'Contact email' })).toBeVisible()
     expect(screen.queryByRole('button', { name: 'Add Open Library' })).not.toBeInTheDocument()
   })
 
@@ -154,9 +164,7 @@ describe('owner settings route', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Add Audible' }))
     await user.click(screen.getByRole('button', { name: 'Add iTunes' }))
-    await user.click(
-      screen.getByRole('checkbox', { name: 'Provider state Enable audible catalog' }),
-    )
+    await user.click(segment('Use Audible', 'On'))
 
     // Keyless: no key, no email, and nothing to configure but enablement.
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
@@ -208,17 +216,14 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=providers', http)
 
     await user.click(await screen.findByRole('button', { name: 'Add Inventaire' }))
-    const enabled = screen.getByRole('checkbox', {
-      name: 'Provider state Enable inventaire',
-    })
-    expect(enabled).toBeChecked()
+    expect(segment('Use Inventaire', 'On')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /API key/u })).not.toBeInTheDocument()
 
-    await user.click(enabled)
-    expect(enabled).not.toBeChecked()
-    await user.click(enabled)
-    expect(enabled).toBeChecked()
+    await user.click(segment('Use Inventaire', 'Off'))
+    expect(segment('Use Inventaire', 'Off')).toHaveAttribute('aria-pressed', 'true')
+    await user.click(segment('Use Inventaire', 'On'))
+    expect(segment('Use Inventaire', 'On')).toHaveAttribute('aria-pressed', 'true')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
     await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
@@ -231,8 +236,8 @@ describe('owner settings route', () => {
         name: 'inventaire',
       },
     ])
-    expect(screen.getByRole('checkbox', { name: 'Provider state Enable inventaire' })).toBeChecked()
     expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
+    expect(segment('Use Inventaire', 'On')).toHaveAttribute('aria-pressed', 'true')
   })
 
   it('keeps the primary shell intact and saves a redacted replacement with revision CAS', async () => {
@@ -247,19 +252,22 @@ describe('owner settings route', () => {
       expect(screen.getByRole('link', { name })).toBeVisible()
     expect(screen.queryByText('Restart required for saved changes')).not.toBeInTheDocument()
     expect(screen.queryByText('Applies on restart')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: /Providers/ }))
-    expect(screen.getByRole('checkbox', { name: 'Provider state Enable hardcover' })).toBeVisible()
+    await user.click(screen.getByRole('button', { name: /Metadata sources/ }))
+    expect(screen.getByRole('group', { name: 'Use Hardcover' })).toBeVisible()
     expect(screen.getByRole('link', { name: 'Get a Hardcover key' })).toBeVisible()
     expect(screen.getByText('Configured · ····abcd')).toBeVisible()
-    expect(
-      screen.getByRole('textbox', { name: 'Open Library contact email' }),
-    ).toHaveAccessibleDescription(
-      /Sent only to Open Library; never shared with this project or retained in reports/,
+    expect(screen.getByRole('textbox', { name: 'Contact email' })).toHaveAccessibleDescription(
+      /Sent only to Open Library, as it asks; never kept in reports/,
     )
     expect(screen.queryByText('Cover evidence')).not.toBeInTheDocument()
-    expect(screen.queryByRole('checkbox', { name: /cover evidence/i })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Replace hardcover API key' }))
-    await user.type(screen.getByLabelText('Replacement hardcover API key'), 'new-secret-abcd')
+    expect(screen.queryByRole('group', { name: /cover evidence/i })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Replace Hardcover API key' }))
+    await user.type(screen.getByLabelText('Replacement Hardcover API key'), 'new-secret-abcd')
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    const review = screen.getByRole('list')
+    expect(review).toHaveTextContent('Hardcover API key')
+    expect(review).toHaveTextContent('Will be replaced')
+    expect(review).not.toHaveTextContent('new-secret-abcd')
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
     await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
@@ -286,25 +294,33 @@ describe('owner settings route', () => {
     })
     renderRoute('/settings?group=providers', http)
 
-    const hardcover = await screen.findByRole('checkbox', {
-      name: 'Provider state Enable hardcover',
-    })
-    await user.click(hardcover)
+    await screen.findByRole('group', { name: 'Use Hardcover' })
+    await user.click(segment('Use Hardcover', 'Off'))
     expect(screen.getByText('Configured · ····abcd')).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Replace hardcover API key' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'Clear hardcover API key' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Replace Hardcover API key' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Clear Hardcover API key' })).toBeVisible()
 
-    const openLibrary = screen.getByRole('checkbox', {
-      name: 'Provider state Enable open-library',
-    })
-    await user.click(openLibrary)
-    expect(screen.getByRole('textbox', { name: 'Open Library contact email' })).toHaveValue(
+    await user.click(segment('Use Open Library', 'Off'))
+    expect(screen.getByRole('textbox', { name: 'Contact email' })).toHaveValue(
       'owner@example.invalid',
     )
 
-    await user.click(hardcover)
-    await user.click(screen.getByRole('button', { name: /Libraries/ }))
-    expect(screen.getByRole('checkbox', { name: /^hardcover$/u })).not.toBeChecked()
+    // Turning a source off removed it from the library: an indirect change
+    // that the Libraries count and the change review both carry.
+    expect(screen.getByRole('button', { name: /Libraries/ })).toHaveAccessibleDescription(
+      '1 changed field',
+    )
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    expect(screen.getByRole('list')).toHaveTextContent(
+      'Ebooks & Audiobooks: Collected Editions: sources (a source was turned off)',
+    )
+    await user.click(segment('Use Hardcover', 'On'))
+    await user.click(
+      within(screen.getByRole('navigation', { name: 'Settings sections' })).getByRole('button', {
+        name: /Libraries/,
+      }),
+    )
+    expect(screen.getByRole('checkbox', { name: 'Hardcover' })).not.toBeChecked()
     await user.click(screen.getByRole('button', { name: 'Save settings' }))
 
     await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
@@ -332,16 +348,18 @@ describe('owner settings route', () => {
     expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Replace|Clear/ })).not.toBeInTheDocument()
     for (const name of [
-      /Providers/,
       /Libraries/,
-      /Automation & limits/,
+      /Metadata sources/,
       /Reviewer/,
-      /Server/,
+      /Background work/,
+      /Access and diagnostics/,
       /Appearance/,
     ]) {
       await user.click(screen.getByRole('button', { name }))
       expect(window.document.querySelector('.settings-sheet input')).toBeNull()
+      expect(window.document.querySelector('.settings-sheet .cm-segmented')).toBeNull()
       expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Discard all' })).not.toBeInTheDocument()
     }
   })
 
@@ -350,7 +368,7 @@ describe('owner settings route', () => {
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())
     const { router } = renderRoute('/settings?group=connection', http)
-    await screen.findByRole('heading', { level: 2, name: 'Connection' })
+    await screen.findByRole('heading', { level: 2, name: 'Audiobookshelf' })
     await user.click(screen.getByRole('button', { name: /Libraries/ }))
     expect(await screen.findByRole('heading', { level: 2, name: 'Libraries' })).toBeVisible()
     expect(router.state.location.search).toEqual({ group: 'libraries' })
@@ -372,13 +390,13 @@ describe('owner settings route', () => {
       }),
     ).toBeVisible()
     expect(screen.queryByRole('heading', { name: 'a-very_long-library-name' })).toBeNull()
-    const metadata = screen.getByText('a-very_long-library-name').closest('p')
-    expect(metadata).toHaveClass('settings-record-meta')
+    const metadata = screen.getByText('a-very_long-library-name').closest('.settings-record-meta')
+    expect(metadata).not.toBeNull()
     expect(metadata).toHaveTextContent('Local identifier: a-very_long-library-name')
     expect(metadata).toHaveTextContent('Audiobookshelf identifier: books')
     expect(
       screen.getByRole('group', {
-        name: 'Providers for Ebooks & Audiobooks: Collected Editions',
+        name: 'Sources for Ebooks & Audiobooks: Collected Editions',
       }),
     ).toBeVisible()
   })
@@ -404,28 +422,49 @@ describe('owner settings route', () => {
     expect(screen.queryByText('A Very Long Library Name')).not.toBeInTheDocument()
   })
 
-  it('announces unavailable and stale recovery states without leaking a value', async () => {
-    const user = userEvent.setup()
-    const http = createHttp()
-    http.getSettings = vi
-      .fn()
-      .mockRejectedValueOnce(new ApiError(503, 'settings_unavailable'))
-      .mockResolvedValue(view())
-    http.writeSettings = vi.fn(async () => {
-      throw new ApiError(409, 'settings_revision_stale')
-    })
-    renderRoute('/settings', http)
-    expect(await screen.findByRole('alert')).toHaveTextContent('could not safely read')
-    await user.click(screen.getByRole('button', { name: 'Try again' }))
-    expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
-    await user.clear(screen.getByDisplayValue('https://library.invalid'))
-    await user.type(screen.getByRole('textbox'), 'https://other.invalid')
-    await user.click(screen.getByRole('button', { name: 'Save settings' }))
-    const staleAlert = await screen.findByRole('alert')
-    expect(staleAlert).toHaveTextContent('Settings changed elsewhere')
-    await waitFor(() => expect(staleAlert).toHaveFocus())
-    expect(screen.queryByText('https://other.invalid')).not.toBeInTheDocument()
-  })
+  it.each([
+    ['unrelated', 'https://library.invalid', 'https://other.invalid', /Your changes were kept/],
+    ['conflicting', 'https://elsewhere.invalid', 'https://elsewhere.invalid', /1 edit was also/],
+  ])(
+    'keeps the draft over %s newer settings and says what a stale save changed',
+    async (_case, newerEndpoint, shownEndpoint, message) => {
+      const user = userEvent.setup()
+      const http = createHttp()
+      const newer: SettingsView = {
+        ...view(),
+        document: {
+          ...document,
+          revision: 4,
+          reduced_motion: 'always_reduced',
+          connections: [{ adapter: 'audiobookshelf', endpoint: newerEndpoint, name: 'home' }],
+        },
+      }
+      http.getSettings = vi
+        .fn()
+        .mockRejectedValueOnce(new ApiError(503, 'settings_unavailable'))
+        .mockResolvedValueOnce(view())
+        .mockResolvedValue(newer)
+      http.writeSettings = vi.fn(async () => {
+        throw new ApiError(409, 'settings_revision_stale')
+      })
+      renderRoute('/settings', http)
+      expect(await screen.findByRole('alert')).toHaveTextContent('could not safely read')
+      await user.click(screen.getByRole('button', { name: 'Try again' }))
+      expect(await screen.findByRole('heading', { level: 1, name: 'Settings' })).toBeVisible()
+      await user.clear(screen.getByDisplayValue('https://library.invalid'))
+      await user.type(screen.getByRole('textbox'), 'https://other.invalid')
+      await user.click(screen.getByRole('button', { name: 'Save settings' }))
+      const staleAlert = await screen.findByText(message)
+      await waitFor(() => expect(staleAlert).toHaveFocus())
+      expect(staleAlert).toHaveAttribute('role', 'alert')
+      expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
+        shownEndpoint,
+      )
+      // The newer saved motion preference is kept, not reverted by the draft.
+      await user.click(screen.getByRole('button', { name: /Appearance/ }))
+      expect(segment('Motion', 'Always reduced')).toHaveAttribute('aria-pressed', 'true')
+    },
+  )
 
   it.each([new AmbiguousMutationError(), new ApiError(502, 'invalid_settings_response')])(
     'reconciles an uncertain save before confirming authoritative state',
@@ -466,7 +505,8 @@ describe('owner settings route', () => {
       expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
         'https://authoritative.invalid',
       )
-      expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+      // The reloaded values are the saved state, so no draft or tray remains.
+      expect(screen.queryByRole('button', { name: 'Save settings' })).not.toBeInTheDocument()
       expect(screen.queryByText(/Nothing changed/)).not.toBeInTheDocument()
       expect(http.getSettings).toHaveBeenCalledTimes(2)
       expect(http.writeSettings).toHaveBeenCalledOnce()
@@ -523,46 +563,52 @@ describe('owner settings route', () => {
     expect(endpoint).toHaveAccessibleDescription(/endpoint must contain 1–2,048 characters/)
     expect(screen.getByRole('alert')).toHaveTextContent('endpoint must contain')
 
-    await user.click(screen.getByRole('button', { name: 'Replace home access key' }))
-    const targetSecret = screen.getByLabelText('Replacement home access key')
+    await user.click(screen.getByRole('button', { name: 'Replace Audiobookshelf access key' }))
+    const targetSecret = screen.getByLabelText('Replacement Audiobookshelf access key')
     await user.type(targetSecret, 'Bearer secret')
     expect(targetSecret).toHaveAttribute('aria-invalid', 'true')
     expect(targetSecret).toHaveAccessibleDescription(/Secrets must be 1–2,048/)
 
-    await user.click(screen.getByRole('button', { name: /Providers/ }))
-    const email = screen.getByRole('textbox', { name: 'Open Library contact email' })
+    await user.click(screen.getByRole('button', { name: /Metadata sources/ }))
+    const email = screen.getByRole('textbox', { name: 'Contact email' })
     await user.clear(email)
     expect(email).toHaveAttribute('aria-invalid', 'true')
     expect(email).toHaveAccessibleDescription(/needs a contact email while enabled/)
-    const openLibraryEnabled = screen.getByRole('checkbox', {
-      name: 'Provider state Enable open-library',
-    })
-    await user.click(openLibraryEnabled)
+    await user.click(segment('Use Open Library', 'Off'))
     expect(email).not.toHaveAttribute('aria-invalid')
-    await user.click(openLibraryEnabled)
+    await user.click(segment('Use Open Library', 'On'))
     expect(email).toHaveAttribute('aria-invalid', 'true')
 
-    await user.click(screen.getByRole('button', { name: 'Clear hardcover API key' }))
-    await user.click(screen.getByRole('button', { name: 'Confirm clear hardcover API key' }))
+    await user.click(screen.getByRole('button', { name: 'Clear Hardcover API key' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm clear Hardcover API key' }))
     const requiredKey = screen.getByRole('button', {
-      name: 'Keep configured hardcover API key',
+      name: 'Keep configured Hardcover API key',
     })
     expect(requiredKey).toHaveAttribute('aria-invalid', 'true')
     expect(requiredKey).toHaveAccessibleDescription(/requires an API key while enabled/)
 
     await user.click(screen.getByRole('button', { name: /Libraries/ }))
-    const libraryId = screen.getByRole('textbox', { name: 'Library identifier' })
+    const libraryId = screen.getByRole('textbox', { name: 'Audiobookshelf library ID' })
     await user.clear(libraryId)
     expect(libraryId).toHaveAttribute('aria-invalid', 'true')
     expect(libraryId).toHaveAccessibleDescription(/identifier must contain 1–128 characters/)
 
-    await user.click(screen.getByRole('button', { name: /Automation & limits/ }))
+    await user.click(screen.getByRole('button', { name: /Background work/ }))
     const timeout = screen.getByRole('spinbutton', { name: 'Request timeout' })
     await user.clear(timeout)
     await user.type(timeout, '0')
     expect(timeout).toHaveAttribute('aria-invalid', 'true')
     expect(timeout).toHaveAccessibleDescription(/Request timeout must be from 1 to 60/)
-    expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+
+    // Save validates the whole draft, including sections not on screen, and
+    // takes the owner to the first invalid field instead of sending it.
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() =>
+      expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveFocus(),
+    )
+    expect(screen.getByRole('heading', { level: 2, name: 'Audiobookshelf' })).toBeVisible()
+    expect(screen.getByText(/values need fixing before saving/)).toBeVisible()
+    expect(http.writeSettings).not.toHaveBeenCalled()
   })
 
   it.each([
@@ -584,9 +630,10 @@ describe('owner settings route', () => {
       http.getReviewerAccess = vi.fn(async () => reviewerView)
       http.configureOpenRouter = vi.fn(async () => ({ ...reviewerView, revision: 4 }))
       renderRoute('/settings?group=reviewer', http)
-      await user.click(await screen.findByRole('button', { name: `Use ${label} (${model})` }))
-      expect(screen.getByRole('textbox', { name: 'Model ID' })).toHaveValue(model)
-      await user.type(screen.getByLabelText('API key'), 'synthetic-key')
+      await screen.findByRole('combobox', { name: 'Cover model' })
+      await pickModel(user, 'Cover model', `${label} (${model})`)
+      expect(screen.getByRole('combobox', { name: 'Cover model' })).toHaveTextContent(label)
+      await user.type(screen.getByLabelText('OpenRouter API key'), 'synthetic-key')
       await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
       await waitFor(() =>
         expect(http.configureOpenRouter).toHaveBeenCalledWith({
@@ -620,27 +667,22 @@ describe('owner settings route', () => {
     }))
     renderRoute('/settings?group=reviewer', http)
 
-    expect(await screen.findByText(/Recommended advisory cover reviewer/u)).toBeVisible()
-    for (const label of ['Ministral 3B', 'GPT-5.6 Luna', 'Mistral Small 4', 'MiMo', 'Qwen']) {
-      expect(
-        screen.queryByRole('button', { name: new RegExp(`Use ${label}`) }),
-      ).not.toBeInTheDocument()
-    }
-    expect(screen.getByText(/Catalogue-capability-only free option/u)).toBeVisible()
-    expect(screen.getByText(/20 requests\/minute/u)).toBeVisible()
+    await user.click(await screen.findByRole('combobox', { name: 'Cover model' }))
+    expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'Choose a model',
+      'GPT-6 Luna (openai/gpt-6-luna)',
+      'dots-studio/dots-3-note-preview:free',
+      'Custom model ID',
+    ])
+    await user.click(screen.getByRole('option', { name: 'GPT-6 Luna (openai/gpt-6-luna)' }))
+    expect(screen.getByText('Recommended. Paid; observations remain advice.')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Restart device sign-in' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: 'Use GPT-6 Luna (openai/gpt-6-luna)' }))
-    const model = screen.getByRole('textbox', { name: 'Model ID' })
-    expect(model).toHaveValue('openai/gpt-6-luna')
-    await user.click(
-      screen.getByRole('button', {
-        name: 'Use dots-studio/dots-3-note-preview:free',
-      }),
-    )
-    expect(model).toHaveValue('dots-studio/dots-3-note-preview:free')
-    await user.clear(model)
+    await pickModel(user, 'Cover model', 'dots-studio/dots-3-note-preview:free')
+    expect(screen.getByText(/not yet qualified here\. 20 requests\/minute/u)).toBeVisible()
+    await pickModel(user, 'Cover model', 'Custom model ID')
+    const model = screen.getByRole('textbox', { name: 'Cover model ID' })
     await user.type(model, 'xiaomi/mimo-v2.6-flash')
-    const key = screen.getByLabelText('API key')
+    const key = screen.getByLabelText('OpenRouter API key')
     await user.type(key, 'secret-key')
     await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
     await waitFor(() =>
@@ -725,13 +767,14 @@ describe('owner settings route', () => {
       'Model',
       'Capabilities',
       'Observed prices in USD',
-      'Measured request cost',
+      'Example cost per 1,000 books',
       'Cover request',
     ])
     expect(cover.getByText('openai/gpt-4o-mini', { selector: 'dd' })).toBeVisible()
     expect(cover.getByText(/Image input, text output and structured output/u)).toBeVisible()
     expect(cover.getByText('Validate and save this model to observe its prices.')).toBeVisible()
-    expect(cover.getByText('Not measured for this model.')).toBeVisible()
+    expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
+    expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
     expect(
       cover.getByText('One work packet, which may contain several cover images.'),
     ).toBeVisible()
@@ -748,7 +791,7 @@ describe('owner settings route', () => {
     ).toBeTruthy()
     // The disclosure carries no control, so the key field still tabs straight
     // to the next available action past the disabled replace button.
-    screen.getByLabelText('API key').focus()
+    screen.getByLabelText('OpenRouter API key').focus()
     await userEvent.setup().tab()
     expect(cover.getByRole('button', { name: 'Refresh current status' })).toHaveFocus()
   })
@@ -761,15 +804,16 @@ describe('owner settings route', () => {
     renderRoute('/settings?group=reviewer', http)
 
     const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
-    const model = cover.getByRole('textbox', { name: 'Model ID' })
-    expect(cover.getByText(/None yet\. Enter a model ID above/u)).toBeVisible()
+    expect(cover.getByText(/None yet\. Choose a model above/u)).toBeVisible()
+    await pickModel(user, 'Cover model', 'Custom model ID')
+    const model = cover.getByRole('textbox', { name: 'Cover model ID' })
     await user.type(model, 'openai/gpt-4o')
     expect(cover.getByText('openai/gpt-4o', { selector: 'dd' })).toBeVisible()
-    expect(cover.queryByText(/None yet\. Enter a model ID above/u)).toBeNull()
+    expect(cover.queryByText(/None yet\. Choose a model above/u)).toBeNull()
     // Clearing the field returns the row to the instruction rather than to a
     // model the page no longer offers.
     await user.clear(model)
-    expect(cover.getByText(/None yet\. Enter a model ID above/u)).toBeVisible()
+    expect(cover.getByText(/None yet\. Choose a model above/u)).toBeVisible()
   })
 
   it('states an absent cover model in the disclosure instead of a blank fact', async () => {
@@ -781,11 +825,11 @@ describe('owner settings route', () => {
     const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
     expect(
       await cover.findByText(
-        'None yet. Enter a model ID above; it is checked for image, text and structured output when you validate.',
+        'None yet. Choose a model above; it is checked for image, text and structured output when you validate.',
         { selector: 'dd' },
       ),
     ).toBeVisible()
-    expect(cover.getByText('Not measured for this model.')).toBeVisible()
+    expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
   })
 
   it.each([
@@ -852,12 +896,9 @@ describe('owner settings route', () => {
       async () => await new Promise<ReviewerAccessView>((resolve) => (finish = resolve)),
     )
     renderRoute('/settings?group=reviewer', http)
-    await user.click(
-      await screen.findByRole('button', {
-        name: 'Use dots-studio/dots-3-note-preview:free',
-      }),
-    )
-    await user.type(screen.getByLabelText('API key'), 'secret-key')
+    await screen.findByRole('combobox', { name: 'Cover model' })
+    await pickModel(user, 'Cover model', 'dots-studio/dots-3-note-preview:free')
+    await user.type(screen.getByLabelText('OpenRouter API key'), 'secret-key')
     await user.click(screen.getByRole('button', { name: 'Validate and use OpenRouter' }))
     expect(screen.getByText('Advisory availability: validating')).toBeVisible()
     finish({
@@ -1154,8 +1195,8 @@ describe('owner settings route', () => {
     try {
       renderRoute('/settings?group=reviewer', http)
 
-      await screen.findByRole('textbox', { name: 'Model ID' })
-      const key = screen.getByLabelText('API key')
+      await screen.findByRole('combobox', { name: 'Cover model' })
+      const key = screen.getByLabelText('OpenRouter API key')
       await user.type(key, 'replacement-key')
       expect(key).toHaveValue('replacement-key')
       act(() => {
@@ -1163,7 +1204,7 @@ describe('owner settings route', () => {
         frames.clear()
         for (const frame of pending) frame(0)
       })
-      expect(screen.getByLabelText('API key')).toBe(key)
+      expect(screen.getByLabelText('OpenRouter API key')).toBe(key)
       expect(key).toHaveFocus()
       expect(key).toHaveValue('replacement-key')
       const replace = screen.getByRole('button', { name: 'Replace OpenRouter key' })
@@ -1180,13 +1221,181 @@ describe('owner settings route', () => {
     }
   })
 
+  it('keeps one draft across sections with true per-section counts that clear on revert', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings', http)
+    const nav = within(await screen.findByRole('navigation', { name: 'Settings sections' }))
+    const endpoint = screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    expect(screen.queryByRole('button', { name: 'Save settings' })).toBeNull()
+
+    await user.clear(endpoint)
+    await user.type(endpoint, 'https://other.invalid')
+    expect(nav.getByRole('button', { name: /Audiobookshelf/ })).toHaveAccessibleDescription(
+      '1 changed field',
+    )
+    expect(endpoint.closest('.settings-field-row')).toHaveClass('is-changed')
+    await user.click(nav.getByRole('button', { name: /Appearance/ }))
+    await user.click(segment('Motion', 'Always reduced'))
+    expect(screen.getByText('2 unsaved changes')).toBeVisible()
+    expect(nav.getByRole('button', { name: /Appearance/ })).toHaveAccessibleDescription(
+      '1 changed field',
+    )
+
+    await user.click(nav.getByRole('button', { name: /Audiobookshelf/ }))
+    const kept = screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    expect(kept).toHaveValue('https://other.invalid')
+    await user.clear(kept)
+    await user.type(kept, 'https://library.invalid')
+    expect(nav.getByRole('button', { name: /Audiobookshelf/ })).toHaveAccessibleDescription(
+      '0 changed fields',
+    )
+    expect(kept.closest('.settings-field-row')).not.toHaveClass('is-changed')
+    expect(screen.getByText('1 unsaved change')).toBeVisible()
+    await user.click(nav.getByRole('button', { name: /Appearance/ }))
+    await user.click(segment('Motion', 'Follow system'))
+    expect(screen.queryByRole('button', { name: 'Save settings' })).toBeNull()
+    expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('saves edits from several sections in one revision-checked write', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    let savedRequest: SettingsWrite | undefined
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async (request: SettingsWrite) => {
+      savedRequest = request
+      return { ...view(), document: { ...request.document, revision: 4 } }
+    })
+    renderRoute('/settings?group=providers', http)
+    await screen.findByRole('group', { name: 'Use Hardcover' })
+    await user.click(segment('Use Hardcover', 'Off'))
+    await user.click(screen.getByRole('button', { name: 'Clear Hardcover API key' }))
+    await user.click(screen.getByRole('button', { name: 'Confirm clear Hardcover API key' }))
+    await user.click(screen.getByRole('button', { name: /Appearance/ }))
+    await user.click(segment('Motion', 'Always reduced'))
+    expect(screen.getByText('4 unsaved changes')).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    const review = screen.getByRole('list')
+    expect(review).toHaveTextContent('Hardcover API key')
+    expect(review).toHaveTextContent('Will be cleared')
+    expect(review).not.toHaveTextContent('abcd')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledOnce())
+    expect(savedRequest?.expected_revision).toBe(3)
+    expect(savedRequest?.document.reduced_motion).toBe('always_reduced')
+    expect(savedRequest?.secrets).toEqual([
+      { field_id: 'provider.hardcover.key', operation: 'clear' },
+    ])
+    expect(await screen.findByText('Settings saved and in use.')).toBeVisible()
+  })
+
+  it('validates sections that are not on screen and takes the owner to the first problem', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings', http)
+    await user.click(await screen.findByRole('button', { name: 'Clear Audiobookshelf access key' }))
+    await user.click(
+      screen.getByRole('button', { name: 'Confirm clear Audiobookshelf access key' }),
+    )
+    await user.click(screen.getByRole('button', { name: /Appearance/ }))
+    await user.click(segment('Motion', 'Always reduced'))
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Audiobookshelf' })).toBeVisible()
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Keep configured Audiobookshelf access key' }),
+      ).toHaveFocus(),
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('home requires an access key.')
+    expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('discards every section at once and announces it', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings', http)
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await user.type(endpoint, '/edited')
+    await user.click(screen.getByRole('button', { name: /Appearance/ }))
+    await user.click(segment('Motion', 'Always reduced'))
+    await user.click(screen.getByRole('button', { name: 'Discard all' }))
+
+    expect(segment('Motion', 'Follow system')).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText('All unsaved settings changes were discarded.')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Save settings' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: /Audiobookshelf/ }))
+    expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
+      'https://library.invalid',
+    )
+    expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('links a change in the review list back to a control in a closed advanced section', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=background', http)
+    await user.click(await screen.findByText('Response and file size limits'))
+    const archive = screen.getByRole('spinbutton', { name: 'Source archive limit' })
+    await user.clear(archive)
+    await user.type(archive, '1048576')
+    await user.click(screen.getByText('Response and file size limits'))
+    await user.click(screen.getByRole('button', { name: /Appearance/ }))
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    await user.click(
+      within(screen.getByRole('list')).getByRole('button', { name: /Source archive limit/ }),
+    )
+
+    expect(await screen.findByRole('heading', { level: 2, name: 'Background work' })).toBeVisible()
+    await waitFor(() =>
+      expect(screen.getByRole('spinbutton', { name: 'Source archive limit' })).toHaveFocus(),
+    )
+  })
+
+  it('keeps every edit when the server rejects a save', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    http.writeSettings = vi.fn(async () => {
+      throw new ApiError(422, 'invalid_settings')
+    })
+    renderRoute('/settings', http)
+    const endpoint = await screen.findByRole('textbox', { name: 'Audiobookshelf endpoint' })
+    await user.type(endpoint, '/edited')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    expect(await screen.findByText(/Nothing was saved; your changes are still here/)).toBeVisible()
+    expect(endpoint).toHaveValue('https://library.invalid/edited')
+    expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled()
+  })
+
+  it('offers a compact section selector that carries change counts', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    const { router } = renderRoute('/settings?group=appearance', http)
+    await user.click(await screen.findByRole('button', { name: 'Always reduced' }))
+    await user.click(screen.getByRole('combobox', { name: 'Settings section' }))
+    expect(screen.getByRole('option', { name: 'Appearance · 1 changed' })).toBeInTheDocument()
+    await user.click(screen.getByRole('option', { name: 'Libraries' }))
+    expect(await screen.findByRole('heading', { level: 2, name: 'Libraries' })).toBeVisible()
+    expect(router.state.location.search).toEqual({ group: 'libraries' })
+    expect(screen.getByText('1 unsaved change')).toBeVisible()
+  })
+
   it('renders and range-validates the audiobook source limit beside the archive one', async () => {
     const user = userEvent.setup()
     const http = createHttp()
     http.getSettings = vi.fn(async () => view())
-    renderRoute('/settings?group=automation', http)
+    renderRoute('/settings?group=background', http)
 
-    await user.click(await screen.findByText('Advanced response and archive limits'))
+    await user.click(await screen.findByText('Response and file size limits'))
     const audio = screen.getByRole('spinbutton', { name: 'Audiobook source limit' })
     expect(audio).toHaveValue(8_589_934_592)
     // Its own ceiling, not the EPUB archive's: an audiobook is read by header
@@ -1201,7 +1410,9 @@ describe('owner settings route', () => {
     await user.type(audio, '1023')
     expect(audio).toHaveAttribute('aria-invalid', 'true')
     expect(audio).toHaveAccessibleDescription(/Audiobook source limit must be from 1,024/)
-    expect(screen.getByRole('button', { name: 'Save settings' })).toBeDisabled()
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    await waitFor(() => expect(audio).toHaveFocus())
+    expect(http.writeSettings).not.toHaveBeenCalled()
 
     await user.clear(audio)
     await user.type(audio, '17179869185')
@@ -1210,7 +1421,7 @@ describe('owner settings route', () => {
     await user.clear(audio)
     await user.type(audio, '17179869184')
     expect(audio).not.toHaveAttribute('aria-invalid', 'true')
-    expect(screen.getByRole('button', { name: 'Save settings' })).toBeEnabled()
+    expect(screen.queryByText(/need fixing before saving/u)).toBeNull()
   })
 })
 
@@ -1250,12 +1461,15 @@ it('discloses description prices before activation and preserves the cover task 
     'href',
     '/policy?section=curation#description-advice',
   )
-  await user.type(
-    screen.getByRole('textbox', { name: 'OpenRouter description model' }),
-    metadata.model,
-  )
+  await user.click(screen.getByRole('combobox', { name: 'Description model' }))
+  await user.click(screen.getByRole('option', { name: 'Custom model ID' }))
+  await user.type(screen.getByRole('textbox', { name: 'Description model ID' }), metadata.model)
   await user.click(screen.getByRole('button', { name: 'Test description model and prices' }))
-  expect(await screen.findAllByText('Not measured for this model.')).toHaveLength(2)
+  expect(
+    await screen.findAllByText(
+      /^(Cover review|Description advice): not measured for this model\.$/u,
+    ),
+  ).toHaveLength(4)
   expect(screen.getByText(metadata.model, { selector: 'dd' })).toBeVisible()
   expect(screen.queryByText('Metadata observed', { selector: 'dt' })).toBeNull()
   expect(screen.getByText(/0.000001 per input token/)).toBeVisible()
@@ -1377,9 +1591,7 @@ it('presents peer reviewer tasks with one shared sign-in and labelled descriptio
   expect(
     within(description).getByLabelText('Shared OpenRouter API key'),
   ).toHaveAccessibleDescription(/Leave the key blank to use the saved credential/)
-  expect(
-    within(description).getByRole('textbox', { name: 'OpenRouter description model' }),
-  ).toBeVisible()
+  expect(within(description).getByRole('combobox', { name: 'Description model' })).toBeVisible()
   expect(
     within(description).getByRole('button', { name: 'Use this OpenRouter model for descriptions' }),
   ).toBeDisabled()
@@ -1544,16 +1756,18 @@ it('separates measured cover cost from observed rates and never lends prices to 
   }))
   renderRoute('/settings?group=reviewer', http)
   const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
-  expect(cover.getByText('About $0.6364 per 1,000 cover review requests (estimate).')).toBeVisible()
+  expect(
+    cover.getByText('Cover review: about $0.64, including about 2.7 cover images per book.'),
+  ).toBeVisible()
+  expect(cover.getByText('Description advice: not measured for this model.')).toBeVisible()
   expect(
     cover.getByText(/0.000001 per input token; Unavailable per output token; 0 per image/u),
   ).toBeVisible()
   expect(cover.queryByText(/2023|1700000000|sample|Maximum-size/u)).toBeNull()
   const user = userEvent.setup()
-  const model = cover.getByRole('textbox', { name: 'Model ID' })
-  await user.clear(model)
-  await user.type(model, 'example/unsaved')
+  await pickModel(user, 'Cover model', 'Custom model ID')
+  await user.type(cover.getByRole('textbox', { name: 'Cover model ID' }), 'example/unsaved')
   expect(cover.getByText('Validate and save this model to observe its prices.')).toBeVisible()
-  expect(cover.getByText('Not measured for this model.')).toBeVisible()
+  expect(cover.getByText('Cover review: not measured for this model.')).toBeVisible()
   expect(cover.queryByText(/0.000001 per input token/u)).toBeNull()
 })

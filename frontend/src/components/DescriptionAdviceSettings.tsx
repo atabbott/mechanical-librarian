@@ -3,6 +3,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 
 import type { ReviewHttp, SettingsView } from '../api/http'
+import { offOn } from '../fieldControls'
+import { FieldRow } from './FieldRow'
+import { SegmentedControl } from './SegmentedControl'
 
 type Preferences = NonNullable<SettingsView['document']['description_advice']>
 const labels: Readonly<Record<keyof Preferences, string>> = {
@@ -86,22 +89,27 @@ const Editor = ({ http, view }: { http: ReviewHttp; view: SettingsView }) => {
         owner decision takes precedence.
       </p>
       {locked ? <p>These preferences are managed by deployment configuration.</p> : null}
-      <fieldset disabled={locked || mutation.isPending || stale}>
-        <legend>Description cleanup and application</legend>
+      <div className="description-advice-fields">
         {(Object.keys(labels) as (keyof Preferences)[]).map((name) => (
-          <label key={name} className="settings-field-row">
-            <input
-              type="checkbox"
-              checked={draft[name]}
-              onChange={(event) => {
-                setDraft({ ...draft, [name]: event.target.checked })
+          <FieldRow
+            key={name}
+            group
+            title={labels[name]}
+            changed={draft[name] !== base.description_advice[name]}
+          >
+            <SegmentedControl
+              label={labels[name]}
+              options={offOn}
+              value={draft[name] ? 'on' : 'off'}
+              disabled={locked || mutation.isPending || stale}
+              onChange={(choice) => {
+                setDraft({ ...draft, [name]: choice === 'on' })
                 mutation.reset()
               }}
             />
-            {labels[name]}
-          </label>
+          </FieldRow>
         ))}
-      </fieldset>
+      </div>
       <button
         disabled={locked || mutation.isPending || stale || !changed}
         onClick={() => mutation.mutate()}

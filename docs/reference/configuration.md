@@ -466,9 +466,10 @@ another model's prices. Description capability and required-price gates remain.
 
 Setup and Settings separate observed prompt, completion, image and request
 rates from measured request estimates. Missing cover rates are unavailable,
-never zero or a capability failure. Estimates state an amount per 1,000 review
-requests, or not measured. A cover request is one work packet that may contain
-multiple images. Dates and sample counts remain evidence data, outside the app
+never zero or a capability failure. Settings states an example cost per 1,000
+books for cover review and description advice separately, or not measured for
+that model. A cover request is one work packet that may contain multiple
+images, and the cover example states the measured images per book. Dates and sample counts remain evidence data, outside the app
 copy. Contained Codex consumes plan allowance and has no monetary estimate.
 Setup keeps validation results visible before Continue and when reopened.
 The shipped measured-evidence set is empty. See the
