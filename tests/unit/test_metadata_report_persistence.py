@@ -484,10 +484,13 @@ def test_clean_database_has_exact_current_tables_and_replays() -> None:
             ("metadata_policy_state",),
             ("metadata_policy_transition_items",),
             ("metadata_policy_transitions",),
+            ("metadata_report_browse_authors",),
+            ("metadata_report_browse_facts",),
             ("metadata_report_cover_references",),
             ("metadata_reports",),
             ("owner_setting_secrets",),
             ("owner_settings",),
+            ("proposal_set_browse_facts",),
             ("proposal_sets",),
             ("provider_recovery_outbox",),
             ("review_case_field_facts",),
@@ -702,6 +705,14 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             fixture["shadow_decision_outcomes_sql"],
         )
         with closing(open_repository(path)) as repository:
+            # The producer predates #1199's report browse facts.
+            repository._connection.executescript(
+                "DROP TRIGGER metadata_reports_project_browse_facts;"
+                "DROP TABLE metadata_report_browse_authors;"
+                "DROP TABLE metadata_report_browse_facts;"
+                "DROP TRIGGER proposal_sets_project_browse_facts;"
+                "DROP TABLE proposal_set_browse_facts;"
+            )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
             ).fetchall()
@@ -928,7 +939,11 @@ def test_exact_schema_isolates_unselected_history_and_validates_selected_rows_an
         repository.close()
         connection = sqlite3.connect(path)
         connection.execute("DROP TRIGGER metadata_reports_no_update")
-        document = "{}"
+        # Leave the browse facts intact (#1199): a fact-changing edit is drift
+        # and refuses the whole database at open instead.
+        payload = json.loads(other.to_json())
+        del payload["field_results"]
+        document = json.dumps(payload, separators=(",", ":"), sort_keys=True)
         connection.execute(
             "UPDATE metadata_reports SET document=?,document_digest=? WHERE report_id=?",
             (document, hashlib.sha256(document.encode()).hexdigest(), other.report_id),
@@ -2285,6 +2300,14 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             fixture["shadow_decision_outcomes_sql"],
         )
         with closing(open_repository(path)) as repository:
+            # The producer predates #1199's report browse facts.
+            repository._connection.executescript(
+                "DROP TRIGGER metadata_reports_project_browse_facts;"
+                "DROP TABLE metadata_report_browse_authors;"
+                "DROP TABLE metadata_report_browse_facts;"
+                "DROP TRIGGER proposal_sets_project_browse_facts;"
+                "DROP TABLE proposal_set_browse_facts;"
+            )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
             ).fetchall()

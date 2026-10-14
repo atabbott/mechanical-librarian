@@ -153,6 +153,14 @@ def test_actual_embedded_predecessor_refused_without_mutation(
         schema, "_COVER_CONSIDERATIONS_SQL", fixture["cover_considerations_sql"]
     ):
         schema._create_schema(connection)
+    # The producer predates #1199's report browse facts.
+    connection.executescript(
+        "DROP TRIGGER metadata_reports_project_browse_facts;"
+        "DROP TABLE metadata_report_browse_authors;"
+        "DROP TABLE metadata_report_browse_facts;"
+        "DROP TRIGGER proposal_sets_project_browse_facts;"
+        "DROP TABLE proposal_set_browse_facts;"
+    )
     rows = connection.execute(
         "SELECT type,name,sql FROM sqlite_master ORDER BY type,name"
     ).fetchall()

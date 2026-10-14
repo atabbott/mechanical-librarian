@@ -31,6 +31,7 @@ from mechanical_librarian.adapters.persistence.binding import (
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
     _expected_schema_objects,
+    _register_casefold,
     _validate_schema,
 )
 from mechanical_librarian.application.metadata_report import MetadataReportError
@@ -91,6 +92,8 @@ _BRIDGE_POPULATED_TABLES = {
     "current_metadata_report_lineages",
     "current_metadata_reports",
     "current_review_packages",
+    "metadata_report_browse_authors",
+    "metadata_report_browse_facts",
     "metadata_report_cover_references",
     "metadata_reports",
 }
@@ -743,6 +746,7 @@ def _validate_output(path: Path, bridge_data: _BridgeData) -> tuple[int, int]:
         uri = f"file:{quote(str(path.absolute()), safe='/')}?mode=ro"
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         _validate_connection_binding(connection, path, descriptor)
+        _register_casefold(connection)
         _validate_schema(connection)
         if connection.execute("PRAGMA foreign_key_check").fetchone() is not None:
             raise MetadataReportError("qualification-state output is incompatible")
@@ -1018,6 +1022,7 @@ def bridge_qualification_state(
         uri = f"file:{quote(str(temp.absolute()), safe='/')}?mode=rw"
         output_connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         _validate_connection_binding(output_connection, temp, output_descriptor)
+        _register_casefold(output_connection)
         output_connection.execute("PRAGMA synchronous=FULL")
         output_connection.execute("PRAGMA busy_timeout=0")
         _create_schema(output_connection)

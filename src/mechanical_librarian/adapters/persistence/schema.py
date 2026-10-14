@@ -101,6 +101,88 @@ _REPORTS_SQL = (
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152), "
     "UNIQUE (connection_name, library_name, item_id, file_identity, document_digest))"
 )
+# #1199: what the Library, Attention, search and count statements read from a
+# report, derived once at insert instead of on every request. `title_key` is
+# both the search value and the order key; `format` keeps the raw value the
+# attention predicates compare. Authors are one row per distinct folded value,
+# because a pattern may contain any separator and must never match across two.
+_REPORT_BROWSE_FACTS_SQL = (
+    "CREATE TABLE metadata_report_browse_facts ("
+    "report_id TEXT PRIMARY KEY NOT NULL REFERENCES metadata_reports(report_id), "
+    "title_key TEXT NOT NULL, format TEXT, format_key TEXT NOT NULL, "
+    "provider_limited INTEGER NOT NULL CHECK(provider_limited IN (0,1))) WITHOUT ROWID"
+)
+_REPORT_BROWSE_AUTHORS_SQL = (
+    "CREATE TABLE metadata_report_browse_authors ("
+    "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
+    "author_key TEXT NOT NULL, PRIMARY KEY(report_id,author_key)) WITHOUT ROWID"
+)
+
+
+def _report_browse_fact_values_sql(document: str) -> str:
+    # Provider lanes are current evidence, not a second workflow state.
+    # Aggregate-only observations have no lanes, so the LEFT JOIN falls back to
+    # their own status.
+    return (
+        "ml_casefold(COALESCE(json_extract("
+        + document
+        + ",'$.target.fields[0].value'),'')),json_extract("
+        + document
+        + ",'$.file.format'),ml_casefold(COALESCE(json_extract("
+        + document
+        + ",'$.file.format'),'')),CASE WHEN EXISTS(SELECT 1 FROM json_each("
+        + document
+        + ",'$.providers') provider "
+        "LEFT JOIN json_each(provider.value,'$.lanes') lane ON 1 "
+        "WHERE COALESCE(json_extract(lane.value,'$.status'),"
+        "json_extract(provider.value,'$.status')) IN ("
+        "'authentication','authorization','rate_limited','unavailable',"
+        "'incomplete','malformed','oversized','candidate_limit_exceeded',"
+        "'query_limit_exceeded')) THEN 1 ELSE 0 END"
+    )
+
+
+def _report_browse_author_values_sql(source: str, document: str) -> str:
+    return (
+        "ml_casefold(COALESCE(author.value,'')) FROM "
+        + source
+        + "json_each("
+        + document
+        + ",'$.target.fields') author_field,"
+        "json_each(author_field.value,'$.value') author "
+        "WHERE json_extract(author_field.value,'$.destination')='authors'"
+    )
+
+
+_REPORT_BROWSE_FACTS_INSERT_SQL = (
+    "CREATE TRIGGER metadata_reports_project_browse_facts AFTER INSERT ON metadata_reports "
+    "BEGIN INSERT INTO metadata_report_browse_facts("
+    "report_id,title_key,format,format_key,provider_limited) SELECT NEW.report_id,"
+    + _report_browse_fact_values_sql("NEW.document")
+    + "; INSERT INTO metadata_report_browse_authors(report_id,author_key) "
+    "SELECT DISTINCT NEW.report_id,"
+    + _report_browse_author_values_sql("", "NEW.document")
+    + "; END"
+)
+
+
+def _review_casefold(value: object) -> str:
+    if type(value) is not str:
+        raise ValueError("review search value is invalid")
+    return value.casefold()
+
+
+def _register_casefold(connection: sqlite3.Connection) -> None:
+    """Give a connection the one deterministic fold its facts were derived by.
+
+    Every connection that inserts a report fires the browse-fact trigger, and
+    every connection that validates facts recomputes them, through this
+    function. One that lacks it fails with `no such function` and writes or
+    accepts nothing.
+    """
+    connection.create_function("ml_casefold", 1, _review_casefold, deterministic=True)
+
+
 _CURRENT_SQL = (
     "CREATE TABLE current_metadata_reports ("
     "connection_name TEXT NOT NULL, library_name TEXT NOT NULL, item_id TEXT NOT NULL, file_identity TEXT NOT NULL, "
@@ -136,6 +218,27 @@ _PROPOSAL_SETS_SQL = (
     "report_id TEXT NOT NULL REFERENCES metadata_reports(report_id), "
     "policy_version TEXT NOT NULL CHECK (policy_version = '" + POLICY_VERSION + "'), "
     "document TEXT NOT NULL CHECK (typeof(document) = 'text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 2097152))"
+)
+# #1199: the policy-ask attention clause joins each candidate's proposal to its
+# library's resolved policy; reading that id here spares a proposal document
+# parse per candidate. A missing id stays NULL and joins nothing, as before.
+_PROPOSAL_BROWSE_FACTS_SQL = (
+    "CREATE TABLE proposal_set_browse_facts ("
+    "proposal_set_id TEXT PRIMARY KEY NOT NULL REFERENCES proposal_sets(proposal_set_id), "
+    "resolved_policy_id TEXT) WITHOUT ROWID"
+)
+
+
+def _proposal_browse_fact_value_sql(document: str) -> str:
+    return "json_extract(" + document + ",'$.resolved_policy_id')"
+
+
+_PROPOSAL_BROWSE_FACTS_INSERT_SQL = (
+    "CREATE TRIGGER proposal_sets_project_browse_facts AFTER INSERT ON proposal_sets "
+    "BEGIN INSERT INTO proposal_set_browse_facts(proposal_set_id,resolved_policy_id) "
+    "VALUES(NEW.proposal_set_id,"
+    + _proposal_browse_fact_value_sql("NEW.document")
+    + "); END"
 )
 _METADATA_POLICY_DRAFTS_SQL = (
     "CREATE TABLE metadata_policy_drafts ("
@@ -730,12 +833,17 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     """
     connection.execute("BEGIN IMMEDIATE")
     connection.execute(_REPORTS_SQL)
+    connection.execute(_REPORT_BROWSE_FACTS_SQL)
+    connection.execute(_REPORT_BROWSE_AUTHORS_SQL)
+    connection.execute(_REPORT_BROWSE_FACTS_INSERT_SQL)
     connection.execute(_CURRENT_SQL)
     connection.execute(_CURRENT_LINEAGE_SQL)
     connection.execute(_COVER_REFERENCES_SQL)
     connection.execute(_COVER_ARTIFACT_INDEX_SQL)
     connection.execute(_COVER_PREVIEW_INDEX_SQL)
     connection.execute(_PROPOSAL_SETS_SQL)
+    connection.execute(_PROPOSAL_BROWSE_FACTS_SQL)
+    connection.execute(_PROPOSAL_BROWSE_FACTS_INSERT_SQL)
     connection.execute(_METADATA_POLICY_DRAFTS_SQL)
     connection.execute(
         "INSERT INTO metadata_policy_drafts(policy_id,document) VALUES(?,?)",
@@ -857,6 +965,7 @@ def _validate_existing_read_only(path: Path, descriptor: int) -> None:
     try:
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         _validate_connection_binding(connection, path, descriptor)
+        _register_casefold(connection)
         # One read transaction for the whole validation. The cross-table checks
         # below compare rows a live sibling commits together, so reading them
         # statement by statement would compare a row from before a commit with
@@ -1055,6 +1164,8 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "field_effects", _FIELD_EFFECTS_SQL),
             ("table", "metadata_report_cover_references", _COVER_REFERENCES_SQL),
             ("table", "metadata_reports", _REPORTS_SQL),
+            ("table", "metadata_report_browse_facts", _REPORT_BROWSE_FACTS_SQL),
+            ("table", "metadata_report_browse_authors", _REPORT_BROWSE_AUTHORS_SQL),
             ("table", "metadata_policy_drafts", _METADATA_POLICY_DRAFTS_SQL),
             ("table", "metadata_policy_resolutions", _METADATA_POLICY_RESOLUTIONS_SQL),
             ("table", "metadata_policy_state", _METADATA_POLICY_STATE_SQL),
@@ -1069,6 +1180,7 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("table", "reviewer_access", _REVIEWER_ACCESS_SQL),
             ("table", "reviewer_access_secrets", _REVIEWER_ACCESS_SECRETS_SQL),
             ("table", "proposal_sets", _PROPOSAL_SETS_SQL),
+            ("table", "proposal_set_browse_facts", _PROPOSAL_BROWSE_FACTS_SQL),
             ("table", "review_case_transitions", _REVIEW_TRANSITIONS_SQL),
             ("table", "review_cases", _REVIEW_CASES_SQL),
             ("table", "review_case_field_facts", _REVIEW_CASE_FIELD_FACTS_SQL),
@@ -1103,6 +1215,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 _COVER_NO_UPDATE_SQL,
             ),
             ("trigger", "metadata_reports_no_delete", _NO_DELETE_SQL),
+            (
+                "trigger",
+                "metadata_reports_project_browse_facts",
+                _REPORT_BROWSE_FACTS_INSERT_SQL,
+            ),
             ("trigger", "metadata_reports_no_update", _NO_UPDATE_SQL),
             (
                 "trigger",
@@ -1197,6 +1314,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 _FIELD_EFFECT_NO_CHANGE_NO_UPDATE_SQL,
             ),
             ("trigger", "proposal_sets_no_delete", _PROPOSAL_NO_DELETE_SQL),
+            (
+                "trigger",
+                "proposal_sets_project_browse_facts",
+                _PROPOSAL_BROWSE_FACTS_INSERT_SQL,
+            ),
             ("trigger", "proposal_sets_no_update", _PROPOSAL_NO_UPDATE_SQL),
             (
                 "trigger",
@@ -1509,7 +1631,7 @@ def _validate_cover_selection_authorities(connection: sqlite3.Connection) -> Non
 
 
 def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
-    """Require every reconstructible review fact to equal its canonical JSON."""
+    """Require every reconstructible browse fact to equal its canonical JSON."""
     review_expected = (
         "SELECT rc.review_case_id,"
         + _review_case_field_fact_values_sql("rc.document")
@@ -1530,9 +1652,33 @@ def _validate_review_field_facts(connection: sqlite3.Connection) -> None:
         "SELECT outcome_set_id,review_case_id,destination,disposition,"
         "automatic_destination,policy_category FROM shadow_outcome_field_facts"
     )
+    report_expected = (
+        "SELECT mr.report_id,"
+        + _report_browse_fact_values_sql("mr.document")
+        + " FROM metadata_reports mr"
+    )
+    report_actual = (
+        "SELECT report_id,title_key,format,format_key,provider_limited "
+        "FROM metadata_report_browse_facts"
+    )
+    author_expected = "SELECT mr.report_id," + _report_browse_author_values_sql(
+        "metadata_reports mr,", "mr.document"
+    )
+    author_actual = "SELECT report_id,author_key FROM metadata_report_browse_authors"
+    proposal_expected = (
+        "SELECT proposal_set_id,"
+        + _proposal_browse_fact_value_sql("document")
+        + " FROM proposal_sets"
+    )
+    proposal_actual = (
+        "SELECT proposal_set_id,resolved_policy_id FROM proposal_set_browse_facts"
+    )
     for expected, actual in (
         (review_expected, review_actual),
         (shadow_expected, shadow_actual),
+        (report_expected, report_actual),
+        (author_expected, author_actual),
+        (proposal_expected, proposal_actual),
     ):
         mismatch = connection.execute(
             "SELECT 1 FROM (" + expected + " EXCEPT " + actual + ") "

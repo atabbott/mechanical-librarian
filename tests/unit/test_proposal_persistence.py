@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import tempfile
+from itertools import groupby
 from pathlib import Path
 
 import pytest
@@ -277,14 +278,21 @@ def test_report_and_pointer_recheck_are_the_final_queries_before_insert() -> Non
         statements: list[str] = []
         repository._connection.set_trace_callback(statements.append)
         repository.publish_proposal(evaluate_report(report))
+        # The browse-fact trigger (#1199) retraces its INSERT's text once per
+        # trigger step; consecutive repeats are one statement.
         relevant = tuple(
             statement
-            for statement in statements
-            if statement.startswith(
-                "SELECT report_id,connection_name,library_name,item_id,"
+            for statement, _ in groupby(
+                statement
+                for statement in statements
+                if statement.startswith(
+                    "SELECT report_id,connection_name,library_name,item_id,"
+                )
+                or statement.startswith(
+                    "SELECT report_id FROM current_metadata_reports"
+                )
+                or statement.startswith("INSERT INTO proposal_sets")
             )
-            or statement.startswith("SELECT report_id FROM current_metadata_reports")
-            or statement.startswith("INSERT INTO proposal_sets")
         )
         assert 3 == len(relevant)
         assert relevant[0].startswith("SELECT report_id,")

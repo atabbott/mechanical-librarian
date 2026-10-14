@@ -30,20 +30,22 @@ _WORKS = 200
 _CHILD = """
 import json, sys, threading
 from pathlib import Path
-from mechanical_librarian.adapters.persistence import metadata_reports
+from mechanical_librarian.adapters.persistence import metadata_reports, schema
 from mechanical_librarian.application.operation_admission import OperationAdmission
 from mechanical_librarian.application.review_web import BrowseReviewLibrary
 
-casefold = metadata_reports._review_casefold
+casefold = schema._review_casefold
 calls = [0]
 def counted(value):
     calls[0] += 1
     return casefold(value)
-metadata_reports._review_casefold = counted
+schema._review_casefold = counted
 
 repository = metadata_reports.open_repository(
     Path(sys.argv[1]), create=False, cross_thread=True, admission=OperationAdmission()
 )
+# Open-time fact validation folds every report; count only the reads below.
+calls[0] = 0
 unserialized = []
 def audit(sql):
     if not repository.operation_lock._is_owned():

@@ -84,6 +84,7 @@ from mechanical_librarian.adapters.persistence.reviewer_access import (
 from mechanical_librarian.adapters.persistence.schema import (
     _create_schema,
     _provider_recovery_outbox_id,
+    _register_casefold,
     _validate_existing_read_only,
     _validate_report_row,
     _validate_schema,
@@ -195,6 +196,9 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
         owns_authority: bool = False,
     ) -> None:
         super().__init__(connection)
+        # Any repository may publish a report, and that insert derives its
+        # browse facts through this fold (#1199).
+        _register_casefold(connection)
         self._setup_serialization_lock = RLock()
         self._browse_failure_lock = RLock()
         self._browse_unavailable_exception_classes: tuple[str, ...] = ()
@@ -2538,6 +2542,7 @@ def open_shadow_preview_repository(path: Path) -> SQLiteShadowPreviewRepository:
         uri = f"file:{quote(absolute, safe='/')}?mode=ro&immutable=1"
         connection = sqlite3.connect(uri, uri=True, isolation_level=None)
         _validate_connection_binding(connection, path, descriptor)
+        _register_casefold(connection)
         connection.execute("PRAGMA query_only=ON")
         if connection.execute("PRAGMA query_only").fetchone() != (1,):
             raise MetadataReportError("database query-only mode is unavailable")
@@ -2685,12 +2690,7 @@ def open_repository(
             cross_thread=cross_thread,
             allow_rollback_journal=portable_authority is not None,
         )
-        connection.create_function(
-            "ml_casefold",
-            1,
-            _review_casefold,
-            deterministic=True,
-        )
+        _register_casefold(connection)
         connection.create_function(
             "ml_cover_consideration_current",
             2,
@@ -2758,12 +2758,6 @@ def open_repository(
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-
-
-def _review_casefold(value: object) -> str:
-    if type(value) is not str:
-        raise ValueError("review search value is invalid")
-    return value.casefold()
 
 
 # The schema spine now lives in `schema.py`, but 33 test modules and the
