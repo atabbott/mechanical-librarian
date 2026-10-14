@@ -5,7 +5,7 @@
 - Library, Attention and work detail answer faster: browse rows read only the
   fields they show, each under its existing validation, and a work's detail no
   longer re-reads its stored report for every consumer. Displayed values,
-  counts, ordering and refusals are unchanged (#1191).
+  counts, ordering and refusals of displayed values are unchanged (#1191).
 
 - Settings keeps one draft across seven sections with true per-section counts, a
   shared review-and-save tray, Discard all, and validation that reaches hidden

@@ -281,11 +281,12 @@ def case_browse_facts(case: dict[str, object], review_case_id: str) -> CaseBrows
 
     The case must name its proposal document by that document's content
     address, the case must be undecided, and the document must carry the
-    case's report binding, relationships and exactly its results, so every value read here is the one the canonical writer
-    validated. Every result is read by the canonical result reader, so each
-    rendered outcome, reason and evidence reference is refused exactly as
-    there. The proposal set is not reconstructed and no proposal identity is
-    computed: no browse row renders one.
+    case's report binding, relationships and exactly its results, so every
+    value read here is the one the canonical writer validated. Every result is
+    read by the canonical result reader, so each rendered outcome, reason and
+    evidence reference is refused exactly as there. The proposal set is not
+    reconstructed and no proposal identity is computed: no browse row renders
+    one.
     """
     try:
         results = case["results"]
