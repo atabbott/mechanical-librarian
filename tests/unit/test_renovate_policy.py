@@ -126,7 +126,7 @@ def test_native_managed_toolchain_declarations_agree(
 ) -> None:
     workflow = (ROOT / ".github/workflows/public-gate.yml").read_text()
     workflow_pins = re.findall(manifest_pattern, workflow, re.MULTILINE)
-    assert len(workflow_pins) == 4
+    assert len(workflow_pins) == 7
     prefix = "ghcr.io/astral-sh/uv" if tool == "uv" else tool
     docker_pins = re.findall(
         re.escape(prefix) + r":(\d+\.\d+\.\d+)", (ROOT / "Dockerfile").read_text()
@@ -159,7 +159,7 @@ def test_osv_custom_manager_is_narrow_and_digest_bound() -> None:
     assert re.fullmatch(r"sha256:[a-f0-9]{64}", matches[0]["currentDigest"])
 
 
-@pytest.mark.parametrize("index", range(4))
+@pytest.mark.parametrize("index", range(7))
 def test_workflow_npm_install_expands_the_actual_manifest_pin(index: int) -> None:
     commands = [
         line.strip().removeprefix("run: ")
@@ -168,7 +168,7 @@ def test_workflow_npm_install_expands_the_actual_manifest_pin(index: int) -> Non
         .splitlines()
         if "run: npm install --global" in line
     ]
-    assert len(commands) == 4
+    assert len(commands) == 7
     # Intercept only installation; the workflow's shell and Node expression run.
     result = subprocess.check_output(
         ["sh", "-eu", "-c", 'npm() { printf "%s\\n" "$@"; }; ' + commands[index]],
