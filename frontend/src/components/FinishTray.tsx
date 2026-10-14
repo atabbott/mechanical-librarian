@@ -23,19 +23,26 @@ export const FinishTray = ({
 }) => {
   const own = useRef<HTMLElement>(null)
   const tray = ref ?? own
+  // Re-measured whenever the tray or the window resizes, since a breakpoint or
+  // zoom can switch it between sticky and static without a render.
   useLayoutEffect(() => {
     const element = tray.current
     const root = document.documentElement
-    if (element && getComputedStyle(element).position === 'sticky')
-      root.style.setProperty('--finish-tray-height', `${String(element.offsetHeight)}px`)
-    else root.style.removeProperty('--finish-tray-height')
-  })
-  useLayoutEffect(
-    () => () => {
-      document.documentElement.style.removeProperty('--finish-tray-height')
-    },
-    [],
-  )
+    const measure = () => {
+      if (element && getComputedStyle(element).position === 'sticky')
+        root.style.setProperty('--finish-tray-height', `${String(element.offsetHeight)}px`)
+      else root.style.removeProperty('--finish-tray-height')
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure)
+    if (element) observer?.observe(element)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer?.disconnect()
+      window.removeEventListener('resize', measure)
+      root.style.removeProperty('--finish-tray-height')
+    }
+  }, [tray])
   return (
     <section className={`cm-finish-tray ${className}`} aria-label={label} ref={tray}>
       <div className="cm-finish-summary">{summary}</div>

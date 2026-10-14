@@ -484,7 +484,9 @@ const Secret = ({
   onChange: (value: SecretWrite | undefined) => void
 }) => {
   const presence = view.secrets.find((item) => item.field_id === fieldId)
-  const [editing, setEditing] = useState(!presence?.configured)
+  // A pending replacement reopens its editor when the row remounts, so a review
+  // link back to it lands on the value that will be sent.
+  const [editing, setEditing] = useState(!presence?.configured || pending?.operation === 'replace')
   const [confirmingClear, setConfirmingClear] = useState(false)
   if (pending?.operation === 'clear')
     return (
@@ -703,10 +705,22 @@ const SettingsEditor = ({
   if (view.document.revision !== base.revision) {
     const [merged, count] = rebase(base, draft, view.document)
     const kept = !same(draft, base)
+    // A pending secret follows the key's newer presence: a value becomes a set
+    // or a replacement to match, and a clear of an absent key is dropped.
+    const pending = Object.fromEntries(
+      Object.entries(secrets).flatMap(([fieldId, item]): [string, SecretWrite][] => {
+        const configured = view.secrets.some(
+          (entry) => entry.field_id === fieldId && entry.configured,
+        )
+        if (item.operation === 'clear') return configured ? [[fieldId, item]] : []
+        return [[fieldId, { ...item, operation: configured ? 'replace' : 'set' }]]
+      }),
+    )
     setBase(clone(view.document))
     setDraft(clone(merged as Document))
+    setSecrets(pending)
     setConflicts(count)
-    setStatus(kept || Object.keys(secrets).length ? 'rebased' : 'idle')
+    setStatus(kept || Object.keys(pending).length ? 'rebased' : 'idle')
   }
   const mutation = useMutation({
     mutationFn: (value: SettingsWrite) => http.writeSettings(value),
@@ -826,6 +840,9 @@ const SettingsEditor = ({
     setDiscardGeneration((generation) => generation + 1)
     setAnnouncement('All unsaved settings changes were discarded.')
   }
+  // A rebase that took the newer value for every edit leaves nothing to save,
+  // so its notice sits on the page instead of in an otherwise empty tray.
+  const settled = status === 'rebased' && !changed && Object.keys(secrets).length === 0
   const statusCopy = mutation.isPending
     ? 'Saving settings…'
     : status === 'uncertain'
@@ -836,13 +853,15 @@ const SettingsEditor = ({
           ? 'Settings changed elsewhere. Loading the newer saved values under your changes.'
           : status === 'unconfirmed'
             ? 'Settings changed elsewhere, but the newer values could not be confirmed. Your changes are still here; save again to retry.'
-            : status === 'rebased'
-              ? conflicts
-                ? `Settings changed elsewhere. Your other changes were kept; ${String(conflicts)} ${conflicts === 1 ? 'edit was' : 'edits were'} also changed elsewhere and now ${conflicts === 1 ? 'shows' : 'show'} the newer saved value.`
-                : 'Settings changed elsewhere. Your changes were kept on top of the newer saved values.'
-              : status === 'invalid' || errors.length
-                ? `${String(errors.length)} ${errors.length === 1 ? 'value needs' : 'values need'} fixing before saving: ${errors[0]?.message ?? ''}`
-                : null
+            : status === 'rebased' && settled
+              ? 'Settings changed elsewhere, and your edits now show the newer saved values. Nothing is left to save.'
+              : status === 'rebased'
+                ? conflicts
+                  ? `Settings changed elsewhere. Your other changes were kept; ${String(conflicts)} ${conflicts === 1 ? 'edit was' : 'edits were'} also changed elsewhere and now ${conflicts === 1 ? 'shows' : 'show'} the newer saved value.`
+                  : 'Settings changed elsewhere. Your changes were kept on top of the newer saved values.'
+                : status === 'invalid' || errors.length
+                  ? `${String(errors.length)} ${errors.length === 1 ? 'value needs' : 'values need'} fixing before saving: ${errors[0]?.message ?? ''}`
+                  : null
   useEffect(() => {
     if (status === 'rebased' || status === 'unconfirmed') statusTarget.current?.focus()
   }, [status])
@@ -910,6 +929,11 @@ const SettingsEditor = ({
             These values are read-only while this deployment is managed by its configuration file.
           </p>
         </section>
+      ) : null}
+      {settled ? (
+        <p className="settings-saved" role="status" tabIndex={-1} ref={statusTarget}>
+          {statusCopy}
+        </p>
       ) : null}
       <div className="settings-compact-sections">
         <Dropdown
@@ -1395,7 +1419,8 @@ const SettingsEditor = ({
           </div>
         </div>
       </div>
-      {!locked && (changed || errors.length > 0 || status !== 'idle' || mutation.isPending) ? (
+      {!locked &&
+      (changed || errors.length > 0 || (status !== 'idle' && !settled) || mutation.isPending) ? (
         <FinishTray
           label="Unsaved settings"
           className="settings-tray"

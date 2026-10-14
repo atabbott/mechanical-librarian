@@ -1,6 +1,5 @@
 import type { ComponentPropsWithoutRef, ReactNode } from 'react'
 
-import { Disclosure } from './Disclosure'
 import { controlId, descriptionId, errorId } from '../fieldControls'
 
 export const FieldInput = ({
@@ -16,12 +15,11 @@ export const FieldInput = ({
   />
 )
 
-// One labelled setting: its name, a short consequence and optional help on the
-// left, and the control on the right edge shared by every row on the page.
+// One labelled setting: its name and a short consequence on the left, and the
+// control on the right edge shared by every row on the page.
 export const FieldRow = ({
   title,
   description,
-  help,
   managed = false,
   locked = false,
   changed = false,
@@ -32,7 +30,6 @@ export const FieldRow = ({
 }: {
   title: string
   description?: string | undefined
-  help?: ReactNode
   managed?: boolean
   locked?: boolean
   changed?: boolean
@@ -58,17 +55,6 @@ export const FieldRow = ({
         <p id={fieldId ? descriptionId(fieldId) : undefined}>{description}</p>
       ) : fieldId ? (
         <span hidden id={descriptionId(fieldId)} />
-      ) : null}
-      {help ? (
-        <Disclosure
-          summary={
-            <>
-              Details<span className="sr-only"> about {title}</span>
-            </>
-          }
-        >
-          {help}
-        </Disclosure>
       ) : null}
     </div>
     <div className="settings-field-control">

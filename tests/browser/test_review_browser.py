@@ -6098,7 +6098,12 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(segment("Use Inventaire", "On")).to_have_attribute(
                     "aria-pressed", "true"
                 )
-                # The tray reserves its own height and never covers a row.
+                # The tray floats while there is more to read, and at the end of
+                # the page it rests in its own reserved space covering no row.
+                expect(page.locator(".settings-tray")).to_have_css("position", "sticky")
+                page.evaluate(
+                    "window.scrollTo(0, document.documentElement.scrollHeight)"
+                )
                 assert_settings_layout(sidebar_visible=False)
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()

@@ -423,11 +423,24 @@ describe('owner settings route', () => {
   })
 
   it.each([
-    ['unrelated', 'https://library.invalid', 'https://other.invalid', /Your changes were kept/],
-    ['conflicting', 'https://elsewhere.invalid', 'https://elsewhere.invalid', /1 edit was also/],
+    [
+      'unrelated',
+      'https://library.invalid',
+      'https://other.invalid',
+      /Your changes were kept/,
+      'alert',
+    ],
+    // The only edit took the newer value, so the notice leaves the empty tray.
+    [
+      'conflicting',
+      'https://elsewhere.invalid',
+      'https://elsewhere.invalid',
+      /Nothing is left to save/,
+      'status',
+    ],
   ])(
     'keeps the draft over %s newer settings and says what a stale save changed',
-    async (_case, newerEndpoint, shownEndpoint, message) => {
+    async (_case, newerEndpoint, shownEndpoint, message, role) => {
       const user = userEvent.setup()
       const http = createHttp()
       const newer: SettingsView = {
@@ -456,7 +469,9 @@ describe('owner settings route', () => {
       await user.click(screen.getByRole('button', { name: 'Save settings' }))
       const staleAlert = await screen.findByText(message)
       await waitFor(() => expect(staleAlert).toHaveFocus())
-      expect(staleAlert).toHaveAttribute('role', 'alert')
+      expect(staleAlert).toHaveAttribute('role', role)
+      if (role === 'status')
+        expect(screen.queryByRole('region', { name: 'Unsaved settings' })).toBeNull()
       expect(screen.getByRole('textbox', { name: 'Audiobookshelf endpoint' })).toHaveValue(
         shownEndpoint,
       )
@@ -1313,6 +1328,53 @@ describe('owner settings route', () => {
     )
     expect(screen.getByRole('alert')).toHaveTextContent('home requires an access key.')
     expect(http.writeSettings).not.toHaveBeenCalled()
+  })
+
+  it('reopens a pending key replacement when the review list links back to it', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    http.getSettings = vi.fn(async () => view())
+    renderRoute('/settings?group=providers', http)
+    await user.click(await screen.findByRole('button', { name: 'Replace Hardcover API key' }))
+    await user.type(screen.getByLabelText('Replacement Hardcover API key'), 'new-secret')
+    await user.click(screen.getByRole('button', { name: /Appearance/ }))
+    await user.click(screen.getByRole('button', { name: 'Review changes' }))
+    await user.click(
+      within(screen.getByRole('list')).getByRole('button', { name: /Hardcover API key/ }),
+    )
+
+    const replacement = await screen.findByLabelText('Replacement Hardcover API key')
+    expect(replacement).toHaveValue('new-secret')
+    await waitFor(() => expect(replacement).toHaveFocus())
+  })
+
+  it('turns a pending replacement into a set when newer settings cleared the key', async () => {
+    const user = userEvent.setup()
+    const http = createHttp()
+    const cleared: SettingsView = {
+      ...view(),
+      document: { ...document, revision: 4 },
+      secrets: view().secrets.filter((item) => item.field_id !== 'provider.hardcover.key'),
+    }
+    http.getSettings = vi.fn().mockResolvedValueOnce(view()).mockResolvedValue(cleared)
+    http.writeSettings = vi
+      .fn()
+      .mockRejectedValueOnce(new ApiError(409, 'settings_revision_stale'))
+      .mockResolvedValue({ ...cleared, document: { ...document, revision: 5 } })
+    renderRoute('/settings?group=providers', http)
+    await user.click(await screen.findByRole('button', { name: 'Replace Hardcover API key' }))
+    await user.type(screen.getByLabelText('Replacement Hardcover API key'), 'new-secret')
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+    expect(await screen.findByText(/Your changes were kept/)).toBeVisible()
+    await user.click(screen.getByRole('button', { name: 'Save settings' }))
+
+    await waitFor(() => expect(http.writeSettings).toHaveBeenCalledTimes(2))
+    expect(http.writeSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        expected_revision: 4,
+        secrets: [{ field_id: 'provider.hardcover.key', operation: 'set', value: 'new-secret' }],
+      }),
+    )
   })
 
   it('discards every section at once and announces it', async () => {
