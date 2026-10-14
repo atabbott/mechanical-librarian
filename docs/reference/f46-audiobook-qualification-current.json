@@ -89,7 +89,7 @@
   "predecessor": {
     "path": "docs/reference/f46-audiobook-qualification-current.json",
     "sha256": "b52762e57775d658035fb56115c5addf2b5cdea0ba2db7d5b2857396af214338",
-    "source_sha": "2c4fe83bed86df53a6bc18109f6412361d834387"
+    "source_sha": "306db17907ba415e84cbcc4c283a97d22ff8d3d9"
   },
   "provenance": "qualification-provenance-current.json",
   "schema": "qualification-current-v1"

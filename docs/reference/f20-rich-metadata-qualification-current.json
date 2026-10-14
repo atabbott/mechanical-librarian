@@ -44,7 +44,7 @@
   "predecessor": {
     "path": "docs/reference/f20-rich-metadata-qualification-current.json",
     "sha256": "63937e49d0df56c60a9b138eb466db8ddcdce6b20cfb6f8661eb01c60cda2462",
-    "source_sha": "2c4fe83bed86df53a6bc18109f6412361d834387"
+    "source_sha": "306db17907ba415e84cbcc4c283a97d22ff8d3d9"
   },
   "provenance": "qualification-provenance-current.json",
   "schema": "qualification-current-v1"
