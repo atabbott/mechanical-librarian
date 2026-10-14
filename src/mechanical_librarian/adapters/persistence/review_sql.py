@@ -164,24 +164,43 @@ _LIBRARY_DISPLAY_SEARCH_SQL = (
     "AND json_extract(label.value,'$[0]')=ml.connection_name "
     "AND ml_casefold(COALESCE(json_extract(label.value,'$[2]'),'')) LIKE ? ESCAPE '\\')"
 )
-_REVIEW_SEARCH_SQL = (
-    " AND (? IS NULL OR "
-    "ml_casefold(COALESCE(json_extract(mr.document,'$.target.fields[0].value'),'')) "
-    "LIKE ? ESCAPE '\\' OR ml_casefold(ml.item_id) LIKE ? ESCAPE '\\' "
-    "OR ml_casefold(ml.library_name) LIKE ? ESCAPE '\\' "
-    "OR EXISTS (SELECT 1 FROM json_each(mr.document,'$.target.fields') author_field, "
-    "json_each(author_field.value,'$.value') author WHERE "
-    "json_extract(author_field.value,'$.destination')='authors' "
-    "AND ml_casefold(COALESCE(author.value,'')) LIKE ? ESCAPE '\\') "
-    "OR ml_casefold(COALESCE(json_extract(mr.document,'$.file.format'),'')) "
-    "LIKE ? ESCAPE '\\' OR " + _LIBRARY_DISPLAY_SEARCH_SQL + ")"
+# Search and order read the report's persisted browse facts (#1199), never its
+# document: a statement joining `metadata_report_browse_facts facts` on
+# `mr.report_id` folds nothing per candidate except the package's own keys.
+_REPORT_BROWSE_FACTS_JOIN_SQL = (
+    " JOIN metadata_report_browse_facts facts ON facts.report_id=mr.report_id "
 )
+_REVIEW_SEARCH_SQL = (
+    " AND (? IS NULL OR facts.title_key LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(ml.item_id) LIKE ? ESCAPE '\\' "
+    "OR ml_casefold(ml.library_name) LIKE ? ESCAPE '\\' "
+    "OR EXISTS (SELECT 1 FROM metadata_report_browse_authors author "
+    "WHERE author.report_id=mr.report_id AND author.author_key LIKE ? ESCAPE '\\') "
+    "OR facts.format_key LIKE ? ESCAPE '\\' OR " + _LIBRARY_DISPLAY_SEARCH_SQL + ")"
+)
+
+
+def _browse_scalar_sql(sql: str) -> str:
+    """Read a shared predicate's document scalars from the persisted browse facts."""
+    return sql.replace(
+        "json_extract(mr.document,'$.file.format')", "facts.format"
+    ).replace(
+        "FROM proposal_sets policy_proposal JOIN metadata_policy_resolutions "
+        "policy_resolution ON policy_resolution.resolved_policy_id="
+        "json_extract(policy_proposal.document,'$.resolved_policy_id')",
+        "FROM proposal_set_browse_facts policy_proposal JOIN metadata_policy_resolutions "
+        "policy_resolution ON policy_resolution.resolved_policy_id="
+        "policy_proposal.resolved_policy_id",
+    )
+
+
 _CURRENT_REVIEW_CASE_COUNT_SQL = (
     "SELECT count(*),COALESCE(sum(CASE WHEN "
-    + _REVIEW_ATTENTION_SQL
+    + _browse_scalar_sql(_REVIEW_ATTENTION_SQL)
     + " THEN 1 ELSE 0 END),0) "
     + _CURRENT_LIBRARY_FROM_SQL
-    + " WHERE COALESCE(c.outcome,'')<>'tombstoned'"
+    + _REPORT_BROWSE_FACTS_JOIN_SQL
+    + "WHERE COALESCE(c.outcome,'')<>'tombstoned'"
     + _REVIEW_SEARCH_SQL
 )
 _LATEST_PREPARATION_WORK_SQL = (
@@ -207,6 +226,7 @@ __all__ = [
     "_EPUB_INAPPLICABLE_ATTENTION_SQL",
     "_LATEST_PREPARATION_WORK_SQL",
     "_POLICY_ASK_ATTENTION_SQL",
+    "_REPORT_BROWSE_FACTS_JOIN_SQL",
     "_REVIEW_ATTENTION_SQL",
     "_REVIEW_FIELD_ATTENTION_SQL",
     "_REVIEW_MANUAL_BIBLIOGRAPHIC_SQL",
@@ -253,10 +273,3 @@ def _terminal_library_sql(catalogue_attached: bool) -> str:
         "SELECT 1 FROM current_review_packages p WHERE p.connection_name=w.connection_name "
         "AND p.library_name=w.library_name AND p.item_id=w.item_id))"
     )
-
-
-def _browse_scalar_sql(sql: str) -> str:
-    """Use the browse query's once-per-report scalars without changing predicates."""
-    return sql.replace(
-        "json_extract(mr.document,'$.file.format')", "scalars.format"
-    ).replace("json_extract(mr.document,'$.target.fields[0].value')", "scalars.title")

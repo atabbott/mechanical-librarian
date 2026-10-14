@@ -696,22 +696,23 @@ def test_disconnected_active_browse_finishes_before_next_reader(
             assert client.get(path).status_code == 200
 
 
-def test_nonattentive_retained_title_still_receives_read_time_validation(
+def test_post_open_report_tamper_refuses_where_rendered_and_at_reopen(
     tmp_path: Path,
 ) -> None:
-    fixture = OwnerResponsivenessFixture(tmp_path, 2)
+    from mechanical_librarian.adapters.persistence.metadata_reports import (
+        open_repository,
+    )
+
+    # #1091 validated every candidate document on every read. #1199 reads
+    # candidates from persisted browse facts, so an edit that bypasses
+    # metadata_reports_no_update after open is refused where the row renders
+    # and at the next open, and deliberately not by a read that never renders it.
+    fixture = OwnerResponsivenessFixture(tmp_path, 30)
     try:
-        fixture.repository.suspend_field_effect_capability(
-            scope="connection",
-            connection="primary",
-            destination="title",
-            reason="connection_unavailable",
-            changed_at=100,
-        )
-        assert fixture.browse.list_current_attention_documents(None, 25, 0) == ()
         connection = fixture.repository._connection
         report_id, document = connection.execute(
-            "SELECT report_id,document FROM metadata_reports ORDER BY report_id LIMIT 1"
+            "SELECT report_id,document FROM current_metadata_reports current "
+            "JOIN metadata_reports USING(report_id) WHERE current.item_id='work-0029'"
         ).fetchone()
         payload = json.loads(document)
         payload["target"]["fields"][0]["value"] = 42
@@ -722,14 +723,31 @@ def test_nonattentive_retained_title_still_receives_read_time_validation(
             (malformed, hashlib.sha256(malformed.encode()).hexdigest(), report_id),
         )
         connection.commit()
+        browse = fixture.browse
+        assert len(browse.list_current_attention_documents(None, 25, 0)) == 25
+        assert browse.read_review_library(None, 25, 0, None).total == 30
         with pytest.raises(
             MetadataReportError, match="^review attention is unavailable$"
-        ) as failure:
-            fixture.browse.list_current_attention_documents(None, 25, 0)
-        assert isinstance(failure.value.__cause__, sqlite3.OperationalError)
-        assert str(failure.value.__cause__) == "user-defined function raised exception"
+        ):
+            browse.list_current_attention_documents("work-0029", 25, 0)
+        with pytest.raises(
+            MetadataReportError, match="^review library is unavailable$"
+        ):
+            browse.read_review_library(None, 25, 25, None)
+        fixture.repository.suspend_field_effect_capability(
+            scope="connection",
+            connection="primary",
+            destination="title",
+            reason="connection_unavailable",
+            changed_at=100,
+        )
+        assert browse.list_current_attention_documents("work-0029", 25, 0) == ()
     finally:
         fixture.close()
+    with pytest.raises(
+        MetadataReportError, match="^database is unavailable or incompatible$"
+    ):
+        open_repository(fixture.database, create=False)
 
 
 def test_external_browse_capture_runs_outside_admission_and_reader_owner(
