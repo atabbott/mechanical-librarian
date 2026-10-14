@@ -288,6 +288,15 @@ def test_current_authority_and_predecessor_refusal_without_history(
             schema, "_PROPOSAL_SETS_SQL", proposal_fixture["proposal_sets_ddl"]
         )
         with closing(open_repository(old_path)) as repository:
+            # The producer predates #1199's report browse facts.
+            repository._connection.executescript(
+                "DROP TRIGGER metadata_reports_project_browse_facts;"
+                "DROP TABLE metadata_report_browse_authors;"
+                "DROP TABLE metadata_report_browse_facts;"
+                "DROP TRIGGER proposal_sets_project_browse_facts;"
+                "DROP TABLE proposal_set_browse_facts;"
+                "DROP TABLE browse_fact_identity;"
+            )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
             ).fetchall()
