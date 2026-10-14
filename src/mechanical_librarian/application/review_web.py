@@ -54,8 +54,6 @@ from mechanical_librarian.domain.metadata_report import (
     ClaimKind,
     FieldState,
     MetadataReport,
-    ProviderLaneObservation,
-    ReportValueError,
     TargetDestination,
     TargetFacts,
     recording_variant_conflict,
@@ -65,8 +63,17 @@ from mechanical_librarian.domain.proposal_set import (
     audiobook_review_scope,
     canonical_target_fields,
 )
-from mechanical_librarian.domain.review_browse import browse_report
-from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
+from mechanical_librarian.domain.review_browse import (
+    CaseBrowseFacts,
+    LibraryReportFacts,
+    ProviderLaneFacts,
+    ReviewBrowseValueError,
+    browse_case_facts_and_report,
+    browse_report,
+    library_report_facts,
+    provider_lane_facts,
+)
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.domain.review_field_classification import (
     ReviewFieldCause,
     classify_review_field,
@@ -173,6 +180,7 @@ class SessionTokens:
 class CurrentReviewCaseSnapshot:
     case_document: str
     report_document: str
+    report: MetadataReport
     decision_documents: tuple[str, ...]
     history: tuple[dict[str, object], ...]
     final_outcome_document: str | None = None
@@ -444,7 +452,7 @@ class InspectCurrentReviewCase:
             ):
                 raise ReviewWebError("stale")
             case = ReviewCase.create_from_data(raw["case"])
-            report = MetadataReport.from_json(snapshot.report_document)
+            report = snapshot.report
             if report.report_id != case.report_id:
                 raise ReviewWebError("unavailable")
             decisions: dict[str, HumanDecision] = {}
@@ -800,7 +808,7 @@ class InspectCurrentReviewCase:
                 # the default keeps a surface that never asks honest.
                 "writes_consented": False,
                 "target": {
-                    "authors": _report_authors(report),
+                    "authors": _report_authors(report.target),
                     "connection": report.target.connection,
                     "item": report.target.item,
                     "library": report.target.library,
@@ -985,7 +993,7 @@ class InspectCurrentReviewCase:
             ),
             "review_case_id": review_case_id,
             "schema_version": "review-case-evidence-v4",
-            "source_ledger": _provider_outcomes(report),
+            "source_ledger": _provider_outcomes(provider_lane_facts(report)),
         }
 
     def history(self, review_case_id: str, limit: int = 50) -> dict[str, object]:
@@ -1436,7 +1444,7 @@ class BrowseReviewLibrary:
                 if raw_total is None:
                     raw_total = snapshot.total
                 previous_documents: tuple[str, str] | None = None
-                parsed: tuple[ReviewCase, MetadataReport] | None = None
+                parsed: tuple[CaseBrowseFacts, LibraryReportFacts] | None = None
                 for row in raw_rows:
                     (
                         case_document,
@@ -1701,7 +1709,7 @@ def _report_detail(
         "recording_identity_basis": recording_identity_basis(recorded),
         "audiobook_review_scope": audiobook_review_scope(recorded),
         # What every configured provider was asked, and how each ended.
-        "provider_sources": _provider_outcomes(recorded),
+        "provider_sources": _provider_outcomes(provider_lane_facts(recorded)),
         # What the admitted candidates stated, under the same ceiling and the
         # same truncation flag the local evidence above uses.
         "provider_evidence": provider_claims[:_EVIDENCE_CEILING],
@@ -2370,24 +2378,23 @@ def _decode_cursor(cursor: str | None, kind: str, lens: str, search: str | None)
 
 def _case_and_report(
     case_document: str, report_document: str
-) -> tuple[ReviewCase, MetadataReport]:
+) -> tuple[CaseBrowseFacts, LibraryReportFacts]:
     try:
-        case = ReviewCase.from_json(case_document)
-        report = MetadataReport.from_json(report_document)
-    except (ReviewCaseValueError, ReportValueError) as error:
-        # Both parsers name their malformed-document outcome, so this matches
-        # those two types rather than the ``ValueError`` they happen to share
-        # with the rest of this projection. The agreement check below is this
-        # layer's own and refuses in its own right.
+        return browse_case_facts_and_report(case_document, report_document)
+    except ReviewBrowseValueError as error:
+        # The bounded readers name their one malformed-document outcome, so
+        # this matches it rather than the ``ValueError`` it happens to share
+        # with the rest of this projection. Lineage disagreement is one of
+        # those outcomes.
         raise ReviewWebError("unavailable") from error
-    if (
-        case.report_id != report.report_id
-        or case.target != report.target.to_data()
-        or case.target_fingerprint != report.target.fingerprint
-        or case.file_identity != report.file.identity
-    ):
-        raise ReviewWebError("unavailable")
-    return case, report
+
+
+def _report_facts(report_document: str) -> LibraryReportFacts:
+    """Read a report that has no current case through the same bounded reader."""
+    try:
+        return library_report_facts(browse_report(report_document))
+    except ReviewBrowseValueError as error:
+        raise ReviewWebError("unavailable") from error
 
 
 def _needs_attention(
@@ -2421,12 +2428,12 @@ def _needs_attention(
     )
 
 
-def _report_authors(report: MetadataReport) -> list[str]:
+def _report_authors(target: TargetFacts) -> list[str]:
     """Derive the bounded current author display value without persistence."""
     value = next(
         (
             field.value
-            for field in report.target.fields
+            for field in target.fields
             if field.destination is TargetDestination.AUTHORS
         ),
         (),
@@ -2463,35 +2470,25 @@ _PROVIDER_OUTCOME_REASONS: dict[str, str] = {
 }
 
 
-def _provider_outcomes(report: MetadataReport) -> list[dict[str, object]]:
+def _provider_outcomes(lanes: tuple[ProviderLaneFacts, ...]) -> list[dict[str, object]]:
     """Expose only bounded lane state, never diagnostics or queries.
 
     Every lane is reported, matches included, so the selected work can show one
     complete source ledger. Suppressing the successful ones left the owner
     unable to tell a source that matched from a source that was never asked.
     """
-    outcomes: list[dict[str, object]] = []
-    for provider in report.providers:
-        lanes = provider.lanes or (provider,)
-        for lane in lanes:
-            status = lane.status.value
-            kind = (
-                cast(ProviderLaneObservation, lane).kind
-                if provider.lanes
-                else provider.query_kind
-            ).value
-            outcomes.append(
-                {
-                    "provider_requests": provider.request_accounting.logical_requests,
-                    "lane_kind": kind,
-                    "provider": _provider_label(provider.authority),
-                    "reason": _PROVIDER_OUTCOME_REASONS.get(
-                        status, "Ended in a bounded state this build cannot name."
-                    ),
-                    "status": status,
-                }
-            )
-    return outcomes
+    return [
+        {
+            "provider_requests": lane.logical_requests,
+            "lane_kind": lane.kind,
+            "provider": _provider_label(lane.authority),
+            "reason": _PROVIDER_OUTCOME_REASONS.get(
+                lane.status, "Ended in a bounded state this build cannot name."
+            ),
+            "status": lane.status,
+        }
+        for lane in lanes
+    ]
 
 
 def _provider_label(authority: str | None) -> str:
@@ -2740,18 +2737,14 @@ def _library_item(
                 }
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
             raise ReviewWebError("unavailable") from error
+    case: CaseBrowseFacts | None
     if case_document is None:
-        try:
-            report = MetadataReport.from_json(report_document)
-        except ReportValueError as error:
-            # ``from_json`` now funnels every malformed-document outcome, the
-            # length guard's codec failure included, into its one declared type.
-            raise ReviewWebError("unavailable") from error
-        case = None
+        report, case = _report_facts(report_document), None
     else:
         case, report = _case_and_report(case_document, report_document)
     decisions: set[str] = set()
     automatic_outcomes: dict[str, str] = {}
+    canonical_case: ReviewCase | None = None
     for document in decision_documents:
         if (
             json.loads(document).get("schema_version")
@@ -2764,8 +2757,12 @@ def _library_item(
         automatic = _automatic_decision_projection(document)
         if automatic is None:
             decision = HumanDecision.from_json(document)
-            assert case is not None
-            decision.validate_for(case)
+            assert case_document is not None
+            # A human decision binds a proposal identity, which only the
+            # canonical case carries, so this row is validated against it.
+            if canonical_case is None:
+                canonical_case = ReviewCase.from_json(case_document)
+            decision.validate_for(canonical_case)
             decisions.add(decision.destination)
         else:
             destination = str(automatic["destination"])
@@ -2827,7 +2824,7 @@ def _library_item(
         len(attention) if attention_count is None else attention_count
     )
     value = {
-        "authors": _report_authors(report),
+        "authors": _report_authors(report.target),
         "attention_count": current_attention_count,
         "attention_state": (
             "needs_attention" if current_attention_count else "no_attention_needed"
@@ -2850,7 +2847,7 @@ def _library_item(
         "preparation": None
         if terminal_document is None
         else _library_item(None, terminal_document, ())["preparation"],
-        "preparation_outcomes": _provider_outcomes(report),
+        "preparation_outcomes": _provider_outcomes(report.providers),
         # A work with no current review case has no case identity to open, so
         # its current values were unreachable from Library. The bounded target
         # projection travels with the row the owner already has, which keeps
@@ -2894,8 +2891,8 @@ def _omitted_for_epub(destination: str, media_kind: str) -> bool:
 
 
 def _attention_item(
-    case: ReviewCase,
-    report: MetadataReport,
+    case: CaseBrowseFacts,
+    report: LibraryReportFacts,
     destination: str,
     work_attention_count: int,
     automatic_outcome: str | None = None,
@@ -2941,14 +2938,14 @@ def _attention_item(
     result = proposal["result"]
     assert type(result) is dict
     return {
-        "authors": _report_authors(report),
+        "authors": _report_authors(report.target),
         "classification_reason": classification.reason,
         "destination": destination,
         "detail_url": f"/review/{case.review_case_id}?field={destination}",
         "item": report.target.item,
         "library": report.target.library,
         "media_kind": report.file.format,
-        "notices": result["reasons"],
+        "notices": list(result["reasons"]),
         "provenance": sorted(
             {
                 reference

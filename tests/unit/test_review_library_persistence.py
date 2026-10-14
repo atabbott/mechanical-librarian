@@ -73,6 +73,7 @@ from mechanical_librarian.domain.metadata_report import (
     TargetFieldState,
 )
 from mechanical_librarian.domain.proposal_set import evaluate_report
+from mechanical_librarian.domain.review_browse import provider_lane_facts
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.proposal_evidence import (
     _claim as _proposal_claim,
@@ -173,7 +174,7 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
             )
         ),
     )
-    outcomes = _provider_outcomes(report)
+    outcomes = _provider_outcomes(provider_lane_facts(report))
     assert {outcome["status"] for outcome in outcomes} == {
         status.value for status in statuses
     }
@@ -194,7 +195,7 @@ def test_terminal_provider_taxonomy_projects_closed_safe_outcomes() -> None:
             for index in range(33)
         ),
     )
-    assert len(_provider_outcomes(many)) == 33
+    assert len(_provider_outcomes(provider_lane_facts(many))) == 33
 
 
 def test_every_lane_is_reported_but_only_limiting_ones_become_notices() -> None:
@@ -228,7 +229,9 @@ def test_every_lane_is_reported_but_only_limiting_ones_become_notices() -> None:
             ),
         ),
     )
-    assert [outcome["status"] for outcome in _provider_outcomes(report)] == [
+    assert [
+        outcome["status"] for outcome in _provider_outcomes(provider_lane_facts(report))
+    ] == [
         "candidates",
         "disabled",
         "insufficient_input",
@@ -3129,7 +3132,7 @@ def test_provider_snapshot_copy_does_not_invent_match_or_retry(status, reason):
             ),
         ),
     )
-    outcomes = _provider_outcomes(report)
+    outcomes = _provider_outcomes(provider_lane_facts(report))
     assert outcomes[0]["status"] == status.value
     assert outcomes[0]["reason"] == reason
 

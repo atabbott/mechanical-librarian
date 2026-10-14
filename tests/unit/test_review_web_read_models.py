@@ -89,8 +89,9 @@ from mechanical_librarian.domain.metadata_report import (
     default_target_fields,
 )
 from mechanical_librarian.domain.preparation_presentation import PreparationTrigger
-from mechanical_librarian.domain.proposal_set import evaluate_report
-from mechanical_librarian.domain.review_case import ReviewCase, ReviewCaseValueError
+from mechanical_librarian.domain.proposal_set import ProposalSet, evaluate_report
+from mechanical_librarian.domain.review_browse import ReviewBrowseValueError
+from mechanical_librarian.domain.review_case import ReviewCase
 from mechanical_librarian.interfaces.web.app import (
     _CaseDetailResponse,
     _CoverOmission,
@@ -1952,10 +1953,10 @@ def test_row_projection_refuses_every_document_the_parsers_cannot_read() -> None
         _case_and_report(case.to_json(), report.to_json()[:-1])
     assert raised.value.code == "unavailable"
 
-    # Both handlers let a fault in the projection itself past. `_library_item`
-    # catches only the domain parser's declared refusal, not arbitrary faults.
+    # Both handlers let a fault in the projection itself past. They catch only
+    # the bounded readers' declared refusal, not arbitrary faults.
     fault = RuntimeError("projection is broken")
-    with patch.object(MetadataReport, "from_json", side_effect=fault):
+    with patch.object(TargetFacts, "from_data", side_effect=fault):
         with pytest.raises(RuntimeError) as surfaced:
             _case_and_report(case.to_json(), report.to_json())
         assert surfaced.value is fault
@@ -3483,7 +3484,12 @@ def test_attention_consecutive_documents_keep_row_specific_classification():
         for count, outcome, cause, policy in flags
         if (
             item := _attention_item(
-                case, report, "title", count, outcome, cause, policy
+                *_case_and_report(case.to_json(), report.to_json()),
+                "title",
+                count,
+                outcome,
+                cause,
+                policy,
             )
         )
         is not None
@@ -3546,12 +3552,18 @@ def test_attention_equal_ids_never_replace_exact_document_validation(
         BrowseReviewLibrary(repository).attention(search=None, limit=1, cursor=None)
     assert parse.call_count == 2  # Even the lookahead row must validate.
     assert isinstance(failure.value.__cause__, ReviewWebError)
-    expected = (
-        ReviewCaseValueError
-        if changed in ("case", "both", "case_subclass")
-        else ReportValueError
+    refusal = failure.value.__cause__.__cause__
+    assert type(refusal) is ReviewBrowseValueError
+    assert (
+        str(refusal)
+        == {
+            "case": "review browse case is invalid",
+            "report": "review browse report is invalid",
+            "both": "review browse case is invalid",
+            "case_subclass": "review browse document is invalid",
+            "report_subclass": "review browse document is invalid",
+        }[changed]
     )
-    assert type(failure.value.__cause__.__cause__) is expected
 
 
 def test_attention_revalidates_each_raw_page_and_fresh_request(
@@ -3586,18 +3598,16 @@ def test_attention_revalidates_each_raw_page_and_fresh_request(
     ] == [0, 2, 0, 2]
 
 
-def test_library_item_projects_canonical_proposals_once(canonical_attention_pair):
+def test_library_item_projects_proposals_without_the_canonical_case(
+    canonical_attention_pair,
+):
     case, report = canonical_attention_pair
-    original = ReviewCase.proposals.fget
-    calls = []
-
-    def proposals(value):
-        calls.append(value.review_case_id)
-        return original(value)
-
-    with patch.object(ReviewCase, "proposals", property(proposals)):
+    with (
+        patch.object(ReviewCase, "from_json", side_effect=AssertionError),
+        patch.object(MetadataReport, "from_json", side_effect=AssertionError),
+        patch.object(ProposalSet, "from_json", side_effect=AssertionError),
+    ):
         item = _library_item(case.to_json(), report.to_json(), ())
-    assert calls == [case.review_case_id]
     assert item["title"] == "Title"
     assert item["attention_count"] == 1
     assert item["attention_state"] == "needs_attention"

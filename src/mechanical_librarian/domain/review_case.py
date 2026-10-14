@@ -80,6 +80,32 @@ def review_proposals(
         resolved_policy_id=proposal.resolved_policy_id,
         media_kind=proposal.media_kind,
     ).proposal_set_id
+    return tuple(
+        {
+            "destination": result["destination"],
+            "manual_required": manual_required,
+            "proposal_id": "review_proposal_"
+            + hashlib.sha256(
+                _canonical(
+                    {
+                        "destination": result["destination"],
+                        "proposal_set_id": result_set_id,
+                        "result": result,
+                    }
+                ).encode("utf-8")
+            ).hexdigest(),
+            "result": _thaw_json_object(result),
+        }
+        for result, manual_required in zip(
+            results, proposal_manual_requirements(results), strict=True
+        )
+    )
+
+
+def proposal_manual_requirements(
+    results: tuple[dict[str, object], ...] | list[dict[str, object]],
+) -> tuple[bool, ...]:
+    """Whether each result, in order, is the owner's to settle by hand."""
     bibliographic_destinations = {
         TargetDestination.TITLE.value,
         TargetDestination.SUBTITLE.value,
@@ -95,24 +121,8 @@ def review_proposals(
         else set()
     )
     return tuple(
-        {
-            "destination": result["destination"],
-            "manual_required": (
-                result["destination"] in manual_destinations
-                and result["reasons"] != [EVIDENCE_LED_TITLE_REASON]
-            ),
-            "proposal_id": "review_proposal_"
-            + hashlib.sha256(
-                _canonical(
-                    {
-                        "destination": result["destination"],
-                        "proposal_set_id": result_set_id,
-                        "result": result,
-                    }
-                ).encode("utf-8")
-            ).hexdigest(),
-            "result": _thaw_json_object(result),
-        }
+        result["destination"] in manual_destinations
+        and result["reasons"] != [EVIDENCE_LED_TITLE_REASON]
         for result in results
     )
 
@@ -696,5 +706,6 @@ __all__ = [
     "ReviewCase",
     "ReviewCaseValueError",
     "is_actionable",
+    "proposal_manual_requirements",
     "proposal_media_kind",
 ]

@@ -964,13 +964,7 @@ class ProposalSet:
             for combination in self.bibliographic_combinations
         ):
             raise ProposalValueError("bibliographic combination is invalid")
-        expected = (
-            "proposal_set_"
-            + hashlib.sha256(
-                canonical_json(self._identity_data()).encode("utf-8")
-            ).hexdigest()
-        )
-        if self.proposal_set_id != expected:
+        if self.proposal_set_id != proposal_set_content_address(self._identity_data()):
             raise ProposalValueError("proposal set identity is inconsistent")
         if len(self.to_json().encode("utf-8")) > MAX_PROPOSAL_BYTES:
             raise ProposalValueError("proposal set exceeds its byte limit")
@@ -992,20 +986,15 @@ class ProposalSet:
                 key=lambda value: value.combination_id,
             )
         )
-        identity = (
-            "proposal_set_"
-            + hashlib.sha256(
-                canonical_json(
-                    _proposal_data(
-                        report_id,
-                        target_fingerprint,
-                        results,
-                        resolved_policy_id,
-                        combinations,
-                        media_kind,
-                    )
-                ).encode("utf-8")
-            ).hexdigest()
+        identity = proposal_set_content_address(
+            _proposal_data(
+                report_id,
+                target_fingerprint,
+                results,
+                resolved_policy_id,
+                combinations,
+                media_kind,
+            )
         )
         return cls(
             identity,
@@ -5408,6 +5397,12 @@ def _alternative_id(
     )
 
 
+def proposal_set_content_address(identity_data: dict[str, object]) -> str:
+    """The proposal set id that a proposal document's data addresses."""
+    digest = hashlib.sha256(canonical_json(identity_data).encode("utf-8"))
+    return f"proposal_set_{digest.hexdigest()}"
+
+
 def _proposal_data(
     report_id: str,
     target_fingerprint: str,
@@ -5645,6 +5640,7 @@ __all__ = [
     "POLICY_VERSION",
     "PROVIDER_CONSENSUS_CONTRIBUTOR_DISPLAY_REASON",
     "MEDIA_KINDS",
+    "proposal_set_content_address",
     "PROPOSAL_SCHEMA",
     "SUBTITLE_SEGMENT_DECORATED_CONSENSUS_REASON",
     "SUBTITLE_SEGMENT_PROVIDER_DISSENT_REASON",
