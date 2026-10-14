@@ -64,7 +64,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _browse_scalar_sql,
     _terminal_library_sql,
 )
-from mechanical_librarian.adapters.persistence.schema import _validate_report_row
+from mechanical_librarian.adapters.persistence.schema import (
+    _validate_report_row,
+    _validated_report_row,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -487,7 +490,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
             if proposal_row is None or report_row is None:
                 raise MetadataReportError("review case source is unavailable")
             proposal = ProposalSet.from_json(_validate_proposal_row(proposal_row))
-            report = MetadataReport.from_json(_validate_report_row(report_row))
+            report = _validated_report_row(report_row)
             policy_destinations = self._policy_destinations_for(report, proposal)
             if (
                 proposal.proposal_set_id != case.proposal_set_id
@@ -528,8 +531,12 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
 
     @local_operation
     def get_review_case_report(self, review_case_id: str) -> str:
+        return self.get_review_case_source_report(review_case_id).to_json()
+
+    @local_operation
+    def get_review_case_source_report(self, review_case_id: str) -> MetadataReport:
         try:
-            return self._source_report_for_review_case(review_case_id).to_json()
+            return self._source_report_for_review_case(review_case_id)
         except (sqlite3.Error, ReviewCaseValueError, ReportValueError) as error:
             raise MetadataReportError("review case evidence is unavailable") from error
 
@@ -1039,7 +1046,7 @@ class SQLiteReviewCaseRepository(ConnectionScoped):
         ).fetchone()
         if row is None:
             raise MetadataReportError("shadow review source is unavailable")
-        return MetadataReport.from_json(_validate_report_row(row))
+        return _validated_report_row(row)
 
     def _source_pair_for_review_case(
         self, review_case_id: str

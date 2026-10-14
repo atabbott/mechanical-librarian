@@ -455,8 +455,10 @@ class SQLiteMetadataReportRepository(ConnectionScoped):
             get_review_case=(
                 lambda review_case_id: self.get_review_case(review_case_id)
             ),
-            get_review_case_report=(
-                lambda review_case_id: self.get_review_case_report(review_case_id)
+            get_review_case_source_report=(
+                lambda review_case_id: self._review_cases.get_review_case_source_report(
+                    review_case_id
+                )
             ),
             get_review_case_decisions=(
                 lambda review_case_id: self.get_review_case_decisions(review_case_id)

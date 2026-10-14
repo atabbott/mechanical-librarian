@@ -562,6 +562,24 @@ class ProviderQueryKind(StrEnum):
     ASIN = "asin"
 
 
+PROVIDER_LANE_KINDS = frozenset(
+    {ProviderQueryKind.ISBN, ProviderQueryKind.WORK, ProviderQueryKind.ASIN}
+)
+PROVIDER_AUTHORITIES = frozenset(
+    {
+        None,
+        "audible_catalog",
+        "audiosilo",
+        "audnexus",
+        "google_books",
+        "hardcover",
+        "itunes_search",
+        "inventaire",
+        "open_library",
+    }
+)
+
+
 class Comparison(StrEnum):
     AGREEMENT = "agreement"
     DISAGREEMENT = "disagreement"
@@ -2219,12 +2237,7 @@ class ProviderLaneObservation:
     def __post_init__(self) -> None:
         if (
             _LANE_IDENTITY.fullmatch(self.identity) is None
-            or self.kind
-            not in {
-                ProviderQueryKind.ISBN,
-                ProviderQueryKind.WORK,
-                ProviderQueryKind.ASIN,
-            }
+            or self.kind not in PROVIDER_LANE_KINDS
             or type(self.status) is not ProviderStatus
         ):
             raise ReportValueError("provider lane is invalid")
@@ -2382,18 +2395,7 @@ class ProviderObservation:
         if (
             type(self.status) is not ProviderStatus
             or type(self.query_kind) is not ProviderQueryKind
-            or self.authority
-            not in {
-                None,
-                "audible_catalog",
-                "audiosilo",
-                "audnexus",
-                "google_books",
-                "hardcover",
-                "itunes_search",
-                "inventaire",
-                "open_library",
-            }
+            or self.authority not in PROVIDER_AUTHORITIES
         ):
             raise ReportValueError("provider status is invalid")
         if self.accessed_at is not None:
@@ -6068,6 +6070,8 @@ __all__ = [
     "MAX_REPORT_BYTES",
     "AUDIO_FILE_FORMATS",
     "SUPPORTED_FILE_FORMATS",
+    "PROVIDER_AUTHORITIES",
+    "PROVIDER_LANE_KINDS",
     "CLAIM_BASES",
     "AudioFacts",
     "MetadataReport",

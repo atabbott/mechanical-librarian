@@ -96,7 +96,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         *,
         require_staged_shadow_projection_current: Callable[[str, PipelineAction], None],
         get_review_case: Callable[[str], str],
-        get_review_case_report: Callable[[str], str],
+        get_review_case_source_report: Callable[[str], MetadataReport],
         get_review_case_decisions: Callable[[str], tuple[str, ...]],
         get_review_case_history: Callable[[str, int], tuple[dict[str, object], ...]],
         description_advice: Callable[[str], dict[str, object] | None],
@@ -121,7 +121,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
         )
         self.description_advice = description_advice
         self.get_review_case = get_review_case
-        self.get_review_case_report = get_review_case_report
+        self.get_review_case_source_report = get_review_case_source_report
         self.get_review_case_decisions = get_review_case_decisions
         self.get_review_case_history = get_review_case_history
         self.current_cover_consideration_document = current_cover_consideration_document
@@ -228,15 +228,15 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             raise MetadataReportError("review case snapshot is unavailable")
         with self._consistent_review_read():
             case_document = self.get_review_case(review_case_id)
-            report_document = self.get_review_case_report(review_case_id)
-            report = MetadataReport.from_json(report_document)
+            report = self.get_review_case_source_report(review_case_id)
             policy = self.current_resolved_metadata_policy(report.target.library)
             decision_documents = self.get_review_case_decisions(review_case_id)
             source_documents = self._automatic_source_outcome_documents(review_case_id)
             snapshot = CurrentReviewCaseSnapshot(
                 description_advice=self.description_advice(review_case_id),
                 case_document=case_document,
-                report_document=report_document,
+                report_document=report.to_json(),
+                report=report,
                 resolved_policy_document=None
                 if policy is None
                 else policy.canonical_json,

@@ -537,14 +537,26 @@ def cover_consideration_currentness(
     provider_fetching: Callable[[MetadataReport], bool],
 ) -> CoverConsiderationCurrentness:
     """Classify one persisted consideration against captured live authority."""
+    return _validated_currentness(document, replay_reference, provider_fetching)[0]
+
+
+def _validated_currentness(
+    document: str,
+    replay_reference: str,
+    provider_fetching: Callable[[MetadataReport], bool],
+) -> tuple[
+    CoverConsiderationCurrentness, tuple[dict[str, object], MetadataReport] | None
+]:
+    """Classify one consideration, keeping what it validated for the caller."""
     if (
         type(document) is not str
         or type(replay_reference) is not str
         or re.fullmatch(r"cover_replay_[0-9a-f]{64}", replay_reference) is None
     ):
-        return "inactive"
+        return "inactive", None
+    validated = None
     try:
-        value, report = _validated_cover_consideration(document)
+        validated = value, report = _validated_cover_consideration(document)
         review_case_id = value.get("review_case_id")
         report_id = value.get("report_id")
         fetching = value.get("provider_fetching")
@@ -564,18 +576,18 @@ def cover_consideration_currentness(
                 replay_reference=saved_replay_reference,
             )
         ):
-            return "inactive"
+            return "inactive", validated
     except (KeyError, TypeError, ValueError):
-        return "inactive"
+        return "inactive", validated
     try:
         current_fetching = provider_fetching(report)
     except Exception:
-        return "inactive"
+        return "inactive", validated
     if type(current_fetching) is not bool or fetching != current_fetching:
-        return "inactive"
+        return "inactive", validated
     return (
         "current" if saved_replay_reference == replay_reference else "refresh_required"
-    )
+    ), validated
 
 
 def cover_consideration_is_current(
@@ -1452,7 +1464,13 @@ class CoverConsiderationService:
         ]
 
     def _project(self, document: str, *, current: bool) -> dict[str, object]:
-        value, _report = _validated_cover_consideration(document)
+        return self._project_validated(
+            *_validated_cover_consideration(document), current=current
+        )
+
+    def _project_validated(
+        self, value: dict[str, object], report: MetadataReport, *, current: bool
+    ) -> dict[str, object]:
         policy_document = cast("str | None", value["policy_report_document"])
         policy = None if policy_document is None else json.loads(policy_document)
         candidates = [
@@ -1467,7 +1485,9 @@ class CoverConsiderationService:
         saved_policy_document = cast("str", value["policy_document"])
         return {
             "candidates": candidates,
-            "choice_contexts": _cover_choice_contexts(value, candidates, policy),
+            "choice_contexts": _cover_choice_contexts(
+                value, report, candidates, policy
+            ),
             "consideration_id": value["consideration_id"],
             "current": current,
             "incumbent": dict(incumbent),
@@ -1550,21 +1570,23 @@ class CoverConsiderationService:
         """Project current choices and identify one safe comparison refresh."""
         if document is None:
             return None, "inactive"
-        currentness = cover_consideration_currentness(
+        currentness, validated = _validated_currentness(
             document,
             self.replay_reference,
             self._provider_fetching,
         )
-        if currentness == "inactive":
-            return None, currentness
-        value, saved_report = _validated_cover_consideration(document)
+        if currentness == "inactive" or validated is None:
+            return None, "inactive"
+        value, saved_report = validated
         if (
             value.get("review_case_id") != review_case_id
             or saved_report.to_json() != report_document
             or value.get("policy_reference") != self._policy.reference
         ):
             return None, "inactive"
-        projection = self._project(document, current=currentness == "current")
+        projection = self._project_validated(
+            value, saved_report, current=currentness == "current"
+        )
         if currentness == "refresh_required" and projection["ready"] is not True:
             return None, "inactive"
         return projection, currentness
@@ -1663,11 +1685,11 @@ class CoverConsiderationService:
 
 def _cover_choice_contexts(
     value: dict[str, object],
+    report: MetadataReport,
     candidates: list[dict[str, object]],
     policy: dict[str, object] | None,
 ) -> list[dict[str, object]]:
     """Expose exact retained cover binding provenance without identifiers."""
-    report = MetadataReport.from_json(str(value["report_document"]))
     packet = (
         json.loads(str(value["packet_document"]))
         if value["packet_document"] is not None

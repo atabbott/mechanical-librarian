@@ -474,6 +474,7 @@ class FakeReviewRepository:
         return CurrentReviewCaseSnapshot(
             case_document=self.get_review_case(review_case_id),
             report_document=self.get_review_case_report(review_case_id),
+            report=self.report,
             decision_documents=self.get_review_case_decisions(review_case_id),
             automatic_selected_values=self.automatic_selected_values,
             history=(
