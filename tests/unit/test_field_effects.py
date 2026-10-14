@@ -4407,6 +4407,29 @@ def test_activity_projection_bounds_delete_journal_pending_writer_convoy(
     assert activity_result["sqlite_errorname"] == "SQLITE_BUSY"
 
 
+def _await_pending_writer(database_path: Path) -> None:
+    """Wait until the writer's commit holds PENDING, so new reads are refused.
+
+    ``writer_ready`` fires before ``commit()`` is called; until the commit
+    takes PENDING a fresh read still succeeds, so a loaded runner could read
+    on the first attempt and never exercise the busy retry.
+    """
+
+    deadline = time.monotonic() + 5
+    while True:
+        probe = sqlite3.connect(database_path, timeout=0, isolation_level=None)
+        try:
+            probe.execute("SELECT 1 FROM field_effects LIMIT 1").fetchone()
+        except sqlite3.OperationalError as error:
+            if "locked" in str(error):
+                return
+            raise
+        finally:
+            probe.close()
+        assert time.monotonic() < deadline, "the writer never reached PENDING"
+        time.sleep(0.005)
+
+
 def _activity_read_after_short_delete_journal_convoy(
     effects: _EffectEnvironment,
     plan: FieldEffectOperation,
@@ -4429,6 +4452,7 @@ def _activity_read_after_short_delete_journal_convoy(
     reader_c.configure_activity_page_reader()
     writer_ready = threading.Event()
     writer_committed = threading.Event()
+    first_attempt = threading.Event()
     writer_errors: list[BaseException] = []
     attempts = [0]
     projection = reader_c._field_effect_activity
@@ -4436,6 +4460,7 @@ def _activity_read_after_short_delete_journal_convoy(
 
     def counted(*arguments, **keywords):
         attempts[0] += 1
+        first_attempt.set()
         return original(*arguments, **keywords)
 
     def pending_writer() -> None:
@@ -4456,6 +4481,10 @@ def _activity_read_after_short_delete_journal_convoy(
             connection.close()
 
     def release_reader() -> None:
+        # The convoy is held from the first attempt, not from when this thread
+        # started: on a loaded runner the read can begin later than any fixed
+        # delay, find the lock already gone, and never need the retry.
+        first_attempt.wait(5)
         time.sleep(0.2)
         reader_a._connection.rollback()
 
@@ -4472,6 +4501,7 @@ def _activity_read_after_short_delete_journal_convoy(
             ).fetchone()
             writer.start()
             assert writer_ready.wait(1)
+            _await_pending_writer(effects.database_path)
             release.start()
             started = time.monotonic()
             result = call(reader_c)

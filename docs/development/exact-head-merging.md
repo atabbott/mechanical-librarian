@@ -87,8 +87,9 @@ instead of the local controller and connector review; which classes those are is
 stated in [dependencies](dependencies.md). The externally configured
 default-branch ruleset remains the authority: it requires a pull request, a head
 current with `main`, and a successful GitHub Actions check run on that head for
-each of the five jobs: `fast-source`, `exact-installed`, `protected-browser`,
-`container-image`, and `dependency-audit`. Behind-main branches refresh and
+each of the eight jobs: `fast-source`, `fast-source-2`, `fast-source-3`,
+`fast-source-4`, `exact-installed`, `protected-browser`, `container-image`, and
+`dependency-audit`. Behind-main branches refresh and
 repeat qualification, including outside the new-branch schedule. Renovate has no
 bypass actor and cannot merge a branch directly.
 

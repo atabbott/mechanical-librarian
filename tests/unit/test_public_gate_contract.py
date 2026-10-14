@@ -117,7 +117,7 @@ def test_qualifies_pull_request_heads_and_merged_main() -> None:
 
 def test_every_exact_revision_reference_resolves_for_both_events() -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
-    assert workflow.count(f"ref: {EXACT_SHA}") == 5
+    assert workflow.count(f"ref: {EXACT_SHA}") == 8
     assert f'--source-sha "{EXACT_SHA}"' in workflow
     # An unguarded head reference is null on a push to `main`.
     assert "${{ github.event.pull_request.head.sha }}" not in workflow
@@ -135,8 +135,22 @@ def test_concurrency_never_cancels_post_merge_verification() -> None:
 
 @pytest.mark.parametrize(
     "job",
-    ("fast-source", "exact-installed", "protected-browser"),
-    ids=("fast_source", "exact_installed", "protected_browser"),
+    (
+        "fast-source",
+        "fast-source-2",
+        "fast-source-3",
+        "fast-source-4",
+        "exact-installed",
+        "protected-browser",
+    ),
+    ids=(
+        "fast_source",
+        "fast_source_2",
+        "fast_source_3",
+        "fast_source_4",
+        "exact_installed",
+        "protected_browser",
+    ),
 )
 def test_retains_the_three_independent_timeout_bounded_tiers(job: str) -> None:
     workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -149,7 +163,7 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
     workflow = WORKFLOW.read_text(encoding="utf-8")
     assert "  container-image:\n" in workflow
     assert "  dependency-audit:\n" in workflow
-    assert workflow.count("runs-on: ubuntu-24.04") == 5
+    assert workflow.count("runs-on: ubuntu-24.04") == 8
     assert (
         "  fast-source:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 25\n"
     ) in workflow
@@ -158,6 +172,12 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
         "  protected-browser:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n"
     ) in workflow
     assert workflow.count("timeout-minutes: 15") == 1
+    for shard in (2, 3, 4):
+        assert (
+            f"  fast-source-{shard}:\n    runs-on: ubuntu-24.04\n"
+            "    timeout-minutes: 12\n"
+        ) in workflow
+    assert workflow.count("timeout-minutes: 12") == 3
     assert workflow.count("timeout-minutes: 10") == 3
     # The three commands CONTRIBUTING.md documents as reproducing this job.
     # `ruff format --check` is the backend's line-width contract, so a tree
@@ -369,7 +389,7 @@ def test_every_action_is_sha_pinned_without_persisted_credentials() -> None:
         for line in workflow.splitlines()
         if line.strip().startswith("uses:")
     ]
-    assert len(uses) == 21
+    assert len(uses) == 33
     # The references are read out of the workflow at run time, so they cannot
     # become parameters without making the collected case count -- and the
     # cohort identity digest built from it -- move whenever the workflow gains
