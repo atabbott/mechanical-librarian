@@ -22,6 +22,9 @@ from mechanical_librarian.adapters.evidence_extractors.audio_local import (
     interpret,
 )
 from mechanical_librarian.application.configuration import ReviewWebConfiguration
+from mechanical_librarian.application.cover_consideration import (
+    CoverConsiderationError,
+)
 from mechanical_librarian.application.field_effects import GuardedApplicationError
 from mechanical_librarian.application.metadata_report import MetadataReportError
 from mechanical_librarian.application.review_pipeline import (
@@ -328,15 +331,22 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         f"/api/v1/review-cases/{case.review_case_id}"
         f"/cover-considerations/{consideration_id}/images/{candidate_reference}"
     )
-    assert web.client.get(image_path).status_code == 401
+    signed_out = web.client.get(image_path)
+    assert 401 == signed_out.status_code
+    assert "no-store, private" == signed_out.headers["cache-control"]
+    covers.image.assert_not_called()
     login = web.login()
     image = web.client.get(image_path)
     assert 200 == image.status_code
     assert "image/png" == image.headers["content-type"]
-    assert {"no-store", "private"} == {
-        value.strip() for value in image.headers["cache-control"].split(",")
-    }
+    # The URL fixes these bytes, so the browser may keep them privately.
+    assert "private, max-age=31536000, immutable" == image.headers["cache-control"]
     assert "nosniff" == image.headers["x-content-type-options"]
+    covers.image.side_effect = CoverConsiderationError("stale")
+    stale = web.client.get(image_path)
+    assert 409 == stale.status_code
+    assert "no-store, private" == stale.headers["cache-control"]
+    covers.image.side_effect = None
     retry_path = (
         f"/api/v1/review-cases/{case.review_case_id}/cover-considerations/retry"
     )
@@ -395,6 +405,16 @@ def test_cover_transport_retry_and_owner_outcome_are_protected_end_to_end(
         json.loads(repository.decisions["cover"])["decision_id"]
         == decision.json()["decision_id"]
     )
+    logout = web.client.post(
+        "/api/v1/session/logout",
+        headers={**web.origin, "X-CSRF-Token": str(login["csrf_token"])},
+    )
+    assert 204 == logout.status_code, logout.text
+    reads = covers.image.call_count
+    revoked = web.client.get(image_path)
+    assert 401 == revoked.status_code
+    assert "no-store, private" == revoked.headers["cache-control"]
+    assert reads == covers.image.call_count
 
 
 def test_shutdown_timeout_preserves_shared_repository_for_live_worker(

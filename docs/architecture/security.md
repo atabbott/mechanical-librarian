@@ -495,7 +495,8 @@ switch authority.
 The #641 live update stream is one further authenticated read on that same
 entry point and adds no authentication mechanism. `GET /api/v1/updates` requires
 the same unexpired opaque session, refuses a cross-origin subscribe, and is
-served private and `no-store` like every other response. Because it is the one
+served private and `no-store` like every other response except hashed review
+assets and cover previews (#1193). Because it is the one
 read whose body keeps arriving after the check that admitted it, the session is
 re-checked as the stream runs and a lapsed session ends it rather than being
 allowed to keep reading through a connection opened while it was valid; the
@@ -589,8 +590,17 @@ authority. Exact canonical Host and state-changing Origin checks prevent
 cross-origin use; HttpOnly SameSite cookies (Secure for browser HTTPS) and per-session CSRF protect
 browser mutation. Forwarded Host or scheme is rejected unless the direct peer
 is explicitly configured, and Uvicorn ambient proxy handling remains disabled.
-Every response is private/no-store with a restrictive CSP, frame denial,
-no-referrer, and no-sniff; browser HTTPS additionally receives HSTS. Validation and runtime errors use fixed
+Every response carries a restrictive CSP, frame denial, no-referrer, and
+no-sniff; browser HTTPS additionally receives HSTS. Every response is
+private/no-store except two route-set families whose bytes their URL fixes:
+manifest-admitted hashed scripts and styles, and session-checked cover previews
+addressed by a content-derived consideration and reference. Those are
+`private, max-age=31536000, immutable`, so no shared cache may keep them and
+they carry no session, CSRF, credential, or account state; a revoked session
+still meets the existing refusal on any request that reaches the server
+(#1193). Logout does not clear the browser cache, so the same browser profile
+can still show a previously viewed cover preview from its private cache for up
+to a year after logout. Validation and runtime errors use fixed
 value-free codes, so passwords, tokens, paths, hostile metadata, and internal
 exceptions do not enter responses. The one #449 mutation accepts only a
 server-presented exact ordinary-field proposal under owner session, CSRF,
@@ -631,7 +641,10 @@ external origin, worker, blob, source map, credential, target client, or write
 adapter. The packaged loader validates bounded exact paths, sizes, digests, a
 content-derived build identity, and the independently emitted expected identity
 before serving any authenticated shell; any failure becomes one stable
-owner-recovery state with no automatic reload loop.
+owner-recovery state with no automatic reload loop. Brotli and gzip siblings
+are manifest entries under the same bounds and digests; verified bytes are held
+for the process, so a sibling that fails verification is never served and its
+identity asset is served instead.
 
 ## Credentials and egress
 

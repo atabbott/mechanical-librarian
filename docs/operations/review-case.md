@@ -135,7 +135,8 @@ library; [observability and support](observability.md) defines what each one
 means. The login surface verifies the owner-only Argon2id hash file, applies a
 durable bounded throttle, and creates an opaque server-side session whose token
 is stored only as a digest.
-All review responses are private/no-store and enforce the canonical Host
+All review responses, except hashed review assets and cover previews (#1193),
+are private/no-store, and all enforce the canonical Host
 and Origin, restrictive CSP, HttpOnly SameSite cookies (Secure for browser HTTPS), CSRF on logout
 and decisions, and explicit proxy trust. The `/api/v1` surface exposes
 exact-current case detail, bounded evidence, current-case admission and decision
