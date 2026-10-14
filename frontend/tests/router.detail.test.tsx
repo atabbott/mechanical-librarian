@@ -584,6 +584,59 @@ describe('Library review ownership', () => {
     )
   })
 
+  it('keeps a retained Attention page visible but inert until the newer search settles', async () => {
+    const item = (id: string, title: string) => ({
+      id,
+      destination: 'title',
+      title,
+      authors: [],
+      library: 'Books',
+      mediaKind: 'ebook',
+      classificationReason: 'This field needs your review.',
+      notices: [],
+      provenance: [],
+      workAttentionCount: 1,
+    })
+    let settle: (view: AttentionView) => void = () => undefined
+    const http = {
+      ...createHttp(),
+      getAttention: vi.fn(async (search: { q?: string }) =>
+        search.q
+          ? new Promise<AttentionView>((resolve) => (settle = resolve))
+          : { total: 7, nextCursor: 'old-page-2', items: [item('case-old', 'Old result')] },
+      ),
+    }
+    const user = userEvent.setup()
+    const { router } = renderRoute('/attention', http)
+    expect(await screen.findByRole('heading', { name: 'Old result' })).toBeVisible()
+    await user.type(screen.getByLabelText('Search title, author, library, or media'), 'new{Enter}')
+    await waitFor(() => expect(router.state.location.search).toEqual({ q: 'new' }))
+
+    const route = document.querySelector('.attention-route')
+    expect(route).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('heading', { name: 'Old result' })).toBeVisible()
+    expect(screen.getByText('7')).toBeVisible()
+    const next = screen.getByRole('link', { name: 'Next page →' })
+    const row = screen.getByRole('link', { name: /Open exact field/u })
+    expect(next).toHaveAttribute('aria-disabled', 'true')
+    expect(row).toHaveAttribute('aria-disabled', 'true')
+    await user.click(next)
+    next.focus()
+    await user.keyboard('{Enter}')
+    expect(next).toHaveFocus()
+    await user.click(row)
+    expect(router.state.location.pathname).toBe('/attention')
+    expect(router.state.location.search).toEqual({ q: 'new' })
+
+    settle({ total: 1, items: [item('case-new', 'New result')] })
+    expect(await screen.findByRole('heading', { name: 'New result' })).toBeVisible()
+    expect(screen.queryByRole('heading', { name: 'Old result' })).toBeNull()
+    expect(route).not.toHaveAttribute('aria-busy')
+    expect(screen.getByRole('link', { name: /Open exact field/u })).not.toHaveAttribute(
+      'aria-disabled',
+    )
+  })
+
   it('records the exact selected scalar choice and refreshes the Library read model', async () => {
     const user = userEvent.setup()
     const field = detail.fields[0]

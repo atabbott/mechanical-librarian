@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Library and Attention keep their current rows in place, dimmed and marked
+  busy, while the next page, lens or search loads, and never show rows from a
+  read that has been superseded or failed. Hovering or focusing paging, lenses
+  and works prefetches them as background work (#1192).
+
 - Settings and setup show a measured Luna cover estimate of about $0.6364 per
   1,000 review requests. Reviewer cost evidence now records its measured run on
   each row, so rows from separate complete runs ship together truthfully (#1180).

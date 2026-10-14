@@ -1,4 +1,5 @@
 import {
+  prefetchBackgroundQuery,
   runRequiredRead,
   useRequiredRead,
   queryWorkClass,
@@ -12,6 +13,7 @@ import { useInfiniteQuery, useMutation } from '@tanstack/react-query'
 import { Link, useNavigate, useRouter, useRouterState } from '@tanstack/react-router'
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { SyntheticEvent } from 'react'
+import type { QueryExecuteOptions, QueryKey } from '@tanstack/react-query'
 
 import { displayValue } from '../api/http'
 import type {
@@ -39,6 +41,7 @@ import {
 import { coalesceMilliseconds } from '../liveInvalidation'
 import {
   detailQuery,
+  libraryQuery,
   libraryRoute,
   PreparationNotice,
   usePreparation,
@@ -59,6 +62,9 @@ const authoredOwnerRecorded = (field: ReviewField) =>
     field.descriptionAdvice.application_outcome,
   )
 const searchNavigationDelay = 150
+const noWorks: readonly LibraryWorkView[] = []
+// A pointer crossing several rows warms only the one it rests on.
+const prefetchIntentDelay = 50
 // Live Library invalidation batches the documented fifty-work burst for 120 ms.
 // Keep each distinct subject from that bounded batch long enough to compare it
 // with the next bounded page read, but never treat a frame as selection
@@ -2084,19 +2090,32 @@ function LibraryCoverChoicesContent({
 
 export default function LibraryPage({
   data,
+  retained,
   pending,
   failed,
   retry,
 }: {
   data: LibraryView | undefined
+  /** `data` is the previous key's result, shown busy until the URL's own read settles. */
+  retained: boolean
   pending: boolean
   failed: boolean
   retry: () => void
 }) {
   const works = useMemo(() => data?.works ?? [], [data?.works])
+  // Retained rows stay visible, but selection resolves only against the URL's own result.
+  const currentWorks = retained ? noWorks : works
+  const reading = pending || retained
   const search = libraryRoute.useSearch()
-  const navigate = useNavigate({ from: '/library' })
+  const libraryNavigate = useNavigate({ from: '/library' })
   const router = useRouter()
+  // Library stays painted while the next route's code loads, but it no longer
+  // owns the URL, so a late selection or advance cannot pull the owner back.
+  const navigate: typeof libraryNavigate = useCallback(
+    (options) =>
+      router.latestLocation.pathname === '/library' ? libraryNavigate(options) : Promise.resolve(),
+    [libraryNavigate, router],
+  )
   const { http, updates, queryClient } = useReviewContext()
   const preparationState = usePreparation()
   const presentation =
@@ -2382,10 +2401,11 @@ export default function LibraryPage({
   // owner opened is kept so the summary does not vanish mid-inspection and
   // send them back to the list; clearing the selection releases it.
   const selectedWork = search.work
-    ? (works.find((work) => work.workId === search.work) ??
+    ? (currentWorks.find((work) => work.workId === search.work) ??
       (openedWork?.workId === search.work ? openedWork : undefined))
     : undefined
-  const unresolvableWork = data !== undefined && Boolean(search.work) && selectedWork === undefined
+  const unresolvableWork =
+    data !== undefined && !retained && Boolean(search.work) && selectedWork === undefined
   // URL-owned selection has to stay truthful. A ?work= that resolves to nothing
   // on the bounded page in hand, and was not opened in this session, asserts a
   // selection the view cannot render, so it is normalised out of the URL. The
@@ -2416,7 +2436,7 @@ export default function LibraryPage({
   }, [navigate, preparationSelected, preparationState.confirmed, search.preparation])
   const hasSelection = preparationSelected || Boolean(search.preview) || selectedWork !== undefined
   const selectedLibraryWork = search.preview
-    ? works.find((work) => work.reviewCaseId === search.preview)
+    ? currentWorks.find((work) => work.reviewCaseId === search.preview)
     : undefined
   const detail = useQuery({
     ...detailQuery(http, selectedReviewCaseId),
@@ -2448,6 +2468,9 @@ export default function LibraryPage({
     refetchOnReconnect: false,
     refetchOnWindowFocus: false,
   })
+  // Keep the queue this rail last showed while a newer search reads; a failed
+  // read shows nothing, so it leaves nothing to revive.
+  const showingAttention = useRef(false)
   const attentionQuery = useInfiniteQuery({
     queryKey: ['attention', 'workspace', search.q ?? null, search.attentionCursor ?? null],
     initialPageParam: search.attentionCursor,
@@ -2465,6 +2488,10 @@ export default function LibraryPage({
     getNextPageParam: (page) => page.nextCursor ?? undefined,
     staleTime: 15_000,
     retry: false,
+    placeholderData: (previous) => (showingAttention.current ? previous : undefined),
+  })
+  useEffect(() => {
+    showingAttention.current = attentionQuery.data !== undefined
   })
   const attention = useMemo(
     () => ({
@@ -2504,8 +2531,10 @@ export default function LibraryPage({
   const selectedIdentity = useMemo(
     () =>
       search.preview
-        ? (works.find((work) => work.reviewCaseId === search.preview) ??
-          attentionItems.find((item) => item.id === search.preview) ??
+        ? (currentWorks.find((work) => work.reviewCaseId === search.preview) ??
+          (attention.isPlaceholderData
+            ? undefined
+            : attentionItems.find((item) => item.id === search.preview)) ??
           (detail.data && reconciledSuccessorIdentity === search.preview
             ? {
                 id: detail.data.id,
@@ -2518,7 +2547,14 @@ export default function LibraryPage({
               }
             : undefined))
         : undefined,
-    [attentionItems, works, detail.data, reconciledSuccessorIdentity, search.preview],
+    [
+      attentionItems,
+      attention.isPlaceholderData,
+      currentWorks,
+      detail.data,
+      reconciledSuccessorIdentity,
+      search.preview,
+    ],
   )
   useEffect(() => {
     if (selectedIdentity && search.preview)
@@ -2618,6 +2654,7 @@ export default function LibraryPage({
     const successorIds = [...pendingSuccessorRef.current]
     if (
       !data ||
+      retained ||
       !selectedTarget ||
       !successorIds.length ||
       selectedTarget.caseId !== search.preview ||
@@ -2664,7 +2701,7 @@ export default function LibraryPage({
         }
       }
     })()
-  }, [data, works, http, navigate, search.preview, successorGeneration])
+  }, [data, retained, works, http, navigate, search.preview, successorGeneration])
   const completionIdentity = complete?.id === selectedReviewCaseId ? complete.identity : undefined
   const [pendingIdentity, setPendingIdentity] = useState<{
     id: string
@@ -2673,12 +2710,12 @@ export default function LibraryPage({
   if (selectedIdentity && search.preview) {
     if (pendingIdentity?.id !== search.preview || pendingIdentity.identity !== selectedIdentity)
       setPendingIdentity({ id: search.preview, identity: selectedIdentity })
-  } else if (pendingIdentity && (!pending || failed || pendingIdentity.id !== search.preview))
+  } else if (pendingIdentity && (!reading || failed || pendingIdentity.id !== search.preview))
     setPendingIdentity(null)
   const displayedIdentity =
     selectedIdentity ??
     completionIdentity ??
-    (pending && !failed && pendingIdentity !== null && pendingIdentity.id === search.preview
+    (reading && !failed && pendingIdentity !== null && pendingIdentity.id === search.preview
       ? pendingIdentity.identity
       : undefined)
   const primaryField = (field: ReviewField) => (field.inventoryRole ?? 'primary') === 'primary'
@@ -2711,13 +2748,14 @@ export default function LibraryPage({
         (item) => item.id === search.preview && item.destination === selected.destination,
       )
     : -1
-  const nextWork = complete
-    ? (attentionItems.find(
-        (item) =>
-          item.id !== selectedReviewCaseId &&
-          !complete.priorAttention.has(`${item.id}:${item.destination}`),
-      ) ?? null)
-    : null
+  const nextWork =
+    complete && !attention.isPlaceholderData
+      ? (attentionItems.find(
+          (item) =>
+            item.id !== selectedReviewCaseId &&
+            !complete.priorAttention.has(`${item.id}:${item.destination}`),
+        ) ?? null)
+      : null
   const nextWorkError = attention.isError
   const controller = useReviewDecisionController({
     reviewCaseId: selectedReviewCaseId,
@@ -2884,7 +2922,8 @@ export default function LibraryPage({
     })
     return () => cancelAnimationFrame(frame)
   }, [preparationSelected, presentation?.run_id])
-  const identityPending = !displayedIdentity && (pending || attention.isPending)
+  const identityPending =
+    !displayedIdentity && (reading || attention.isPending || attention.isPlaceholderData)
   const identityError = !displayedIdentity && (failed || attention.isError)
   const selectedReadPending = identityPending || (Boolean(displayedIdentity) && detail.isPending)
   const selectedReadError = identityError || (Boolean(displayedIdentity) && detail.isError)
@@ -3009,8 +3048,8 @@ export default function LibraryPage({
       )
         return
       const first =
-        works.find((work) => work.reviewCaseId && work.attentionCount > 0) ??
-        works.find((work) => work.reviewCaseId)
+        currentWorks.find((work) => work.reviewCaseId && work.attentionCount > 0) ??
+        currentWorks.find((work) => work.reviewCaseId)
       const reviewCaseId = first?.reviewCaseId
       if (reviewCaseId)
         void navigate({
@@ -3024,7 +3063,7 @@ export default function LibraryPage({
     selectWideDefault()
     media.addEventListener('change', selectWideDefault)
     return () => media.removeEventListener('change', selectWideDefault)
-  }, [works, navigate, searchPending])
+  }, [currentWorks, navigate, searchPending])
 
   const selectCase = (
     reviewCaseId: string,
@@ -3124,6 +3163,30 @@ export default function LibraryPage({
       searchNavigation.current = drain()
     }, delay)
   }
+  const prefetchTimer = useRef<number | null>(null)
+  useEffect(
+    () => () => {
+      if (prefetchTimer.current !== null) window.clearTimeout(prefetchTimer.current)
+    },
+    [],
+  )
+  const prefetchOnIntent = <TData, TKey extends QueryKey>(
+    options: QueryExecuteOptions<TData, Error, TData, TData, TKey>,
+  ) => {
+    if (prefetchTimer.current !== null) window.clearTimeout(prefetchTimer.current)
+    prefetchTimer.current = window.setTimeout(() => {
+      prefetchTimer.current = null
+      prefetchBackgroundQuery(queryClient, options)
+    }, prefetchIntentDelay)
+  }
+  const pageIntent = (cursor: string | undefined) => {
+    if (cursor && !retained) prefetchOnIntent(libraryQuery(http, { ...search, cursor }))
+  }
+  const workIntent = (work: LibraryWorkView) => {
+    if (work.reviewCaseId) prefetchOnIntent(detailQuery(http, work.reviewCaseId))
+  }
+  const lensIntent = (lens: LibrarySearch['lens']) =>
+    prefetchOnIntent(libraryQuery(http, { lens, ...(search.q ? { q: search.q } : {}) }))
   const runSearch = (value: string) => {
     const q = value.trim()
     setTypedQuery({ echo: q, text: value })
@@ -3142,7 +3205,9 @@ export default function LibraryPage({
     event.preventDefault()
     runSearch(queryText)
   }
+  // A retained page's cursors belong to the key the URL just left.
   const movePage = (cursor: string | undefined) => {
+    if (retained) return
     void navigate({
       search: (current) => {
         const next = { ...current }
@@ -3223,6 +3288,7 @@ export default function LibraryPage({
     field: string,
     attentionCursor: string | undefined,
   ) => {
+    if (attention.isPlaceholderData) return
     workSelectionGeneration.current += 1
     if (reviewCaseId !== selectedReviewCaseId)
       setExpandedChoiceState({ work: reviewCaseId, keys: new Set() })
@@ -3383,6 +3449,8 @@ export default function LibraryPage({
                   ...(search.preparation ? { preparation: search.preparation } : {}),
                 }}
                 preload="intent"
+                onPointerEnter={() => lensIntent(lens)}
+                onFocus={() => lensIntent(lens)}
                 activeProps={{ 'aria-current': 'page' }}
               >
                 {fieldLabel(lens === 'no_attention_needed' ? 'No attention needed' : lens)}
@@ -3416,7 +3484,7 @@ export default function LibraryPage({
               </button>
             </div>
           </form>
-          <div className="library-work-list">
+          <div className="library-work-list" aria-busy={retained || undefined}>
             {!data ? (
               <div className="empty-copy" aria-busy={!failed}>
                 {failed ? (
@@ -3557,6 +3625,8 @@ export default function LibraryPage({
                             [preparationId, summaryId].filter(Boolean).join(' ') || undefined
                           }
                           onClick={() => void select(work)}
+                          onPointerEnter={() => workIntent(work)}
+                          onFocus={() => workIntent(work)}
                         >
                           {row}
                         </button>
@@ -3579,11 +3649,14 @@ export default function LibraryPage({
             )}
           </div>
           {data ? (
-            <div className="library-pager">
+            <div className="library-pager" aria-busy={retained || undefined}>
               <button
                 type="button"
                 disabled={!data.previousCursor}
+                aria-disabled={retained || undefined}
                 onClick={() => movePage(data.previousCursor)}
+                onPointerEnter={() => pageIntent(data.previousCursor)}
+                onFocus={() => pageIntent(data.previousCursor)}
               >
                 ← Previous
               </button>
@@ -3594,7 +3667,10 @@ export default function LibraryPage({
               <button
                 type="button"
                 disabled={!data.nextCursor}
+                aria-disabled={retained || undefined}
                 onClick={() => movePage(data.nextCursor)}
+                onPointerEnter={() => pageIntent(data.nextCursor)}
+                onFocus={() => pageIntent(data.nextCursor)}
               >
                 Next →
               </button>
@@ -3886,7 +3962,9 @@ export default function LibraryPage({
                       >
                         Review next work →
                       </button>
-                    ) : attention.isPending || attention.isFetchingNextPage ? (
+                    ) : attention.isPending ||
+                      attention.isPlaceholderData ||
+                      attention.isFetchingNextPage ? (
                       <span>Looking for the next visible work…</span>
                     ) : nextWorkError ? (
                       <>
@@ -4405,6 +4483,7 @@ export default function LibraryPage({
           <aside
             className="attention-rail"
             aria-label="Attention queue"
+            aria-busy={attention.isPlaceholderData || undefined}
             tabIndex={-1}
             ref={attentionRail}
           >
@@ -4437,6 +4516,7 @@ export default function LibraryPage({
                     aria-current={
                       item.id === search.preview && item.destination === selected?.destination
                     }
+                    aria-disabled={attention.isPlaceholderData || undefined}
                     onClick={() => selectFromQueue(item.id, item.destination, item.attentionCursor)}
                   >
                     <span className="attention-position">{String(index + 1)}</span>

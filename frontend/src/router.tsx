@@ -1,6 +1,6 @@
 import { invalidateForegroundQueries } from './queryWork'
 import { invalidateBackgroundQueries } from './queryWork'
-import { queryWorkClass, useRequiredQuery as useQuery } from './queryWork'
+import { queryWorkClass, useRequiredQuery as useQuery, useRetainedQuery } from './queryWork'
 import { QueryClient, queryOptions, useMutation } from '@tanstack/react-query'
 import {
   Link,
@@ -977,10 +977,11 @@ const indexRoute = createRoute({
 const LibraryRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const search = libraryRoute.useSearch()
-  const query = useQuery(libraryQuery(http, search))
+  const query = useRetainedQuery(libraryQuery(http, search))
   return (
     <LibraryPage
       data={query.data}
+      retained={query.isPlaceholderData}
       pending={query.isPending}
       failed={query.isError}
       retry={() => void query.refetch()}
@@ -990,16 +991,23 @@ const LibraryRouteComponent = () => {
 const AttentionRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
   const search = attentionRoute.useSearch()
-  const query = useQuery(attentionQuery(http, search))
+  const query = useRetainedQuery(attentionQuery(http, search))
   return (
-    <AttentionPage data={query.data} failed={query.isError} retry={() => void query.refetch()} />
+    <div className="attention-route" aria-busy={query.isPlaceholderData || undefined}>
+      <AttentionPage
+        data={query.data}
+        retained={query.isPlaceholderData}
+        failed={query.isError}
+        retry={() => void query.refetch()}
+      />
+    </div>
   )
 }
 const DiagnosticRouteComponent = () => {
   const { reviewCaseId } = detailRoute.useParams()
   const { http } = rootRoute.useRouteContext()
   const search = normalizeDetailSearch(detailRoute.useSearch())
-  const detail = useQuery(detailQuery(http, reviewCaseId))
+  const detail = useRetainedQuery(detailQuery(http, reviewCaseId))
   const backSearch = normalizeLibrarySearch({ ...search, preview: reviewCaseId })
   const problem =
     detail.error instanceof ApiError && detail.error.code === 'not_found'
@@ -1008,7 +1016,7 @@ const DiagnosticRouteComponent = () => {
         ? 'This diagnostic is no longer current.'
         : 'The retained diagnostic could not be read safely.'
   return (
-    <div className="diagnostic-route">
+    <div className="diagnostic-route" aria-busy={detail.isPlaceholderData || undefined}>
       <Link className="diagnostic-back-to-work" to="/library" search={backSearch}>
         <span aria-hidden="true">←</span> Back to work
       </Link>
@@ -1041,19 +1049,20 @@ export const libraryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/library',
   validateSearch: normalizeLibrarySearch,
-  component: LibraryRouteComponent,
+  // Each route component preloads its page chunk on intent through the lazy wrapper.
+  component: Object.assign(LibraryRouteComponent, { preload: () => LibraryPage.preload?.() }),
 })
 export const attentionRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/attention',
   validateSearch: normalizeAttentionSearch,
-  component: AttentionRouteComponent,
+  component: Object.assign(AttentionRouteComponent, { preload: () => AttentionPage.preload?.() }),
 })
 export const detailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/review/$reviewCaseId',
   validateSearch: normalizeDetailSearch,
-  component: DiagnosticRouteComponent,
+  component: Object.assign(DiagnosticRouteComponent, { preload: () => DetailPage.preload?.() }),
 })
 export interface PolicyCritical {
   state: PolicyStateView
@@ -1085,7 +1094,7 @@ export const policyRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/policy',
   validateSearch: normalizePolicySearch,
-  component: PolicyRouteComponent,
+  component: Object.assign(PolicyRouteComponent, { preload: () => PolicyPage.preload?.() }),
 })
 const ActivityRouteComponent = () => {
   const { http } = rootRoute.useRouteContext()
@@ -1116,13 +1125,13 @@ export const activityRoute = createRoute({
   pendingMs: Infinity,
   pendingComponent: () => <RoutePending title="Activity" />,
   errorComponent: (props) => <RouteFailure {...props} title="Activity" />,
-  component: ActivityRouteComponent,
+  component: Object.assign(ActivityRouteComponent, { preload: () => ActivityPage.preload?.() }),
 })
 export const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/settings',
   validateSearch: normalizeSettingsSearch,
-  component: () => <SettingsPage />,
+  component: SettingsPage,
 })
 const routeTree = rootRoute.addChildren([
   indexRoute,

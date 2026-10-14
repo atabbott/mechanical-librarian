@@ -13,12 +13,13 @@ import type {
   InvalidateQueryFilters,
   Query,
   QueryClient,
+  QueryExecuteOptions,
   QueryFunctionContext,
   QueryKey,
   UseQueryOptions,
   UseQueryResult,
 } from '@tanstack/react-query'
-import { useEffect, useEffectEvent } from 'react'
+import { useEffect, useEffectEvent, useRef } from 'react'
 import type { ReadWorkClass } from './api/http'
 
 type OwnerFetchMeta = NonNullable<Query['state']['fetchMeta']> & {
@@ -255,6 +256,24 @@ export function invalidateBackgroundQueries(
   ).then(() => undefined)
 }
 
+/**
+ * Warm a read the owner is about to make as background work, deduplicated by
+ * the cache. A required read of the same key later promotes or reuses it.
+ */
+export function prefetchBackgroundQuery<TQueryFnData, TError, TData, TQueryKey extends QueryKey>(
+  client: QueryClient,
+  options: QueryExecuteOptions<TQueryFnData, TError, TData, TData, TQueryKey>,
+): void {
+  const defaulted = client.defaultQueryOptions(options)
+  const query = client.getQueryCache().build(client, defaulted)
+  const staleTime =
+    typeof defaulted.staleTime === 'function' ? defaulted.staleTime(query) : defaulted.staleTime
+  if (query.state.fetchStatus !== 'idle' || !query.isStaleByTime(staleTime)) return
+  void query
+    .fetch(defaulted, { cancelRefetch: false, meta: backgroundFetch })
+    .catch(() => undefined)
+}
+
 /** Explicit result reads and retries promote a pending background request. */
 export async function runRequiredRead<T>(
   client: QueryClient,
@@ -302,6 +321,25 @@ export function useRequiredRead(client: QueryClient, key: QueryKey, enabled = tr
     const query = client.getQueryCache().get(queryHash)
     if (enabled && query) void promoteRequiredRead(client, query.queryKey)
   }, [client, queryHash, enabled])
+}
+
+/**
+ * A required read that keeps the result this view last showed while a newer
+ * key reads. Unlike keepPreviousData it never revives a result that a failed
+ * read already cleared from the screen.
+ */
+export function useRetainedQuery<TQueryFnData, TError, TQueryKey extends QueryKey>(
+  options: UseQueryOptions<TQueryFnData, TError, TQueryFnData, TQueryKey>,
+): UseQueryResult<TQueryFnData, TError> {
+  const showing = useRef(false)
+  const result = useRequiredQuery({
+    ...options,
+    placeholderData: (previous) => (showing.current ? previous : undefined),
+  })
+  useEffect(() => {
+    showing.current = result.data !== undefined
+  })
+  return result
 }
 
 export function useRequiredQuery<

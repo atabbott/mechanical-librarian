@@ -247,6 +247,12 @@ Attention or Policy collections. Appearance, preparation and URL-selected
 review detail load independently. Pending or unavailable counts are never zero;
 a failed collection keeps navigation and a manual retry usable. Superseded
 queries cancel, and an older response cannot replace a newer URL selection.
+While a newer Library, Attention or diagnostic read is pending, the content the
+view last showed stays in place, dimmed and marked busy, and its selection,
+paging and queue controls stay inert; it is cleared rather than revived once
+that read settles or fails. The selected-work panel never keeps another work's
+fields while it loads. Pointer or keyboard intent on pager controls, lenses and
+work rows prefetches that read and its route code as background work.
 Owner navigation, typing, paging, retries and command results take priority over
 background refreshes at the next safe local-operation boundary. Recurring polls
 join ongoing work without accumulating redundant requests. A recorded choice is
