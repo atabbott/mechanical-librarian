@@ -2138,7 +2138,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                 assert "0 of 0" not in policy_body
                 assert "Draft is separate from the active policy" not in policy_body
                 assert page.locator(".policy-cutover").count() == 0
-                page.locator(".cm-policy-finish").get_by_text(
+                page.locator(".cm-finish-tray").get_by_text(
                     "Change any field to create a new draft \u2014 validation always "
                     "covers the whole policy.",
                     exact=True,
@@ -2201,8 +2201,8 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     assert option.bounding_box()["height"] >= 44
                 page.keyboard.press("Escape")
                 for control in page.locator(
-                    ".cm-policy-sidebar nav button, .cm-policy-posture button, "
-                    ".cm-dropdown-trigger, .cm-policy-finish-actions button"
+                    ".cm-policy-sidebar nav button, .cm-segmented button, "
+                    ".cm-dropdown-trigger, .cm-finish-actions button"
                 ).all():
                     assert control.bounding_box()["height"] >= 44
                 assert (
@@ -2212,7 +2212,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     == 1
                 )
                 assert (
-                    page.locator(".cm-policy-finish").evaluate(
+                    page.locator(".cm-finish-tray").evaluate(
                         "node => getComputedStyle(node).position"
                     )
                     == "static"
@@ -2241,7 +2241,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     "0",
                     "0",
                 ]
-                page.locator(".cm-policy-finish").get_by_text(
+                page.locator(".cm-finish-tray").get_by_text(
                     "Draft matches the active policy", exact=True
                 ).wait_for()
                 page.get_by_text("Draft matches active policy.", exact=True).wait_for()
@@ -2273,8 +2273,8 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                         page.evaluate(
                             """() => [...document.querySelectorAll(
                             `.masthead nav, .masthead nav a, .cm-policy-route,
-                            .cm-policy-editor, .cm-policy-finish,
-                            .cm-policy-finish-actions, .cm-policy-finish-actions button`)]
+                            .cm-policy-editor, .cm-finish-tray,
+                            .cm-finish-actions, .cm-finish-actions button`)]
                             .filter(node => node.scrollWidth > node.clientWidth &&
                             getComputedStyle(node).overflowX === 'visible')
                             .map(node => [node.tagName, node.className, node.clientWidth, node.scrollWidth])"""
@@ -2350,7 +2350,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     page.locator(".cm-policy-mode summary").click()
                 page.get_by_role("button", name="Enter Preview mode").wait_for()
                 sidebar_box = page.locator(".cm-policy-sidebar").bounding_box()
-                tray_box = page.locator(".cm-policy-finish").bounding_box()
+                tray_box = page.locator(".cm-finish-tray").bounding_box()
                 assert sidebar_box is not None and tray_box is not None
                 sidebar_right = sidebar_box["x"] + sidebar_box["width"]
                 assert tray_box["x"] < sidebar_right
@@ -2359,7 +2359,7 @@ def test_persistent_workspace_direct_entry_navigation_and_safe_decision(
                     const rail = document.querySelector('.cm-policy-sidebar')
                     const side = rail.getBoundingClientRect()
                     const tray = document.querySelector(
-                        '.cm-policy-finish').getBoundingClientRect()
+                        '.cm-finish-tray').getBoundingClientRect()
                     return [...rail.querySelectorAll('button, summary')]
                         .map(node => [node, node.getBoundingClientRect()])
                         .filter(([, box]) => {
@@ -5822,13 +5822,20 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     "Audiobookshelf identifier: synthetic-000"
                 )
                 expect(
-                    page.get_by_text(
-                        "No enabled metadata providers are available to associate."
-                    ).first
+                    page.get_by_text("Turn on a metadata source to use it here.").first
                 ).to_be_visible()
                 expect(
-                    page.get_by_role("group", name=re.compile(r"^Providers for"))
+                    page.get_by_role("group", name=re.compile(r"^Sources for"))
                 ).to_have_count(0)
+                # Nothing is edited yet, so there is no idle tray to reserve.
+                expect(page.locator(".settings-tray")).to_have_count(0)
+
+                def choose_section(label: str) -> None:
+                    page.get_by_role("combobox", name="Settings section").click()
+                    page.get_by_role(
+                        "option", name=re.compile("^" + re.escape(label))
+                    ).click()
+
                 assert page.locator("*").count() < 2_000
 
                 def assert_settings_layout(
@@ -5843,10 +5850,9 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                                 if (closedDetails && element !== closedDetails.querySelector(':scope > summary')) return false;
                                 return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
                               };
-                          const save = [...document.querySelectorAll('button')]
-                            .find((element) => element.textContent === 'Save settings');
-                          const saveRect = save.getBoundingClientRect();
-                          const overlapElements = [...document.querySelectorAll('.settings-fields > *, .settings-field-row, .settings-record-meta')]
+                          const tray = document.querySelector('.settings-tray');
+                          const saveRect = tray?.getBoundingClientRect();
+                          const overlapElements = !saveRect ? [] : [...document.querySelectorAll('.settings-fields > *, .settings-field-row, .settings-record-meta')]
                             .filter(visible)
                             .filter((element) => {
                               const rect = element.getBoundingClientRect();
@@ -5870,7 +5876,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                               group: new URL(location.href).searchParams.get('group'),
                               viewport: {width: innerWidth, height: innerHeight},
                               theme: document.documentElement.dataset.theme ?? getComputedStyle(document.documentElement).colorScheme,
-                              save: saveRect.toJSON(),
+                              tray: saveRect?.toJSON(),
                               offenders: overlapElements.map((element) => ({
                                 tag: element.tagName,
                                 className: element.className,
@@ -5883,7 +5889,6 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                             headingSize: Number.parseFloat(heading.fontSize),
                             headingLineHeight: Number.parseFloat(heading.lineHeight),
                             rootSize: Number.parseFloat(getComputedStyle(document.documentElement).fontSize),
-                            disabledOpacity: Number.parseFloat(getComputedStyle(save).opacity),
                             minLabelWidth: labels.length ? Math.min(...labels) : null,
                             brandContained: masthead && brandMark
                               ? brandMark.left >= 0 && brandMark.right <= innerWidth && brandMark.top >= masthead.top && brandMark.bottom <= masthead.bottom
@@ -5919,7 +5924,6 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     else:
                         assert layout["headingSize"] <= 40
                         assert layout["headingLineHeight"] <= 45
-                    assert layout["disabledOpacity"] < 1
                     if layout["minLabelWidth"] is not None:
                         assert layout["minLabelWidth"] >= 180
                     assert layout["brandContained"] is True
@@ -5958,29 +5962,44 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                             "document.documentElement.scrollWidth <= window.innerWidth"
                         )
                         assert_settings_layout(sidebar_visible=width > 700)
-                        if width <= 390:
-                            expect(
-                                page.locator("label.settings-mobile-group select")
-                            ).to_be_visible()
+                        # Exactly one of the two navigations at every width,
+                        # including the 391-700px band that once had neither.
+                        compact = page.get_by_role("combobox", name="Settings section")
+                        sidebar = page.get_by_role(
+                            "navigation", name="Settings sections"
+                        )
+                        if width <= 700:
+                            expect(compact).to_be_visible()
+                            expect(sidebar).to_be_hidden()
                         else:
-                            expect(page.get_by_label("Settings groups")).to_be_visible()
+                            expect(sidebar).to_be_visible()
+                            expect(compact).to_be_hidden()
+
+                    for width in (600, 701):
+                        page.set_viewport_size({"width": width, "height": 900})
+                        assert (
+                            page.get_by_role(
+                                "combobox", name="Settings section"
+                            ).is_visible()
+                            != page.get_by_role(
+                                "navigation", name="Settings sections"
+                            ).is_visible()
+                        )
 
                     group_labels = {
-                        "connection": "Connection",
-                        "providers": "Providers",
+                        "connection": "Audiobookshelf",
                         "libraries": "Libraries",
-                        "automation": "Automation & limits",
+                        "providers": "Metadata sources",
                         "reviewer": "Reviewer",
-                        "server": "Server",
+                        "background": "Background work",
+                        "access": "Access and diagnostics",
                         "appearance": "Appearance",
                     }
                     for width, height in ((884, 1000), (390, 844), (320, 800)):
                         page.set_viewport_size({"width": width, "height": height})
-                        for group, label in group_labels.items():
-                            if width <= 390:
-                                page.locator(
-                                    "label.settings-mobile-group select"
-                                ).select_option(group)
+                        for label in group_labels.values():
+                            if width <= 700:
+                                choose_section(label)
                             else:
                                 page.locator(
                                     ".settings-sidebar button", has_text=label
@@ -6013,9 +6032,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         toggle.click()
                     for width, height in ((390, 844), (320, 800)):
                         page.set_viewport_size({"width": width, "height": height})
-                        page.locator(
-                            "label.settings-mobile-group select"
-                        ).select_option("libraries")
+                        choose_section("Libraries")
                         page.evaluate(
                             "document.documentElement.style.fontSize = '200%'"
                         )
@@ -6027,15 +6044,14 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         )
                         assert_settings_layout(sidebar_visible=False, zoomed=True)
                         expect(
-                            page.locator("label.settings-mobile-group select")
+                            page.get_by_role("combobox", name="Settings section")
                         ).to_be_visible()
                         page.evaluate("document.documentElement.style.fontSize = ''")
 
                 page.set_viewport_size({"width": 320, "height": 800})
-                compact_group = page.locator("label.settings-mobile-group select")
-                compact_group.select_option("providers")
+                choose_section("Metadata sources")
                 expect(
-                    page.get_by_role("heading", name="Add a metadata provider")
+                    page.get_by_role("heading", name="Add a metadata source")
                 ).to_be_visible()
                 for provider in (
                     "Audible",
@@ -6065,14 +6081,30 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                       .every((heading) => heading.getBoundingClientRect().bottom < heading.nextElementSibling.getBoundingClientRect().top)"""
                 )
                 page.get_by_role("button", name="Add Inventaire").click()
-                inventaire_enabled = page.get_by_role(
-                    "checkbox", name="Provider state Enable inventaire"
+
+                def segment(group: str, choice: str):
+                    return page.get_by_role("group", name=group).get_by_role(
+                        "button", name=choice, exact=True
+                    )
+
+                expect(segment("Use Inventaire", "On")).to_have_attribute(
+                    "aria-pressed", "true"
                 )
-                expect(inventaire_enabled).to_be_checked()
-                inventaire_enabled.click()
-                expect(inventaire_enabled).not_to_be_checked()
-                inventaire_enabled.click()
-                expect(inventaire_enabled).to_be_checked()
+                segment("Use Inventaire", "Off").click()
+                expect(segment("Use Inventaire", "Off")).to_have_attribute(
+                    "aria-pressed", "true"
+                )
+                segment("Use Inventaire", "On").click()
+                expect(segment("Use Inventaire", "On")).to_have_attribute(
+                    "aria-pressed", "true"
+                )
+                # The tray floats while there is more to read, and at the end of
+                # the page it rests in its own reserved space covering no row.
+                expect(page.locator(".settings-tray")).to_have_css("position", "sticky")
+                page.evaluate(
+                    "window.scrollTo(0, document.documentElement.scrollHeight)"
+                )
+                assert_settings_layout(sidebar_visible=False)
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 saved_settings = page.request.get(origin + "/api/v1/settings").json()[
@@ -6099,33 +6131,29 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     page.get_by_role("heading", name="Audnexus audnexus")
                 ).to_be_visible()
                 expect(
-                    page.get_by_role(
-                        "checkbox", name="Cover evidence Use audnexus covers"
-                    )
+                    page.get_by_role("group", name="Audnexus cover evidence")
                 ).to_have_count(0)
-                audible_enabled = page.get_by_role(
-                    "checkbox", name="Provider state Enable audible catalog"
+                audible_cover_on = segment("Audible cover evidence", "On")
+                expect(segment("Use Audible", "Off")).to_have_attribute(
+                    "aria-pressed", "true"
                 )
-                audible_cover = page.get_by_role(
-                    "checkbox", name="Cover evidence Use audible catalog covers"
-                )
-                expect(audible_enabled).not_to_be_checked()
-                expect(audible_cover).to_be_disabled()
-                expect(audible_cover).not_to_be_checked()
-                audible_enabled.click()
-                expect(audible_cover).to_be_enabled()
-                audible_cover.focus()
+                expect(audible_cover_on).to_be_disabled()
+                segment("Use Audible", "On").click()
+                expect(audible_cover_on).to_be_enabled()
+                audible_cover_on.focus()
                 page.keyboard.press("Space")
-                expect(audible_cover).to_be_checked()
+                expect(audible_cover_on).to_have_attribute("aria-pressed", "true")
                 # Turning the provider off turns the evidence off with it and
                 # puts the control out of reach again.
-                audible_enabled.click()
-                expect(audible_cover).not_to_be_checked()
-                expect(audible_cover).to_be_disabled()
-                audible_enabled.click()
-                audible_cover.focus()
-                page.keyboard.press("Space")
-                expect(audible_cover).to_be_checked()
+                segment("Use Audible", "Off").click()
+                expect(segment("Audible cover evidence", "Off")).to_have_attribute(
+                    "aria-pressed", "true"
+                )
+                expect(audible_cover_on).to_be_disabled()
+                segment("Use Audible", "On").click()
+                audible_cover_on.focus()
+                page.keyboard.press("Enter")
+                expect(audible_cover_on).to_have_attribute("aria-pressed", "true")
                 page.get_by_role("button", name="Save settings").click()
                 expect(page.get_by_text("Settings saved and in use.")).to_be_visible()
                 saved_audible = next(
@@ -6141,29 +6169,34 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 # field is a live one, so the reload shows what the runtime
                 # already holds rather than a restart-pending value.
                 page.reload()
-                compact_group = page.locator("label.settings-mobile-group select")
-                compact_group.select_option("providers")
-                expect(
-                    page.get_by_role(
-                        "checkbox", name="Cover evidence Use audible catalog covers"
-                    )
-                ).to_be_checked()
+                choose_section("Metadata sources")
+                expect(segment("Audible cover evidence", "On")).to_have_attribute(
+                    "aria-pressed", "true"
+                )
                 expect(page.get_by_text("Applies after restart")).to_have_count(0)
                 assert not errors
 
-                compact_group.select_option("connection")
+                choose_section("Audiobookshelf")
                 expect(page.get_by_text("Configured · ····cret")).to_be_visible()
-                page.get_by_role("button", name="Clear primary access key").click()
+                page.get_by_role(
+                    "button", name="Clear Audiobookshelf access key"
+                ).click()
                 expect(
-                    page.get_by_role("button", name="Confirm clear primary access key")
+                    page.get_by_role(
+                        "button", name="Confirm clear Audiobookshelf access key"
+                    )
                 ).to_be_visible()
-                page.get_by_role("button", name="Keep primary access key").click()
-                page.get_by_role("button", name="Replace primary access key").click()
+                page.get_by_role(
+                    "button", name="Keep Audiobookshelf access key"
+                ).click()
+                page.get_by_role(
+                    "button", name="Replace Audiobookshelf access key"
+                ).click()
                 expect(
-                    page.get_by_label("Replacement primary access key")
+                    page.get_by_label("Replacement Audiobookshelf access key")
                 ).to_be_visible()
 
-                compact_group.select_option("automation")
+                choose_section("Background work")
                 timeout_input = page.get_by_role("spinbutton", name="Request timeout")
                 timeout_input.fill("0")
                 expect(page.get_by_role("alert")).to_contain_text(
@@ -6177,29 +6210,42 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     page.locator("#settings-limits-timeout_seconds-error")
                 ).to_contain_text("Request timeout must be from 1 to 60")
                 expect(timeout_input).to_be_focused()
+                # Save takes the owner to the first invalid value, here from
+                # another section, rather than sitting disabled.
+                choose_section("Appearance")
+                page.get_by_role("button", name="Save settings").click()
                 expect(
-                    page.get_by_role("button", name="Save settings")
-                ).to_be_disabled()
-                timeout_input.fill("30")
+                    page.get_by_role("heading", name="Background work", exact=True)
+                ).to_be_visible()
+                expect(timeout_input).to_be_focused()
+                timeout_input.fill("31")
+                page.get_by_role("button", name="Discard all").click()
+                expect(page.locator(".settings-tray")).to_have_count(0)
+                expect(timeout_input).to_have_value("30")
 
-                compact_group.select_option("reviewer")
-                reviewer_choice = page.get_by_role(
-                    "button", name="Use dots-studio/dots-3-note-preview:free"
-                )
+                choose_section("Reviewer")
+                expect(
+                    page.get_by_text(
+                        "Reviewer actions take effect as soon as you use them."
+                    )
+                ).to_be_visible()
+                reviewer_choice = page.get_by_role("combobox", name="Cover model")
                 reviewer_metrics = reviewer_choice.evaluate(
                     "element => element.getBoundingClientRect().toJSON()"
                 )
                 assert reviewer_metrics["height"] >= 44
+                reviewer_choice.click()
                 expect(
-                    page.get_by_text("Recommended advisory cover reviewer:")
+                    page.get_by_role("option", name="GPT-6 Luna (openai/gpt-6-luna)")
                 ).to_be_visible()
                 expect(
                     page.get_by_role(
-                        "button", name="Use GPT-6 Luna (openai/gpt-6-luna)"
+                        "option", name="dots-studio/dots-3-note-preview:free"
                     )
                 ).to_be_visible()
+                page.get_by_role("option", name="Custom model ID").click()
                 expect(
-                    page.get_by_text("Catalogue-capability-only free option:")
+                    page.get_by_role("textbox", name="Cover model ID")
                 ).to_be_visible()
                 expect(
                     page.get_by_text(
@@ -6207,21 +6253,20 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                         "Free memory or raise the container limit."
                     )
                 ).to_be_visible()
-                compact_group.select_option("server")
-                diagnostic_checkbox = page.get_by_role(
-                    "checkbox", name="Record diagnostic timings"
+                choose_section("Access and diagnostics")
+                diagnostic_metrics = page.get_by_role(
+                    "group", name="Diagnostic timings"
+                ).evaluate(
+                    """element => [...element.querySelectorAll('button')]
+                      .map((button) => button.getBoundingClientRect().toJSON())"""
                 )
-                diagnostic_metrics = diagnostic_checkbox.evaluate(
-                    """element => ({
-                      glyph: element.getBoundingClientRect().toJSON(),
-                      target: element.closest('label').getBoundingClientRect().toJSON(),
-                    })"""
-                )
-                assert diagnostic_metrics["glyph"]["width"] <= 20
-                assert diagnostic_metrics["glyph"]["height"] <= 20
-                assert diagnostic_metrics["target"]["height"] >= 44
+                assert len(diagnostic_metrics) == 2
+                assert all(item["height"] >= 44 for item in diagnostic_metrics)
+                # Off and On share one width and one baseline.
+                assert diagnostic_metrics[0]["width"] == diagnostic_metrics[1]["width"]
+                assert diagnostic_metrics[0]["top"] == diagnostic_metrics[1]["top"]
 
-                compact_group.select_option("connection")
+                choose_section("Audiobookshelf")
                 page.evaluate("window.__settingsLongTasks = []")
                 feedback = page.evaluate(
                     """async () => {
@@ -6235,7 +6280,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     }"""
                 )
                 assert feedback <= 100
-                expect(page.get_by_text("Unsaved settings changes.")).to_be_visible()
+                expect(page.get_by_text("1 unsaved change")).to_be_visible()
                 held_save: list[Any] = []
 
                 def hold_save(route) -> None:
@@ -6287,9 +6332,9 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 )
                 expect(recovered_status).to_be_visible()
                 expect(recovered_status).to_be_focused()
-                expect(
-                    page.get_by_role("button", name="Save settings")
-                ).to_be_disabled()
+                expect(page.get_by_role("button", name="Save settings")).to_have_count(
+                    0
+                )
                 assert errors == [
                     "Failed to load resource: the server responded with a status of 503 "
                     "(Service Unavailable)"
@@ -6315,7 +6360,9 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                     ),
                 )
                 page.get_by_role("button", name="Save settings").click()
-                stale_alert = page.get_by_text("Settings changed elsewhere.")
+                stale_alert = page.get_by_text(
+                    "Settings changed elsewhere, but the newer values could not be confirmed."
+                )
                 expect(stale_alert).to_be_visible()
                 expect(stale_alert).to_be_focused()
                 assert errors == [
@@ -6339,9 +6386,7 @@ def test_owner_settings_installed_semantics_responsiveness_and_bounds() -> None:
                 expect(page.get_by_text("Managed by /data/config.json")).to_be_visible()
                 assert page.locator(".settings-sheet input").count() == 0
                 assert page.get_by_role("button", name="Save settings").count() == 0
-                page.locator("label.settings-mobile-group select").select_option(
-                    "providers"
-                )
+                choose_section("Metadata sources")
                 expect(
                     page.get_by_role("heading", name="Audible audible_catalog")
                 ).to_be_visible()
@@ -7084,8 +7129,8 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                         "0.000001 per input token, 0.000002 per output token, 0 per request."
                     )
                     expect(
-                        page.get_by_role("textbox", name="Model ID", exact=True)
-                    ).to_have_attribute("placeholder", "synthetic/cover-a")
+                        page.get_by_role("textbox", name="Cover model ID", exact=True)
+                    ).to_have_value("synthetic/cover-a")
                     with page.expect_response(
                         lambda response: response.url.endswith(
                             "/api/v1/reviewer-access/selection"
@@ -7097,8 +7142,8 @@ def test_description_unavailable_inputs_and_explicit_metadata_recovery(state):
                     assert removed.value.status == 200
                     expect(adviser).to_contain_text("No description adviser selected.")
                     expect(
-                        page.get_by_role("textbox", name="Model ID", exact=True)
-                    ).to_have_attribute("placeholder", "synthetic/cover-a")
+                        page.get_by_role("textbox", name="Cover model ID", exact=True)
+                    ).to_have_value("synthetic/cover-a")
             browser.close()
 
 
@@ -8004,7 +8049,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             assert (
                 result.locator("xpath=..").get_attribute("class") == "cm-policy-editor"
             )
-            assert page.locator(".cm-policy-finish .cm-policy-result").count() == 0
+            assert page.locator(".cm-finish-tray .cm-policy-result").count() == 0
             for theme in ("light", "dark"):
                 page.locator("html").evaluate(
                     "(node, theme) => node.dataset.theme = theme", theme
@@ -8065,7 +8110,7 @@ def test_recorded_refusal_and_populated_policy_results_use_document_flow(tmp_pat
             last.scroll_into_view_if_needed()
             expect(last).to_be_in_viewport()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
-            actions = page.locator(".cm-policy-finish-actions")
+            actions = page.locator(".cm-finish-actions")
             actions.scroll_into_view_if_needed()
             assert actions.evaluate("""node => {
                 const [back, activate] = [...node.querySelectorAll('button')];
@@ -8146,12 +8191,10 @@ def test_packaged_description_cost_in_settings_and_cover_only_setup(width: int) 
                     adviser = page.get_by_role(
                         "region", name="Optional description adviser"
                     )
-                    expect(adviser).to_contain_text(
-                        "About $0.1713 per 1,000 description review requests (estimate)."
-                    )
+                    expect(adviser).to_contain_text("Description advice: about $0.17.")
                     cover = page.get_by_role("region", name="Optional cover reviewer")
                     expect(cover).to_contain_text(
-                        "About $0.6364 per 1,000 cover review requests (estimate)."
+                        "Cover review: about $0.64, including about 2.7 cover images per book."
                     )
                     expect(adviser).not_to_contain_text("1790929488")
                     expect(adviser).not_to_contain_text("2026")

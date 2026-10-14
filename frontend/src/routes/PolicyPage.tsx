@@ -20,8 +20,12 @@ import type {
   PolicyTransitionView,
   ShadowPostureView,
 } from '../api/http'
+import { ChangeCount } from '../components/ChangeCount'
 import { DescriptionAdviceSettings } from '../components/DescriptionAdviceSettings'
+import { Disclosure } from '../components/Disclosure'
 import { Dropdown } from '../components/Dropdown'
+import { FinishTray } from '../components/FinishTray'
+import { SegmentedControl } from '../components/SegmentedControl'
 import { automaticRefusalReasons, fieldLabel } from '../labels'
 import { policyRoute, useReviewContext } from '../router'
 import type { PolicyCritical } from '../router'
@@ -1268,7 +1272,6 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             {chapters.map((chapter) => {
               const chapterFields = fields.filter((field) => field.chapter === chapter.key)
               const changes = chapterFields.filter(fieldChanged).length
-              const changedFieldLabel = `${String(changes)} changed ${changes === 1 ? 'field' : 'fields'}`
               const labelId = `policy-${chapter.key}-label`
               const descriptionId = `policy-${chapter.key}-description`
               return (
@@ -1284,10 +1287,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     <strong id={labelId}>{chapter.label}</strong>
                     <small id={descriptionId}>{chapter.description}</small>
                   </span>
-                  <b aria-hidden="true">{changes}</b>
-                  <span className="sr-only" id={`policy-${chapter.key}-changes`}>
-                    {changedFieldLabel}
-                  </span>
+                  <ChangeCount id={`policy-${chapter.key}-changes`} count={changes} />
                 </button>
               )
             })}
@@ -1408,8 +1408,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                     {data.state.audiobook_qualification.some(
                       (entry) => entry.field === field.key && entry.option === option,
                     ) ? (
-                      <details className="cm-policy-field-guidance">
-                        <summary>Audiobook operations</summary>
+                      <Disclosure summary="Audiobook operations">
                         <ul>
                           {data.state.audiobook_qualification
                             .filter((entry) => entry.field === field.key && entry.option === option)
@@ -1423,10 +1422,9 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                               </li>
                             ))}
                         </ul>
-                      </details>
+                      </Disclosure>
                     ) : null}
-                    <details className="cm-policy-field-guidance">
-                      <summary>What this changes</summary>
+                    <Disclosure summary="What this changes">
                       {field.key === 'series' ? (
                         <p>
                           One provider can supply enough backing; corroboration strengthens the
@@ -1447,7 +1445,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           </li>
                         ))}
                       </ul>
-                    </details>
+                    </Disclosure>
                   </header>
                   {field.unsupported ? (
                     <div className="cm-policy-unavailable">
@@ -1467,51 +1465,26 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
                           ) : null}
                           {automaticAvailable ? null : <small>Automatic mode not supported</small>}
                         </span>
-                        <div
-                          className="cm-policy-posture"
-                          role="group"
-                          aria-label={`${field.label} review mode`}
-                        >
-                          <button
-                            type="button"
-                            aria-pressed={destination === 'automatic'}
-                            disabled={command.isPending || !automaticAvailable}
-                            onClick={() =>
-                              editDraft({
-                                ...draft,
-                                destinations: { ...draft.destinations, [field.key]: 'automatic' },
-                              })
-                            }
-                          >
-                            Automatic
-                          </button>
-                          <button
-                            type="button"
-                            aria-pressed={destination === 'ask'}
-                            disabled={command.isPending}
-                            onClick={() =>
-                              editDraft({
-                                ...draft,
-                                destinations: { ...draft.destinations, [field.key]: 'ask' },
-                              })
-                            }
-                          >
-                            Ask me
-                          </button>
-                          <button
-                            type="button"
-                            aria-pressed={destination === 'ignore'}
-                            disabled={command.isPending}
-                            onClick={() =>
-                              editDraft({
-                                ...draft,
-                                destinations: { ...draft.destinations, [field.key]: 'ignore' },
-                              })
-                            }
-                          >
-                            Ignore
-                          </button>
-                        </div>
+                        <SegmentedControl
+                          label={`${field.label} review mode`}
+                          value={destination}
+                          disabled={command.isPending}
+                          options={[
+                            {
+                              value: 'automatic',
+                              label: 'Automatic',
+                              disabled: !automaticAvailable,
+                            },
+                            { value: 'ask', label: 'Ask me' },
+                            { value: 'ignore', label: 'Ignore' },
+                          ]}
+                          onChange={(next) =>
+                            editDraft({
+                              ...draft,
+                              destinations: { ...draft.destinations, [field.key]: next },
+                            })
+                          }
+                        />
                       </div>
                       <label className="cm-policy-representation">
                         <span>Representation</span>
@@ -1716,96 +1689,104 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
             ) : null}
           </section>
         ) : null}
-        <section
-          className={`cm-policy-finish stage-${stage}`}
-          aria-label="Whole policy draft impact and activation"
+        <FinishTray
+          label="Whole policy draft impact and activation"
+          className={`stage-${stage}`}
           ref={trayRef}
-        >
-          <div className="cm-policy-impact-summary">
-            {['error', 'warning'].includes(status.tone) ? null : (
-              <>
-                <strong>{finishTitle}</strong>
-                <span>{finishDetail}</span>
-              </>
-            )}
-            <p
-              className={`policy-status ${status.tone} ${['error', 'warning'].includes(status.tone) ? '' : 'sr-only'}`}
-              ref={policyStatusRef}
-              tabIndex={-1}
-              role={status.tone === 'error' ? 'alert' : 'status'}
-            >
-              {status.message}
-            </p>
-          </div>
-          <ol aria-label="Policy activation steps">
-            {['Validate', 'Preview', 'Activate'].map((label, index) => {
-              const done =
-                index === 0
-                  ? completedValidate
-                  : index === 1
-                    ? completedPreview
-                    : stage === 'activated'
-              return (
-                <li
-                  key={label}
-                  className={done ? 'done' : ''}
-                  aria-current={stage !== 'activated' && currentStep === index ? 'step' : undefined}
+          summary={
+            <>
+              {['error', 'warning'].includes(status.tone) ? null : (
+                <>
+                  <strong>{finishTitle}</strong>
+                  <span>{finishDetail}</span>
+                </>
+              )}
+              <p
+                className={`policy-status ${status.tone} ${['error', 'warning'].includes(status.tone) ? '' : 'sr-only'}`}
+                ref={policyStatusRef}
+                tabIndex={-1}
+                role={status.tone === 'error' ? 'alert' : 'status'}
+              >
+                {status.message}
+              </p>
+            </>
+          }
+          progress={
+            <ol aria-label="Policy activation steps">
+              {['Validate', 'Preview', 'Activate'].map((label, index) => {
+                const done =
+                  index === 0
+                    ? completedValidate
+                    : index === 1
+                      ? completedPreview
+                      : stage === 'activated'
+                return (
+                  <li
+                    key={label}
+                    className={done ? 'done' : ''}
+                    aria-current={
+                      stage !== 'activated' && currentStep === index ? 'step' : undefined
+                    }
+                  >
+                    <span>{done ? <Check /> : index + 1}</span>
+                    <small>{label}</small>
+                  </li>
+                )
+              })}
+            </ol>
+          }
+          actions={
+            <>
+              {stage === 'preview' ? (
+                <button disabled={command.isPending} onClick={() => setStage('editing')}>
+                  Back to editing
+                </button>
+              ) : null}
+              {stage === 'activation' ? (
+                <button disabled={command.isPending} onClick={() => setStage('preview')}>
+                  Back to preview
+                </button>
+              ) : null}
+              {stage === 'editing' ? (
+                <button
+                  className="primary-action"
+                  disabled={command.isPending || !draftDisplay.changed}
+                  onClick={() => void validateAndPreview()}
                 >
-                  <span>{done ? <Check /> : index + 1}</span>
-                  <small>{label}</small>
-                </li>
-              )
-            })}
-          </ol>
-          <div className="cm-policy-finish-actions">
-            {stage === 'preview' ? (
-              <button disabled={command.isPending} onClick={() => setStage('editing')}>
-                Back to editing
-              </button>
-            ) : null}
-            {stage === 'activation' ? (
-              <button disabled={command.isPending} onClick={() => setStage('preview')}>
-                Back to preview
-              </button>
-            ) : null}
-            {stage === 'editing' ? (
-              <button
-                className="primary-action"
-                disabled={command.isPending || !draftDisplay.changed}
-                onClick={() => void validateAndPreview()}
-              >
-                Validate and preview
-              </button>
-            ) : null}
-            {stage === 'validating' ? (
-              <button className="primary-action" disabled>
-                Validating…
-              </button>
-            ) : null}
-            {stage === 'preview' ? (
-              <button
-                className="primary-action"
-                disabled={command.isPending || !snapshotId || !preview || !previewActivePolicyId}
-                onClick={() => setStage('activation')}
-              >
-                Review activation
-              </button>
-            ) : null}
-            {stage === 'activation' ? (
-              <button
-                className="primary-action"
-                disabled={command.isPending}
-                onClick={() => void activate()}
-              >
-                {command.isPending ? 'Activating…' : 'Activate policy'}
-              </button>
-            ) : null}
-            {stage === 'activated' ? (
-              <button className="primary-action" onClick={() => setStage('editing')}>
-                Continue editing
-              </button>
-            ) : null}
-          </div>
+                  Validate and preview
+                </button>
+              ) : null}
+              {stage === 'validating' ? (
+                <button className="primary-action" disabled>
+                  Validating…
+                </button>
+              ) : null}
+              {stage === 'preview' ? (
+                <button
+                  className="primary-action"
+                  disabled={command.isPending || !snapshotId || !preview || !previewActivePolicyId}
+                  onClick={() => setStage('activation')}
+                >
+                  Review activation
+                </button>
+              ) : null}
+              {stage === 'activation' ? (
+                <button
+                  className="primary-action"
+                  disabled={command.isPending}
+                  onClick={() => void activate()}
+                >
+                  {command.isPending ? 'Activating…' : 'Activate policy'}
+                </button>
+              ) : null}
+              {stage === 'activated' ? (
+                <button className="primary-action" onClick={() => setStage('editing')}>
+                  Continue editing
+                </button>
+              ) : null}
+            </>
+          }
+        >
           {stage === 'validating' ? (
             <section className="cm-policy-validation" aria-label="Validation in progress">
               <header>
@@ -1855,7 +1836,7 @@ export default function PolicyPage({ data }: { data: PolicyCritical }) {
               </div>
             </section>
           ) : null}
-        </section>
+        </FinishTray>
       </div>
       {activationNotice ? (
         <section className="policy-cutover" aria-label="Policy activation progress">

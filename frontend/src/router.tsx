@@ -140,20 +140,24 @@ export const normalizeActivitySearch = (search: Record<string, unknown>): Activi
 }
 
 export type SettingsGroup =
-  'connection' | 'providers' | 'libraries' | 'automation' | 'reviewer' | 'server' | 'appearance'
+  'connection' | 'libraries' | 'providers' | 'reviewer' | 'background' | 'access' | 'appearance'
 export interface SettingsSearch {
   group: SettingsGroup
 }
+// `automation` and `server` were the earlier names for Background work, so
+// links saved before the sections were regrouped still open a useful page.
 export const normalizeSettingsSearch = (search: Record<string, unknown>): SettingsSearch => ({
   group:
-    search.group === 'providers' ||
     search.group === 'libraries' ||
-    search.group === 'automation' ||
+    search.group === 'providers' ||
     search.group === 'reviewer' ||
-    search.group === 'server' ||
+    search.group === 'background' ||
+    search.group === 'access' ||
     search.group === 'appearance'
       ? search.group
-      : 'connection',
+      : search.group === 'automation' || search.group === 'server'
+        ? 'background'
+        : 'connection',
 })
 
 export const libraryQuery = (http: ReviewHttp, search: LibrarySearch) =>
