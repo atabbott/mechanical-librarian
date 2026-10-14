@@ -113,6 +113,8 @@ _PYTEST_ARGUMENTS = (
 # The tiers `--workers` may divide. The others either already run as bounded
 # partitions of their own or execute through the installed distribution.
 _PARALLEL_TIERS = ("fast", "browser")
+# Each fast-tier file's recorded wall time, which `--shard` balances on.
+_FAST_TIMINGS = Path(__file__).with_name("fast_tier_timings.json")
 _RUN_EXIT_CODES = frozenset((pytest.ExitCode.OK, pytest.ExitCode.TESTS_FAILED))
 # The shape `unittest.TestResult` is handed a failure in, spelled out
 # because typeshed keeps its own alias private.
@@ -1016,8 +1018,8 @@ def _parallel_units(
 
     Units start in descending expected size because a free worker takes the
     next unit as soon as it finishes one, so a large unit started last would
-    run alone at the end. File size stands in for run time, which nothing
-    records; a function unit is sized by its parameter sets.
+    run alone at the end. File units are put in recorded-time order later,
+    by `_shard_units`; a function unit is sized by its parameter sets.
     """
 
     targets = cohort_targets(root, name)
@@ -1043,6 +1045,73 @@ def _parallel_units(
         groups.setdefault(target.partition("[")[0], []).append(target)
     units = sorted(groups.values(), key=lambda unit: -len(unit))
     return tuple(tuple(unit) for unit in units), session.identifiers
+
+
+def _recorded_seconds(root: Path) -> dict[str, float]:
+    """Read the fast tier's recorded per-file run times, keyed by path."""
+
+    try:
+        table = json.loads(_FAST_TIMINGS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(table, dict) or table.get("schema") != "fast-tier-timings-v1":
+        return {}
+    seconds = table.get("seconds")
+    if not isinstance(seconds, dict):
+        return {}
+    return {
+        str(root / path): float(value)
+        for path, value in seconds.items()
+        if isinstance(value, int | float) and not isinstance(value, bool)
+    }
+
+
+def _shard_units(
+    root: Path, units: tuple[tuple[str, ...], ...], index: int, count: int
+) -> tuple[tuple[str, ...], ...]:
+    """Return the file units shard `index` of `count` runs.
+
+    Each unit, longest expected first, goes to the shard expecting the least
+    time so far, the lowest-numbered on a tie. Every shard computes the same
+    split from the same tree, so the shards together run every unit exactly
+    once. A file's expected time is its recorded run time; a file with none
+    is estimated from its size at the recorded files' rate. The record only
+    balances the shards: a stale one makes them uneven, never incomplete.
+    """
+
+    recorded = _recorded_seconds(root)
+    sizes = {target: Path(target).stat().st_size for unit in units for target in unit}
+    known = [target for target in sizes if target in recorded]
+    known_bytes = sum(sizes[target] for target in known)
+    rate = sum(recorded[target] for target in known) / known_bytes if known_bytes else 1
+    expected = {
+        unit: sum(recorded.get(target, sizes[target] * rate) for target in unit)
+        for unit in units
+    }
+    loads = [0.0] * count
+    owned: list[list[tuple[str, ...]]] = [[] for _ in range(count)]
+    for unit in sorted(units, key=lambda unit: (-expected[unit], unit)):
+        shard = loads.index(min(loads))
+        loads[shard] += expected[unit]
+        owned[shard].append(unit)
+    return tuple(owned[index - 1])
+
+
+def _write_recorded_seconds(
+    root: Path, units: tuple[tuple[str, ...], ...], seconds: list[float]
+) -> None:
+    """Record each file unit's wall time as the table shards balance on."""
+
+    table = {
+        "schema": "fast-tier-timings-v1",
+        "seconds": {
+            Path(unit[0]).relative_to(root).as_posix(): round(elapsed, 1)
+            for unit, elapsed in sorted(zip(units, seconds, strict=True))
+        },
+    }
+    _FAST_TIMINGS.write_text(
+        json.dumps(table, indent=1, sort_keys=True) + "\n", encoding="utf-8"
+    )
 
 
 def _run_worker_unit(
@@ -1192,30 +1261,44 @@ def run_cohort_in_parallel(
     name: str,
     workers: int,
     test_timeout_seconds: int | None = None,
+    shard: tuple[int, int] | None = None,
+    record_timings: bool = False,
 ) -> bool:
     """Run a cohort across `workers` processes and report it as one tier.
 
     The verdict, counts and failure diagnostics are the ones a serial run of
-    the same cohort reports; only the wall-clock time differs.
+    the same cohort reports; only the wall-clock time differs. With `shard`,
+    only that shard's file units run, and the report covers just those. With
+    `record_timings`, each unit's wall time replaces the recorded table.
     """
 
     _verify_pytest_environment()
     units, expected = _parallel_units(root, name)
+    if COHORTS[name].parallel_unit == "file":
+        units = _shard_units(root, units, *(shard or (1, 1)))
+    seconds = [0.0] * len(units)
+
+    def timed(position: int, directory: Path) -> dict[str, object]:
+        started = time.monotonic()
+        record = _spawn_worker_unit(
+            root,
+            name,
+            units[position],
+            directory / f"unit-{position}.json",
+            test_timeout_seconds,
+        )
+        seconds[position] = time.monotonic() - started
+        return record
+
     with tempfile.TemporaryDirectory(prefix="ml-tier-") as scratch:
-        records_directory = Path(scratch)
         with ThreadPoolExecutor(max_workers=workers) as pool:
             records = list(
                 pool.map(
-                    lambda numbered: _spawn_worker_unit(
-                        root,
-                        name,
-                        numbered[1],
-                        records_directory / f"unit-{numbered[0]}.json",
-                        test_timeout_seconds,
-                    ),
-                    enumerate(units),
+                    lambda position: timed(position, Path(scratch)), range(len(units))
                 )
             )
+    if record_timings:
+        _write_recorded_seconds(root, units, seconds)
     return _report_cohort(name, _merge_worker_records(records, expected))
 
 
@@ -1494,6 +1577,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--slow-part", choices=("remaining", "owner-browser"))
     parser.add_argument("--test-timeout-seconds", type=int)
     parser.add_argument("--workers", type=int)
+    parser.add_argument("--shard", metavar="K/N")
+    parser.add_argument("--record-timings", action="store_true")
     # Internal: one work unit of a `--workers` run, spawned by the runner.
     parser.add_argument("--worker-result", help=argparse.SUPPRESS)
     parser.add_argument("--worker-target", action="append", help=argparse.SUPPRESS)
@@ -1504,6 +1589,20 @@ def main(argv: list[str] | None = None) -> int:
         parser.error(
             "--workers requires fast or browser execution and at least two workers"
         )
+    shard: tuple[int, int] | None = None
+    if arguments.shard is not None:
+        index, _, count = arguments.shard.partition("/")
+        if not (index.isdigit() and count.isdigit()) or not (
+            1 <= int(index) <= int(count) and int(count) >= 2
+        ):
+            parser.error("--shard takes K/N with 1 <= K <= N and N at least two")
+        if arguments.tier != "fast" or arguments.workers is None:
+            parser.error("--shard requires fast execution with --workers")
+        shard = (int(index), int(count))
+    if arguments.record_timings and (
+        arguments.tier != "fast" or arguments.workers is None or shard is not None
+    ):
+        parser.error("--record-timings requires an unsharded fast run with --workers")
     if (arguments.worker_result is None) != (arguments.worker_target is None) or (
         arguments.worker_result is not None
         and (
@@ -1541,7 +1640,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if arguments.workers is not None:
             passed = run_cohort_in_parallel(
-                root, arguments.tier, arguments.workers, arguments.test_timeout_seconds
+                root,
+                arguments.tier,
+                arguments.workers,
+                arguments.test_timeout_seconds,
+                shard,
+                arguments.record_timings,
             )
         elif arguments.slow_part is not None:
             _verify_slow_partition(root)

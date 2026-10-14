@@ -41,7 +41,8 @@ uv run mypy src tests scripts
 uv run python scripts/run_test_tier.py fast    # unit, focused integration,
                                                # static architecture; add
                                                # --workers N to run N files
-                                               # at a time, as the gate does
+                                               # at a time, and --shard K/N
+                                               # for one gate job's share
 
 python3 scripts/qualify_exact_artifact.py \    # wheel identity, RECORD
   --source-sha "$(git rev-parse HEAD)" \       # integrity, installed console,
@@ -222,8 +223,9 @@ to select `--test-tier required`; protected-browser scheduling is unchanged.
 
 ## What the gate proves
 
-Every pull-request candidate runs independent required `fast-source`,
-`exact-installed`, and `protected-browser` jobs. They are deliberately not
+Every pull-request candidate runs independent required `fast-source` (with its
+`fast-source-2` to `fast-source-4` shards), `exact-installed`, and
+`protected-browser` jobs. They are deliberately not
 recombined: the former serial exact-installed workflow exhausted its 825-second
 subprocess deadline on four consecutive candidates, including after internal
 sharding. No runner-only aggregate job is maintained; the trusted delivery
@@ -240,11 +242,21 @@ The `fast-source` job has a 25-minute deadline covering toolchain and dependency
 setup as well as qualification. This operational margin preserves every check
 and test; it is not a runtime guarantee for the fast tier.
 
-`fast-source` runs its tier with `--workers 4`; run serially it took about
-seventeen minutes, and every merge waits on the slowest job. `protected-browser`
-stays serial: it finishes well before `fast-source`, and four Chromium workers
-on the hosted runner broke timing-bound browser tests. `--workers` still
-divides the browser tier for local runs. Each worker is a fresh
+The fast tier runs as four shards, one per job: `fast-source` runs shard 1
+after its static and frontend checks, and `fast-source-2`, `fast-source-3` and
+`fast-source-4` run the others, each with `--workers 2 --shard K/4`. Run
+serially on one hosted runner it took about sixteen minutes, every merge waits
+on the slowest job, and four worker processes on that one runner saved barely
+a minute, so the split is across runners. Every shard computes the same split:
+each test file, longest first, goes to the shard expecting the least time so
+far, using the per-file wall times in `scripts/fast_tier_timings.json`, and a
+file the table does not list is estimated from its size. A stale table only
+unbalances the shards; it never drops or repeats a file. Refresh it with
+`uv run python scripts/run_test_tier.py fast --workers 4 --record-timings`.
+
+`protected-browser` stays serial: four Chromium workers on one hosted runner
+broke timing-bound browser tests and saved little time. `--workers` still divides the browser tier for
+local runs. Each worker is a fresh
 interpreter that takes the next work unit as it frees up, largest first: a test
 file for `fast`, and a test function with all its parameter sets for
 `browser`, whose time sits mostly in one file. The coordinating runner merges
@@ -281,7 +293,7 @@ origin or payload mismatch, a stale test install, or a non-installed import or
 command stops the qualification. The script is the authority for each check and
 the order it runs in.
 
-All five jobs, including `dependency-audit`, are required by the strict default-
+All eight jobs, including `dependency-audit`, are required by the strict default-
 branch ruleset. Managed Renovate version updates use the bounded
 [platform auto-merge exception](exact-head-merging.md#renovate-platform-auto-merge-exception).
 Other public CI results are necessary but are not merge authority. The maintainer-owned

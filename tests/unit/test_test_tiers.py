@@ -28,8 +28,11 @@ from scripts.run_test_tier import (
     COHORTS,
     _CohortSession,
     _merge_worker_records,
+    _parallel_units,
     _retained_traceback,
+    _shard_units,
     _verify_slow_partition,
+    _write_recorded_seconds,
     cohort_manifest,
     cohort_targets,
     collect_cohort,
@@ -1849,6 +1852,15 @@ def test_merged_units_refuse_duplicates_omissions_and_emptiness() -> None:
             "--worker-target",
             "tests/slow/test_audio_probe.py",
         ],
+        ["fast", "--shard", "1/4"],
+        ["browser", "--workers", "2", "--shard", "1/4"],
+        *(
+            ["fast", "--workers", "2", "--shard", shard]
+            for shard in ("0/4", "5/4", "1/1", "a/4", "1", "-1/4")
+        ),
+        ["fast", "--record-timings"],
+        ["browser", "--workers", "2", "--record-timings"],
+        ["fast", "--workers", "2", "--shard", "1/4", "--record-timings"],
     ),
 )
 def test_workers_option_refuses_tiers_it_cannot_divide(args: list[str]) -> None:
@@ -1857,9 +1869,80 @@ def test_workers_option_refuses_tiers_it_cannot_divide(args: list[str]) -> None:
     assert error.value.code == 2
 
 
-def test_the_gate_divides_the_fast_tier_into_four_workers() -> None:
+@pytest.mark.parametrize("count", (2, 3, 4))
+def test_shards_together_run_every_fast_file_exactly_once(count: int) -> None:
+    root = Path(__file__).parents[2]
+    units, expected = _parallel_units(root, "fast")
+    assert expected is None
+    shards = [_shard_units(root, units, index, count) for index in range(1, 5)[:count]]
+    assert all(shards)
+    assert sorted(unit for shard in shards for unit in shard) == sorted(units)
+
+
+def test_shards_balance_on_recorded_time_and_estimate_unrecorded_files(
+    tmp_path: Path,
+) -> None:
+    sizes = {"slow.py": 10, "large.py": 4000, "quick.py": 10, "new.py": 2000}
+    for name, size in sizes.items():
+        (tmp_path / name).write_bytes(b"#" * size)
+    units = tuple((str(tmp_path / name),) for name in sizes)
+    timings = tmp_path / "timings.json"
+    with patch("scripts.run_test_tier._FAST_TIMINGS", timings):
+        # With no record, size stands in for time.
+        assert [_shard_units(tmp_path, units, index, 2) for index in (1, 2)] == [
+            ((str(tmp_path / "large.py"),),),
+            tuple(
+                (str(tmp_path / name),) for name in ("new.py", "quick.py", "slow.py")
+            ),
+        ]
+        _write_recorded_seconds(
+            tmp_path,
+            tuple(
+                (str(tmp_path / name),) for name in ("slow.py", "large.py", "quick.py")
+            ),
+            [9.0, 2.0, 5.0],
+        )
+        assert json.loads(timings.read_text(encoding="utf-8")) == {
+            "schema": "fast-tier-timings-v1",
+            "seconds": {"large.py": 2.0, "quick.py": 5.0, "slow.py": 9.0},
+        }
+        # `new.py` has no record, so it is estimated at the recorded files'
+        # rate: 16 seconds over 4020 bytes, about 8 seconds for its 2000.
+        assert [_shard_units(tmp_path, units, index, 2) for index in (1, 2)] == [
+            tuple((str(tmp_path / name),) for name in ("slow.py", "large.py")),
+            tuple((str(tmp_path / name),) for name in ("new.py", "quick.py")),
+        ]
+
+
+def test_recording_timings_times_every_unit_of_the_run(tmp_path: Path) -> None:
+    targets = tuple(
+        target
+        for body in ("def test_one() -> None:\n    pass\n",) * 2
+        for target in _module(tmp_path, body)
+    )
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._shard_units", side_effect=lambda r, u, i, c: u),
+        patch("scripts.run_test_tier._write_recorded_seconds") as write,
+    ):
+        passed, _, _ = _tier_streams(
+            lambda: run_cohort_in_parallel(Path.cwd(), "fast", 2, record_timings=True)
+        )
+    assert passed is True
+    root, units, seconds = write.call_args.args
+    assert root == Path.cwd()
+    assert sorted(units) == sorted((target,) for target in targets)
+    assert len(seconds) == 2 and all(value > 0 for value in seconds)
+
+
+def test_the_gate_divides_the_fast_tier_into_four_sharded_jobs() -> None:
     workflow = (
         Path(__file__).parents[2] / ".github/workflows/public-gate.yml"
     ).read_text(encoding="utf-8")
-    assert "run: uv run python scripts/run_test_tier.py fast --workers 4\n" in workflow
+    for shard in range(1, 5):
+        assert (
+            "run: uv run python scripts/run_test_tier.py fast --workers 2 "
+            f"--shard {shard}/4\n"
+        ) in workflow
+    assert workflow.count("run_test_tier.py fast") == 4
     assert "run: uv run python scripts/run_test_tier.py browser\n" in workflow
