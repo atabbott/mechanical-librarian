@@ -4,8 +4,8 @@
 
 - Reloads and return visits reuse the browser's private copy of the review
   application and of cover previews instead of downloading them again, and the
-  application is served precompressed. The shell and every API response remain
-  uncacheable (#1193).
+  application is served precompressed. The shell and every other API response
+  remain uncacheable (#1193).
 
 - Settings and setup show a measured Luna cover estimate of about $0.6364 per
   1,000 review requests. Reviewer cost evidence now records its measured run on

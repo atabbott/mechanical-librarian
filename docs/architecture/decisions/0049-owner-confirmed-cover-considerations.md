@@ -42,6 +42,8 @@ noncurrent and blocks its decision from reaching the guarded write path.
 Authenticated image transport exposes only the bounded application-owned PNG
 preview for the exact current consideration. It is private/no-store and is not
 an original-download, provider, arbitrary-path, or generic image endpoint.
+Amended 2026-10-14 (#1193): previews are now cached
+`private, max-age=31536000, immutable` after the session check.
 Automatic model-selected writes, bulk reevaluation, silent learning, new
 providers, media writes, and production-library qualification remain excluded.
 
