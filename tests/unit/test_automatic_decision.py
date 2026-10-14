@@ -1109,6 +1109,21 @@ def test_pre_v19_f46_aliases_retain_every_original_operation(prior_digest):
             automatic_decision._HISTORICAL_PERMISSIONS_0,
             id="asset-cache-predecessor-f46",
         ),
+        pytest.param(
+            "f8dd88e5cf53a6e47871d8f8bf3357331a6b59baa72827b23891944c47d62344",
+            automatic_decision._HISTORICAL_PERMISSIONS_2,
+            id="browse-facts-predecessor-f19a",
+        ),
+        pytest.param(
+            "688d5d9737f27d7edafda8dcb96ea0a5396f022860e93f9d065239317f78c254",
+            automatic_decision._HISTORICAL_PERMISSIONS_7,
+            id="browse-facts-predecessor-f20",
+        ),
+        pytest.param(
+            "f93b61f767eafd8a0e5438886171743f84311a2c5a5a964ec0632ad538442e16",
+            automatic_decision._HISTORICAL_PERMISSIONS_0,
+            id="browse-facts-predecessor-f46",
+        ),
     ),
 )
 def test_immediate_predecessor_decisions_preserve_only_their_frozen_permissions(
