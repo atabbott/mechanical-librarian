@@ -657,6 +657,11 @@ def execute(
         "public_evidence": None,
     }
     if complete:
+        run = {
+            "source_head": manifest["source_head"],
+            "cohort_sha256": manifest["cohort_sha256"],
+            "observed_at": int(time.time()),
+        }
         rows = []
         for model, task in dict.fromkeys(
             (row[1], row[2]) for row in selected if row[0] == "openrouter"
@@ -689,18 +694,14 @@ def execute(
                     else 0,
                     "total_cost_usd": str(total),
                     "per_1000_usd": str(per_thousand(str(total), len(attempts))),
+                    "measured_run": run,
                 }
             )
         if rows:
             evidence = ReviewerCostEvidence.model_validate_json(
                 encoded(
                     {
-                        "schema_version": "reviewer-cost-evidence-v1",
-                        "measured_run": {
-                            "source_head": manifest["source_head"],
-                            "cohort_sha256": manifest["cohort_sha256"],
-                            "observed_at": int(time.time()),
-                        },
+                        "schema_version": "reviewer-cost-evidence-v2",
                         "models": rows,
                     }
                 )

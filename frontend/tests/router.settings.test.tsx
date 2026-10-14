@@ -23,7 +23,7 @@ import { document, view } from './settingsFixtures'
 const reviewerView: ReviewerAccessView = {
   schema_version: 'reviewer-access-view-v2',
   cover_metadata: null,
-  cost_evidence: { schema_version: 'reviewer-cost-evidence-v1', measured_run: null, models: [] },
+  cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
   revision: 3,
   mapping: null,
   description_mapping: null,
@@ -1520,31 +1520,31 @@ it('separates measured cover cost from observed rates and never lends prices to 
       request_price: null,
     },
     cost_evidence: {
-      schema_version: 'reviewer-cost-evidence-v1' as const,
-      measured_run: {
-        source_head: 'a'.repeat(40),
-        cohort_sha256: 'b'.repeat(64),
-        observed_at: 1700000000,
-      },
+      schema_version: 'reviewer-cost-evidence-v2' as const,
       models: [
         {
           model: 'openai/gpt-6-luna',
           task: 'cover' as const,
-          requests_selected: 10,
-          requests_attempted: 10,
-          requests_completed: 9,
-          requests_failed: 1,
-          works: 10,
-          distinct_images: 20,
-          total_cost_usd: '0.0042',
-          per_1000_usd: '0.42',
+          requests_selected: 100,
+          requests_attempted: 100,
+          requests_completed: 100,
+          requests_failed: 0,
+          works: 100,
+          distinct_images: 270,
+          total_cost_usd: '0.063641500',
+          per_1000_usd: '0.636415000',
+          measured_run: {
+            source_head: 'a'.repeat(40),
+            cohort_sha256: 'b'.repeat(64),
+            observed_at: 1700000000,
+          },
         },
       ],
     },
   }))
   renderRoute('/settings?group=reviewer', http)
   const cover = within(await screen.findByRole('region', { name: 'Optional cover reviewer' }))
-  expect(cover.getByText('About $0.42 per 1,000 cover review requests (estimate).')).toBeVisible()
+  expect(cover.getByText('About $0.6364 per 1,000 cover review requests (estimate).')).toBeVisible()
   expect(
     cover.getByText(/0.000001 per input token; Unavailable per output token; 0 per image/u),
   ).toBeVisible()

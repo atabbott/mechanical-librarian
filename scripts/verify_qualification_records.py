@@ -47,7 +47,7 @@ AST_SOURCES = sorted(
 )
 # Reviewed path/classification snapshot. Amend explicitly when source ownership changes.
 CLASSIFICATION_SHA256 = (
-    "93629660a085b27716a4fdf4be62290cb4a4453dbd4329864985b54ec68ef3e8"
+    "f6d92646dd26676d8c85a7f6f4f0438311faa22b903c61cd63d705dfca4fb5a8"
 )
 
 

@@ -164,8 +164,7 @@ def _exercise_exact_built_shell_supports_every_direct_route_and_client_navigatio
                             "description_metadata": None,
                             "cover_metadata": None,
                             "cost_evidence": {
-                                "schema_version": "reviewer-cost-evidence-v1",
-                                "measured_run": None,
+                                "schema_version": "reviewer-cost-evidence-v2",
                                 "models": [],
                             },
                             "description": None,

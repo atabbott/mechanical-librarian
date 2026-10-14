@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Settings and setup show a measured Luna cover estimate of about $0.6364 per
+  1,000 review requests. Reviewer cost evidence now records its measured run on
+  each row, so rows from separate complete runs ship together truthfully (#1180).
+
 - Cover considerations retain exact canonical report references instead of duplicate
   report JSON, preserving all evidence, history and effect authority. Clean rebuild
   required for prior application stores; no migration or cleanup is added (#1158).

@@ -1132,8 +1132,7 @@ describe('shipped first-run setup script', () => {
           schema_version: 'reviewer-access-view-v2',
           cover_metadata: null,
           cost_evidence: {
-            schema_version: 'reviewer-cost-evidence-v1',
-            measured_run: null,
+            schema_version: 'reviewer-cost-evidence-v2',
             models: [],
           },
           revision: 3,
@@ -1475,7 +1474,7 @@ describe('shipped first-run setup script', () => {
 const reviewerAccess = (state: string, reason: string | null = null) => ({
   schema_version: 'reviewer-access-view-v2',
   cover_metadata: null,
-  cost_evidence: { schema_version: 'reviewer-cost-evidence-v1', measured_run: null, models: [] },
+  cost_evidence: { schema_version: 'reviewer-cost-evidence-v2', models: [] },
   revision: 3,
   mapping: null,
   codex: { state, reason, model: state === 'not_provisioned' ? null : 'gpt-5.6-sol' },
