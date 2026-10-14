@@ -167,7 +167,7 @@ of this table can be checked against the workflow rather than trusted.
 | DTO generation is deterministic | gate | `cmp "$RUNNER_TEMP/review-api-a.d.ts"` in `fast-source` |
 | The asset build is reproducible | gate | `diff -r "$RUNNER_TEMP/frontend-build-a"` in `fast-source` |
 | Generating everything leaves the tree clean | gate | `git diff --exit-code` in `fast-source` |
-| Unit, integration and architecture tests | gate | `scripts/run_test_tier.py fast` in `fast-source` |
+| Unit, integration and architecture tests | gate | `scripts/run_test_tier.py fast` in `fast-source` and its three shard jobs |
 | Committed OpenAPI and configuration schemas still match the code | gate | the fast tier |
 | Workflow permissions and the advisory acceptance register | gate | the fast tier |
 | Wheel identity, archive and installed record integrity, payload equality, installed console | gate | `scripts/qualify_exact_artifact.py` in `exact-installed` |

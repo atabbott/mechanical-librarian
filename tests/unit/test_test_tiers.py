@@ -27,13 +27,18 @@ from scripts.run_test_tier import (
     _TEST_TRACEBACK_HEAD_BYTES,
     COHORTS,
     _CohortSession,
+    _merge_worker_records,
+    _parallel_units,
     _retained_traceback,
+    _shard_units,
     _verify_slow_partition,
+    _write_recorded_seconds,
     cohort_manifest,
     cohort_targets,
     collect_cohort,
     main,
     run_cohort,
+    run_cohort_in_parallel,
 )
 
 _FAILURE_SUMMARY_KEYS = {
@@ -1680,3 +1685,318 @@ def test_slow_partition_refuses_real_collection_membership_fault(fault: str) -> 
     ):
         with pytest.raises(RuntimeError, match="^slow_partition_invalid$"):
             _verify_slow_partition(root)
+
+
+_PARALLEL_MODULES = (
+    "import unittest\n"
+    "\n"
+    "class First(unittest.TestCase):\n"
+    "    def test_passing(self) -> None:\n"
+    "        pass\n"
+    "\n"
+    "    def test_failing(self) -> None:\n"
+    "        self.fail('first must be reported')\n",
+    "import pytest\n"
+    "\n"
+    "@pytest.mark.parametrize('value', (1, 2, 3))\n"
+    "def test_values(value: int) -> None:\n"
+    "    assert value < 3\n"
+    "\n"
+    "@pytest.mark.skip(reason='skipped on purpose')\n"
+    "def test_skipped() -> None:\n"
+    "    pass\n",
+    "def test_erroring() -> None:\n    raise ValueError('an error, not a failure')\n",
+    "import unittest\n"
+    "\n"
+    "class Fourth(unittest.TestCase):\n"
+    "    def test_passing(self) -> None:\n"
+    "        pass\n",
+)
+
+
+def _tier_streams(run: Any) -> tuple[bool, dict[str, Any], str]:
+    summary = StringIO()
+    narrative = StringIO()
+    with redirect_stderr(summary), redirect_stdout(narrative):
+        passed = run()
+    stream = narrative if passed else summary
+    decoded: dict[str, Any] = json.loads(stream.getvalue().strip().splitlines()[-1])
+    tracebacks = narrative.getvalue() if not passed else ""
+    return passed, decoded, tracebacks
+
+
+@pytest.mark.parametrize("tier", ("fast", "browser"))
+def test_parallel_workers_report_exactly_what_a_serial_run_reports(
+    tmp_path: Path, tier: str
+) -> None:
+    """Dividing a cohort between workers changes its wall time and nothing else.
+
+    `fast` divides by file and `browser` by test functions, so both unit kinds
+    are proved against the serial verdict, counts, failed identities, skips
+    and traceback stream of the same real cohort.
+    """
+
+    targets = tuple(
+        target for body in _PARALLEL_MODULES for target in _module(tmp_path, body)
+    )
+    with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+        serial = _tier_streams(lambda: run_cohort(Path.cwd(), tier))
+        parallel = _tier_streams(lambda: run_cohort_in_parallel(Path.cwd(), tier, 3))
+    assert serial[0] is False
+    assert serial[1]["tests_run"] == 8
+    assert serial[1]["failures"] == 2
+    assert serial[1]["errors"] == 1
+    assert parallel == serial
+
+
+def test_parallel_workers_pass_a_passing_cohort_with_its_skips(
+    tmp_path: Path,
+) -> None:
+    targets = tuple(
+        target
+        for body in (_PARALLEL_MODULES[3], "def test_one() -> None:\n    pass\n")
+        for target in _module(tmp_path, body)
+    )
+    with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+        passed, summary, _ = _tier_streams(
+            lambda: run_cohort_in_parallel(Path.cwd(), "fast", 2)
+        )
+    assert passed is True
+    assert summary == {
+        "schema": "test-tier-result-v1",
+        "skipped": 0,
+        "status": "passed",
+        "tests_run": 2,
+        "tier": "fast",
+    }
+
+
+def test_a_unit_that_cannot_import_refuses_the_parallel_tier(tmp_path: Path) -> None:
+    targets = tuple(
+        target
+        for body in (_PARALLEL_MODULES[3], "import a_module_that_is_not_there\n")
+        for target in _module(tmp_path, body)
+    )
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        pytest.raises(RuntimeError, match="^test_cohort_import_failed$"),
+    ):
+        run_cohort_in_parallel(Path.cwd(), "fast", 2)
+
+
+def test_a_worker_that_leaves_no_record_refuses_the_parallel_tier(
+    tmp_path: Path,
+) -> None:
+    # A worker that hard-exits -- the deadline's `os._exit`, a crash -- writes
+    # no record, and the tier must not read its absence as an empty unit.
+    targets = _module(tmp_path, "import os\nos._exit(3)\n")
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        pytest.raises(RuntimeError, match="^test_tier_worker_exited$"),
+    ):
+        run_cohort_in_parallel(Path.cwd(), "fast", 2)
+
+
+def _worker_record(*identifiers: str) -> dict[str, object]:
+    return {
+        "engine_ok": True,
+        "errors": 0,
+        "failed_test_ids": [],
+        "failures": 0,
+        "identifiers": list(identifiers),
+        "schema": "test-tier-worker-v1",
+        "skipped": [],
+        "tests_run": len(identifiers),
+        "tracebacks": [],
+        "unexpected_successes": 0,
+    }
+
+
+def test_merged_units_refuse_duplicates_omissions_and_emptiness() -> None:
+    complete = [_worker_record("a.one"), _worker_record("a.two")]
+    assert _merge_worker_records(complete, ("a.one", "a.two")).tests_run == 2
+    with pytest.raises(RuntimeError, match="^test_cohort_identity_collision$"):
+        _merge_worker_records([_worker_record("a.one"), _worker_record("a.one")], None)
+    with pytest.raises(RuntimeError, match="^test_cohort_partition_invalid$"):
+        _merge_worker_records([_worker_record("a.one")], ("a.one", "a.two"))
+    with pytest.raises(RuntimeError, match="^empty test cohort$"):
+        _merge_worker_records([_worker_record()], None)
+    # The first refusing unit names the reason, whatever later units found.
+    with pytest.raises(RuntimeError, match="^test_cohort_import_failed$"):
+        _merge_worker_records(
+            [
+                _worker_record("a.one"),
+                {"reason": "test_cohort_import_failed"},
+                {"reason": "test_tier_worker_exited"},
+            ],
+            None,
+        )
+    malformed = _worker_record("a.one")
+    malformed["tests_run"] = True
+    with pytest.raises(RuntimeError, match="^test_tier_worker_exited$"):
+        _merge_worker_records([malformed], None)
+
+
+@pytest.mark.parametrize(
+    "args",
+    (
+        ["fast", "--workers", "1"],
+        ["slow", "--workers", "4"],
+        ["fast", "--workers", "4", "--list"],
+        ["fast", "--worker-result", "record.json"],
+        ["fast", "--worker-target", "tests/unit/test_package.py"],
+        [
+            "slow",
+            "--worker-result",
+            "record.json",
+            "--worker-target",
+            "tests/slow/test_audio_probe.py",
+        ],
+        ["fast", "--shard", "1/4"],
+        ["browser", "--workers", "2", "--shard", "1/4"],
+        *(
+            ["fast", "--workers", "2", "--shard", shard]
+            for shard in ("0/4", "5/4", "1/1", "a/4", "1", "-1/4")
+        ),
+        ["fast", "--record-timings"],
+        ["browser", "--workers", "2", "--record-timings"],
+        ["fast", "--workers", "2", "--shard", "1/4", "--record-timings"],
+    ),
+)
+def test_workers_option_refuses_tiers_it_cannot_divide(args: list[str]) -> None:
+    with pytest.raises(SystemExit) as error:
+        main(args)
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize("count", (2, 3, 4))
+def test_shards_together_run_every_fast_file_exactly_once(count: int) -> None:
+    root = Path(__file__).parents[2]
+    units, expected = _parallel_units(root, "fast")
+    assert expected is None
+    shards = [_shard_units(root, units, index, count) for index in range(1, 5)[:count]]
+    assert all(shards)
+    assert sorted(unit for shard in shards for unit in shard) == sorted(units)
+
+
+def test_shards_balance_on_recorded_time_and_estimate_unrecorded_files(
+    tmp_path: Path,
+) -> None:
+    sizes = {"slow.py": 10, "large.py": 4000, "quick.py": 10, "new.py": 2000}
+    for name, size in sizes.items():
+        (tmp_path / name).write_bytes(b"#" * size)
+    units = tuple((str(tmp_path / name),) for name in sizes)
+    timings = tmp_path / "timings.json"
+    with patch("scripts.run_test_tier._FAST_TIMINGS", timings):
+        # With no record, size stands in for time.
+        assert [_shard_units(tmp_path, units, index, 2) for index in (1, 2)] == [
+            ((str(tmp_path / "large.py"),),),
+            tuple(
+                (str(tmp_path / name),) for name in ("new.py", "quick.py", "slow.py")
+            ),
+        ]
+        _write_recorded_seconds(
+            tmp_path,
+            tuple(
+                (str(tmp_path / name),) for name in ("slow.py", "large.py", "quick.py")
+            ),
+            [9.0, 2.0, 5.0],
+        )
+        assert json.loads(timings.read_text(encoding="utf-8")) == {
+            "schema": "fast-tier-timings-v1",
+            "seconds": {"large.py": 2.0, "quick.py": 5.0, "slow.py": 9.0},
+        }
+        # `new.py` has no record, so it is estimated at the recorded files'
+        # rate: 16 seconds over 4020 bytes, about 8 seconds for its 2000.
+        assert [_shard_units(tmp_path, units, index, 2) for index in (1, 2)] == [
+            tuple((str(tmp_path / name),) for name in ("slow.py", "large.py")),
+            tuple((str(tmp_path / name),) for name in ("new.py", "quick.py")),
+        ]
+
+
+def test_recording_timings_times_every_unit_of_the_run(tmp_path: Path) -> None:
+    targets = tuple(
+        target
+        for body in ("def test_one() -> None:\n    pass\n",) * 2
+        for target in _module(tmp_path, body)
+    )
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._shard_units", side_effect=lambda r, u, i, c: u),
+        patch("scripts.run_test_tier._write_recorded_seconds") as write,
+    ):
+        passed, _, _ = _tier_streams(
+            lambda: run_cohort_in_parallel(Path.cwd(), "fast", 2, record_timings=True)
+        )
+    assert passed is True
+    root, units, seconds = write.call_args.args
+    assert root == Path.cwd()
+    assert sorted(units) == sorted((target,) for target in targets)
+    assert len(seconds) == 2 and all(value > 0 for value in seconds)
+
+
+def test_a_failing_run_leaves_the_recorded_timings_alone(tmp_path: Path) -> None:
+    # A failing or truncated unit's time is not representative, so it must
+    # never replace the table later shards balance on.
+    targets = tuple(
+        target
+        for body in (
+            "def test_one() -> None:\n    pass\n",
+            "def test_two() -> None:\n    assert False\n",
+        )
+        for target in _module(tmp_path, body)
+    )
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._write_recorded_seconds") as write,
+    ):
+        passed, _, _ = _tier_streams(
+            lambda: run_cohort_in_parallel(Path.cwd(), "fast", 2, record_timings=True)
+        )
+    assert passed is False
+    write.assert_not_called()
+
+
+def test_a_worker_crash_leaves_the_recorded_timings_alone(tmp_path: Path) -> None:
+    targets = _module(tmp_path, "import os\nos._exit(3)\n")
+    with (
+        patch("scripts.run_test_tier.cohort_targets", return_value=targets),
+        patch("scripts.run_test_tier._write_recorded_seconds") as write,
+        pytest.raises(RuntimeError, match="^test_tier_worker_exited$"),
+    ):
+        run_cohort_in_parallel(Path.cwd(), "fast", 2, record_timings=True)
+    write.assert_not_called()
+
+
+def test_browser_units_split_each_file_into_at_most_one_unit_per_worker(
+    tmp_path: Path,
+) -> None:
+    # A module fixture runs once per process, so a file split finer than the
+    # worker count would repeat it, as the Chromium payload hash would.
+    body = "".join(f"def test_{index}() -> None:\n    pass\n" for index in range(7))
+    targets = tuple(target for _ in range(2) for target in _module(tmp_path, body))
+    with patch("scripts.run_test_tier.cohort_targets", return_value=targets):
+        units, expected = _parallel_units(Path.cwd(), "browser", 3)
+    assert expected is not None and len(expected) == 14
+    assert sorted(member for unit in units for member in unit) == sorted(
+        f"{target}::test_{index}" for target in targets for index in range(7)
+    )
+    by_file: dict[str, list[int]] = {}
+    for unit in units:
+        files = {member.partition("::")[0] for member in unit}
+        assert len(files) == 1
+        by_file.setdefault(files.pop(), []).append(len(unit))
+    assert sorted(by_file.values()) == [[3, 2, 2], [3, 2, 2]]
+
+
+def test_the_gate_divides_the_fast_tier_into_four_sharded_jobs() -> None:
+    workflow = (
+        Path(__file__).parents[2] / ".github/workflows/public-gate.yml"
+    ).read_text(encoding="utf-8")
+    for shard in range(1, 5):
+        assert (
+            "run: uv run python scripts/run_test_tier.py fast --workers 2 "
+            f"--shard {shard}/4\n"
+        ) in workflow
+    assert workflow.count("run_test_tier.py fast") == 4
+    assert "run: uv run python scripts/run_test_tier.py browser\n" in workflow
