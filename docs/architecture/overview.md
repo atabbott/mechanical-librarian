@@ -160,9 +160,9 @@ for each case, instead of repeatedly rebuilding the domain graph. Each visible
 row is read through the bounded facts in `domain/review_browse.py`, which verify
 each document's content address and validate every rendered value under the
 canonical parser's rule for that field, so a rendered value is byte-identical to
-what the canonical writer validated. The parser's internal-consistency rules,
-non-canonical stored text and unrendered sub-documents are not re-checked per
-row; detail and every write path still parse canonically.
+what the canonical writer validated. The internal-consistency rules the
+canonical writer enforces, non-canonical report and proposal text and
+sub-documents never rendered are not re-checked per row; detail and every write path still parse canonically.
 New canonical writes retain their complete validation and
 commit their derived facts atomically.
 

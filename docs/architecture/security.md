@@ -222,12 +222,12 @@ read through the bounded facts in `domain/review_browse.py`, which verify each
 document's content address and validate every rendered value under the canonical
 parser's rule for that field, so every rendered value is byte-identical to what
 the canonical writer validated at write time. Rows no longer re-check the
-canonical parser's internal-consistency rules (format/audio section agreement,
-provider status/candidate agreement, inactive-provider inputs), non-canonical
-serialisation of the stored report and proposal text, or sub-documents they never
-render; those can diverge only through a canonical-writer defect or an
-out-of-band storage edit, and detail and every write path still parse canonically
-and refuse as before.
+internal-consistency rules the canonical writer enforces (format/audio section
+agreement, provider status/candidate agreement, inactive-provider inputs),
+non-canonical report and proposal text, or sub-documents they never render;
+those can diverge only through a canonical-writer defect or an out-of-band
+storage edit, and detail and every write path still parse canonically and
+refuse as before.
 Canonical documents remain immutable, and every insert still crosses the
 complete domain validator and projects its field facts in the same transaction.
 

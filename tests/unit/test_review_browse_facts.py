@@ -71,10 +71,10 @@ Pair = tuple[dict[str, Any], dict[str, Any]]
 # The posture the equality below holds to: with the content addresses
 # verified, every rendered value is byte-identical to what the canonical writer
 # validated at write time. What browse no longer re-checks per row is the
-# canonical parser's internal-consistency rules (format/audio section
-# agreement, provider status/candidate agreement, inactive-provider inputs),
-# non-canonical serialisation of the stored report and proposal text, and
-# sub-documents the row never renders: those can only diverge through a
+# internal-consistency rules the canonical writer enforces (format/audio
+# section agreement, provider status/candidate agreement, inactive-provider
+# inputs), non-canonical report and proposal text, and sub-documents the row
+# never renders: those can only diverge through a
 # canonical-writer defect or an out-of-band storage edit, and detail and every
 # write path still parse canonically.
 def _canonical_report_facts(report: MetadataReport) -> LibraryReportFacts:
@@ -434,6 +434,11 @@ _INCONSISTENT: dict[str, tuple[str, Callable[[Pair], Pair]]] = {
     "result reasons": (
         "plain",
         _set(lambda pair: pair[0]["results"][0], "reasons", ["Not A Reason"]),
+    ),
+    "case disposition": ("plain", _set(lambda pair: pair[0], "disposition", "decided")),
+    "case relationships": (
+        "plain",
+        _set(lambda pair: pair[0]["relationships"], "bibliographic_combinations", [{}]),
     ),
 }
 
