@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Library, Attention and search choose their rows and counts from stored per-work
+  title, author, format, provider and policy facts, reading only the reports they
+  show instead of every work's report and proposal on each request. Visible rows,
+  counts, order and matches are unchanged; clean rebuild required (#1199).
+
 - Library, Attention and work detail answer faster: browse rows read only the
   fields they show, each under its existing validation, and a work's detail no
   longer re-reads its stored report for every consumer. Displayed values,

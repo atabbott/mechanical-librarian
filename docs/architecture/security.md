@@ -230,6 +230,13 @@ storage edit, and detail and every write path still parse canonically and
 refuse as before.
 Canonical documents remain immutable, and every insert still crosses the
 complete domain validator and projects its field facts in the same transaction.
+Library, Attention, search and their counts choose candidates from report and
+proposal browse facts (#1199): SQL over already-admitted documents, with no new input,
+folded through the deterministic `ml_casefold` (`str.casefold`, as the query is).
+A connection without that function cannot insert a report, and open refuses
+facts that differ from their documents. An edit that bypasses
+`metadata_reports_no_update` after open is therefore refused where the row
+renders and at the next open, not by a read that never renders it.
 
 A claimed stage retains its already-validated repository connection, without an open
 transaction, until its separate durable transition; composed report, proposal,
