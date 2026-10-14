@@ -4363,6 +4363,11 @@ def test_an_admitted_audiobook_is_decided_like_any_other_case(
                     source.press("Space")
                     expect(basis.locator("details")).to_have_attribute("open", "")
                     page.get_by_role("link", name="Evidence", exact=True).click()
+                    # The router keeps Library in place until the diagnostic route's
+                    # code is ready, so wait for that route before measuring it.
+                    expect(
+                        page.get_by_role("link", name="Back to work", exact=True)
+                    ).to_be_visible()
                     expect(
                         page.get_by_role("region", name="Recording identity evidence")
                     ).to_be_visible()

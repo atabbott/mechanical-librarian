@@ -1,5 +1,5 @@
 import type { Query } from '@tanstack/react-query'
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { startLiveInvalidation } from '../src/liveInvalidation'
 import { createLiveStream } from './fixtures'
 import { mountBackgroundWork, hasBackgroundDebt, useRequiredQuery } from '../src/queryWork'
@@ -8,6 +8,7 @@ import { expect, it, onTestFinished, vi } from 'vitest'
 import {
   invalidateForegroundQueries,
   invalidateBackgroundQueries,
+  prefetchBackgroundQuery,
   promoteRequiredRead,
   queryWorkClass,
 } from '../src/queryWork'
@@ -382,4 +383,49 @@ it('promotes a cold background command-result read before native invalidation', 
   reads[0]?.resolve('late background')
   await old
   expect(client.getQueryData(key)).toBe('required result')
+})
+
+const prefetchable = () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  const dispose = mountBackgroundWork(client)
+  const reads: { role: string; signal: AbortSignal; resolve: (value: string) => void }[] = []
+  const options = {
+    queryKey: ['review-case', 'intent'],
+    queryFn: (context: {
+      client: QueryClient
+      queryKey: readonly unknown[]
+      signal: AbortSignal
+    }) =>
+      new Promise<string>((resolve) =>
+        reads.push({ role: queryWorkClass(context), signal: context.signal, resolve }),
+      ),
+  }
+  onTestFinished(() => {
+    dispose()
+    client.clear()
+  })
+  return { client, reads, options }
+}
+
+it('prefetches only a key nothing is reading yet', () => {
+  const { client, reads, options } = prefetchable()
+  const stop = new QueryObserver(client, { ...options, enabled: false }).subscribe(() => undefined)
+  prefetchBackgroundQuery(client, options)
+  expect(reads).toHaveLength(0)
+  stop()
+  prefetchBackgroundQuery(client, options)
+  prefetchBackgroundQuery(client, options)
+  expect(reads.map((read) => read.role)).toEqual(['background'])
+})
+
+it('promotes an in-flight prefetch when a required read of its key mounts', async () => {
+  const { client, reads, options } = prefetchable()
+  prefetchBackgroundQuery(client, options)
+  const hook = renderHook(() => useRequiredQuery(options, client))
+  onTestFinished(() => hook.unmount())
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+  expect(reads.map((read) => read.role)).toEqual(['background', 'foreground'])
+  expect(reads[0]?.signal.aborted).toBe(true)
+  await act(async () => reads[1]?.resolve('required result'))
+  await waitFor(() => expect(hook.result.current.data).toBe('required result'))
 })

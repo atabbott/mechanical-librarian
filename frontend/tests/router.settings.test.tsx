@@ -895,10 +895,12 @@ describe('owner settings route', () => {
     expect(await screen.findByText('ABCD-EFGH')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Cancel sign-in' })).toBeVisible()
     await act(async () => router.navigate({ to: '/library', search: { lens: 'all' } }))
+    expect(screen.queryByText('ABCD-EFGH')).not.toBeInTheDocument()
 
     await act(async () => router.navigate({ to: '/settings', search: { group: 'reviewer' } }))
-    expect(await screen.findByText('ABCD-EFGH')).toBeVisible()
-    expect(http.getCodexDevice).toHaveBeenCalledOnce()
+    // The remounted panel resumes from the cached flow, then refreshes it once.
+    expect(screen.getByText('ABCD-EFGH')).toBeVisible()
+    await waitFor(() => expect(http.getCodexDevice).toHaveBeenCalledTimes(2))
   })
 
   it('announces OpenRouter validation before retaining its terminal result', async () => {

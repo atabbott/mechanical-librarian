@@ -2094,6 +2094,242 @@ describe('Library route', () => {
     )
   })
 
+  describe('retention and intent prefetch', () => {
+    const work = library.works[0]
+    if (!work) throw new Error('library fixture requires one work')
+    const page = (title: string, cursors: Partial<LibraryView> = {}): LibraryView => ({
+      ...library,
+      ...cursors,
+      works: [{ ...work, id: title, title }],
+    })
+    interface Deferred {
+      resolve: (value: LibraryView) => void
+      reject: (error: Error) => void
+    }
+    const deferredLibrary = (first: LibraryView) => {
+      const reads = new Map<string, Deferred>()
+      const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) => {
+        const key = search.q ? `q:${search.q}` : (search.cursor ?? '')
+        if (!key) return first
+        return new Promise<LibraryView>((resolve, reject) => reads.set(key, { resolve, reject }))
+      })
+      return { reads, getLibrary }
+    }
+
+    it('keeps the previous page busy in place until the newer page settles', async () => {
+      const user = userEvent.setup()
+      const { reads, getLibrary } = deferredLibrary(page('First page', { nextCursor: 'page-2' }))
+      const http = { ...createHttp(), getLibrary }
+      const { router } = renderRoute('/library?lens=all', http)
+      const next = await screen.findByRole('button', { name: 'Next →' })
+      next.focus()
+      await user.keyboard('{Enter}')
+      await waitFor(() => expect(router.state.location.search.cursor).toBe('page-2'))
+      const list = document.querySelector<HTMLElement>('.library-work-list')
+      expect(list).toHaveAttribute('aria-busy', 'true')
+      expect(screen.getByRole('button', { name: /^First page\./u })).toBeVisible()
+      expect(screen.queryByText('Loading works…')).toBeNull()
+      expect(screen.getByText('1 total')).toHaveAttribute('aria-busy', 'true')
+      const announced = document.querySelector('.navigation-status')
+      expect(announced).toHaveTextContent('Loading Library')
+      expect(next).toHaveAttribute('aria-disabled', 'true')
+      // The retained page's cursor belongs to the key the URL just left.
+      await user.click(next)
+      expect(router.state.location.search.cursor).toBe('page-2')
+      // So may its rows, which the settled page may not contain.
+      const retainedRow = screen.getByRole('button', { name: /^First page\./u })
+      expect(retainedRow).toHaveAttribute('aria-disabled', 'true')
+      await user.click(retainedRow)
+      expect(router.state.location.search).toEqual({ lens: 'all', cursor: 'page-2' })
+      fireEvent.pointerEnter(retainedRow)
+      retainedRow.focus()
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(http.getCaseDetail).not.toHaveBeenCalled()
+      await act(async () =>
+        reads
+          .get('page-2')
+          ?.resolve(
+            page('Second page', { page: 2, previousCursor: 'page-1', nextCursor: 'page-3' }),
+          ),
+      )
+      expect(await screen.findByRole('button', { name: /^Second page\./u })).toBeVisible()
+      expect(screen.queryByRole('button', { name: /^First page\./u })).toBeNull()
+      expect(list).not.toHaveAttribute('aria-busy')
+      expect(next).not.toHaveAttribute('aria-disabled')
+      expect(announced).toHaveTextContent('Library loaded')
+    })
+
+    it('keeps the retained rows grouped as their own lens until the newer lens settles', async () => {
+      let settle: (view: LibraryView) => void = () => undefined
+      const getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
+        search.lens === 'all'
+          ? page('Grouped work')
+          : new Promise<LibraryView>((resolve) => (settle = resolve)),
+      )
+      const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+      await screen.findByRole('button', { name: /^Grouped work\./u })
+      const groups = () =>
+        [...document.querySelectorAll('.library-provider-group h3')].map((h) => h.textContent)
+      const shown = groups()
+      expect(shown).toEqual(['Provider evidence complete'])
+      await act(async () =>
+        router.navigate({ to: '/library', search: { lens: 'no_attention_needed' } }),
+      )
+      expect(document.querySelector('.library-work-list')).toHaveAttribute('aria-busy', 'true')
+      expect(groups()).toEqual(shown)
+      await act(async () => settle({ ...page('Clear work'), lens: 'no_attention_needed' }))
+      await screen.findByRole('button', { name: /^Clear work\./u })
+      expect(groups()).toEqual([])
+    })
+
+    it('lets no late Library navigation pull the owner back once another route is loading', async () => {
+      const { getLibrary } = deferredLibrary(page('First page', { nextCursor: 'page-2' }))
+      const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+      const next = await screen.findByRole('button', { name: 'Next →' })
+      await act(async () => {
+        const leaving = router.navigate({ to: '/settings', search: { group: 'connection' } })
+        // Library is still painted while the Settings route loads.
+        fireEvent.click(next)
+        await leaving
+      })
+      expect(router.state.location.pathname).toBe('/settings')
+      expect(router.state.location.search).toEqual({ group: 'connection' })
+    })
+
+    it('never lets an older page response replace a newer page or the typed draft', async () => {
+      const user = userEvent.setup()
+      const { reads, getLibrary } = deferredLibrary(page('First page', { nextCursor: 'page-2' }))
+      const { router } = renderRoute('/library?lens=all', { ...createHttp(), getLibrary })
+      await screen.findByRole('button', { name: /^First page\./u })
+      await act(async () =>
+        router.navigate({ to: '/library', search: { lens: 'all', cursor: 'page-2' } }),
+      )
+      await act(async () =>
+        router.navigate({ to: '/library', search: { lens: 'all', cursor: 'page-3' } }),
+      )
+      await act(async () => reads.get('page-3')?.resolve(page('Third page', { page: 3 })))
+      expect(await screen.findByRole('button', { name: /^Third page\./u })).toBeVisible()
+      await act(async () => reads.get('page-2')?.resolve(page('Second page', { page: 2 })))
+      expect(screen.queryByRole('button', { name: /^Second page\./u })).toBeNull()
+      expect(screen.getByRole('button', { name: /^Third page\./u })).toBeVisible()
+
+      await act(async () =>
+        router.navigate({ to: '/library', search: { lens: 'all', cursor: 'page-4' } }),
+      )
+      const box = screen.getByRole('searchbox')
+      await user.click(box)
+      await user.type(box, 'draft')
+      await act(async () => reads.get('page-4')?.resolve(page('Older page', { page: 4 })))
+      expect(box).toHaveValue('draft')
+      expect(box).toHaveFocus()
+      expect(box).toHaveProperty('selectionStart', 5)
+      await waitFor(() => expect(router.state.location.search.q).toBe('draft'))
+      expect(screen.getByRole('button', { name: /^Older page\./u })).toBeVisible()
+      expect(document.querySelector('.library-work-list')).toHaveAttribute('aria-busy', 'true')
+      await act(async () => reads.get('q:draft')?.resolve(page('Draft result')))
+      expect(await screen.findByRole('button', { name: /^Draft result\./u })).toBeVisible()
+      expect(screen.queryByRole('button', { name: /^Older page\./u })).toBeNull()
+      expect(box).toHaveValue('draft')
+      expect(box).toHaveFocus()
+    })
+
+    it('keeps the loaded Attention queue busy in place while a newer search reads', async () => {
+      const user = userEvent.setup()
+      const item = {
+        id: 'case-1',
+        destination: 'title',
+        title: 'Retained queue work',
+        authors: [],
+        library: 'Books',
+        mediaKind: 'ebook',
+        notices: [],
+        provenance: [],
+        workAttentionCount: 1,
+      }
+      type Page = Awaited<ReturnType<ReviewHttp['getAttention']>>
+      let settle: ((value: Page) => void) | undefined
+      const http = createHttp()
+      http.getAttention = vi.fn<ReviewHttp['getAttention']>(async ({ q }) =>
+        q
+          ? new Promise<Page>((resolve) => {
+              settle = resolve
+            })
+          : { total: 1, items: [item], nextCursor: 'later-page' },
+      )
+      const { router } = renderRoute('/library?lens=all&attention=open', http)
+      const row = await screen.findByRole('button', { name: /Retained queue work/u })
+      await act(async () =>
+        router.navigate({ to: '/library', search: { lens: 'all', attention: 'open', q: 'later' } }),
+      )
+      const rail = screen.getByLabelText('Attention queue')
+      await waitFor(() => expect(rail).toHaveAttribute('aria-busy', 'true'))
+      // The works read has settled, but the route is not loaded while its rail is retained.
+      expect(screen.getByText('1 total')).not.toHaveAttribute('aria-busy')
+      const announced = document.querySelector('.navigation-status')
+      expect(announced).toHaveTextContent('Loading Library')
+      expect(row).toBeVisible()
+      expect(row).toHaveAttribute('aria-disabled', 'true')
+      expect(screen.queryByRole('button', { name: 'Load more attention' })).toBeNull()
+      await user.click(row)
+      expect(router.state.location.search.preview).toBeUndefined()
+      await act(async () =>
+        settle?.({ total: 1, items: [{ ...item, id: 'case-2', title: 'Later queue work' }] }),
+      )
+      expect(await screen.findByRole('button', { name: /Later queue work/u })).toBeVisible()
+      expect(screen.queryByRole('button', { name: /Retained queue work/u })).toBeNull()
+      expect(rail).not.toHaveAttribute('aria-busy')
+      expect(announced).toHaveTextContent('Library loaded')
+    })
+
+    it('prefetches the adjacent page, other lenses and a work on intent as background reads', async () => {
+      const user = userEvent.setup()
+      const second = { ...work, id: 'case-2', reviewCaseId: 'case-2', title: 'Second work' }
+      const http = createHttp()
+      http.getLibrary = vi.fn<ReviewHttp['getLibrary']>(async (search) =>
+        search.cursor
+          ? page('Prefetched page', { page: 2, previousCursor: 'page-1' })
+          : { ...library, nextCursor: 'page-2', works: [work, second] },
+      )
+      const { router } = renderRoute('/library?lens=all', http)
+      const next = await screen.findByRole('button', { name: 'Next →' })
+      const href = router.state.location.href
+      const reads = (match: Partial<LibrarySearch>) =>
+        vi
+          .mocked(http.getLibrary)
+          .mock.calls.filter(([search]) =>
+            Object.entries(match).every(
+              ([key, value]) => search[key as keyof LibrarySearch] === value,
+            ),
+          )
+
+      await user.hover(next)
+      await waitFor(() => expect(reads({ cursor: 'page-2' })).toHaveLength(1))
+      expect(reads({ cursor: 'page-2' })[0]?.[2]).toBe('background')
+      await user.unhover(next)
+      await user.hover(next)
+      await new Promise((resolve) => setTimeout(resolve, 100))
+      expect(reads({ cursor: 'page-2' })).toHaveLength(1)
+
+      act(() => screen.getByRole('link', { name: 'Needs attention' }).focus())
+      await waitFor(() => expect(reads({ lens: 'needs_attention' })).toHaveLength(1))
+      expect(reads({ lens: 'needs_attention' })[0]?.[2]).toBe('background')
+
+      await user.hover(screen.getByRole('button', { name: /^Second work\./u }))
+      await waitFor(() =>
+        expect(http.getCaseDetail).toHaveBeenCalledWith(
+          'case-2',
+          expect.any(AbortSignal),
+          'background',
+        ),
+      )
+      expect(router.state.location.href).toBe(href)
+
+      await user.click(next)
+      expect(await screen.findByRole('button', { name: /^Prefetched page\./u })).toBeVisible()
+      expect(reads({ cursor: 'page-2' })).toHaveLength(1)
+    })
+  })
+
   it('filters progressively while typing, resets on clear, and keeps the lens and selection', async () => {
     const user = userEvent.setup()
     const { router } = renderRoute('/library?lens=needs_attention&preview=case-1&cursor=page-2')
@@ -6145,6 +6381,87 @@ describe('Library route', () => {
     await waitFor(() => expect([libraryReads, attentionReads]).toEqual([3, 3]))
   })
 
+  it('never lets a retained rail prune the next search queue when a review completes', async () => {
+    const user = userEvent.setup()
+    const titleField = detail.fields[0]
+    if (!titleField) throw new Error('completion fixture requires a title field')
+    const decision = {
+      actor: 'owner',
+      application: 'apply' as const,
+      decision_id: 'decision-complete',
+      destination: 'title',
+      occurred_at: 1,
+      outcome: 'keep_current',
+      proposal_id: titleField.proposalId,
+      review_case_id: 'case-1',
+      selected_value: null,
+      target_fingerprint: titleField.targetFingerprint,
+    }
+    const settled: CaseDetailView = {
+      ...detail,
+      fields: [{ ...titleField, needsAttention: false, humanDecision: decision }],
+    }
+    const item = (id: string, destination: string, title: string) => ({
+      id,
+      destination,
+      title,
+      authors: [],
+      library: 'Books',
+      mediaKind: 'ebook',
+      notices: [],
+      provenance: [],
+      workAttentionCount: 1,
+    })
+    const earlier = item('case-2', 'authors', 'Earlier queue work')
+    type Page = Awaited<ReturnType<ReviewHttp['getAttention']>>
+    const searched: ((page: Page) => void)[] = []
+    let current = detail
+    const http: ReviewHttp = {
+      ...createHttp(),
+      getAttention: vi.fn<ReviewHttp['getAttention']>(async ({ q }) =>
+        q
+          ? new Promise<Page>((resolve) => searched.push(resolve))
+          : { total: 2, items: [earlier, item('case-1', 'title', 'A Book')] },
+      ),
+      getCaseDetail: vi.fn(async () => current),
+      recordDecision: vi.fn(async () => {
+        current = settled
+        return {
+          ...decision,
+          confirmation: { status: 'confirmed' as const, case: current },
+          invalidation_sequences: [90],
+          schema_version: 'review-decision-v1',
+        }
+      }),
+    }
+    const { router } = renderRoute(
+      '/library?lens=all&attention=open&preview=case-1&field=title',
+      http,
+    )
+    const choose = await screen.findByRole('button', { name: 'Choose current value: Old title' })
+    await screen.findByRole('button', { name: /Earlier queue work/u })
+    await act(async () =>
+      router.navigate({
+        to: '/library',
+        search: {
+          lens: 'all',
+          attention: 'open',
+          preview: 'case-1',
+          field: 'title',
+          q: 'later',
+        },
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('Attention queue')).toHaveAttribute('aria-busy', 'true'),
+    )
+    // The retained rail ranks the earlier search's work ahead of this one.
+    await user.click(choose)
+    expect(await screen.findByText('Review complete')).toBeVisible()
+    await act(async () => searched.forEach((resolve) => resolve({ total: 1, items: [earlier] })))
+    expect(await screen.findByRole('button', { name: 'Review next work →' })).toBeVisible()
+  })
+
   const renderLaterPageProviderRetry = () => {
     const predecessor = { ...detail, id: 'case-1', current: true }
     const successor: CaseDetailView = {
@@ -7804,7 +8121,11 @@ describe('Library route', () => {
           search: { lens: 'all', preview: 'case-1', q: 'pending' },
         })
       })
-      expect(await screen.findByText('Loading works…')).toBeVisible()
+      // The previous rows stay in place, busy, until the URL's own read settles.
+      const list = document.querySelector<HTMLElement>('.library-work-list')
+      await waitFor(() => expect(list).toHaveAttribute('aria-busy', 'true'))
+      expect(screen.getByRole('button', { name: /^A Book\./u })).toBeVisible()
+      expect(screen.queryByText('Loading works…')).toBeNull()
       expect(screen.getByRole('heading', { level: 2, name: 'A Book' })).toBeVisible()
       await act(async () => {
         if (result === 'absent')
@@ -7819,6 +8140,8 @@ describe('Library route', () => {
         ),
       ).toBeVisible()
       expect(screen.queryByRole('heading', { level: 2, name: 'A Book' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /^A Book\./u })).toBeNull()
+      expect(list).not.toHaveAttribute('aria-busy')
       await act(async () => {
         await router.navigate({
           to: '/library',
@@ -7827,6 +8150,8 @@ describe('Library route', () => {
       })
       expect(await screen.findByText('Loading selected work…')).toBeVisible()
       expect(screen.queryByRole('heading', { level: 2, name: 'A Book' })).toBeNull()
+      // Rows a settled read already cleared are never revived for a later read.
+      expect(screen.queryByRole('button', { name: /^A Book\./u })).toBeNull()
     },
   )
 
