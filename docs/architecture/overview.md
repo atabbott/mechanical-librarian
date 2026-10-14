@@ -156,9 +156,11 @@ owner-visible budget.
 Repository startup proves schema, SQLite integrity, and exact derived-field
 equivalence. Library and Attention repositories then use bounded closed
 envelopes and lineage facts, including the exact immutable ProposalSet admitted
-for each case, instead of repeatedly rebuilding the domain graph. The
-application performs one complete semantic parse of each visible row before
-returning its DTO. New canonical writes retain their complete validation and
+for each case, instead of repeatedly rebuilding the domain graph. Each visible
+row is read through the bounded facts in `domain/review_browse.py`, which
+validate every rendered value under the canonical parser's rule for that field
+and read nothing else; detail and every write path still parse canonically.
+New canonical writes retain their complete validation and
 commit their derived facts atomically.
 
 The `metadata-report-v43` document retains all 16 ordered Audiobookshelf target

@@ -217,9 +217,11 @@ the runtime borrowers before that control owner. A Library or Attention
 repository request uses
 size-bounded closed envelopes and lineage facts instead of repeatedly evaluating
 the same provider, proposal, and decision documents. It also proves that each
-case still embeds the exact immutable ProposalSet accepted by admission. Before
-returning the DTO, the application performs one complete semantic parse of
-every visible row.
+case still embeds the exact immutable ProposalSet accepted by admission. Rows are
+read through the bounded facts in `domain/review_browse.py`, which validate every
+rendered value under the canonical parser's rule for that field and read nothing
+else; a malformed sub-document a row never renders no longer refuses the page,
+while detail and every write path still parse canonically and refuse as before.
 Canonical documents remain immutable, and every insert still crosses the
 complete domain validator and projects its field facts in the same transaction.
 
