@@ -109,6 +109,7 @@ from mechanical_librarian.interfaces.web.react_assets import (
 
 _CASE_ID = re.compile(r"^review_case_[0-9a-f]{64}$")
 _COOKIE_NAME = "ml_session"
+_IMMUTABLE_CACHE = "private, max-age=31536000, immutable"
 _ShellResponse: TypeAlias = HTMLResponse | RedirectResponse
 
 # The rule these seven were chosen by:
@@ -3241,7 +3242,9 @@ def _register_case_and_effect_routes(
             content=payload,
             media_type="image/png",
             headers={
-                "Cache-Control": "private, no-store",
+                # The URL binds a content-addressed consideration and the
+                # preview digest it records, so these bytes cannot change.
+                "Cache-Control": _IMMUTABLE_CACHE,
                 "Content-Security-Policy": "default-src 'none'",
                 "X-Content-Type-Options": "nosniff",
             },
@@ -4110,21 +4113,36 @@ def _register_html_routes(
         return shell_response(ml_session)
 
     @app.get("/assets/review-app/{asset_path:path}", include_in_schema=False)
-    def react_asset(asset_path: str) -> Response:
+    def react_asset(asset_path: str, request: Request) -> Response:
         bundle = asset_loader.load()
         if isinstance(bundle, ReactAssetRecovery):
             return _react_asset_recovery_response()
         selected = next(
             (asset for asset in bundle.assets if asset.path == asset_path), None
         )
-        if selected is None or selected.kind == "shell":
+        if selected is None or selected.kind not in {"script", "style"}:
             raise HTTPException(404, detail={"code": "asset_not_found"})
         try:
-            payload = bundle.read(asset_path)
+            served, payload = bundle.negotiate(
+                asset_path, request.headers.get("accept-encoding", "")
+            )
         except (OSError, ReactAssetError):
             return _react_asset_recovery_response()
+        # Paths are content hashed, so a new build never reuses one.
+        headers = {
+            "Cache-Control": _IMMUTABLE_CACHE,
+            "ETag": f'"{served.sha256}"',
+            "Vary": "Accept-Encoding",
+        }
+        if headers["ETag"] in {
+            tag.strip().removeprefix("W/")
+            for tag in request.headers.get("if-none-match", "").split(",")
+        }:
+            return Response(status_code=304, headers=headers)
+        if served.path != asset_path:
+            headers["Content-Encoding"] = served.kind
         media_type = "text/css" if selected.kind == "style" else "text/javascript"
-        return Response(payload, media_type=media_type)
+        return Response(payload, media_type=media_type, headers=headers)
 
 
 def _react_asset_recovery_response() -> HTMLResponse:
@@ -4318,7 +4336,9 @@ def _secured_error(status_code: int, code: str, *, hsts: bool) -> JSONResponse:
 
 
 def _set_security_headers(response: Response, *, hsts: bool) -> None:
-    response.headers["Cache-Control"] = "no-store, private"
+    # Only a route serving content-addressed bytes may opt out of no-store.
+    if response.headers.get("Cache-Control") != _IMMUTABLE_CACHE:
+        response.headers["Cache-Control"] = "no-store, private"
     response.headers["Content-Security-Policy"] = (
         "default-src 'none'; script-src 'self'; style-src 'self'; "
         "img-src 'self' data:; connect-src 'self'; form-action 'self'; "

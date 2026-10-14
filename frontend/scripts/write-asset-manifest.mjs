@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { brotliCompressSync, constants, gzipSync } from 'node:zlib'
 
 const outputRoot = path.resolve(process.env.ML_FRONTEND_OUT_DIR ?? 'dist')
 const handoffAssets = ['preparation-handoff.css', 'preparation-handoff.js']
@@ -60,14 +61,31 @@ for (const relativePath of [...reachable].sort()) {
   const bytes = await readFile(absolutePath)
   const metadata = await stat(absolutePath)
   if (!metadata.isFile()) throw new Error(`Asset is not a regular file: ${relativePath}`)
-  assets.push({
-    kind:
+  const variants = [
+    [
       relativePath === 'index.html' ? 'shell' : relativePath.endsWith('.css') ? 'style' : 'script',
-    path: relativePath,
-    sha256: createHash('sha256').update(bytes).digest('hex'),
-    size: bytes.byteLength,
-  })
+      relativePath,
+      bytes,
+    ],
+  ]
+  if (relativePath !== 'index.html') {
+    // Precompressed siblings let the server negotiate encodings without compressing per request.
+    const brotli = { [constants.BROTLI_PARAM_QUALITY]: constants.BROTLI_MAX_QUALITY }
+    variants.push(['br', `${relativePath}.br`, brotliCompressSync(bytes, { params: brotli })])
+    variants.push(['gzip', `${relativePath}.gz`, gzipSync(bytes, { level: 9 })])
+  }
+  for (const [kind, variantPath, variantBytes] of variants) {
+    if (variantPath !== relativePath)
+      await writeFile(path.join(outputRoot, variantPath), variantBytes)
+    assets.push({
+      kind,
+      path: variantPath,
+      sha256: createHash('sha256').update(variantBytes).digest('hex'),
+      size: variantBytes.byteLength,
+    })
+  }
 }
+assets.sort((left, right) => (left.path < right.path ? -1 : 1))
 
 const identityInput = JSON.stringify({
   schema: 'review-react-assets-v1',
