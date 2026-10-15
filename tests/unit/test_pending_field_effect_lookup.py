@@ -1359,6 +1359,20 @@ def _arm_drivers(connection: sqlite3.Connection, statement: str) -> set[str]:
     }
 
 
+def _lineage_memberships(
+    connection: sqlite3.Connection, statement: str
+) -> tuple[int, int]:
+    """How many lineage lists a statement builds, and how many case-index probes."""
+    tree = _plan_tree(connection, statement)
+    return (
+        sum(path[0].startswith("LIST SUBQUERY") for path in tree),
+        sum(
+            path[0] == "USING INDEX current_review_case_lineages_case FOR IN-OPERATOR"
+            for path in tree
+        ),
+    )
+
+
 def test_lineage_lists_are_built_once_and_arms_keep_their_scans(
     store: tuple[sqlite3.Connection, list[str]],
 ) -> None:
@@ -1366,13 +1380,23 @@ def test_lineage_lists_are_built_once_and_arms_keep_their_scans(
     for name, statement in _statements(connection).items():
         assert not _scans_lineage_per_decision(connection, statement), name
         assert _arm_drivers(connection, statement) == {"SCAN human", "SCAN automatic"}
-        lists = sum(
-            path[0].startswith("LIST SUBQUERY")
-            for path in _plan_tree(connection, statement)
-        )
-        assert lists == 2, name
-        # The correlated test is the per-decision scan being removed.
-        assert _scans_lineage_per_decision(connection, _before_1205(name, statement))
+        # The owner arm's membership test probes #1211's case index once per
+        # decision; the automatic arm's, a join, still builds its list once.
+        assert _lineage_memberships(connection, statement) == (1, 1), name
+        assert not connection.in_transaction
+        connection.execute("BEGIN")
+        try:
+            connection.execute("DROP INDEX current_review_case_lineages_case")
+            connection.execute("DROP INDEX current_review_packages_case")
+            # Without that index both arms build their list once, and the
+            # correlated test is the per-decision scan being removed; the index
+            # serves it by search instead.
+            assert _lineage_memberships(connection, statement) == (2, 0), name
+            assert _scans_lineage_per_decision(
+                connection, _before_1205(name, statement)
+            )
+        finally:
+            connection.execute("ROLLBACK")
         # Without the unary plus the planner drives the automatic arm from the
         # lineage list, so the arm's rows arrive in case order, not rowid order.
         bare = statement.replace(
