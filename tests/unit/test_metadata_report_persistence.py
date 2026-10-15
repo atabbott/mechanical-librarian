@@ -706,8 +706,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             fixture["shadow_decision_outcomes_sql"],
         )
         with closing(open_repository(path)) as repository:
-            # The producer predates #1199's report browse facts and #1202's
-            # history indexes.
+            # The producer predates #1199's report browse facts, #1202's
+            # history indexes and #1204's indexes.
             repository._connection.executescript(
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
@@ -717,6 +717,12 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP TABLE browse_fact_identity;"
                 "DROP INDEX human_decisions_case_destination;"
                 "DROP INDEX metadata_policy_resolutions_resolved;"
+                "DROP INDEX field_effects_decision;"
+                "DROP INDEX field_effects_companion_decision;"
+                "DROP INDEX field_effects_ready;"
+                "DROP INDEX field_effects_waiting;"
+                "DROP INDEX field_effects_target;"
+                "DROP INDEX description_decisions_case;"
             )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
@@ -2351,8 +2357,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             fixture["shadow_decision_outcomes_sql"],
         )
         with closing(open_repository(path)) as repository:
-            # The producer predates #1199's report browse facts and #1202's
-            # history indexes.
+            # The producer predates #1199's report browse facts, #1202's
+            # history indexes and #1204's indexes.
             repository._connection.executescript(
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
@@ -2362,6 +2368,12 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                 "DROP TABLE browse_fact_identity;"
                 "DROP INDEX human_decisions_case_destination;"
                 "DROP INDEX metadata_policy_resolutions_resolved;"
+                "DROP INDEX field_effects_decision;"
+                "DROP INDEX field_effects_companion_decision;"
+                "DROP INDEX field_effects_ready;"
+                "DROP INDEX field_effects_waiting;"
+                "DROP INDEX field_effects_target;"
+                "DROP INDEX description_decisions_case;"
             )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"

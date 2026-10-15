@@ -70,6 +70,8 @@ from mechanical_librarian.adapters.persistence.field_effect_validation import (
     _validate_automatic_decision_authority,
 )
 from mechanical_librarian.adapters.persistence.schema import (
+    _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_WAITING_STATES_SQL,
     _validate_report_row,
     _validated_report_row,
 )
@@ -609,8 +611,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT ordinal FROM human_decisions WHERE decision_id=?) UNION ALL "
                 "SELECT decision_id,-1 FROM automatic_decisions earlier WHERE "
                 "earlier.review_case_id=? AND earlier.destination=?"
-                ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id=json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')) "
-                "WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
+                ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
+                + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                + ") WHERE effect.state='verified' "
+                "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
                 (
                     decision.review_case_id,
                     decision.destination,
@@ -1028,9 +1032,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "ON lineage.review_case_id=consideration.review_case_id "
                 "WHERE selection.kind='automatic'"
                 " UNION ALL SELECT d.decision_id,json_extract(d.document,'$.occurred_at'),d.document FROM current_description_decisions p JOIN description_decisions d ON d.decision_id=p.decision_id JOIN current_review_case_lineages l ON l.review_case_id=d.review_case_id"
-                ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
-                "WHERE (effect.decision_id=pending.decision_id OR json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')=pending.decision_id) AND "
-                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
+                ") AS pending WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
+                "AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
+                + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                + "=pending.decision_id AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 + cursor
                 + (
                     "ORDER BY pending.occurred_at,pending.decision_id "
@@ -1108,9 +1113,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "AND package.item_id=lineage.item_id AND package.proposal_set_id=lineage.proposal_set_id "
                 "AND package.report_id=lineage.report_id AND package.review_case_id=lineage.review_case_id "
                 "AND package.checkpoint=lineage.checkpoint "
-                "WHERE NOT EXISTS (SELECT 1 FROM field_effects effect "
-                "WHERE (effect.decision_id=pending.decision_id OR json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')=pending.decision_id) AND "
-                "effect.state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
+                "WHERE NOT EXISTS (SELECT 1 FROM field_effects WHERE decision_id=pending.decision_id "
+                "AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effects WHERE "
+                + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                + "=pending.decision_id AND state NOT IN ('superseded','abandoned')) AND NOT EXISTS (SELECT 1 FROM field_effect_no_changes no_change WHERE no_change.decision_id=pending.decision_id) "
                 "GROUP BY lineage.connection_name,lineage.library_name,pending.origin,"
                 "pending.destination ORDER BY lineage.connection_name,"
                 "lineage.library_name,pending.origin,pending.destination"
@@ -3222,8 +3228,9 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             "LEFT JOIN review_cases cover_review ON cover_review.review_case_id=cover_consideration.review_case_id "
             "LEFT JOIN description_decisions description_decision ON description_decision.decision_id=effect.decision_id "
             "LEFT JOIN review_cases description_review ON description_review.review_case_id=description_decision.review_case_id "
-            "WHERE effect.state IN ('planned','claimed','applying','reconciling','retryable') "
-            "ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
+            "WHERE effect.state IN "
+            + _FIELD_EFFECT_WAITING_STATES_SQL
+            + " ORDER BY effect.updated_at DESC,effect.plan_id DESC LIMIT 1"
         ).fetchone()
         waiting_title = "Recorded work"
         if waiting is not None:

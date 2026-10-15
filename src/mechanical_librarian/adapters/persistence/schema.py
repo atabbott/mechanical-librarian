@@ -684,6 +684,52 @@ _FIELD_EFFECTS_SQL = (
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))"
 )
+# Pending, revocation, replacement, history and override reads ask which effects
+# name a decision as their own authority or as their subtitle companion's;
+# without these each such read scanned every effect (#1204). The companion arm
+# compares this CAST, which a statement must use exactly for the planner to
+# choose the index. Against a TEXT-affinity column it is the conversion a bare
+# json_extract already received; against a bound parameter (revocation,
+# replacement) it differs only for the text of a number a companion holds (a
+# boolean extracts as 1 or 0), which no decision id can be. Every authority id
+# carries the human_decision_ or automatic_decision_ prefix: the human,
+# automatic and description decision domain types derive and validate it, and
+# the human_decisions, automatic_decisions and cover_selection_authorities GLOB
+# checks enforce it.
+_FIELD_EFFECT_COMPANION_DECISION_SQL = "CAST(json_extract(document,'$.plan.subtitle_companion.authority.decision_id') AS TEXT)"
+_FIELD_EFFECTS_DECISION_INDEX_SQL = (
+    "CREATE INDEX field_effects_decision ON field_effects(decision_id)"
+)
+_FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL = (
+    "CREATE INDEX field_effects_companion_decision ON field_effects("
+    + _FIELD_EFFECT_COMPANION_DECISION_SQL
+    + ") WHERE "
+    + _FIELD_EFFECT_COMPANION_DECISION_SQL
+    + " IS NOT NULL"
+)
+# The scheduler's claim, the Activity page's waiting effect and description
+# advice's target check read only live or one target's effects, but scanned
+# every effect ever recorded. A partial index serves only a statement whose
+# state list is written exactly as its WHERE clause's, so each statement uses
+# the list below; a plain state index would not do, as without statistics the
+# planner prefers it for the verified authority lookups and walks every
+# verified effect (#1204).
+_FIELD_EFFECT_READY_STATES_SQL = "('planned','retryable')"
+_FIELD_EFFECT_WAITING_STATES_SQL = (
+    "('planned','claimed','applying','reconciling','retryable')"
+)
+_FIELD_EFFECTS_READY_INDEX_SQL = (
+    "CREATE INDEX field_effects_ready ON field_effects(updated_at,plan_id) "
+    "WHERE state IN " + _FIELD_EFFECT_READY_STATES_SQL
+)
+_FIELD_EFFECTS_WAITING_INDEX_SQL = (
+    "CREATE INDEX field_effects_waiting ON field_effects(updated_at,plan_id) "
+    "WHERE state IN " + _FIELD_EFFECT_WAITING_STATES_SQL
+)
+_FIELD_EFFECTS_TARGET_INDEX_SQL = (
+    "CREATE INDEX field_effects_target ON field_effects("
+    "connection_name,library_name,work_id,destination)"
+)
 _FIELD_EFFECT_NO_CHANGES_SQL = (
     "CREATE TABLE field_effect_no_changes ("
     "decision_id TEXT PRIMARY KEY NOT NULL, "
@@ -845,6 +891,12 @@ _DESCRIPTION_ADVICE_TRIGGERS = {
     for table in ("description_advice_candidates", "description_decisions")
     for operation in ("update", "delete")
 }
+# A corrective keep_current's predecessor and an authored description's both
+# find a case's description decisions; without this the pending statements
+# built an automatic index over field_effects per call (#1204).
+_DESCRIPTION_DECISIONS_CASE_INDEX_SQL = (
+    "CREATE INDEX description_decisions_case ON description_decisions(review_case_id)"
+)
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:
@@ -946,6 +998,12 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_FIELD_EFFECT_CONSENTS_SQL)
     connection.execute(_FIELD_EFFECT_MANUAL_HOLDS_SQL)
     connection.execute(_FIELD_EFFECTS_SQL)
+    connection.execute(_FIELD_EFFECTS_DECISION_INDEX_SQL)
+    connection.execute(_FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL)
+    connection.execute(_FIELD_EFFECTS_READY_INDEX_SQL)
+    connection.execute(_FIELD_EFFECTS_WAITING_INDEX_SQL)
+    connection.execute(_FIELD_EFFECTS_TARGET_INDEX_SQL)
+    connection.execute(_DESCRIPTION_DECISIONS_CASE_INDEX_SQL)
     connection.execute(_FIELD_EFFECT_EVENTS_SQL)
     connection.execute(_FIELD_EFFECT_NO_CHANGES_SQL)
     connection.execute(_FIELD_EFFECT_ACTIONS_SQL)
@@ -1031,6 +1089,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
                 for name in _DESCRIPTION_ADVICE_TABLES
             ),
             ("index", "sqlite_autoindex_description_decisions_2", None),
+            (
+                "index",
+                "description_decisions_case",
+                _DESCRIPTION_DECISIONS_CASE_INDEX_SQL,
+            ),
             *(
                 ("trigger", name, statement)
                 for name, statement in _DESCRIPTION_ADVICE_TRIGGERS.items()
@@ -1092,6 +1155,15 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_field_effect_consents_1", None),
             ("index", "sqlite_autoindex_field_effect_manual_holds_1", None),
             ("index", "sqlite_autoindex_field_effects_1", None),
+            ("index", "field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
+            (
+                "index",
+                "field_effects_companion_decision",
+                _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL,
+            ),
+            ("index", "field_effects_ready", _FIELD_EFFECTS_READY_INDEX_SQL),
+            ("index", "field_effects_waiting", _FIELD_EFFECTS_WAITING_INDEX_SQL),
+            ("index", "field_effects_target", _FIELD_EFFECTS_TARGET_INDEX_SQL),
             ("index", "sqlite_autoindex_metadata_reports_1", None),
             ("index", "sqlite_autoindex_metadata_reports_2", None),
             ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),

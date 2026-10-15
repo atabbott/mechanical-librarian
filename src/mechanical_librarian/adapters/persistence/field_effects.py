@@ -54,6 +54,10 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
 )
+from mechanical_librarian.adapters.persistence.schema import (
+    _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECT_READY_STATES_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -840,7 +844,8 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 parameters = (last_library,)
             row = self._connection.execute(
                 "SELECT plan_id,library_name FROM field_effects WHERE state IN "
-                "('planned','retryable') ORDER BY "
+                + _FIELD_EFFECT_READY_STATES_SQL
+                + " ORDER BY "
                 + preference
                 + "updated_at,plan_id LIMIT 1",
                 parameters,
@@ -1367,7 +1372,12 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 (changed_at, canonical_effect_json(raw), decision_id),
             )
         rows = self._connection.execute(
-            "SELECT document,state FROM field_effects WHERE (decision_id=? OR json_extract(document,'$.plan.subtitle_companion.authority.decision_id')=?) AND state IN ('planned','retryable')",
+            "SELECT document,state FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects WHERE decision_id=? "
+            "UNION ALL SELECT rowid FROM field_effects WHERE "
+            + _FIELD_EFFECT_COMPANION_DECISION_SQL
+            + "=?) AND state IN "
+            + _FIELD_EFFECT_READY_STATES_SQL
+            + " ORDER BY rowid",
             (decision_id, decision_id),
         ).fetchall()
         for document, state in rows:
@@ -1397,8 +1407,12 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "UPDATE field_effect_consents SET current=0,updated_at=?,document=? WHERE consent_id=?",
                 (changed_at, canonical_effect_json(raw), consent_id),
             )
+            # The unary plus lets the planner use field_effects_ready and then
+            # sort; a bare rowid order forces a full scan of every effect.
             rows = self._connection.execute(
-                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN ('planned','retryable')",
+                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN "
+                + _FIELD_EFFECT_READY_STATES_SQL
+                + " ORDER BY +rowid",
                 (consent_id, consent_id),
             ).fetchall()
             for document, state in rows:

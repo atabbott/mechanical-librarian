@@ -532,6 +532,12 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
         connection.execute("DROP INDEX shadow_decision_outcomes_case_history")
         connection.execute("DROP INDEX human_decisions_case_destination")
         connection.execute("DROP INDEX metadata_policy_resolutions_resolved")
+        connection.execute("DROP INDEX field_effects_decision")
+        connection.execute("DROP INDEX field_effects_companion_decision")
+        connection.execute("DROP INDEX field_effects_ready")
+        connection.execute("DROP INDEX field_effects_waiting")
+        connection.execute("DROP INDEX field_effects_target")
+        connection.execute("DROP INDEX description_decisions_case")
         connection.commit()
         assert results() == indexed
         repository.close()
@@ -582,6 +588,12 @@ def test_representative_attention_expectation_counts_only_remaining_owner_action
         "shadow_decision_outcomes_case_history",
         "human_decisions_case_destination",
         "metadata_policy_resolutions_resolved",
+        "field_effects_decision",
+        "field_effects_companion_decision",
+        "field_effects_ready",
+        "field_effects_waiting",
+        "field_effects_target",
+        "description_decisions_case",
     ],
 )
 def test_exact_schema_requires_each_measured_index(index_name: str) -> None:
