@@ -667,7 +667,7 @@ def _alternative(
 ) -> Path:
     """The same seeded ledger with its newest owner choice made at another time."""
     root = tmp_path / "alternative"
-    root.mkdir()
+    root.mkdir(mode=0o700)
     seeded = seed_activity(root)
     _record_decision(seeded.repository, 0, occurred_at)
     seeded.repository.close()
