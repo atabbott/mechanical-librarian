@@ -903,6 +903,21 @@ def test_consent_revocation_supersedes_in_its_original_order(
         lambda operation, kind, at: events.append(operation),
     )
     monkeypatch.setattr(effects, "_schedule_field_effect_cleanup", lambda *_: None)
-    assert effects.revoke_field_effect_consent(consent_id, 200) == len(original)
+    revoked: list[int] = []
+    (statement,) = (
+        traced
+        for traced in _traced_selects(
+            connection,
+            lambda: revoked.append(
+                effects.revoke_field_effect_consent(consent_id, 200)
+            ),
+        )
+        if "FROM field_effects" in traced
+    )
+    assert revoked == [len(original)]
     assert superseded == original
     assert events == [document for document, _ in original]
+    # Only live effects are walked, through the claim's partial index.
+    assert _effect_steps(_plan(connection, statement, ())) == [
+        "SCAN field_effects USING INDEX field_effects_ready"
+    ]

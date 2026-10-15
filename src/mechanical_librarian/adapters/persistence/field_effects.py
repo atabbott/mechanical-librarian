@@ -1405,8 +1405,12 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 "UPDATE field_effect_consents SET current=0,updated_at=?,document=? WHERE consent_id=?",
                 (changed_at, canonical_effect_json(raw), consent_id),
             )
+            # The unary plus lets the planner use field_effects_ready and then
+            # sort; a bare rowid order forces a full scan of every effect.
             rows = self._connection.execute(
-                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN ('planned','retryable') ORDER BY rowid",
+                "SELECT document,state FROM field_effects WHERE (json_extract(document,'$.plan.consent.consent_id')=? OR json_extract(document,'$.plan.subtitle_companion.consent.consent_id')=?) AND state IN "
+                + _FIELD_EFFECT_READY_STATES_SQL
+                + " ORDER BY +rowid",
                 (consent_id, consent_id),
             ).fetchall()
             for document, state in rows:
