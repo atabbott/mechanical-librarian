@@ -653,6 +653,43 @@ def test_appends_cannot_hold_the_sweep_in_one_table(ledger: _Ledger) -> None:
     raise AssertionError("appends held the re-verification sweep in one table")
 
 
+def test_a_row_appended_inside_its_table_is_reverified_within_two_laps(
+    ledger: _Ledger,
+) -> None:
+    """The entry ceiling defers a row appended behind the cursor a lap (#1218)."""
+    table = "field_effect_events"
+    store = ActivityFactStore()
+    _witness_refresh(store, ledger.path)
+    for _ in range(4 * ledger.admitted_rows()):
+        if _TABLES[store._cursor[0]] == table and store._cursor[1] is not None:
+            break
+        _witness_refresh(store, ledger.path)
+    else:
+        raise AssertionError("the re-verification cursor never reached the table")
+    source = _event_row(ledger, 1)
+    ledger.root._connection.execute(
+        "INSERT INTO field_effect_events"
+        "(event_id,plan_id,sequence,kind,occurred_at,document) "
+        "VALUES (?,?,?,?,?,?)",
+        (f"effect_event_{999:064x}", source[1], 999, *source[3:]),
+    )
+    ledger.root._connection.commit()
+    rowid = ledger.root._connection.execute(
+        f"SELECT max(rowid) FROM {table}"
+    ).fetchone()[0]
+    snapshot = _witness_refresh(store, ledger.path)
+    assert snapshot.witnesses == _full_witness(ledger.path).witnesses
+    lap = math.ceil(sum(count for _, count in snapshot.marks.values()) / SLICE)
+    _replace_in_place(ledger, rowid)
+    for _ in range(2 * lap):
+        if (
+            _witness_refresh(store, ledger.path).witnesses
+            == _full_witness(ledger.path).witnesses
+        ):
+            return
+    raise AssertionError("an appended row waited longer than two laps")
+
+
 def test_sweep_covers_rowid_zero_from_its_first_refresh(ledger: _Ledger) -> None:
     """The cursor starts at a table's start, not at rowid zero."""
     # The fixture's own reads have advanced its sweep, so construct afresh.

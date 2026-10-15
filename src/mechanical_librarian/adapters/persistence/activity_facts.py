@@ -10,6 +10,7 @@ import sqlite3
 from collections import defaultdict, deque
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from itertools import chain
 from threading import Lock
 from typing import Any, cast
 
@@ -215,7 +216,9 @@ def _reverify(
 
     The cursor walks every admitted append-only row in (table, rowid) order, so
     an in-place change that preserves rowid and count is found within
-    ceil(rows / slice) refreshes. A disagreeing table is re-witnessed in full.
+    ceil(rows / slice) refreshes for a row present when the cursor entered its
+    table, and within about two laps for a row appended while the cursor was
+    inside it (#1218). A disagreeing table is re-witnessed in full.
     """
     index, after, ceiling = cursor
     eligible = append_only & previous.marks.keys()
@@ -690,28 +693,38 @@ class ActivityFactStore:
         if previous is None:
             affected = None
             facts: dict[Candidate, ActivityFact] = {}
+            retained = 0
         else:
             # Reverse edges are needed only while computing a changed revision.
             # Retain each forward binding once; discard this temporary traversal
-            # index before parsing any affected canonical candidates.
+            # index before parsing any affected canonical candidates. A witness
+            # both snapshots share contributes the same edges twice, so only
+            # the previous snapshot's differing witnesses are added (#1218).
             reverse: dict[Key, set[Key]] = defaultdict(set)
             currentness: dict[Key, set[Candidate]] = defaultdict(set)
-            for nodes in (witnesses, previous.witnesses):
-                for table_rows in nodes.values():
-                    for key, node in table_rows.items():
-                        for dependency in node.dependencies:
-                            if dependency[0] in {
-                                "current_cover_considerations",
-                                "resolution_identity",
-                                "isbn_resolution",
-                                "isbn_fallback",
-                            }:
-                                # Currentness and ISBN policy lookups affect
-                                # these candidates, not ordinary retained
-                                # decision lineage.
-                                currentness[dependency].update(node.candidates)
-                            else:
-                                reverse[dependency].add(key)
+            for table in _TABLES:
+                current, prior = witnesses[table], previous.witnesses[table]
+                for key, node in chain(
+                    current.items(),
+                    (
+                        (key, node)
+                        for key, node in (() if prior is current else prior.items())
+                        if current.get(key) is not node
+                    ),
+                ):
+                    for dependency in node.dependencies:
+                        if dependency[0] in {
+                            "current_cover_considerations",
+                            "resolution_identity",
+                            "isbn_resolution",
+                            "isbn_fallback",
+                        }:
+                            # Currentness and ISBN policy lookups affect these
+                            # candidates, not ordinary retained decision lineage.
+                            currentness[dependency].update(node.candidates)
+                        else:
+                            reverse[dependency].add(key)
+                    if node.aliases:
                         reverse[key].update(node.aliases)
             affected = set()
             pending = deque(changed)
@@ -728,13 +741,16 @@ class ActivityFactStore:
                         pending.append(dependent)
                         reached.add(dependent)
             del reverse, currentness
-            facts = {
-                key: value
-                for key, value in previous.facts.items()
-                if key not in affected
-            }
+            # The previous facts' bytes are already counted; subtract only the
+            # affected facts instead of re-summing all history (#1218).
+            facts = dict(previous.facts)
+            retained = previous.fact_bytes
+            for candidate in affected:
+                fact = facts.pop(candidate, None)
+                if fact is not None:
+                    retained -= activity_fact_bytes(candidate, fact)
         state_bytes = accounted
-        accounted += sum(activity_fact_bytes(key, fact) for key, fact in facts.items())
+        accounted += retained
         if accounted > self.max_bytes:
             self._disable()
             return None
@@ -748,10 +764,14 @@ class ActivityFactStore:
                 activity_fact_bytes(key, fact) for key, fact in refreshed.items()
             )
             facts.update(refreshed)
+        # The canonical total order: newest first, then event id descending,
+        # then kind and group identity ascending. The stable second sort keeps
+        # the first sort's candidate order among facts tied on time and id.
         ordered = tuple(
-            sorted(
-                facts.values(),
-                key=lambda fact: (fact.occurred_at, fact.event_id),
+            fact
+            for _, fact in sorted(
+                sorted(facts.items(), key=lambda item: item[0]),
+                key=lambda item: (item[1].occurred_at, item[1].event_id),
                 reverse=True,
             )
         )

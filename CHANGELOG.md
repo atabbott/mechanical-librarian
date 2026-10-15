@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Activity keeps up with each change at scale: a change re-reads only the
+  history of the events it affects instead of all history for each one, and a
+  large refresh parses each report once. Results, counts and refusals are
+  unchanged; events tied on time and identifier now order the same way on every
+  read path (#1218).
+
 - Library and Attention stay responsive while preparation runs: Activity now
   reads only the history added since its last check, and re-verifies older
   history a slice at a time, instead of re-reading all of it on every change

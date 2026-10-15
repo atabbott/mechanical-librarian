@@ -1360,8 +1360,12 @@ alongside raw-byte hashes, so a normal commit cannot conceal a same-ID byte chan
 Affected canonical candidates are revalidated before search, including old and new
 missing/excluded dependencies. Schema drift or inability to admit the optimized
 representation returns to canonical query-scoped validation; overflow never returns
-partial counts. Typed authority objects do not persist between requests. This
-store grants no permission, backup, consent or effect authority.
+partial counts. Typed authority objects do not persist between requests: the
+bounded parser reuse (256 entries each for reports, cases, proposals and
+outcomes) lives only for one construction or reprojection call and is dropped
+before the store publishes (#1218). Reprojected candidates reach SQL as one bound
+JSON parameter; source kinds are code literals. This store grants no permission,
+backup, consent or effect authority.
 
 Changed revisions witness trigger-enforced append-only tables incrementally above
 a recorded `max(rowid)` and `count(*)`; a deletion whose row is not replaced at
@@ -1369,10 +1373,12 @@ or below the mark, renumbering or a reused key re-witnesses the table at the nex
 refresh (#1200). Changes that keep the mark and count (raw file bytes behind an
 ordinary commit, `REPLACE` naming an existing rowid or an unused rowid at or below
 the mark, BLOB I/O, trigger removal through `writable_schema`) are found by a
-rolling 256-row re-verification, covering zero and negative rowids, within
-⌈rows / 256⌉ refreshes or unchanged-revision Activity reads rather than at the
-next refresh; an idle library's reads advance the sweep too, so stale facts
-cannot stay visible across that many reads. Until then Activity may display the
+rolling 256-row re-verification, covering zero and negative rowids, rather than
+at the next refresh: a row present when the sweep enters its table within
+⌈rows / 256⌉ refreshes or unchanged-revision Activity reads that advance the
+sweep, and a row appended while the sweep is inside its table within about two
+laps (#1218). An idle library's reads advance the sweep too, so stale facts
+cannot stay visible beyond that bound. Until then Activity may display the
 prior readable fact; Activity facts feed no write, permission or
 effect path, so that exposure is display-only. Every new borrower generation
 performs a full witness against the previous snapshot rather than admitting
