@@ -225,11 +225,22 @@ _GUARDS = (
 )
 
 
+_LITERAL_NAMES = {":": "colon", "/": "slash", "~": "tilde", ":=": "assignment"}
+
+
 @pytest.mark.parametrize(
     "flags,literals",
-    sorted(
-        {(pattern.flags & re.IGNORECASE, literals) for pattern, literals in _GUARDS}
-    ),
+    [
+        pytest.param(
+            flags,
+            literals,
+            id=("folded_" if flags else "exact_")
+            + _LITERAL_NAMES.get(literals, "backslash"),
+        )
+        for flags, literals in sorted(
+            {(pattern.flags & re.IGNORECASE, literals) for pattern, literals in _GUARDS}
+        )
+    ],
 )
 def test_no_other_codepoint_matches_a_guard_literal(flags: int, literals: str) -> None:
     # A guard tests `in` on the exact literal; the pattern would also accept any
