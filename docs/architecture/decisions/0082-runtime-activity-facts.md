@@ -85,3 +85,59 @@ combined commit and byte corruption, old/new dependency closure, excluded
 membership, bounded overflow, schema drift and generation drain. Exact-installed
 startup, retained changed-revision and idle reads, preparation contention, RSS,
 and the existing owner browser journey retain their original budgets.
+
+## Amendment: incremental witness with rolling re-verification (#1200)
+
+A full witness held one shared read for the whole history on every changed
+revision. In rollback-journal mode the preparation writer cannot commit while
+that read is held, so it waits while holding root admission (ADR-0077) and owner
+reads queue behind it. The witness is therefore admitted incrementally where the
+schema makes that exact, and verified in full by a rolling sweep.
+
+A changed revision re-witnesses every row of `field_effects`,
+`description_advice_attempts`, `metadata_policy_transitions`,
+`metadata_policy_resolutions`, `current_cover_considerations`, and
+`field_effect_no_changes` (no rowid). For every other source table, whose schema
+raises on every UPDATE and DELETE, the store records `max(rowid)` and `count(*)`
+with its witnesses; a later borrower, in its own snapshot, witnesses only rows
+above the mark and admits the table incrementally only when the mark has not
+decreased, no row above the mark carries a previously witnessed key, and
+`count(*)` equals the recorded count plus those rows; otherwise it re-witnesses
+the whole table.
+
+This detects every SQL insert, every deletion (including `INSERT OR REPLACE`'s
+silent delete) and rowid renumbering. In-place changes that preserve rowid and
+count (out-of-band file bytes with an ordinary commit, `REPLACE` naming an
+existing rowid, incremental BLOB I/O, trigger removal through `writable_schema`
+without a schema-version change) are detected by the rolling re-verification,
+not the next refresh.
+
+Rolling re-verification: each refresh re-verifies the next bounded slice of
+admitted append-only rows (256) inside its existing read, so every row is
+re-verified at least once per ⌈rows / slice⌉ refreshes. A row whose witness
+differs re-witnesses its whole table in that refresh. Construction still performs
+a full witness; an unchanged revision with a changed file identity still refuses.
+
+The table classification is derived from the schema's triggers and verified at
+construction, so a table that loses its append-only triggers falls back to full
+re-witnessing. A table qualifies only when an unconditional `BEFORE UPDATE` and
+`BEFORE DELETE` trigger each raise, it has a rowid, and no column shadows it;
+the classification is re-derived inside every refresh's own read. Shadow outcomes
+bound to a review case appended above its mark are re-bound within the same
+refresh, and a review-case table re-witnessed with any difference re-witnesses
+every outcome.
+
+Marks and the sweep cursor count toward the 64 MiB bound. Overflow, a decoding
+failure and schema drift keep the canonical fallback. The sweep cursor lives
+beside the published snapshot, so a refresh that changes nothing keeps the
+published store version. The product holds no route that changes an
+append-only row in place: a static test refuses `OR REPLACE`, `REPLACE INTO`,
+BLOB I/O and `writable_schema` in the source, and a schema test requires both
+refusal triggers on every incrementally witnessed table.
+
+Consequences replace the earlier statement that a changed revision scans all
+source bytes: it now scans the mutable tables, the rows above each mark and one
+sweep slice. Activity facts feed no write path, so the detection delay for an
+in-place change outside SQL's ordinary routes is display-only and bounded by the
+sweep. Journal mode, schema, startup admission and the canonical projection are
+unchanged.

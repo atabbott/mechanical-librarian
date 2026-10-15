@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library and Attention stay responsive while preparation runs: Activity now
+  reads only the history added since its last check, and re-verifies older
+  history a slice at a time, instead of re-reading all of it on every change
+  while preparation waits. Activity results, counts, order and refusals are
+  unchanged (#1200).
+
 - Preparation no longer stops until a restart when a long Activity read holds
   the database past a claim's busy timeout: a claim that committed nothing
   retries on its next one-second wake and preparation resumes once the read

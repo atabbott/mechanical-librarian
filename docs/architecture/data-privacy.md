@@ -197,7 +197,8 @@ stored-row corruption, source-specific evidence, current-state recovery, and
 authenticated private-cache behavior.
 
 The process may also retain up to 64 MiB of serialized readable Activity facts,
-search text and source/dependency witnesses. This private in-memory store is not
+search text, source/dependency witnesses, and each append-only table's row mark
+and a re-verification cursor. This private in-memory store is not
 an export or another durable ledger. It retains no domain report objects between
 requests and disappears with its runtime owner; canonical retention is unchanged.
 

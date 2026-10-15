@@ -66,6 +66,16 @@ one generation does not erase successor facts. Overflow and schema drift use the
 canonical query path. Writable and direct repositories retain that path; no table,
 schema version, adoption command or journal setting changes.
 
+A changed revision re-witnesses the six mutable source tables in full (#1200).
+Every other source table refuses UPDATE and DELETE by trigger, so the store
+records its `max(rowid)` and `count(*)` and a later borrower streams only rows
+above that mark. A decreased mark, a reused key above it, or a count that the
+appended rows do not explain re-witnesses the whole table. Each refresh also
+re-verifies the next 256 admitted append-only rows, so an in-place change that
+keeps rowid and count is found within ⌈rows / 256⌉ refreshes. The classification
+is re-derived from the live triggers in every refresh. This shortens the shared
+read that delays the preparation writer's commit; journal mode stays `DELETE`.
+
 Library and Attention need no additional browse borrower. Membership, counts and
 row facts share a short deferred transaction; visible projection remains inside
 the bounded local operation after that transaction ends. External policy/replay
