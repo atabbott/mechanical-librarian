@@ -364,7 +364,7 @@ jobs:
 
   container-image:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check out the exact revision
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -411,7 +411,8 @@ jobs:
       # never pushed or run here: running the built image's lifecycle
       # qualifier stays a documented maintainer-manual step. It is loaded into
       # the runner's daemon for exactly one purpose -- extracting the pinned
-      # probe binary the tier below executes (#929). Layers restore
+      # probe binary (#929) and the SQLite library (#1211) the tiers below
+      # execute. Layers restore
       # from the repository Actions cache; a step re-executes only when its
       # inputs change. Base-image freshness comes from the digest pins the
       # Dockerfile carries on every FROM line, not from `--pull` -- a base
@@ -431,12 +432,17 @@ jobs:
       # inspector resolves. It is removed so the tier can only ever execute
       # the binary the shipped image pins -- a pass that ran the distribution
       # probe would prove nothing about the pin. The version assertion reads
-      # the Dockerfile's own ARG, so a pin bump stays a one-file change.
+      # the Dockerfile's own ARG, so a pin bump stays a one-file change. The
+      # same container hands over the SQLite library and package database the
+      # image ships, for the plan tier below.
       - name: Install the image's pinned probe binary
         run: |
           sudo rm -f /usr/bin/ffprobe
           container="$(docker create mechanical-librarian:gate)"
           docker cp "${container}:/usr/local/bin/ffprobe" "$RUNNER_TEMP/ffprobe"
+          mkdir "$RUNNER_TEMP/shipped-sqlite"
+          docker cp -L "${container}:/usr/lib/$(uname -m)-linux-gnu/libsqlite3.so.0" "$RUNNER_TEMP/shipped-sqlite/libsqlite3.so.0"
+          docker cp "${container}:/var/lib/dpkg/status" "$RUNNER_TEMP/shipped-sqlite/dpkg-status"
           docker rm "${container}"
           sudo install -m 0755 "$RUNNER_TEMP/ffprobe" /usr/local/bin/ffprobe
           version="$(sed -n 's/^ARG FFMPEG_VERSION=//p' Dockerfile)"
@@ -445,6 +451,21 @@ jobs:
 
       - name: Run the probe tier against the shipped binary
         run: uv run python scripts/run_test_tier.py probe
+
+      # The image runs on the SQLite its Debian base ships, which plans some
+      # reads differently from the runner's newer library (#1211), so every
+      # plan and read-budget assertion reruns on the library extracted above.
+      # The readback fails the step unless Python loaded exactly the version
+      # the image's package database records: an interpreter that bundles its
+      # own SQLite, or ignores the library path, cannot pass in its place. The
+      # path is prepended, since setup-python's interpreter finds its own
+      # shared library through the same variable.
+      - name: Run the plan assertions on the image's SQLite
+        run: |
+          export LD_LIBRARY_PATH="$RUNNER_TEMP/shipped-sqlite${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          version="$(sed -n '/^Package: libsqlite3-0$/,/^$/s/^Version: \([0-9.]*\)-.*/\1/p' "$RUNNER_TEMP/shipped-sqlite/dpkg-status")"
+          test "$(uv run python -c 'import sqlite3; print(sqlite3.sqlite_version)')" = "${version:?}"
+          uv run python scripts/run_test_tier.py shipped-sqlite
 
   dependency-audit:
     runs-on: ubuntu-24.04

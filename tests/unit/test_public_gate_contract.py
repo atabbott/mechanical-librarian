@@ -171,14 +171,17 @@ def test_every_job_is_bounded_and_the_source_job_gates_before_it_tests() -> None
     assert (
         "  protected-browser:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n"
     ) in workflow
-    assert workflow.count("timeout-minutes: 15") == 1
+    assert (
+        "  container-image:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 15\n"
+    ) in workflow
+    assert workflow.count("timeout-minutes: 15") == 2
     for shard in (2, 3, 4):
         assert (
             f"  fast-source-{shard}:\n    runs-on: ubuntu-24.04\n"
             "    timeout-minutes: 12\n"
         ) in workflow
     assert workflow.count("timeout-minutes: 12") == 3
-    assert workflow.count("timeout-minutes: 10") == 3
+    assert workflow.count("timeout-minutes: 10") == 2
     # The three commands CONTRIBUTING.md documents as reproducing this job.
     # `ruff format --check` is the backend's line-width contract, so a tree
     # that is not formatted has to fail here rather than pass unnoticed.
@@ -289,8 +292,9 @@ def test_builds_the_shipped_container_from_the_exact_revision() -> None:
     assert "docker build --pull" not in workflow
     # The built image is never pushed or run by the gate. It is loaded and
     # its tag referenced exactly once more, by the extraction that hands the
-    # image's pinned probe binary to the probe tier (#929) -- a `docker
-    # create` never starts a process. The `docker run` in the dependency
+    # image's pinned probe binary to the probe tier (#929) and its SQLite
+    # library to the plan tier (#1211) -- a `docker create` never starts a
+    # process. The `docker run` in the dependency
     # audit runs a different, digest-pinned scanner image and never touches
     # this one.
     assert "push: false" in workflow
@@ -336,6 +340,45 @@ def test_the_probe_tier_executes_the_images_own_pinned_binary() -> None:
     # `fast-source` stays ffprobe-free: unit tests consume recorded probe
     # documents, and the probe binary exists only where the image supplies it.
     assert "ffprobe" not in jobs[0]
+
+
+def test_plan_assertions_run_on_the_images_own_sqlite() -> None:
+    """The plan tier must be attributable to the SQLite the image ships (#1211).
+
+    The runner's newer SQLite plans some reads differently, so a pass there
+    proves nothing about the image. The library comes from the container the
+    job just built, its path is prepended rather than replacing the one
+    setup-python's interpreter needs, and the version Python reports must equal
+    the one the image's package database records, so an interpreter carrying
+    its own SQLite fails the step instead of passing in its place.
+    """
+
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    tail = workflow.split("\n  container-image:\n")[1].split("\n  dependency-audit:\n")[
+        0
+    ]
+    extraction = tail.index('container="$(docker create mechanical-librarian:gate)"')
+    library = tail.index(
+        'docker cp -L "${container}:/usr/lib/$(uname -m)-linux-gnu/libsqlite3.so.0" '
+        '"$RUNNER_TEMP/shipped-sqlite/libsqlite3.so.0"'
+    )
+    status = tail.index(
+        'docker cp "${container}:/var/lib/dpkg/status" '
+        '"$RUNNER_TEMP/shipped-sqlite/dpkg-status"'
+    )
+    removal = tail.index('docker rm "${container}"')
+    assert extraction < library < removal
+    assert extraction < status < removal
+    step = tail.split("- name: Run the plan assertions on the image's SQLite\n")[1]
+    assert step_commands(step) == (
+        'export LD_LIBRARY_PATH="$RUNNER_TEMP/shipped-sqlite'
+        '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"',
+        "version=\"$(sed -n '/^Package: libsqlite3-0$/,/^$/s/^Version: "
+        '\\([0-9.]*\\)-.*/\\1/p\' "$RUNNER_TEMP/shipped-sqlite/dpkg-status")"',
+        "test \"$(uv run python -c 'import sqlite3; print(sqlite3.sqlite_version)')\" "
+        '= "${version:?}"',
+        "uv run python scripts/run_test_tier.py shipped-sqlite",
+    )
 
 
 def test_caches_the_pinned_chromium_payload_but_still_verifies_it() -> None:

@@ -159,6 +159,19 @@ COHORTS = {
     # a member of `slow`, the same way `required-installed` re-runs files that
     # `fast` owns: the slow tier remains the complete maintainer-local cohort.
     "probe": TestCohort(discoveries=(("tests/slow", "test_audio_probe.py"),)),
+    # The same job reruns every file that asserts a query plan or a read budget
+    # on the SQLite library extracted from that image (#1211): the runner's
+    # newer SQLite plans some reads differently from the one the image ships.
+    # Each file stays a member of `fast` or `slow`.
+    "shipped-sqlite": TestCohort(
+        discoveries=(
+            ("tests/unit", "test_pending_field_effect_lookup.py"),
+            ("tests/unit", "test_provider_recovery.py"),
+            ("tests/unit", "test_review_pipeline.py"),
+            ("tests/unit", "test_review_read_indexes.py"),
+            ("tests/slow", "test_review_read_indexes.py"),
+        )
+    ),
     "required-installed": TestCohort(
         discoveries=(
             ("tests/unit", "test_package.py"),

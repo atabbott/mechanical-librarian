@@ -538,6 +538,8 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
         connection.execute("DROP INDEX field_effects_waiting")
         connection.execute("DROP INDEX field_effects_target")
         connection.execute("DROP INDEX description_decisions_case")
+        connection.execute("DROP INDEX current_review_case_lineages_case")
+        connection.execute("DROP INDEX current_review_packages_case")
         connection.commit()
         assert results() == indexed
         repository.close()
@@ -594,6 +596,8 @@ def test_representative_attention_expectation_counts_only_remaining_owner_action
         "field_effects_waiting",
         "field_effects_target",
         "description_decisions_case",
+        "current_review_case_lineages_case",
+        "current_review_packages_case",
     ],
 )
 def test_exact_schema_requires_each_measured_index(index_name: str) -> None:
@@ -611,6 +615,145 @@ def test_exact_schema_requires_each_measured_index(index_name: str) -> None:
             MetadataReportError, match="database is unavailable or incompatible"
         ):
             open_repository(database, create=False)
+
+
+def test_case_reads_reach_lineage_and_package_by_index() -> None:
+    """Library rows and detail reach a case's lineage and package by index (#1211).
+
+    Each visible Library row read its field-effect suspensions and attention
+    count, and detail its suspensions, overrides and cover selection, by case
+    id from tables keyed by work, so every read walked every lineage or
+    package. SQLite 3.53 skipped the lineage walk only while no suspension
+    existed, by leaving a join over an empty table early; SQLite 3.40.1, which
+    the image ships, never did. One suspension of another connection makes
+    every engine walk, so this store holds one.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        connection = _representative_database(
+            Path(directory) / "application.sqlite3", works=600
+        )
+        connection.execute(
+            "INSERT INTO field_effect_suspensions(scope,connection_name,destination,"
+            "reason,updated_at,document) VALUES('connection','other','',"
+            "'connection_unavailable',0,'{}')"
+        )
+        connection.commit()
+        repository = SQLiteMetadataReportRepository(connection)
+        projections = repository._review_projections
+        try:
+            case_ids = tuple(
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT review_case_id FROM current_review_case_lineages "
+                    "WHERE item_id IN ('item-0000','item-0299','item-0598')"
+                )
+            )
+            assert len(case_ids) == 3
+            reads: tuple[Callable[[str], object], ...] = (
+                projections._field_effect_capability_suspended_destinations,
+                projections._field_effect_capability_suspension_causes,
+                projections._override_blocked_destinations,
+                projections._current_attention_count,
+            )
+            for read in reads:
+                for case_id in case_ids:
+                    steps = 0
+
+                    def progress() -> int:
+                        nonlocal steps
+                        steps += 10
+                        return 0
+
+                    connection.set_progress_handler(progress, 10)
+                    try:
+                        read(case_id)
+                    finally:
+                        connection.set_progress_handler(None, 0)
+                    # Indexed, each read takes a few hundred steps at any
+                    # library size; walking 600 works took thousands.
+                    assert steps <= 1_000, (read.__name__, steps)
+
+            statements = _traced_selects(
+                connection,
+                lambda: (
+                    repository.read_review_library(None, 7, 0, None),
+                    repository.read_current_review_case(case_ids[0], 100),
+                ),
+            )
+            used: set[str] = set()
+            for statement in statements:
+                if statement.lstrip().upper().startswith("WITH"):
+                    # The page itself lists every package by design.
+                    continue
+                aliases = (
+                    "current_review_case_lineages",
+                    "current_review_packages",
+                    *re.findall(
+                        r"(?:current_review_case_lineages|current_review_packages) (\w+)",
+                        statement,
+                    ),
+                )
+                plan = _plan(connection, statement, ())
+                assert not any(
+                    re.match(rf"SCAN {alias}\b", step)
+                    for alias in aliases
+                    for step in plan
+                ), statement
+                used.update(
+                    name
+                    for name in (
+                        "current_review_case_lineages_case",
+                        "current_review_packages_case",
+                    )
+                    if any(f"INDEX {name} " in step for step in plan)
+                )
+            assert used == {
+                "current_review_case_lineages_case",
+                "current_review_packages_case",
+            }
+        finally:
+            repository.close()
+
+
+def test_first_match_and_hold_reads_keep_their_lineage_walk() -> None:
+    """The case indexes leave rowid-order lineage walks where order is visible.
+
+    A dependency probe stops at its first match and a pending-return read
+    evaluates json_type on each joined hold, so a covering scan or a hold-first
+    join over #1211's indexes would change which rows those terms reach.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        connection = _representative_database(
+            Path(directory) / "application.sqlite3", works=20
+        )
+        repository = SQLiteMetadataReportRepository(connection)
+        activity = repository._field_effect_activity
+        try:
+            statements = _traced_selects(
+                connection,
+                lambda: (
+                    activity.pending_field_effect_manual_returns(100),
+                    activity.field_effect_dependencies_current(("0" * 64,)),
+                ),
+            )
+            walks = [
+                _plan(connection, statement, ())
+                for statement in statements
+                if "current_review_case_lineages lineage" in statement
+            ]
+            assert len(walks) == 3
+            for plan in walks:
+                assert plan[0] == "SCAN lineage", plan
+                assert not any(
+                    name in step
+                    for name in (
+                        "current_review_case_lineages_case",
+                        "current_review_packages_case",
+                    )
+                    for step in plan
+                ), plan
+        finally:
+            repository.close()
 
 
 def test_browse_probes_decision_and_policy_history_by_index() -> None:

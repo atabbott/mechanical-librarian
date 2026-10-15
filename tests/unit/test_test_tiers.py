@@ -254,6 +254,34 @@ def test_the_probe_cohort_is_exactly_the_audio_probe_slice_of_slow() -> None:
     )
 
 
+def test_the_shipped_sqlite_cohort_is_every_plan_asserting_file() -> None:
+    """The hosted gate reruns each plan or read-budget assertion on the image's
+    SQLite (#1211), so a new one cannot pass only on the runner's newer engine.
+
+    A file asserts a plan when it runs `EXPLAIN QUERY PLAN` itself or calls the
+    `_plan` helper of the read-index suite, which the slow read budget does.
+    """
+
+    root = Path(__file__).resolve().parents[2]
+    asserting = sorted(
+        path
+        for path in (root / "tests").glob("*/test_*.py")
+        if path != Path(__file__).resolve()
+        and (
+            "QUERY PLAN" in (text := path.read_text(encoding="utf-8"))
+            or ("test_review_read_indexes" in text and re.search(r"\b_plan\(", text))
+        )
+    )
+    assert len(asserting) == 5
+    targets = cohort_targets(root, "shipped-sqlite")
+    assert sorted(Path(target) for target in targets) == asserting
+    members = set(collect_cohort(root, "shipped-sqlite"))
+    assert members
+    assert members < set(collect_cohort(root, "fast")) | set(
+        collect_cohort(root, "slow")
+    )
+
+
 def test_required_installed_adds_explicit_preparation_nodes_to_fast() -> None:
     root = Path(__file__).resolve().parents[2]
     fast = set(collect_cohort(root, "fast"))
@@ -291,6 +319,7 @@ def test_the_tier_inventory_lists_standalone_and_a_bare_invocation_refuses() -> 
             "fast",
             "probe",
             "required-installed",
+            "shipped-sqlite",
             "slow",
         ],
     }

@@ -1173,11 +1173,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     after[1],
                     after[2],
                 )
+            # NOT INDEXED keeps the lineage-first plan this statement always had, so
+            # json_type still sees only holds whose case has a lineage (#1211).
             rows = self._connection.execute(
                 "SELECT hold.review_case_id,hold.destination,lineage.connection_name,"
                 "lineage.library_name,hold.document,hold.updated_at "
                 "FROM field_effect_manual_holds hold "
-                "JOIN current_review_case_lineages lineage "
+                "JOIN current_review_case_lineages lineage NOT INDEXED "
                 "ON lineage.review_case_id=hold.review_case_id "
                 "WHERE hold.active=1 AND "
                 "json_type(hold.document,'$.pending_return')='object' "
@@ -1220,10 +1222,12 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             or any(type(value) is not str or len(value) != 64 for value in digests)
         ):
             return False
+        # NOT INDEXED keeps both probes on the rowid-order lineage walk they always
+        # had, so the first match is reached by the same rows as before (#1211).
         try:
             return all(
                 self._connection.execute(
-                    "SELECT 1 FROM current_review_case_lineages lineage "
+                    "SELECT 1 FROM current_review_case_lineages lineage NOT INDEXED "
                     "JOIN review_cases review ON review.review_case_id=lineage.review_case_id "
                     "WHERE json_extract(review.document,'$.target_fingerprint')=? LIMIT 1",
                     (digest,),
@@ -1233,7 +1237,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "SELECT 1 FROM current_cover_considerations current "
                     "JOIN cover_considerations consideration ON consideration.consideration_id=current.consideration_id "
                     "LEFT JOIN metadata_reports report ON report.report_id=consideration.report_id "
-                    "JOIN current_review_case_lineages lineage ON lineage.review_case_id=current.review_case_id "
+                    "JOIN current_review_case_lineages lineage NOT INDEXED "
+                    "ON lineage.review_case_id=current.review_case_id "
                     "WHERE consideration.document_digest=? "
                     "AND report.report_id=json_extract(consideration.document,'$.report_id') "
                     "AND report.document_digest=json_extract(consideration.document,'$.report_document_digest') "

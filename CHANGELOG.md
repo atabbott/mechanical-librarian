@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library and work detail stay within their read budget on the SQLite the image
+  ships, and on newer SQLite once any field-effect suspension exists: each row
+  reaches its case's lineage and package by index instead of walking every
+  work. Rows, counts, order and refusals are unchanged; clean rebuild required
+  (#1211).
+
 - Activity, the scheduler's claim, owner decisions, review history and
   description advice no longer slow as applied changes accumulate: they reach
   the field effects they ask about by index instead of scanning every effect.
