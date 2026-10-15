@@ -25,7 +25,7 @@ from mechanical_librarian.domain.metadata_report import (
 
 # Retained wire name: SHA-256 of the canonical current authority object only.
 F46_QUALIFICATION_MANIFEST_SHA256: Final[str | None] = (
-    "6b07a05e302e54a105d6c9c91ef95924603c15bca4e7a1999d4a397c77446947"
+    "c0042c797adf3b810de5ec51543fbf2d8a919ec9d34c1ca2eb1b7d20a70ea147"
 )
 
 _FIELD_OPTIONS: Final = {

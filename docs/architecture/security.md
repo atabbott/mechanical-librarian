@@ -1364,8 +1364,10 @@ partial counts. Typed authority objects do not persist between requests: the
 bounded parser reuse (256 entries each for reports, cases, proposals and
 outcomes) lives only for one construction or reprojection call and is dropped
 before the store publishes (#1218). Reprojected candidates reach SQL as one bound
-JSON parameter; source kinds are code literals. This store grants no permission,
-backup, consent or effect authority.
+JSON parameter; source kinds are code literals. A candidate identity containing
+NUL, or a persisted outcome that fails validation during a refresh, returns reads
+to the canonical query-scoped path, which refuses only the queries selecting it.
+This store grants no permission, backup, consent or effect authority.
 
 Changed revisions witness trigger-enforced append-only tables incrementally above
 a recorded `max(rowid)` and `count(*)`; a deletion whose row is not replaced at

@@ -25,8 +25,8 @@ Activity events, search text, exact source witnesses and forward dependencies.
 Generation-owned, explicitly configured query-only Activity readers borrow it.
 The store is initialized before readiness; bounded exact-document parser reuse
 exists only during that construction and each later reprojection (#1218). Typed
-reports, cases, proposals and outcomes are discarded afterward. Direct and writable repository consumers retain the
-canonical projection.
+reports, cases, proposals and outcomes are discarded afterward. Direct and
+writable repository consumers retain the canonical projection.
 
 A new borrower streams every source witness in its own existing SQLite snapshot
 before sharing facts. Each witness contains every scalar column with exact type
@@ -40,7 +40,10 @@ Changed sources identify affected candidates through both old and new bindings,
 including excluded candidates, missing joins, deletion and replacement. A temporary
 reverse index computes that closure and is discarded before canonical reprojection.
 Reprojection restricts each union arm to the requested candidates' whole ranking
-partitions, so the canonical ranking sees every row it would rank (#1218).
+partitions, so the canonical ranking sees every row it would rank, in an order
+fixed by the explicit tiebreak: rows tied within a partition rank the earliest
+stored row first, and a cover selection before an automatic decision of the
+same id (#1218).
 ISBN refusal candidates bind the exact policy generation/library lookup and the
 generation-one profile fallback, including absent lookups. These policy edges
 refresh only the ISBN candidate, not ordinary automatic decision lineage.

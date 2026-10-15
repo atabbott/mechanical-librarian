@@ -13,6 +13,7 @@ import json
 import re
 from collections.abc import Iterator
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from typing import cast
@@ -45,12 +46,13 @@ from mechanical_librarian.domain.proposal_set import evaluate_report
 from mechanical_librarian.domain.review_case import ReviewCase
 from tests.support.activity_seed import SEED_NOW, _report, seed_activity
 from tests.support.audiobook_reports import synthetic_audiobook_isbn_reason_report
+from tests.support.description_advice import _prepared
 from tests.support.field_effects import (  # noqa: F401
     _EffectEnvironment,
     effects,
 )
 from tests.unit.test_activity_end_to_end import _qualified_no_change_decision
-from tests.unit.test_activity_fact_witness import _pages
+from tests.unit.test_activity_fact_witness import _outcome, _pages
 
 
 @dataclass
@@ -368,8 +370,8 @@ def test_isbn_candidates_keep_blob_rows_of_their_own_partition_only(
             # Newer than its text twin, so it is the partition's ranked row.
             (outcome["outcome_set_id"].encode(), row[6] + 1),
             (("shadow_outcome_set_" + "f" * 64).encode(), row[6]),
-            # Tied with the text twin written after it: the full projection's
-            # scan order ranks it first, and so must a candidate projection.
+            # Tied with the text twin written after it: the earliest stored
+            # row ranks first, whichever index a projection reads them by.
             (twin.encode(), row[6]),
             (twin, row[6]),
         ):
@@ -394,14 +396,272 @@ def test_isbn_candidates_keep_blob_rows_of_their_own_partition_only(
         reader.close()
 
 
+def _early_pages(repository: SQLiteMetadataReportRepository) -> list[object]:
+    """Application pages of a ledger recorded at the start of time."""
+    application = ContinuousGuardedApplication(
+        repository,
+        {},
+        {},
+        PersistedFieldEffectAuthority(repository),
+        (("primary", "ebooks"),),
+        lambda: 2000,
+        lambda *_: None,
+        activity_only=True,
+    )
+    pages = []
+    for search, event_type in ((None, "all"), (None, "metadata"), ("title", "all")):
+        pages.append(
+            _outcome(
+                partial(
+                    application.activity,
+                    search=search,
+                    event_type=event_type,
+                    range_days=90,
+                    page=1,
+                    page_size=100,
+                )
+            )
+        )
+    return pages
+
+
+def _cover_ledger(
+    repository: SQLiteMetadataReportRepository, case_id: str, tied: str, at: int
+) -> str:
+    """SQL-valid cover rows: a prepared consideration and automatic selections.
+
+    One selection reuses the automatic decision ``tied`` recorded at ``at``, so
+    the two decision ledgers tie in one partition. Returns the other
+    selection's decision id, whose ``selected`` event the safeguard arm must
+    leave to the selection arm.
+    """
+    connection = repository._connection
+    report_id, digest = connection.execute(
+        "SELECT report.report_id,report.document_digest FROM review_cases review "
+        "JOIN metadata_reports report ON report.report_id=review.report_id "
+        "WHERE review.review_case_id=?",
+        (case_id,),
+    ).fetchone()
+    consideration_id = "cover_consideration_" + "a" * 64
+    connection.execute(
+        "INSERT INTO cover_considerations(consideration_id,review_case_id,report_id,"
+        "replay_digest,document_digest,supersedes_id,occurred_at,document,"
+        "currentness_document) VALUES(?,?,?,?,?,NULL,12,?,'null')",
+        (
+            consideration_id,
+            case_id,
+            report_id,
+            "b" * 64,
+            "c" * 64,
+            json.dumps({"report_document_digest": digest, "reviewer_status": "failed"}),
+        ),
+    )
+    decision_id = "automatic_decision_" + "d" * 64
+    for selection, decision, occurred_at in (
+        ("e", decision_id, 13),
+        ("f", tied, at),
+    ):
+        connection.execute(
+            "INSERT INTO cover_selection_authorities(selection_id,connection_name,"
+            "library_name,item_id,kind,decision_id,consideration_id,"
+            "supersedes_selection_id,occurred_at,document) "
+            "VALUES(?,'primary','ebooks','item-1','automatic',?,?,NULL,?,?)",
+            (
+                "cover_selection_" + selection * 64,
+                decision,
+                consideration_id,
+                occurred_at,
+                json.dumps(
+                    {
+                        "decision_document": json.dumps(
+                            {"schema_version": "cover-automatic-decision-v3"}
+                        )
+                    }
+                ),
+            ),
+        )
+    for index, (kind, event_decision) in enumerate(
+        (("automatic_prepared", None), ("selected", decision_id))
+    ):
+        connection.execute(
+            "INSERT INTO cover_consideration_events(event_id,consideration_id,"
+            "review_case_id,kind,decision_id,occurred_at,document) "
+            "VALUES(?,?,?,?,?,?,'{}')",
+            (
+                "cover_consideration_event_" + str(index) * 64,
+                consideration_id,
+                case_id,
+                kind,
+                event_decision,
+                14 + index,
+            ),
+        )
+    connection.commit()
+    return decision_id
+
+
+def test_description_and_cover_candidates_project_exactly(tmp_path: Path) -> None:
+    """Both automatic decision arms, cover safeguards and description rows.
+
+    A wrong kind or identity column in any of these arms' restrictions drops
+    or admits rows here, before any validation. Where both decision ledgers
+    hold one id at one time, the cover selection ranks first on every path.
+    """
+    repository, store, binding, candidate, deterministic = _prepared(tmp_path)
+    store.admit(candidate.candidate_id, binding, "automatic_policy", "a" * 64, 11)
+    selected = _cover_ledger(
+        repository,
+        binding.review_case_id,
+        deterministic.decision_id,
+        deterministic.occurred_at,
+    )
+    reader = open_repository(
+        tmp_path / "reports.sqlite", create=False, authority=repository.authority
+    )
+    try:
+        existing = _assert_restriction(reader, facts=False)
+        kinds = [kind for kind, _ in existing]
+        assert {kind: kinds.count(kind) for kind in set(kinds)} == {
+            # The deterministic decision and the cover selection.
+            "automatic_decision": 2,
+            "cover_safeguard": 1,
+            "description_decision": 1,
+            "description_preparation": 1,
+            "policy_transition": 2,
+        }
+        assert ("automatic_decision", selected) in existing
+        _, rows, _ = _projected(reader, None)
+        (tied,) = (
+            row
+            for row in rows
+            if _candidate(row) == ("automatic_decision", deterministic.decision_id)
+        )
+        assert tied[2] == "cover"
+    finally:
+        reader.close()
+        repository.close()
+
+
+@pytest.mark.parametrize(
+    "invalid_first", (False, True), ids=("valid_stored_first", "invalid_stored_first")
+)
+def test_tied_partition_rows_rank_the_earliest_stored_first(
+    tmp_path: Path, invalid_first: bool
+) -> None:
+    """Two candidates of one attempt tie in its partition, out of band.
+
+    Nothing makes ``attempt_id`` unique. The earliest stored candidate ranks
+    first whichever order a plan reads them in, so a reprojected candidate and
+    the canonical page agree; an invalid winner refuses on both.
+    """
+    repository, _, _, _, _ = _prepared(tmp_path)
+    path = tmp_path / "reports.sqlite"
+    reader = open_repository(path, create=False, authority=repository.authority)
+    canonical = open_repository(path, create=False, authority=repository.authority)
+    reader.configure_activity_page_reader(ActivityFactStore())
+    try:
+        assert _early_pages(reader) == _early_pages(canonical)
+        attempt, request = repository._connection.execute(
+            "SELECT attempt_id,request_identity FROM description_advice_candidates"
+        ).fetchone()
+        # An invalid document that sorts before the stored candidate's.
+        repository._connection.execute(
+            "INSERT INTO description_advice_candidates"
+            "(rowid,candidate_id,attempt_id,request_identity,document) "
+            "VALUES(?,'zzz',?,?,'{\"!\":1}')",
+            (0 if invalid_first else None, attempt, request),
+        )
+        repository._connection.commit()
+        served = _early_pages(reader)
+        expected = _early_pages(canonical)
+        assert [type(page) is tuple for page in expected] == [invalid_first] * 3
+        assert served == expected
+        _assert_restriction(reader, facts=not invalid_first)
+    finally:
+        reader.close()
+        canonical.close()
+        repository.close()
+
+
+def _letters(pages: list[object]) -> str:
+    return "".join(
+        cast(type, page[1]).__name__[0] if type(page) is tuple else "."
+        for page in pages
+    )
+
+
+@pytest.mark.parametrize("fresh", (False, True), ids=("reprojected", "constructed"))
+@pytest.mark.parametrize(
+    "identifier", ("\x00z", ""), ids=("nul_identifier", "mismatched_identifier")
+)
+def test_an_invalid_isbn_outcome_refuses_only_the_reads_that_select_it(
+    effects: _EffectEnvironment,  # noqa: F811
+    identifier: str,
+    fresh: bool,
+) -> None:
+    """A newer outcome copied under another id fails its own validation.
+
+    A NUL suffix also defeats SQLite's text functions, so no reprojection can
+    name its partition. Either way the borrower falls back and serves exactly
+    the canonical pages, refusing only where canonical refuses.
+    """
+    root = effects.repository
+    report = synthetic_audiobook_isbn_reason_report("conflict")
+    policy = resolve_policy(MetadataPolicyProfile.builtin(), report.target.library)
+    root.enter_shadow_preview(1)
+    root.publish(report, lambda: True)
+    proposal = evaluate_report(
+        report, policy.resolved_id, human_review_destinations(policy)
+    )
+    root.publish_proposal(proposal)
+    case_id = json.loads(root.admit_review_case(proposal))["review_case_id"]
+    outcome = json.loads(root.persist_shadow_outcome(case_id, SEED_NOW))
+    reader = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    canonical = open_repository(
+        effects.database_path, create=False, authority=root.authority
+    )
+    reader.configure_activity_page_reader(ActivityFactStore())
+    try:
+        assert _pages(reader) == _pages(canonical)
+        row = list(
+            root._connection.execute(
+                "SELECT * FROM shadow_decision_outcomes WHERE outcome_set_id=?",
+                (outcome["outcome_set_id"],),
+            ).fetchone()
+        )
+        row[0] = "shadow_outcome_set_" + "d" * 64 + identifier
+        row[6] = SEED_NOW + 60
+        root._connection.execute(
+            "INSERT INTO shadow_decision_outcomes VALUES ("
+            + ",".join("?" * len(row))
+            + ")",
+            row,
+        )
+        root._connection.commit()
+        if fresh:
+            reader.close()
+            reader = open_repository(
+                effects.database_path, create=False, authority=root.authority
+            )
+            reader.configure_activity_page_reader(ActivityFactStore())
+        expected = _pages(canonical)
+        assert _letters(expected) == "MMM..M..MG"
+        assert _pages(reader) == expected
+    finally:
+        reader.close()
+        canonical.close()
+
+
 def test_candidate_projection_drives_every_arm_from_its_identity(
     ledger: _Ledger,
 ) -> None:
     """Each union arm searches its own key; nothing scans a source table.
 
     The field-effect arm is driven from the requested plan, and the ISBN arm
-    selects its rows by rowid through the identifier index (a multi-index OR
-    for the BLOB clause), so only the requested partitions are read.
+    searches its identifier index (a multi-index OR for the BLOB clause), so
+    only the requested partitions are read.
     """
     kinds = (
         "field_effect",
@@ -434,11 +694,10 @@ def test_candidate_projection_drives_every_arm_from_its_identity(
         index.format("no_change", "field_effect_no_changes_2", "event_id"),
         index.format("event", "cover_consideration_events_1", "event_id"),
         index.format("transition", "metadata_policy_transitions_1", "transition_id"),
-        "SEARCH outcome USING INTEGER PRIMARY KEY (rowid=?)",
         "MULTI-INDEX OR",
-        "SEARCH shadow_decision_outcomes USING COVERING INDEX "
+        "SEARCH outcome USING INDEX "
         "sqlite_autoindex_shadow_decision_outcomes_1 (outcome_set_id=?)",
-        "SEARCH shadow_decision_outcomes USING COVERING INDEX "
+        "SEARCH outcome USING INDEX "
         "sqlite_autoindex_shadow_decision_outcomes_1 (outcome_set_id>?)",
     } <= set(plan)
     scans = {re.sub(r"\(subquery-\d+\)", "(subquery)", step) for step in plan}
@@ -489,7 +748,12 @@ def test_every_activity_order_ends_in_the_total_key(ledger: _Ledger) -> None:
         r"^,(event\.)?source_kind,CASE WHEN (event\.)?source_kind='field_effect' "
         r"THEN (event\.)?source_parent_id ELSE (event\.)?event_id END"
     )
-    ranked = [order for order in orders if order.startswith(") AS activity_rank")]
+    # Within a partition the explicit tiebreak, not scan order, decides.
+    ranked = [
+        order
+        for order in orders
+        if order.startswith(",source_tiebreak) AS activity_rank")
+    ]
     assert len(ranked) == len(activity)
     assert len(orders) > len(ranked)
     assert all(tie.match(order) for order in orders if order not in ranked)
