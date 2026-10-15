@@ -1201,11 +1201,13 @@ def test_configured_borrowers_rescan_after_another_reader_wins_publication(
         )
 
     first, second, fresh = map(application, readers)
-    refreshes = []
+    refreshes: list[object] = []
+    sweeps: list[object] = []
     refresh = facts.refresh
 
     def observe_refresh(connection, project, **options):
-        refreshes.append(connection)
+        # An unchanged revision only advances the re-verification sweep.
+        (refreshes if options.get("unchanged") is None else sweeps).append(connection)
         return refresh(connection, project, **options)
 
     monkeypatch.setattr(facts, "refresh", observe_refresh)
@@ -1236,11 +1238,13 @@ def test_configured_borrowers_rescan_after_another_reader_wins_publication(
         assert len(competing) == 1
         assert first.activity(range_days=90) == expected
         assert len(refreshes) == 3  # Same reader, revision, identity and store.
+        assert sweeps == [readers[0]._connection] and facts.snapshot() is published
         assert fresh.activity(range_days=90) == expected
         assert refreshes[-1] is readers[2]._connection and len(refreshes) == 4
         readers[0].close()
         assert second.activity(range_days=90) == expected
         assert facts.snapshot() is published and len(refreshes) == 4
+        assert sweeps == [readers[0]._connection, readers[1]._connection]
     finally:
         for reader in readers:
             reader.close()

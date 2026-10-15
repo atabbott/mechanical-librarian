@@ -1370,8 +1370,10 @@ refresh (#1200). Changes that keep the mark and count (raw file bytes behind an
 ordinary commit, `REPLACE` naming an existing rowid or an unused rowid at or below
 the mark, BLOB I/O, trigger removal through `writable_schema`) are found by a
 rolling 256-row re-verification, covering zero and negative rowids, within
-⌈rows / 256⌉ refreshes rather than at the next refresh. Until then Activity may
-display the prior readable fact; Activity facts feed no write, permission or
+⌈rows / 256⌉ refreshes or unchanged-revision Activity reads rather than at the
+next refresh; an idle library's reads advance the sweep too, so stale facts
+cannot stay visible across that many reads. Until then Activity may display the
+prior readable fact; Activity facts feed no write, permission or
 effect path, so that exposure is display-only. Every new borrower generation
 performs a full witness against the previous snapshot rather than admitting
 tables from an earlier generation's marks. The product uses none of those routes on

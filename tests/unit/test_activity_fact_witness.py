@@ -196,10 +196,15 @@ class _Ledger:
             self.read()
         raise AssertionError("the re-verification cursor never reached the table")
 
-    def detect(self, bound: int) -> int:
-        """Refresh until exact; return how many refreshes detection took."""
+    def detect(self, bound: int, *, idle: bool = False) -> int:
+        """Read until exact; return how many reads detection took.
+
+        ``idle`` reads without any write, so every read sees an unchanged
+        revision and only the sweep inside the read can find the change.
+        """
         for refreshes in range(1, bound + 1):
-            self.commit()
+            if not idle:
+                self.commit()
             self.read()
             if self.exact():
                 return refreshes
@@ -496,47 +501,133 @@ def _replace_at(target: int, *, new_key: bool) -> Callable[[_Ledger, int], None]
         "replace_new_key_into_negative_rowid",
     ),
 )
+@pytest.mark.parametrize("idle", (False, True), ids=("changed", "idle"))
 def test_in_place_change_is_detected_by_the_rolling_sweep_within_its_bound(
-    ledger: _Ledger, mutation: Callable[[_Ledger, int], None]
+    ledger: _Ledger, mutation: Callable[[_Ledger, int], None], idle: bool
 ) -> None:
     rowid = ledger.advance_into("field_effect_events")
     bound = math.ceil(ledger.admitted_rows() / SLICE)
     marks = ledger.snapshot().marks
     mutation(ledger, rowid)
     # The worst case: the cursor has just passed the changed row, so neither
-    # the mark nor the count can see it and a whole lap is needed.
-    ledger.commit()
+    # the mark nor the count can see it and a whole lap is needed. Raw bytes
+    # move no SQL revision, so without a commit they meet the identity refusal.
+    if not idle or mutation is _corrupt_bytes:
+        ledger.commit()
     ledger.read()
     assert ledger.snapshot().marks == marks
     assert ledger.serving() and not ledger.exact()
-    detected = 1 + ledger.detect(bound - 1)
+    # The idle case writes nothing more: the change is an invalid document, so
+    # detection falls back to the canonical projection.
+    detected = 1 + ledger.detect(bound - 1, idle=idle)
     assert 1 < detected <= bound
     ledger.assert_exact()
 
 
+def test_clean_unchanged_reads_advance_only_the_cursor(
+    ledger: _Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A clean idle slice keeps the published object, its version and facts."""
+    ledger.commit()
+    ledger.read()
+    published = ledger.snapshot()
+    projection = ledger.reader._field_effect_activity
+    stamp = projection._activity_fact_stamp
+    projected: list[object] = []
+    monkeypatch.setattr(
+        projection, "_project_activity_facts", lambda *args: projected.append(args)
+    )
+    for _ in range(math.ceil(ledger.admitted_rows() / SLICE) + 1):
+        before = ledger.store._cursor
+        ledger.read()
+        assert ledger.store._cursor != before
+        assert ledger.snapshot() is published
+        assert projection._activity_fact_stamp == stamp
+    assert not projected
+    ledger.assert_exact()
+
+
+def test_racing_unchanged_reads_advance_the_cursor_once(
+    ledger: _Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A borrower that loses the cursor race skips; it publishes nothing."""
+    second = open_repository(ledger.path, create=False, authority=ledger.root.authority)
+    try:
+        second.configure_activity_page_reader(ledger.store)
+        ledger.commit()
+        ledger.read()
+        _pages(second)
+        published = ledger.snapshot()
+        stamps = [
+            borrower._field_effect_activity._activity_fact_stamp
+            for borrower in (ledger.reader, second)
+        ]
+        reverify = activity_facts._reverify
+        won: list[activity_facts.Cursor] = []
+
+        def racing(*args: object) -> object:
+            if not won:
+                won.append(ledger.store._cursor)
+                # The second borrower sweeps this slice and the next one first,
+                # so a blind write of the stale result would move the cursor back.
+                for _ in range(2):
+                    second.field_effect_activity_page(
+                        search=None,
+                        event_type="all",
+                        occurred_after=0,
+                        page=1,
+                        page_size=25,
+                    )
+                won.append(ledger.store._cursor)
+            return reverify(*args)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(activity_facts, "_reverify", racing)
+        ledger.read()
+        assert won[0] != won[1] == ledger.store._cursor
+        assert ledger.snapshot() is published
+        assert stamps == [
+            borrower._field_effect_activity._activity_fact_stamp
+            for borrower in (ledger.reader, second)
+        ]
+    finally:
+        second.close()
+
+
 def test_sweep_covers_rowid_zero_from_its_first_refresh(ledger: _Ledger) -> None:
     """The cursor starts at a table's start, not at rowid zero."""
-    table = _TABLES[0]
-    connection = ledger.root._connection
-    names = [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
-    row = list(
+    # The fixture's own reads have advanced its sweep, so construct afresh.
+    borrower = open_repository(
+        ledger.path, create=False, authority=ledger.root.authority
+    )
+    try:
+        fresh = _Ledger(
+            ledger.path, ledger.root, borrower, ledger.canonical, ActivityFactStore()
+        )
+        borrower.configure_activity_page_reader(fresh.store)
+        fresh.read()
+        table = _TABLES[0]
+        connection = ledger.root._connection
+        names = [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
+        row = list(
+            connection.execute(
+                f"SELECT {','.join(names)} FROM {table} ORDER BY rowid LIMIT 1"
+            ).fetchone()
+        )
+        row[names.index("content_digest")] = "f" * 64
         connection.execute(
-            f"SELECT {','.join(names)} FROM {table} ORDER BY rowid LIMIT 1"
-        ).fetchone()
-    )
-    row[names.index("content_digest")] = "f" * 64
-    connection.execute(
-        f"INSERT OR REPLACE INTO {table}(rowid,{','.join(names)}) "
-        f"VALUES (0,{','.join('?' * len(names))})",
-        row,
-    )
-    connection.commit()
-    assert _full_witness(ledger.path).marks[table] == ledger.snapshot().marks[table]
-    assert ledger.serving() and not ledger.exact()
-    # Construction leaves the cursor at the first table's start, so the first
-    # refresh re-verifies rowid zero before any other row.
-    assert ledger.detect(1) == 1
-    ledger.assert_exact()
+            f"INSERT OR REPLACE INTO {table}(rowid,{','.join(names)}) "
+            f"VALUES (0,{','.join('?' * len(names))})",
+            row,
+        )
+        connection.commit()
+        assert _full_witness(ledger.path).marks[table] == fresh.snapshot().marks[table]
+        assert fresh.serving() and not fresh.exact()
+        # Construction leaves the cursor at the first table's start, so the
+        # first refresh re-verifies rowid zero before any other row.
+        assert fresh.detect(1) == 1
+        fresh.assert_exact()
+    finally:
+        borrower.close()
 
 
 def test_trigger_removal_without_restoration_rewitnesses_the_table(
@@ -719,9 +810,10 @@ def _occurred(pages: list[object]) -> set[int]:
     }
 
 
+@pytest.mark.parametrize("idle", (False, True), ids=("changed", "idle"))
 @pytest.mark.parametrize("moves", ((), LOW_ROWIDS), ids=("retained", "low_rowids"))
 def test_valid_in_place_change_keeps_serving_and_the_sweep_admits_it(
-    ledger: _Ledger, tmp_path: Path, moves: tuple[tuple[str, int], ...]
+    ledger: _Ledger, tmp_path: Path, moves: tuple[tuple[str, int], ...], idle: bool
 ) -> None:
     """Detection must reproject a valid change, not merely fall back."""
     _record_decision(ledger.root, 0, SEED_NOW + 100)
@@ -731,11 +823,12 @@ def test_valid_in_place_change_keeps_serving_and_the_sweep_admits_it(
     ledger.assert_exact()
     marks = ledger.snapshot().marks
     _transplant(ledger.path, _alternative(tmp_path, SEED_NOW + 777, moves))
-    ledger.commit()
+    if not idle:
+        ledger.commit()
     ledger.read()
     assert ledger.serving() and ledger.snapshot().marks == marks
     assert not ledger.exact()
-    ledger.detect(math.ceil(ledger.admitted_rows() / SLICE))
+    ledger.detect(math.ceil(ledger.admitted_rows() / SLICE), idle=idle)
     assert ledger.serving()
     ledger.assert_exact()
     occurred = _occurred(_pages(ledger.reader))

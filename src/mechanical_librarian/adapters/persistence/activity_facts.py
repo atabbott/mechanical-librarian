@@ -506,6 +506,7 @@ class ActivityFactStore:
         project: Callable[[set[Candidate] | None, int], dict[Candidate, ActivityFact]],
         *,
         full: bool = False,
+        unchanged: _Snapshot | None = None,
     ) -> _Snapshot | None:
         """Admit this borrower's snapshot; ``full`` witnesses every row.
 
@@ -513,13 +514,24 @@ class ActivityFactStore:
         source witness in its own snapshot and compares it with the previous
         snapshot, instead of admitting append-only tables from their marks.
         Only candidates whose witnesses differ are reprojected.
+
+        A read whose revision is unchanged passes the snapshot it is serving as
+        ``unchanged``. It advances the sweep by one slice; a clean slice moves
+        only the cursor and keeps that snapshot published, while a difference
+        re-witnesses and republishes exactly as a changed refresh does.
         """
         with self._lock:
             if self._disabled:
                 return None
             previous = self._snapshot
+            if unchanged is not None and previous is not unchanged:
+                # Another borrower published first; its facts may be newer
+                # than this borrower's snapshot, so this read only skips.
+                return unchanged
             # A full witness re-verifies every row, so the sweep restarts.
-            cursor = self._cursor if previous is not None and not full else _START
+            swept = cursor = (
+                self._cursor if previous is not None and not full else _START
+            )
         # Every witness below is read from this borrower's own SQLite snapshot.
         # No object parser or shared connection revision can stand in for it.
         shapes = {table: _shape(connection, table) for table in _TABLES}
@@ -529,6 +541,11 @@ class ActivityFactStore:
             suspect, cursor = _reverify(
                 connection, previous, cursor, shapes, append_only
             )
+            if unchanged is not None and not suspect:
+                with self._lock:
+                    if self._snapshot is previous and self._cursor == swept:
+                        self._cursor = cursor
+                return previous
         witnesses: dict[str, dict[Key, _Witness]] = {}
         witness_bytes: dict[str, int] = {}
         marks: dict[str, tuple[int, int]] = {}

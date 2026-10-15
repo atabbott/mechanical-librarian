@@ -2595,38 +2595,40 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             if prior is not None and prior[0] == revision and prior[1] != identity:
                 raise FieldEffectError("persistence")
             snapshot = store.snapshot()
-            if (
-                prior is None
-                or snapshot is None
-                or prior != (revision, identity, snapshot.version)
-            ):
-                try:
-                    # A new borrower generation witnesses every row itself.
-                    snapshot = store.refresh(
-                        self._connection,
-                        self._project_activity_facts,
-                        full=prior is None,
-                    )
-                except (
-                    FieldEffectError,
-                    ValueError,
-                    TypeError,
-                    KeyError,
-                    RecursionError,
-                    sqlite3.OperationalError,
-                ) as error:
-                    if isinstance(error, sqlite3.OperationalError) and not (
-                        getattr(error, "sqlite_errorcode", None) is None
-                        and str(error).startswith("Could not decode to UTF-8 column ")
-                    ):
-                        raise
-                    # Full initialization must not broaden a normal page's
-                    # candidate validation. Malformed unrelated history uses
-                    # the original query-scoped canonical path.
-                    self._activity_facts = None
-                    self._activity_page_cache.clear()
-                    self._activity_page_cache_bytes = 0
-                    return None
+            current = snapshot is not None and prior == (
+                revision,
+                identity,
+                snapshot.version,
+            )
+            try:
+                # A new borrower generation witnesses every row itself; an
+                # unchanged revision advances the re-verification sweep.
+                snapshot = store.refresh(
+                    self._connection,
+                    self._project_activity_facts,
+                    full=prior is None,
+                    unchanged=snapshot if current else None,
+                )
+            except (
+                FieldEffectError,
+                ValueError,
+                TypeError,
+                KeyError,
+                RecursionError,
+                sqlite3.OperationalError,
+            ) as error:
+                if isinstance(error, sqlite3.OperationalError) and not (
+                    getattr(error, "sqlite_errorcode", None) is None
+                    and str(error).startswith("Could not decode to UTF-8 column ")
+                ):
+                    raise
+                # Full initialization must not broaden a normal page's
+                # candidate validation. Malformed unrelated history uses
+                # the original query-scoped canonical path.
+                self._activity_facts = None
+                self._activity_page_cache.clear()
+                self._activity_page_cache_bytes = 0
+                return None
             if snapshot is None:
                 self._activity_facts = None
                 return None

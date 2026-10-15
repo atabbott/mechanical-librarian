@@ -115,11 +115,21 @@ schema-version change) are detected by the rolling re-verification within its
 bound, not the next refresh.
 
 Rolling re-verification: each refresh re-verifies the next bounded slice of
-admitted append-only rows (about 256) inside its existing read, so every row is
-re-verified at least once per ⌈rows / slice⌉ refreshes; the sweep covers every
-rowid, including zero and negative rowids; construction and every new borrower
+admitted append-only rows (about 256) inside its existing read, and an Activity
+read whose revision is unchanged advances the same sweep without republishing
+unless it finds a difference, so every row is re-verified at least once per
+⌈rows / slice⌉ refreshes or unchanged Activity reads, and stale facts cannot stay
+visible across that many reads of an idle library; the sweep covers every rowid,
+including zero and negative rowids; construction and every new borrower
 generation still perform a full witness; an unchanged revision with a changed
 file identity still refuses.
+
+A clean slice in an unchanged-revision read moves only the cursor: the published
+snapshot stays the same object and nothing is reprojected. A slice that finds a
+difference re-witnesses that table and republishes exactly as a changed refresh
+does. The cursor moves only by compare-and-swap against the snapshot and cursor
+the read started from, so a borrower that loses that race skips its advance and
+never publishes over a newer snapshot.
 
 A row whose witness differs re-witnesses its whole table in that refresh, and so
 does any table whose `max(rowid)` is SQLite's largest rowid: SQLite then
@@ -142,15 +152,16 @@ every outcome.
 Marks and the sweep cursor count toward the 64 MiB bound. Overflow, a decoding
 failure and schema drift keep the canonical fallback. The classification reads
 `pragma_table_list`, so the store requires SQLite 3.37 or later. The sweep
-cursor lives beside the published snapshot, so a refresh that changes nothing
-keeps the published store version. The product holds no route that changes an
+cursor lives beside the published snapshot, so a refresh or unchanged read that
+changes nothing keeps the published store version. The product holds no route that changes an
 append-only row in place: a static test refuses `OR REPLACE`, `REPLACE INTO`,
 BLOB I/O and `writable_schema` in the source, and a schema test requires both
 refusal triggers on every incrementally witnessed table.
 
 Consequences replace the earlier statement that a changed revision scans all
 source bytes: it now scans the mutable tables, the rows above each mark and one
-sweep slice; a new borrower generation still performs a full witness against the
+sweep slice, and an unchanged-revision read scans one sweep slice; a new borrower
+generation still performs a full witness against the
 previous snapshot. Activity facts feed no write path, so the detection delay for
 an in-place change outside SQL's ordinary routes is display-only and bounded by
 the sweep. Journal mode, schema, startup admission and the canonical projection are
