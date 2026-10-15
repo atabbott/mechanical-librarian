@@ -328,8 +328,10 @@ def test_automatic_and_no_change_candidates_project_exactly(
         reader.close()
 
 
+@pytest.mark.parametrize("blob_first", (True, False), ids=("blob_first", "text_first"))
 def test_isbn_candidates_keep_blob_rows_of_their_own_partition_only(
     effects: _EffectEnvironment,  # noqa: F811
+    blob_first: bool,
 ) -> None:
     """Concatenation reads a BLOB ``outcome_set_id`` as the text it spells.
 
@@ -366,14 +368,14 @@ def test_isbn_candidates_keep_blob_rows_of_their_own_partition_only(
         # rows are out-of-band corruption on every supported engine.
         root._connection.execute("PRAGMA ignore_check_constraints=ON")
         twin = "shadow_outcome_set_" + "e" * 64
+        # Tied twins, stored in either order: the lower identifier, text before
+        # BLOB, ranks first however the rows are stored or read.
+        twins = ((twin.encode(), row[6]), (twin, row[6]))
         for identity, at in (
             # Newer than its text twin, so it is the partition's ranked row.
             (outcome["outcome_set_id"].encode(), row[6] + 1),
             (("shadow_outcome_set_" + "f" * 64).encode(), row[6]),
-            # Tied with its text twin, stored before it: the lower identifier,
-            # text before BLOB, ranks first however the rows are stored or read.
-            (twin.encode(), row[6]),
-            (twin, row[6]),
+            *(twins if blob_first else twins[::-1]),
         ):
             row[0], row[6] = identity, at
             root._connection.execute(
