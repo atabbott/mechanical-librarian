@@ -1374,9 +1374,9 @@ rolling 256-row re-verification, covering zero and negative rowids, within
 display the prior readable fact; Activity facts feed no write, permission or
 effect path, so that exposure is display-only. Every new borrower generation
 performs a full witness against the previous snapshot rather than admitting
-tables from an earlier generation's marks. The product uses none of those routes on append-only
-tables, enforced by a static source test and a schema test requiring both
-refusal triggers. No credential, network, parser or write authority is added.
+tables from an earlier generation's marks. The product uses none of those routes on
+append-only tables, enforced by a static source test and a schema test requiring
+both refusal triggers. No credential, network, parser or write authority is added.
 
 Ordinary history returns required null backup-readiness and example fields. The
 separate authenticated permission-readiness endpoint checks the existing database

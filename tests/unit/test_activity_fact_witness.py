@@ -278,9 +278,10 @@ def _changed_document(document: object) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"))
 
 
-def _record_decision(ledger: _Ledger, index: int) -> None:
+def _record_decision(
+    root: SQLiteMetadataReportRepository, index: int, occurred_at: int | None = None
+) -> None:
     """Admit a new report, case and owner choice through supported seams."""
-    root = ledger.root
     report = _report(f"Oracle title {index}", f"oracle-book-{index}", "3", "4")
     root.publish(report, lambda: True)
     policy = root.current_resolved_metadata_policy(report.target.library)
@@ -311,7 +312,7 @@ def _record_decision(ledger: _Ledger, index: int) -> None:
             outcome="keep_current",
             selected_value=None,
             idempotency_key=f"oracle-owner-choice-{index:04d}",
-            occurred_at=SEED_NOW + index * 90,
+            occurred_at=SEED_NOW + index * 90 if occurred_at is None else occurred_at,
         )
     )
 
@@ -336,7 +337,7 @@ def test_supported_inserts_are_admitted_incrementally_and_exactly(
 ) -> None:
     before = ledger.snapshot()
     for index in range(3):
-        _record_decision(ledger, index)
+        _record_decision(ledger.root, index)
         ledger.read()
         ledger.assert_exact()
     after = ledger.snapshot()
@@ -620,6 +621,154 @@ def test_new_borrower_generation_witnesses_every_row_itself(
             # reprojected and the published version is kept.
             assert ledger.snapshot() is published
             assert published.witnesses == _full_witness(ledger.path).witnesses
+    finally:
+        borrower.close()
+
+
+def _bypassing_triggers(
+    path: Path, change: Callable[[sqlite3.Connection], None]
+) -> None:
+    """Run ``change`` with every trigger removed, then restore them unchanged."""
+    raw = _raw(path)
+    try:
+        triggers = raw.execute(
+            "SELECT name,tbl_name FROM sqlite_schema WHERE type='trigger'"
+        ).fetchall()
+    finally:
+        raw.close()
+    removed = [(name, table, _drop_trigger(path, name)) for name, table in triggers]
+    raw = _raw(path)
+    try:
+        change(raw)
+    finally:
+        raw.close()
+    for name, table, sql in removed:
+        _restore_trigger(path, name, table, sql)
+
+
+# Rowid zero and negative rowids are reachable only by an explicit rowid.
+LOW_ROWIDS = (("human_decision_events", 0), ("human_decisions", -5))
+
+
+def _move_newest(path: Path, moves: tuple[tuple[str, int], ...]) -> None:
+    def move(raw: sqlite3.Connection) -> None:
+        for table, rowid in moves:
+            raw.execute(
+                f"UPDATE {table} SET rowid=? "
+                f"WHERE rowid=(SELECT max(rowid) FROM {table})",
+                (rowid,),
+            )
+
+    _bypassing_triggers(path, move)
+
+
+def _alternative(
+    tmp_path: Path, occurred_at: int, moves: tuple[tuple[str, int], ...] = ()
+) -> Path:
+    """The same seeded ledger with its newest owner choice made at another time."""
+    root = tmp_path / "alternative"
+    root.mkdir()
+    seeded = seed_activity(root)
+    _record_decision(seeded.repository, 0, occurred_at)
+    seeded.repository.close()
+    path = root / "activity.sqlite"
+    _move_newest(path, moves)
+    return path
+
+
+def _transplant(target: Path, source: Path) -> None:
+    """Give every differing table the source's rows, rowids and schema version kept.
+
+    The rows are valid product facts, so only an in-place witness check can
+    tell them from the rows they replace: mark, count and keys all agree.
+    """
+
+    def copy(raw: sqlite3.Connection) -> None:
+        raw.execute("ATTACH ? AS alternative", (str(source),))
+        raw.execute("BEGIN")
+        for table, without_rowid in raw.execute(
+            "SELECT name,wr FROM pragma_table_list "
+            "WHERE schema='main' AND type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall():
+            names = [row[1] for row in raw.execute(f"PRAGMA table_info({table})")]
+            columns = ",".join(names if without_rowid else ["rowid", *names])
+            rows = [
+                raw.execute(
+                    f"SELECT {columns} FROM {schema}.{table} ORDER BY {columns}"
+                ).fetchall()
+                for schema in ("main", "alternative")
+            ]
+            if rows[0] != rows[1]:
+                raw.execute(f"DELETE FROM main.{table}")
+                raw.execute(
+                    f"INSERT INTO main.{table}({columns}) "
+                    f"SELECT {columns} FROM alternative.{table}"
+                )
+        raw.execute("COMMIT")
+        raw.execute("DETACH alternative")
+
+    _bypassing_triggers(target, copy)
+
+
+def _occurred(pages: list[object]) -> set[int]:
+    return {
+        event["occurred_at"]
+        for page in pages
+        if isinstance(page, dict)
+        for event in page["events"]
+    }
+
+
+@pytest.mark.parametrize("moves", ((), LOW_ROWIDS), ids=("retained", "low_rowids"))
+def test_valid_in_place_change_keeps_serving_and_the_sweep_admits_it(
+    ledger: _Ledger, tmp_path: Path, moves: tuple[tuple[str, int], ...]
+) -> None:
+    """Detection must reproject a valid change, not merely fall back."""
+    _record_decision(ledger.root, 0, SEED_NOW + 100)
+    _move_newest(ledger.path, moves)
+    ledger.commit()
+    ledger.read()
+    ledger.assert_exact()
+    marks = ledger.snapshot().marks
+    _transplant(ledger.path, _alternative(tmp_path, SEED_NOW + 777, moves))
+    ledger.commit()
+    ledger.read()
+    assert ledger.serving() and ledger.snapshot().marks == marks
+    assert not ledger.exact()
+    ledger.detect(math.ceil(ledger.admitted_rows() / SLICE))
+    assert ledger.serving()
+    ledger.assert_exact()
+    occurred = _occurred(_pages(ledger.reader))
+    assert SEED_NOW + 777 in occurred and SEED_NOW + 100 not in occurred
+
+
+def test_new_generation_admits_a_valid_change_behind_schema_drift(
+    ledger: _Ledger, tmp_path: Path
+) -> None:
+    _record_decision(ledger.root, 0, SEED_NOW + 100)
+    ledger.read()
+    ledger.assert_exact()
+    _transplant(ledger.path, _alternative(tmp_path, SEED_NOW + 777))
+    ledger.root._connection.execute(
+        "CREATE INDEX activity_oracle_drift ON field_effect_events(kind)"
+    )
+    ledger.root._connection.commit()
+    ledger.read()
+    assert not ledger.serving()
+    borrower = open_repository(
+        ledger.path, create=False, authority=ledger.root.authority
+    )
+    try:
+        borrower.configure_activity_page_reader(ledger.store)
+        borrower.initialize_activity_facts()
+        # The full witness against the previous snapshot reprojects the
+        # changed rows and serves them; admission from the marks would not.
+        assert borrower._field_effect_activity._activity_facts is not None
+        assert ledger.snapshot().witnesses == _full_witness(ledger.path).witnesses
+        pages = _pages(borrower)
+        assert pages == _pages(ledger.canonical)
+        occurred = _occurred(pages)
+        assert SEED_NOW + 777 in occurred and SEED_NOW + 100 not in occurred
     finally:
         borrower.close()
 

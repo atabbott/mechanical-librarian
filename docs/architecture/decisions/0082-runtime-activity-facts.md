@@ -138,9 +138,9 @@ every outcome.
 
 Marks and the sweep cursor count toward the 64 MiB bound. Overflow, a decoding
 failure and schema drift keep the canonical fallback. The classification reads
-`pragma_table_list`, so the store requires SQLite 3.37 or later. The sweep cursor lives
-beside the published snapshot, so a refresh that changes nothing keeps the
-published store version. The product holds no route that changes an
+`pragma_table_list`, so the store requires SQLite 3.37 or later. The sweep
+cursor lives beside the published snapshot, so a refresh that changes nothing
+keeps the published store version. The product holds no route that changes an
 append-only row in place: a static test refuses `OR REPLACE`, `REPLACE INTO`,
 BLOB I/O and `writable_schema` in the source, and a schema test requires both
 refusal triggers on every incrementally witnessed table.
