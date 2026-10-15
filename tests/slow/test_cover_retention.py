@@ -127,12 +127,11 @@ def test_repeated_cover_histories_share_reports_and_artifacts(tmp_path: Path) ->
                 == 24 * (revision + 1)
             )
             assert full["reports"] == compact["reports"] == 24
-            for metric in (
-                "payload_bytes",
-                "pages",
-                "logical_bytes",
-                "allocated_bytes",
-            ):
+            # Allocated bytes are recorded but not compared: the filesystem grows
+            # files in its own allocation units (1 MiB steps on APFS), so both
+            # specimens can grow by one identical unit while sharing works.
+            # Payload, pages and file size follow only the stored rows.
+            for metric in ("payload_bytes", "pages", "logical_bytes"):
                 assert compact[metric] < full[metric]
                 if snapshots:
                     assert (
