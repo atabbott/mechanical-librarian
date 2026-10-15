@@ -65,6 +65,7 @@ from mechanical_librarian.domain.field_effect import (
     decision_value_kind,
 )
 from mechanical_librarian.domain.human_decision import (
+    DecisionScope,
     HumanDecision,
     HumanDecisionError,
 )
@@ -381,9 +382,13 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 (review_case_id,),
             ).fetchall()
             documents = []
+            # Projected once, at the first decision, as `validate_for` did (#1215).
+            scope: DecisionScope | None = None
             for row in rows:
                 decision = HumanDecision.from_json(row[10])
-                decision.validate_for(case)
+                if scope is None:
+                    scope = DecisionScope.of(case)
+                decision.validate_in(scope)
                 if (
                     decision.decision_id,
                     decision.proposal_id,

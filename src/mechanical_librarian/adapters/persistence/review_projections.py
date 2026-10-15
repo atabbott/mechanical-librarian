@@ -70,7 +70,11 @@ from mechanical_librarian.application.review_web import (
 )
 from mechanical_librarian.domain.automatic_decision import AutomaticDecision
 from mechanical_librarian.domain.field_effect import FieldEffectError
-from mechanical_librarian.domain.human_decision import HumanDecision, HumanDecisionError
+from mechanical_librarian.domain.human_decision import (
+    DecisionScope,
+    HumanDecision,
+    HumanDecisionError,
+)
 from mechanical_librarian.domain.metadata_policy import ResolvedMetadataPolicy
 from mechanical_librarian.domain.metadata_report import (
     MetadataReport,
@@ -448,6 +452,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     int,
                 ]
             ] = []
+            scopes: list[DecisionScope | None] = []
             for (case_document, report_document), envelope in zip(
                 page.rows, page.envelopes, strict=True
             ):
@@ -458,6 +463,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                     projected_rows.append(
                         (case_document, report_document, (), (), (), (), None, 0)
                     )
+                    scopes.append(None)
                     continue
                 # The page read validated these envelopes from these bytes.
                 if envelope is None:
@@ -496,15 +502,17 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                         }
                     )
                 )
+                decisions, scope = (
+                    ((), None)
+                    if case is None
+                    else self._browse_decision_documents(cast("str", case_id), case)
+                )
+                scopes.append(scope)
                 projected_rows.append(
                     (
                         case_document,
                         report_document,
-                        ()
-                        if case is None
-                        else self._browse_decision_documents(
-                            cast("str", case_id), case
-                        ),
+                        decisions,
                         ()
                         if case_id is None
                         else self._automatic_attention_destinations(case_id),
@@ -527,13 +535,21 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
                 rows=projected,
                 total=page.total,
                 attention_total=page.attention_total,
+                decision_scopes=tuple(scopes),
             )
         return snapshot
 
     def _browse_decision_documents(
         self, review_case_id: str, case: dict[str, object]
-    ) -> tuple[str, ...]:
-        """Validate only the decision documents attached to one visible row."""
+    ) -> tuple[tuple[str, ...], DecisionScope | None]:
+        """Validate only the decision documents attached to one visible row.
+
+        The row's case is projected once, when its first decision has parsed,
+        so every refusal is still raised at the step and in the order it was
+        when each decision projected the case again (#1215). The scope goes
+        out with the documents so the row's projection need not project the
+        same case a third time.
+        """
         human_rows = self._connection.execute(
             "SELECT decision_id,proposal_id,target_fingerprint,destination,"
             "actor,outcome,selected_value_document,idempotency_digest,"
@@ -542,12 +558,15 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             (review_case_id,),
         ).fetchall()
         documents: list[str] = []
+        scope: DecisionScope | None = None
         try:
             for row in human_rows:
                 if len(row) != 11 or type(row[10]) is not str:
                     raise MetadataReportError("review library is unavailable")
                 decision = HumanDecision.from_json(row[10])
-                decision.validate_for_browse_case(review_case_id, case)
+                if scope is None:
+                    scope = DecisionScope.of_browse_case(review_case_id, case)
+                decision.validate_in(scope)
                 if (
                     decision.decision_id,
                     decision.proposal_id,
@@ -567,7 +586,7 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             )
         except (HumanDecisionError, TypeError) as error:
             raise MetadataReportError("review library is unavailable") from error
-        return tuple(documents)
+        return tuple(documents), scope
 
     def _current_attention_count(self, review_case_id: str) -> int:
         """Use the same persisted field-membership predicate as every attention view."""
