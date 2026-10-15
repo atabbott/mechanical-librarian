@@ -64,7 +64,10 @@ from mechanical_librarian.adapters.persistence.transactions import (
 )
 from mechanical_librarian.application.catalogue import CatalogueEntry
 from mechanical_librarian.application.metadata_report import MetadataReportError
-from mechanical_librarian.application.review_pipeline import PipelineAction
+from mechanical_librarian.application.review_pipeline import (
+    PipelineAction,
+    ReviewPipelineClaimContention,
+)
 from mechanical_librarian.domain.audio_inspection import MAX_AUDIO_TRACKS
 from mechanical_librarian.domain.metadata_report import MetadataReport
 from mechanical_librarian.domain.review_case import (
@@ -422,6 +425,20 @@ class SQLiteReviewPreparationRepository(ConnectionScoped):
             elif isinstance(error, MetadataReportError):
                 raise
             elif isinstance(error, sqlite3.Error):
+                # Only plain SQLITE_BUSY after a proven release of the scope and
+                # its connection means nothing was claimed (#1216). Every other
+                # failure, or an unprovable release, keeps the recovery latch.
+                try:
+                    released = (
+                        not transaction.started and not self._connection.in_transaction
+                    )
+                except sqlite3.Error:
+                    released = False
+                if (
+                    released
+                    and getattr(error, "sqlite_errorcode", None) == sqlite3.SQLITE_BUSY
+                ):
+                    raise ReviewPipelineClaimContention() from error
                 raise MetadataReportError("review preparation claim failed") from error
             else:
                 raise

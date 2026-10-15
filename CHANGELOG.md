@@ -8,6 +8,11 @@
   the store and again in the page. Every decision is still validated, and rows,
   order, paging and refusals are unchanged (#1215).
 
+- Preparation no longer stops until a restart when a long Activity read holds
+  the database past a claim's busy timeout: a claim that committed nothing
+  retries on its next one-second wake and preparation resumes once the read
+  ends. Every other claim failure still stops preparation (#1216).
+
 - Library and work detail stay within their read budget on the SQLite the image
   ships, and on newer SQLite once any field-effect suspension exists: each row
   reaches its case's lineage and package by index instead of walking every
