@@ -2,9 +2,10 @@
 
 Library, search, the attention lens and the case detail used to project a
 case's proposals once per decision, in the store and again in the row
-projection. The refusals below were captured from that code at a1d73710 and
-are pinned here, outer error and whole cause chain, so the single projection
-is held to every refusal the repeated one raised, and in the same order.
+projection. The refusals below were captured from that code at base a1d73710,
+verified unchanged at da64015c, and are pinned here, outer error and whole
+cause chain, so the single projection is held to every refusal the repeated
+one raised, and in the same order.
 """
 
 from __future__ import annotations
@@ -244,6 +245,8 @@ def _routes(
         )
         if item["review_case_id"] == case.review_case_id
     )
+    # A first-row case would have no read-ahead position to test.
+    assert position > 0
 
     def library(lens: str, search: str | None = None, limit: int = 50):
         return lambda: application.library(
@@ -256,7 +259,7 @@ def _routes(
         "search": library("all", "0003"),
         # The decided case is the read-ahead row the page fetches but does not
         # show; the store still validates its decisions.
-        "read-ahead": library("all", limit=position) if position else library("all"),
+        "read-ahead": library("all", limit=position),
         "detail": lambda: application.case_detail(case.review_case_id),
     }
 
@@ -286,7 +289,8 @@ def _store_refusal(*cause: tuple[str, str]) -> dict[str, object]:
 
 _STALE = ("HumanDecisionError", "stale")
 _INVALID = ("HumanDecisionError", "invalid")
-# Captured at a1d73710, before the case was projected once per row.
+# Captured at base a1d73710, before the case was projected once per row, and
+# verified unchanged at da64015c.
 _PINNED: dict[str, object] = {
     "first malformed": _store_refusal(_INVALID, ("ValueError", "")),
     "later malformed": _store_refusal(_INVALID, ("ValueError", "")),
@@ -425,6 +429,28 @@ def test_the_browse_scope_refuses_as_each_decision_did(tmp_path: Path) -> None:
             assert actual == expected, (name, decision.decision_id)
             compared += expected is not None
     assert compared > len(decisions)
+
+
+def test_the_store_projects_the_case_only_once_a_decision_has_parsed(
+    tmp_path: Path,
+) -> None:
+    # A malformed first decision on a case whose proposals cannot be projected
+    # is refused as malformed: the store builds its scope only after the first
+    # decision parses, as each decision once projected the case after parsing.
+    # Building it before the loop would refuse it as stale instead. The same
+    # eager move in `get_review_case_decisions` is an equivalent mutant there:
+    # `ReviewCase.__post_init__` already validates the proposals, so
+    # `case.proposals` cannot fail once `ReviewCase.from_json` has returned.
+    with _decided(tmp_path) as fixture:
+        case = fixture.cases[3]
+        _replace(fixture, _first(fixture), "{}")
+        review_case_id, envelope = _envelopes(case)["proposal not json"]
+        refusal = _refusal(
+            lambda: fixture.repository._review_projections._browse_decision_documents(
+                review_case_id, envelope
+            )
+        )
+    assert refusal == [_LIBRARY, _INVALID, ("ValueError", "")]
 
 
 @contextmanager
