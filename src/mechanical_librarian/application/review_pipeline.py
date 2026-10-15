@@ -30,6 +30,7 @@ from mechanical_librarian.domain.preparation_presentation import PreparationTrig
 __all__ = [
     "PipelineAction",
     "PipelineProgress",
+    "ReviewPipelineClaimContention",
     "ReviewPipelineError",
     "ReviewPipelineRepository",
     "ReviewPreparationPipeline",
@@ -69,6 +70,29 @@ class ReviewPipelineError(RuntimeError):
         super().__init__(code)
         self.code = code
         self.root = root
+
+
+class ReviewPipelineClaimContention(ReviewPipelineError):
+    """A claim lost the database writer lock to a reader and retained nothing.
+
+    A repository raises this only once the claim's transaction has rolled back
+    and released its scope, so no work was claimed and nothing is owned. The lane
+    retries on its next ordinary wake instead of latching for recovery (#1216).
+    """
+
+    def __init__(self) -> None:
+        super().__init__("contention")
+
+
+def _log_claim_contention() -> None:
+    """Record one value-free claim retry; a failing sink cannot stop the lane."""
+    try:
+        sys.stderr.write(
+            '{"code":"contention","event":"preparation_claim_contended",'
+            '"level":"warning"}\n'
+        )
+    except Exception:
+        pass
 
 
 def preparation_failure_reference(
@@ -997,6 +1021,9 @@ class ReviewPreparationPipeline:
                         return False
                     try:
                         action = repository.claim_review_pipeline_action(self._clock())
+                    except ReviewPipelineClaimContention:
+                        _log_claim_contention()
+                        return False
                     except ReviewPipelineError:
                         raise
                     except Exception as error:
