@@ -89,6 +89,13 @@ page after sorting. The package-bound Library and case-bound Attention report
 joins, canonical visible-row validation, catalogue attachment and deferred snapshot
 remain authoritative. Empty and out-of-range pages carry validated totals through
 an explicit presence marker; independent count APIs remain available (#1148).
+Within that read, a work's attention probe tests its non-cover fields before its
+cover field, so the cover consideration document and
+`ml_cover_consideration_current` are read only for works no other field already
+places in attention; Attention filters candidate fields by the field predicate
+instead of projecting it as a column; and the Library page carries the envelopes
+its row validation parsed, so the row projection of the same read does not parse
+those bytes again (#1202).
 
 ## Lossless cover report retention (#1158)
 
@@ -354,8 +361,14 @@ distinct event automatic index.
 index; `field_effect_no_changes` consequently exposes only its distinct event
 automatic index.
 
+#1202's `human_decisions_case_destination` and
+`metadata_policy_resolutions_resolved` postdate this snapshot, so they are listed
+without measurements and are not in its sums.
+
 | Exact index | Parent | Entries | KiB |
 | --- | --- | ---: | ---: |
+| `human_decisions_case_destination` | `human_decisions` | — | — |
+| `metadata_policy_resolutions_resolved` | `metadata_policy_resolutions` | — | — |
 | `metadata_report_cover_references_artifact_id` | `metadata_report_cover_references` | 6,216 | 560 |
 | `metadata_report_cover_references_preview_digest` | `metadata_report_cover_references` | 6,216 | 508 |
 | `review_preparation_work_aged_claim` | `review_preparation_work` | 2,053 | 100 |
@@ -511,14 +524,22 @@ own closed checks and/or domain-document validation.
 
 ## Exact indexes and triggers
 
-The seven named indexes are all live production access paths: cover artifact
-and preview lookups use `metadata_report_cover_references_artifact_id` and
+The schema expects fifteen named indexes, all live production access paths:
+cover artifact and preview lookups use
+`metadata_report_cover_references_artifact_id` and
 `metadata_report_cover_references_preview_digest`; fair claims use
 `review_preparation_work_aged_claim` and
-`review_preparation_work_recent_claim`; latest-work status uses
+`review_preparation_work_recent_claim`, and due-work promotion uses
+`review_preparation_work_due_promotion`; preparation presentation reads use the
+five `review_preparation_presentation_*` indexes (`active`,
+`completion_integrity`, `recent`, `run` and `throughput`); latest-work status uses
 `review_preparation_work_lineage_history`; bounded outcome history uses
-`shadow_decision_outcomes_case_history`; and #802 Library/Attention predicates
-use `shadow_outcome_field_facts_case`. Primary and unique keys provide the
+`shadow_decision_outcomes_case_history`; #802 Library/Attention predicates
+use `shadow_outcome_field_facts_case`; and #1202's Library, Attention, search and
+count predicates reach a case's decisions per destination through
+`human_decisions_case_destination` and a proposal's policy resolution through
+`metadata_policy_resolutions_resolved`, where both histories were scanned once
+per candidate. Primary and unique keys provide the
 remaining exact indexes; the schema validates their SQLite automatic-index
 objects too.
 

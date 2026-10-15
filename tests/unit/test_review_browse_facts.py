@@ -494,7 +494,7 @@ def test_lineage_disagreement_still_refuses() -> None:
             read(case_document, other)
 
 
-def test_a_detail_read_parses_its_report_five_times(tmp_path: Path) -> None:
+def test_a_detail_read_parses_its_report_four_times(tmp_path: Path) -> None:
     fixture = OwnerResponsivenessFixture(tmp_path, 10, mixed=True)
     try:
         review_case_id = fixture.cases[2].review_case_id
@@ -512,16 +512,54 @@ def test_a_detail_read_parses_its_report_five_times(tmp_path: Path) -> None:
             fixture.application.case_detail(review_case_id)
     finally:
         fixture.close()
-    # Down from 13 before #1191. What remains, by caller chain:
-    # - `get_review_case`, through `_validated_report_row`: once for the
-    #   snapshot's case and once more for `get_review_case_decisions`;
+    # Down from 13 before #1191, and from 5 before #1202. What remains, by
+    # caller chain:
+    # - `get_review_case`, through `_validated_report_row`, once for the
+    #   snapshot's case, whose document `get_review_case_decisions` reuses;
     # - `get_review_case_source_report`, through `_validated_report_row`, whose
     #   typed report the snapshot now carries to `review_web._read`;
     # - `current_cover_consideration_document`, in
     #   `compact_cover_consideration`;
     # - `project_for_review`, once, in `_validated_cover_consideration`.
     assert Counter(callers) == {
-        "_validated_report_row": 3,
+        "_validated_report_row": 2,
         "compact_cover_consideration": 1,
         "_validated_cover_consideration": 1,
     }
+
+
+def test_library_and_attention_reads_parse_each_document_once_in_the_store(
+    tmp_path: Path,
+) -> None:
+    import sys
+
+    from mechanical_librarian.domain import review_browse
+    from tests.unit.test_report_browse_facts import _resolve_policies
+
+    fixture = OwnerResponsivenessFixture(tmp_path, 10, mixed=True)
+    try:
+        repository = fixture.repository
+        # Asked policies give a work several attentive fields: adjacent rows.
+        _resolve_policies(repository, "books-1")
+        parsed: Counter[str] = Counter()
+        original = review_browse._object
+
+        def counted(serialized: str, maximum: int) -> dict[str, object]:
+            parsed[sys._getframe(1).f_code.co_name] += 1
+            return original(serialized, maximum)
+
+        with patch.object(review_browse, "_object", counted):
+            library = repository.read_review_library(None, 50, 0, None)
+            library_parses = dict(parsed)
+            parsed.clear()
+            attention = repository.read_review_attention(None, 50, 0)
+    finally:
+        fixture.close()
+    # Library: the page read parses each row's report and case once, and the
+    # row projection reads those envelopes rather than the bytes again (#1202).
+    cases = sum(case is not None for case, *_ in library.rows)
+    assert library_parses == {"browse_report": len(library.rows), "browse_case": cases}
+    # Attention: a work's adjacent fields share one parse of its documents.
+    works = len({(row[0], row[1]) for row in attention.rows})
+    assert works < len(attention.rows)
+    assert dict(parsed) == {"browse_case": works, "browse_report": works}

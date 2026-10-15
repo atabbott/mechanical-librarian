@@ -45,6 +45,9 @@ _FORBIDDEN_CODEPOINTS = re.compile(
     + "".join(chr(plane << 16 | low) for plane in range(17) for low in (0xFFFE, 0xFFFF))
     + "]"
 )
+# The same set's ASCII members: for ASCII text it decides exactly what the
+# whole class does, at a fraction of the scan (#1202).
+_FORBIDDEN_ASCII_CODEPOINTS = re.compile("[\x00-\x1f\x7f]")
 _CREDENTIAL_PATTERN = re.compile(
     r"(?i)(?:"
     r"\bauthorization\s*:\s*(?:bearer|basic)\s+\S+"
@@ -96,7 +99,9 @@ def validate_text(value: object, label: str, maximum: int) -> str:
         or len(value.encode("utf-8", errors="surrogatepass")) > maximum * 4
     ):
         raise EvidenceValueError(f"{label} exceeds its size limit")
-    if _FORBIDDEN_CODEPOINTS.search(value):
+    if (
+        _FORBIDDEN_ASCII_CODEPOINTS if value.isascii() else _FORBIDDEN_CODEPOINTS
+    ).search(value):
         raise EvidenceValueError(f"{label} contains forbidden control or Unicode text")
     return value
 
@@ -140,6 +145,11 @@ def validate_incumbent_description(value: object, label: str, maximum: int) -> s
 
 def _validate_projection_safety(text: str, label: str) -> str:
     lowered = text.casefold()
+    # Each pattern below can match only text holding the literal its guard
+    # names, and no other codepoint matches that literal under the pattern's
+    # flags, so a guard decides nothing and only skips a scan that would fail
+    # (#1202).
+    assignment = ":" in text or "=" in text
     if (
         text.startswith("\\")
         or (
@@ -149,12 +159,12 @@ def _validate_projection_safety(text: str, label: str) -> str:
             and text[1] == ":"
             and text[2] in "/\\"
         )
-        or _FILESYSTEM_URI_PATTERN.search(text)
-        or _HOME_PATH_PATTERN.search(text)
-        or _LABELLED_PATH_PATTERN.search(text)
-        or _ABSOLUTE_PATH_PATTERN.search(text)
-        or _WINDOWS_DRIVE_ROOT_PATTERN.search(text)
-        or _UNC_PATH_PATTERN.search(text)
+        or ("://" in text and _FILESYSTEM_URI_PATTERN.search(text))
+        or ("~" in text and _HOME_PATH_PATTERN.search(text))
+        or (assignment and _LABELLED_PATH_PATTERN.search(text))
+        or ("/" in text and _ABSOLUTE_PATH_PATTERN.search(text))
+        or (":" in text and _WINDOWS_DRIVE_ROOT_PATTERN.search(text))
+        or ("\\\\" in text and _UNC_PATH_PATTERN.search(text))
         or "/users/" in lowered
         or "/home/" in lowered
         or "../" in text
@@ -280,7 +290,11 @@ def ensure_unique(values: Iterable[object], label: str) -> None:
 
 
 def _credential_shaped(value: str) -> bool:
-    if _CREDENTIAL_PATTERN.search(value) or _MULTIWORD_CREDENTIAL_PATTERN.search(value):
+    # Both labelled forms end in a literal `:` or `=`; see the guards above.
+    assignment = ":" in value or "=" in value
+    if _CREDENTIAL_PATTERN.search(value) or (
+        assignment and _MULTIWORD_CREDENTIAL_PATTERN.search(value)
+    ):
         return True
     bare_bearer = _BARE_BEARER_PATTERN.search(value)
     if bare_bearer is not None:
@@ -292,6 +306,8 @@ def _credential_shaped(value: str) -> bool:
             or credential.count(".") >= 2
         ):
             return True
+    if not assignment:
+        return False
     for match in _CREDENTIAL_ASSIGNMENT_PATTERN.finditer(value):
         raw_label = match.group(1)
         delimiter = match.group(2)

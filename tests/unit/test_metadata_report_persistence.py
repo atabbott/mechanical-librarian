@@ -706,7 +706,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
             fixture["shadow_decision_outcomes_sql"],
         )
         with closing(open_repository(path)) as repository:
-            # The producer predates #1199's report browse facts.
+            # The producer predates #1199's report browse facts and #1202's
+            # history indexes.
             repository._connection.executescript(
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
@@ -714,6 +715,8 @@ def test_prior_shadow_outcome_schema_is_rejected_without_change(tmp_path, monkey
                 "DROP TRIGGER proposal_sets_project_browse_facts;"
                 "DROP TABLE proposal_set_browse_facts;"
                 "DROP TABLE browse_fact_identity;"
+                "DROP INDEX human_decisions_case_destination;"
+                "DROP INDEX metadata_policy_resolutions_resolved;"
             )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
@@ -2348,7 +2351,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
             fixture["shadow_decision_outcomes_sql"],
         )
         with closing(open_repository(path)) as repository:
-            # The producer predates #1199's report browse facts.
+            # The producer predates #1199's report browse facts and #1202's
+            # history indexes.
             repository._connection.executescript(
                 "DROP TRIGGER metadata_reports_project_browse_facts;"
                 "DROP TABLE metadata_report_browse_authors;"
@@ -2356,6 +2360,8 @@ def test_actual_v18_title_conflict_state_is_rejected_without_change(
                 "DROP TRIGGER proposal_sets_project_browse_facts;"
                 "DROP TABLE proposal_set_browse_facts;"
                 "DROP TABLE browse_fact_identity;"
+                "DROP INDEX human_decisions_case_destination;"
+                "DROP INDEX metadata_policy_resolutions_resolved;"
             )
             rows = repository._connection.execute(
                 "SELECT type,name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"

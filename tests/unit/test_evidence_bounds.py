@@ -1,10 +1,27 @@
-"""The forbidden-codepoint set the evidence validators refuse and replace."""
+"""The forbidden-codepoint set and the projection scans the validators apply."""
+
+import re
 
 import pytest
+from hypothesis import given, settings
+from hypothesis import strategies as st
 
+from mechanical_librarian.domain import evidence_bounds
 from mechanical_librarian.domain.evidence_bounds import (
+    _ABSOLUTE_PATH_PATTERN,
+    _BARE_BEARER_PATTERN,
+    _CREDENTIAL_ASSIGNMENT_PATTERN,
+    _CREDENTIAL_PATTERN,
+    _FILESYSTEM_URI_PATTERN,
+    _FORBIDDEN_ASCII_CODEPOINTS,
     _FORBIDDEN_CODEPOINTS,
+    _HOME_PATH_PATTERN,
+    _LABELLED_PATH_PATTERN,
+    _MULTIWORD_CREDENTIAL_PATTERN,
+    _UNC_PATH_PATTERN,
+    _WINDOWS_DRIVE_ROOT_PATTERN,
     EvidenceValueError,
+    _credential_label_shaped,
     replace_forbidden_codepoints,
     validate_incumbent_description,
     validate_text,
@@ -51,6 +68,16 @@ def test_pattern_matches_exactly_the_forbidden_codepoints() -> None:
         != _forbidden_codepoint(codepoint)
     ]
     assert mismatches == []
+
+
+def test_ascii_pattern_matches_exactly_the_forbidden_ascii_codepoints() -> None:
+    # `validate_text` scans ASCII text with this narrower class (#1202).
+    assert [
+        codepoint
+        for codepoint in range(0x80)
+        if bool(_FORBIDDEN_ASCII_CODEPOINTS.search(chr(codepoint)))
+        != _forbidden_codepoint(codepoint)
+    ] == []
 
 
 _FORBIDDEN_SAMPLES = (
@@ -119,3 +146,203 @@ def test_replacement_substitutes_each_forbidden_codepoint() -> None:
     clean = "Café\u00a0語 \U0001f600"
     assert replace_forbidden_codepoints(clean) == clean
     assert replace_forbidden_codepoints("") == ""
+
+
+# --- Projection scan guards (#1202). ---
+#
+# The two scans below are `_validate_projection_safety` and
+# `_credential_shaped` exactly as they read before #1202 added literal guards,
+# kept verbatim so the guarded scans are compared with the unguarded ones.
+
+
+def _pre_1202_validate_projection_safety(text: str, label: str) -> str:
+    lowered = text.casefold()
+    if (
+        text.startswith("\\")
+        or (
+            len(text) >= 3
+            and text[0].isascii()
+            and text[0].isalpha()
+            and text[1] == ":"
+            and text[2] in "/\\"
+        )
+        or _FILESYSTEM_URI_PATTERN.search(text)
+        or _HOME_PATH_PATTERN.search(text)
+        or _LABELLED_PATH_PATTERN.search(text)
+        or _ABSOLUTE_PATH_PATTERN.search(text)
+        or _WINDOWS_DRIVE_ROOT_PATTERN.search(text)
+        or _UNC_PATH_PATTERN.search(text)
+        or "/users/" in lowered
+        or "/home/" in lowered
+        or "../" in text
+        or "..\\" in text
+    ):
+        raise EvidenceValueError(f"{label} must not contain a production path")
+    if _pre_1202_credential_shaped(text):
+        raise EvidenceValueError(f"{label} must not contain credential-shaped text")
+    return text
+
+
+def _pre_1202_credential_shaped(value: str) -> bool:
+    if _CREDENTIAL_PATTERN.search(value) or _MULTIWORD_CREDENTIAL_PATTERN.search(value):
+        return True
+    bare_bearer = _BARE_BEARER_PATTERN.search(value)
+    if bare_bearer is not None:
+        credential = bare_bearer.group(1)
+        if (
+            any(
+                character.isdigit() or character in "_~+/=-" for character in credential
+            )
+            or credential.count(".") >= 2
+        ):
+            return True
+    for match in _CREDENTIAL_ASSIGNMENT_PATTERN.finditer(value):
+        raw_label = match.group(1)
+        delimiter = match.group(2)
+        structured_prefix = match.start() == 0 or (
+            match.start() > 0 and value[match.start() - 1] in "?&{[,;"
+        )
+        if _credential_label_shaped(
+            raw_label,
+            reject_exact_secret=delimiter == "=" or structured_prefix,
+        ):
+            return True
+    return False
+
+
+# Each guarded pattern, the flags it compiles with, and the literal set a match
+# must contain: the guard skips the scan only for text holding none of them.
+_GUARDS = (
+    (_FILESYSTEM_URI_PATTERN, ":"),
+    (_FILESYSTEM_URI_PATTERN, "/"),
+    (_HOME_PATH_PATTERN, "~"),
+    (_LABELLED_PATH_PATTERN, ":="),
+    (_ABSOLUTE_PATH_PATTERN, "/"),
+    (_WINDOWS_DRIVE_ROOT_PATTERN, ":"),
+    (_UNC_PATH_PATTERN, "\\"),
+    (_MULTIWORD_CREDENTIAL_PATTERN, ":="),
+    (_CREDENTIAL_ASSIGNMENT_PATTERN, ":="),
+)
+
+
+_LITERAL_NAMES = {":": "colon", "/": "slash", "~": "tilde", ":=": "assignment"}
+
+
+@pytest.mark.parametrize(
+    "flags,literals",
+    [
+        pytest.param(
+            flags,
+            literals,
+            id=("folded_" if flags else "exact_")
+            + _LITERAL_NAMES.get(literals, "backslash"),
+        )
+        for flags, literals in sorted(
+            {(pattern.flags & re.IGNORECASE, literals) for pattern, literals in _GUARDS}
+        )
+    ],
+)
+def test_no_other_codepoint_matches_a_guard_literal(flags: int, literals: str) -> None:
+    # A guard tests `in` on the exact literal; the pattern would also accept any
+    # codepoint its flags fold onto that literal, so there must be none.
+    literal = re.compile("[" + re.escape(literals) + "]", flags)
+    assert {
+        chr(codepoint)
+        for codepoint in range(0x110000)
+        if literal.fullmatch(chr(codepoint))
+    } == set(literals)
+
+
+_SCAN_FRAGMENTS = (
+    "path",
+    "File",
+    "location",
+    "source",
+    "smb",
+    "FILE://",
+    "://",
+    "~/",
+    "~\\",
+    "/",
+    "//",
+    "\\",
+    "\\\\",
+    "C:",
+    "c:\\",
+    "\u212a:/",
+    ":",
+    "=",
+    " ",
+    "\t",
+    "api key",
+    "Secret Access Key",
+    "client_secret",
+    "token",
+    "apiKey",
+    "authorization",
+    "Bearer ",
+    "abc.def.ghi",
+    "sk-proj-abcdefgh12",
+    "user:pass@",
+    "/users/",
+    "/Home/",
+    "../",
+    "..\\",
+    "?",
+    "&",
+    "{",
+    '"',
+    "Straße",
+    "\u017f",
+    "word",
+    "42",
+)
+
+
+def _assert_scans_agree(text: str) -> None:
+    assert evidence_bounds._credential_shaped(text) is _pre_1202_credential_shaped(text)
+    outcomes = []
+    for scan in (
+        evidence_bounds._validate_projection_safety,
+        _pre_1202_validate_projection_safety,
+    ):
+        try:
+            outcomes.append(("admitted", scan(text, "label")))
+        except EvidenceValueError as error:
+            outcomes.append((type(error).__name__, str(error)))
+    assert outcomes[0] == outcomes[1]
+
+
+@settings(max_examples=400, deadline=None)
+@given(
+    st.lists(
+        st.one_of(st.sampled_from(_SCAN_FRAGMENTS), st.text(max_size=4)),
+        max_size=14,
+    ).map("".join)
+)
+def test_guarded_scans_equal_the_unguarded_scans(text: str) -> None:
+    _assert_scans_agree(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    (
+        "A synthetic account of shared libraries and careful decisions.",
+        "Book 1: a plain subtitle",
+        "and/or",
+        "a = b",
+        "path: /srv/library",
+        "File://share",
+        "SMB://host/share",
+        "path=\\share",
+        "~/books",
+        "\\\\server\\share",
+        "see D:\\media",
+        "api key: abc",
+        "access_token=abc",
+        "Bearer abc.def.ghi",
+        "",
+    ),
+)
+def test_guarded_scans_keep_each_refusal(text: str) -> None:
+    _assert_scans_agree(text)

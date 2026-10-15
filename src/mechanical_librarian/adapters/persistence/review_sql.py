@@ -102,7 +102,10 @@ _CURRENT_COVER_ATTENTION_AUTHORITY_SQL = (
     "AND CASE ml_cover_consideration_current(authority_consideration.currentness_document,?) "
     "WHEN 1 THEN 1 WHEN 2 THEN result.unresolved_choice ELSE 0 END=1))"
 )
-_REVIEW_FIELD_ATTENTION_SQL = (
+# A field asks for the owner when one of these reasons holds, the cover
+# authority below admits it, and nothing in `_REVIEW_FIELD_ATTENTION_CLEAR_SQL`
+# has already settled or suspended it.
+_REVIEW_FIELD_ATTENTION_REASON_SQL = (
     "result.has_owner_decision_actions=1 AND (result.unresolved_choice=1 "
     "OR (result.destination='cover' AND EXISTS (SELECT 1 "
     "FROM current_cover_considerations current_cover "
@@ -120,9 +123,10 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     + _AUTOMATIC_SAFETY_ATTENTION_SQL
     + " OR "
     + _SHADOW_ABSTENTION_SQL
-    + ") AND "
-    + _CURRENT_COVER_ATTENTION_AUTHORITY_SQL
-    + " AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
+    + ")"
+)
+_REVIEW_FIELD_ATTENTION_CLEAR_SQL = (
+    " AND NOT EXISTS (SELECT 1 FROM human_decisions decision "
     "WHERE decision.review_case_id=rc.review_case_id "
     "AND decision.destination=result.destination) "
     "AND NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=rc.review_case_id AND result.destination='description') "
@@ -147,16 +151,32 @@ _REVIEW_FIELD_ATTENTION_SQL = (
     "(suspension.scope='destination' AND suspension.destination="
     "result.destination)))"
 )
+_REVIEW_FIELD_ATTENTION_SQL = (
+    _REVIEW_FIELD_ATTENTION_REASON_SQL
+    + " AND "
+    + _CURRENT_COVER_ATTENTION_AUTHORITY_SQL
+    + _REVIEW_FIELD_ATTENTION_CLEAR_SQL
+)
 _EPUB_INAPPLICABLE_ATTENTION_SQL = (
     " AND NOT (json_extract(mr.document,'$.file.format')='epub' "
     "AND result.destination IN ('narrators','explicit'))"
 )
+# A work is in attention when any one of its fields is. `destination` is NOT
+# NULL, so the two probes partition the fields exactly; the cover authority
+# admits every non-cover field, and its consideration document and currentness
+# function are therefore read only for a work no other field already put in
+# attention (#1202). The bound authority parameters stay in the cover probe.
 _REVIEW_ATTENTION_SQL = (
-    "EXISTS (SELECT 1 FROM review_case_field_facts result WHERE "
-    "result.review_case_id=rc.review_case_id AND "
+    "(EXISTS (SELECT 1 FROM review_case_field_facts result WHERE "
+    "result.review_case_id=rc.review_case_id AND result.destination<>'cover' AND "
+    + _REVIEW_FIELD_ATTENTION_REASON_SQL
+    + _REVIEW_FIELD_ATTENTION_CLEAR_SQL
+    + _EPUB_INAPPLICABLE_ATTENTION_SQL
+    + ") OR EXISTS (SELECT 1 FROM review_case_field_facts result WHERE "
+    "result.review_case_id=rc.review_case_id AND result.destination='cover' AND "
     + _REVIEW_FIELD_ATTENTION_SQL
     + _EPUB_INAPPLICABLE_ATTENTION_SQL
-    + ")"
+    + "))"
 )
 _LIBRARY_DISPLAY_SEARCH_SQL = (
     "EXISTS (SELECT 1 FROM json_each(?) label "

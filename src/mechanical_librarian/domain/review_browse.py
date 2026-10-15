@@ -143,19 +143,16 @@ def browse_case(serialized: str) -> dict[str, object]:
     return value
 
 
-def browse_case_and_report(
-    case_document: str, report_document: str, admitted_proposal_set_id: str
-) -> tuple[dict[str, object], dict[str, object]]:
-    """Prove one case still binds its admitted proposal and source report."""
-    case = browse_case(case_document)
-    report = browse_report(report_document)
+def require_admitted_lineage(
+    case: dict[str, object], report: dict[str, object], admitted_proposal_set_id: str
+) -> None:
+    """Prove read envelopes still bind the admitted proposal and source report."""
     _require_lineage(case, report)
     if (
         type(admitted_proposal_set_id) is not str
         or case["proposal_set_id"] != admitted_proposal_set_id
     ):
         raise ReviewBrowseValueError("review browse lineage disagrees")
-    return case, report
 
 
 def _require_lineage(case: dict[str, object], report: dict[str, object]) -> None:
@@ -381,10 +378,10 @@ __all__ = [
     "browse_case",
     "browse_case_facts_and_report",
     "browse_case_with_id",
-    "browse_case_and_report",
     "browse_report",
     "browse_review_case_id",
     "case_browse_facts",
     "library_report_facts",
     "provider_lane_facts",
+    "require_admitted_lineage",
 ]

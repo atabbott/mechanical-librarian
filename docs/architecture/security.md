@@ -235,6 +235,14 @@ proposal browse facts (#1199): SQL over already-admitted documents, with no new 
 folded through the deterministic `ml_casefold` (`str.casefold`, as the query is).
 A connection without that function cannot insert a report; what open validates
 is stated under [Schema admission](#schema-admission).
+#1202 changes what a request repeats, never what it refuses. A read validates a
+row's documents once and reuses them only within that read, for those exact
+bytes. The path and credential scans skip a pattern only for text lacking a
+literal its every match contains, and ASCII text is scanned for forbidden
+codepoints with the forbidden class's ASCII members. That no other codepoint
+folds onto a guard literal, and that the ASCII class equals the full class on
+ASCII, are checked exhaustively over codepoints; the guarded scans are compared
+with verbatim unguarded copies on generated and boundary text.
 
 A claimed stage retains its already-validated repository connection, without an open
 transaction, until its separate durable transition; composed report, proposal,

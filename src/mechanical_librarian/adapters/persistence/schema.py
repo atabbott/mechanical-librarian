@@ -282,6 +282,12 @@ _METADATA_POLICY_RESOLUTIONS_SQL = (
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 16384), "
     "PRIMARY KEY(generation,library_name))"
 )
+# Browse probes a proposal's resolution by library and resolved id per field;
+# the primary key leads with generation, so history made that a scan (#1202).
+_METADATA_POLICY_RESOLUTIONS_RESOLVED_INDEX_SQL = (
+    "CREATE INDEX metadata_policy_resolutions_resolved "
+    "ON metadata_policy_resolutions(library_name,resolved_policy_id,generation)"
+)
 _METADATA_POLICY_TRANSITIONS_SQL = (
     "CREATE TABLE metadata_policy_transitions ("
     "transition_id TEXT PRIMARY KEY NOT NULL CHECK(transition_id GLOB 'policy_transition_[0-9a-f]*' AND length(transition_id)=82), "
@@ -533,6 +539,13 @@ _HUMAN_DECISIONS_SQL = (
     "request_digest TEXT NOT NULL CHECK(length(request_digest)=64 AND request_digest NOT GLOB '*[^0-9a-f]*'), "
     "occurred_at INTEGER NOT NULL CHECK(occurred_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 65536))"
+)
+# Browse, counts and detail ask for a case's decisions per destination, and the
+# latest by ordinal (the rowid, so the index carries it); without this every
+# candidate scanned the whole decision history (#1202).
+_HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL = (
+    "CREATE INDEX human_decisions_case_destination "
+    "ON human_decisions(review_case_id,destination)"
 )
 _HUMAN_DECISION_EVENTS_SQL = (
     "CREATE TABLE human_decision_events ("
@@ -876,6 +889,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
         _SETUP_POLICY_STATE_ROW,
     )
     connection.execute(_METADATA_POLICY_RESOLUTIONS_SQL)
+    connection.execute(_METADATA_POLICY_RESOLUTIONS_RESOLVED_INDEX_SQL)
     connection.execute(_METADATA_POLICY_TRANSITIONS_SQL)
     connection.execute(
         "INSERT INTO metadata_policy_transitions(transition_id,from_policy_id,to_policy_id,generation,state,total,acknowledged,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
@@ -909,6 +923,7 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_WORK_RECENT_CLAIM_INDEX_SQL)
     connection.execute(_REVIEW_WORK_LINEAGE_HISTORY_INDEX_SQL)
     connection.execute(_HUMAN_DECISIONS_SQL)
+    connection.execute(_HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL)
     connection.execute(_HUMAN_DECISION_EVENTS_SQL)
     connection.execute(_COVER_CONSIDERATIONS_SQL)
     connection.execute(_CURRENT_COVER_CONSIDERATIONS_SQL)
@@ -1040,6 +1055,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_human_decision_events_2", None),
             ("index", "sqlite_autoindex_human_decisions_1", None),
             ("index", "sqlite_autoindex_human_decisions_2", None),
+            (
+                "index",
+                "human_decisions_case_destination",
+                _HUMAN_DECISIONS_CASE_DESTINATION_INDEX_SQL,
+            ),
             ("index", "sqlite_autoindex_cover_considerations_1", None),
             ("index", "sqlite_autoindex_current_cover_considerations_1", None),
             ("index", "sqlite_autoindex_current_cover_considerations_2", None),
@@ -1076,6 +1096,11 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_metadata_reports_2", None),
             ("index", "sqlite_autoindex_metadata_policy_drafts_1", None),
             ("index", "sqlite_autoindex_metadata_policy_resolutions_1", None),
+            (
+                "index",
+                "metadata_policy_resolutions_resolved",
+                _METADATA_POLICY_RESOLUTIONS_RESOLVED_INDEX_SQL,
+            ),
             ("index", "sqlite_autoindex_metadata_policy_transitions_1", None),
             ("index", "sqlite_autoindex_metadata_policy_transitions_2", None),
             ("index", "sqlite_autoindex_metadata_policy_transition_items_1", None),

@@ -356,9 +356,16 @@ class SQLiteDecisionRepository(ConnectionScoped):
             )
 
     @local_operation
-    def get_review_case_decisions(self, review_case_id: str) -> tuple[str, ...]:
+    def get_review_case_decisions(
+        self, review_case_id: str, case_document: str | None = None
+    ) -> tuple[str, ...]:
+        """Read a case's decisions; a reader holding the case passes its document."""
         try:
-            envelope = json.loads(self.get_review_case(review_case_id))
+            envelope = json.loads(
+                self.get_review_case(review_case_id)
+                if case_document is None
+                else case_document
+            )
             if type(envelope) is not dict or type(envelope.get("case")) is not dict:
                 raise MetadataReportError("human decision is unavailable")
             case = ReviewCase.create_from_data(envelope["case"])

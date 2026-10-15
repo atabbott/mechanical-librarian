@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sqlite3
 import tempfile
 import time
@@ -529,6 +530,8 @@ def test_indexes_preserve_exact_browse_search_detail_and_history_results() -> No
         indexed = results()
         connection.execute("DROP INDEX review_preparation_work_lineage_history")
         connection.execute("DROP INDEX shadow_decision_outcomes_case_history")
+        connection.execute("DROP INDEX human_decisions_case_destination")
+        connection.execute("DROP INDEX metadata_policy_resolutions_resolved")
         connection.commit()
         assert results() == indexed
         repository.close()
@@ -577,9 +580,11 @@ def test_representative_attention_expectation_counts_only_remaining_owner_action
     [
         "review_preparation_work_lineage_history",
         "shadow_decision_outcomes_case_history",
+        "human_decisions_case_destination",
+        "metadata_policy_resolutions_resolved",
     ],
 )
-def test_exact_schema_requires_both_measured_indexes(index_name: str) -> None:
+def test_exact_schema_requires_each_measured_index(index_name: str) -> None:
     with tempfile.TemporaryDirectory() as directory:
         database = Path(directory) / "application.sqlite3"
         repository = open_repository(database)
@@ -594,6 +599,60 @@ def test_exact_schema_requires_both_measured_indexes(index_name: str) -> None:
             MetadataReportError, match="database is unavailable or incompatible"
         ):
             open_repository(database, create=False)
+
+
+def test_browse_probes_decision_and_policy_history_by_index() -> None:
+    """Library, Attention, search and counts reach history by index (#1202).
+
+    Each candidate probes its case's decisions per destination and its
+    proposal's policy resolution; scanning either history instead made every
+    browse grow with the owner's decisions and policy activations. Plans
+    depend on the schema alone (nothing is analysed), so a small store fixes
+    the plan an owner-scale store gets.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        connection = _representative_database(
+            Path(directory) / "application.sqlite3", works=24
+        )
+        repository = SQLiteMetadataReportRepository(connection)
+        try:
+            statements = _traced_selects(
+                connection,
+                lambda: (
+                    repository.read_review_library(None, 7, 0, None),
+                    repository.read_review_library(None, 7, 0, True),
+                    repository.read_review_library(
+                        "Representative title 0006", 7, 0, None
+                    ),
+                    repository.read_review_attention(None, 7, 0),
+                    repository.count_current_review_cases(None),
+                    repository.count_current_attention_fields(None),
+                ),
+            )
+            probing = tuple(
+                statement
+                for statement in statements
+                if "metadata_policy_resolutions" in statement
+            )
+            assert len(probing) >= 6
+            for statement in probing:
+                plan = _plan(connection, statement, ())
+                assert any(
+                    "INDEX human_decisions_case_destination "
+                    "(review_case_id=? AND destination=?)" in step
+                    for step in plan
+                )
+                assert any(
+                    "INDEX metadata_policy_resolutions_resolved "
+                    "(library_name=? AND resolved_policy_id=?)" in step
+                    for step in plan
+                )
+                assert not any(
+                    re.match(r"SCAN (decision|policy_resolution)\b", step)
+                    for step in plan
+                )
+        finally:
+            repository.close()
 
 
 def test_canonical_inserts_project_exact_review_and_shadow_field_facts(
