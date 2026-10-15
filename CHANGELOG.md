@@ -5,9 +5,9 @@
 - Activity, the scheduler's claim, owner decisions, review history and
   description advice no longer slow as applied changes accumulate: they reach
   the field effects they ask about by index instead of scanning every effect.
-  Answers are unchanged, except that review history ties within a second are
-  now broken deterministically, matching the displayed order; clean rebuild
-  required (#1204).
+  Answers are unchanged, except that description application history ties
+  within a second are now broken deterministically, matching the displayed
+  order; clean rebuild required (#1204).
 
 - Library, Attention, search and work detail do less work per request and no
   longer slow as decisions and policy changes accumulate: indexes reach that
