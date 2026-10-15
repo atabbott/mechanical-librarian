@@ -243,6 +243,12 @@ codepoints with the forbidden class's ASCII members. That no other codepoint
 folds onto a guard literal, and that the ASCII class equals the full class on
 ASCII, are checked exhaustively over codepoints; the guarded scans are compared
 with verbatim unguarded copies on generated and boundary text.
+#1215 holds to the same rule for owner decisions. Each of a row's decisions,
+superseded revisions included, is validated in one projection of the row's
+case, built when the first decision has parsed, so every refusal keeps its step
+and order. The page projection reuses that projection only for a canonical case
+with the same content address, the SHA-256 of the same case bytes; otherwise it
+projects the case itself. Either way it validates every decision it renders.
 
 A claimed stage retains its already-validated repository connection, without an open
 transaction, until its separate durable transition; composed report, proposal,

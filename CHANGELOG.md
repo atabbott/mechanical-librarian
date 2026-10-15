@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library, search, the attention lens and work detail no longer slow as owner
+  decisions accumulate: each row's case is projected once for all of its
+  decisions, superseded revisions included, rather than once per decision in
+  the store and again in the page. Every decision is still validated, and rows,
+  order, paging and refusals are unchanged (#1215).
+
 - Library and work detail stay within their read budget on the SQLite the image
   ships, and on newer SQLite once any field-effect suspension exists: each row
   reaches its case's lineage and package by index instead of walking every

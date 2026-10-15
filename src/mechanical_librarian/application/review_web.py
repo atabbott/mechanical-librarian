@@ -11,6 +11,7 @@ import unicodedata
 from collections.abc import Callable
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Protocol, cast
 from urllib.parse import urlencode
 
@@ -45,6 +46,7 @@ from mechanical_librarian.domain.field_effect import decision_value_kind
 from mechanical_librarian.domain.field_outcomes import language_is_unknown
 from mechanical_librarian.domain.human_decision import (
     RECORDED_ONLY_REASON,
+    DecisionScope,
     HumanDecision,
     HumanDecisionError,
     decision_actions,
@@ -218,6 +220,11 @@ class ReviewLibrarySnapshot:
     ]
     total: int
     attention_total: int
+    # The scope each row's human decisions were validated in, when the store
+    # projected one, so the row projection need not project the case again.
+    decision_scopes: tuple[DecisionScope | None, ...] = dataclass_field(
+        default=(), compare=False, repr=False
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -541,10 +548,12 @@ class InspectCurrentReviewCase:
         # of the report, so rebuilding it inside the loop multiplied the only
         # cost on that path by the number of fields under review.
         evidence = _evidence_by_reference(report)
+        # Projected once: each `case.proposals` re-parses the proposal set (#1215).
+        proposals = case.proposals
         publication_date_present = any(
-            value["destination"] == "publishedDate" for value in case.proposals
+            value["destination"] == "publishedDate" for value in proposals
         )
-        for proposal in case.proposals:
+        for proposal in proposals:
             result = proposal["result"]
             assert type(result) is dict
             destination = cast(str, proposal["destination"])
@@ -1356,7 +1365,10 @@ class BrowseReviewLibrary:
                 normalized, bounded_limit + 1, offset, attention, library_labels
             )
             items = []
-            for row in snapshot.rows[:bounded_limit]:
+            scopes = snapshot.decision_scopes or (None,) * len(snapshot.rows)
+            for row, scope in tuple(zip(snapshot.rows, scopes, strict=True))[
+                :bounded_limit
+            ]:
                 (
                     case_document,
                     report_document,
@@ -1377,6 +1389,7 @@ class BrowseReviewLibrary:
                         shadow_abstention_destinations,
                         terminal_document,
                         attention_count,
+                        decision_scope=scope,
                     )
                 )
         except Exception as error:
@@ -2647,6 +2660,8 @@ def _library_item(
     shadow_abstention_destinations: tuple[str, ...] = (),
     terminal_document: str | None = None,
     attention_count: int | None = None,
+    *,
+    decision_scope: DecisionScope | None = None,
 ) -> dict[str, object]:
     if case_document is None:
         try:
@@ -2744,7 +2759,7 @@ def _library_item(
         case, report = _case_and_report(case_document, report_document)
     decisions: set[str] = set()
     automatic_outcomes: dict[str, str] = {}
-    canonical_case: ReviewCase | None = None
+    scope: DecisionScope | None = None
     for document in decision_documents:
         if (
             json.loads(document).get("schema_version")
@@ -2760,9 +2775,23 @@ def _library_item(
             assert case_document is not None
             # A human decision binds a proposal identity, which only the
             # canonical case carries, so this row is validated against it.
-            if canonical_case is None:
+            if scope is None:
                 canonical_case = ReviewCase.from_json(case_document)
-            decision.validate_for(canonical_case)
+                # The store's scope is reused only for this exact case. Both
+                # identities are the SHA-256 of the same case bytes: the store
+                # hashes the row's `case_document` (`browse_case_with_id`), and
+                # `from_json` admits only bytes that re-serialize exactly and
+                # whose identity is that same hash. Equal identities are then
+                # equal proposal inputs, so the scope's projection is the one
+                # `canonical_case.proposals` would compute; any other scope is
+                # set aside and the canonical case is projected here (#1215).
+                scope = (
+                    decision_scope
+                    if decision_scope is not None
+                    and decision_scope.review_case_id == canonical_case.review_case_id
+                    else DecisionScope.of(canonical_case)
+                )
+            decision.validate_in(scope)
             decisions.add(decision.destination)
         else:
             destination = str(automatic["destination"])

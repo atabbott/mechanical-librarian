@@ -182,6 +182,58 @@ def _actionable(proposal: Mapping[str, object]) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class DecisionScope:
+    """One case's proposal projection, which every retained decision is checked in.
+
+    Projecting a case's proposals re-parses its proposal set, so a reader with
+    several decisions on one case builds the scope once and validates each
+    decision in it rather than projecting the same case per decision (#1215).
+    """
+
+    review_case_id: str
+    target_fingerprint: str
+    proposals: tuple[dict[str, object], ...]
+    applications: frozenset[str]
+
+    @classmethod
+    def of(cls, case: ReviewCase) -> Self:
+        return cls(
+            case.review_case_id,
+            case.target_fingerprint,
+            case.proposals,
+            admitted_applications(case.media_kind),
+        )
+
+    @classmethod
+    def of_browse_case(cls, review_case_id: str, case: dict[str, object]) -> Self:
+        """Project the bounded case envelope used by browse projections."""
+        target_fingerprint = case.get("target_fingerprint")
+        proposal_set_id = case.get("proposal_set_id")
+        proposal_document = case.get("proposal_document")
+        results = case.get("results")
+        if (
+            type(review_case_id) is not str
+            or type(target_fingerprint) is not str
+            or type(proposal_set_id) is not str
+            or type(proposal_document) is not str
+            or type(results) is not list
+            or any(type(result) is not dict for result in results)
+        ):
+            raise HumanDecisionError("stale")
+        try:
+            proposals = review_proposals(proposal_set_id, proposal_document, results)
+            media_kind = proposal_media_kind(proposal_document)
+        except ReviewCaseValueError as error:
+            raise HumanDecisionError("stale") from error
+        return cls(
+            review_case_id,
+            target_fingerprint,
+            proposals,
+            admitted_applications(media_kind),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class HumanDecision:
     decision_id: str
     review_case_id: str
@@ -299,11 +351,15 @@ class HumanDecision:
 
     def validate_for(self, case: ReviewCase) -> None:
         """Validate a retained immutable fact against its canonical case."""
+        self.validate_in(DecisionScope.of(case))
+
+    def validate_in(self, scope: DecisionScope) -> None:
+        """Validate a retained immutable fact in its case's projected scope."""
         self._validate_for(
-            case.review_case_id,
-            case.target_fingerprint,
-            list(case.proposals),
-            applications=admitted_applications(case.media_kind),
+            scope.review_case_id,
+            scope.target_fingerprint,
+            scope.proposals,
+            applications=scope.applications,
         )
 
     def validate_new_for(self, case: ReviewCase) -> None:
@@ -314,35 +370,6 @@ class HumanDecision:
             list(case.proposals),
             new_command=True,
             applications=admitted_applications(case.media_kind),
-        )
-
-    def validate_for_browse_case(
-        self, review_case_id: str, case: dict[str, object]
-    ) -> None:
-        """Validate against the bounded case envelope used by browse projections."""
-        target_fingerprint = case.get("target_fingerprint")
-        proposal_set_id = case.get("proposal_set_id")
-        proposal_document = case.get("proposal_document")
-        results = case.get("results")
-        if (
-            type(review_case_id) is not str
-            or type(target_fingerprint) is not str
-            or type(proposal_set_id) is not str
-            or type(proposal_document) is not str
-            or type(results) is not list
-            or any(type(result) is not dict for result in results)
-        ):
-            raise HumanDecisionError("stale")
-        try:
-            proposals = review_proposals(proposal_set_id, proposal_document, results)
-            media_kind = proposal_media_kind(proposal_document)
-        except ReviewCaseValueError as error:
-            raise HumanDecisionError("stale") from error
-        self._validate_for(
-            review_case_id,
-            target_fingerprint,
-            proposals,
-            applications=admitted_applications(media_kind),
         )
 
     def _validate_for(
