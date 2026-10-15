@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -1515,6 +1516,7 @@ def _admission_free(admission: OperationAdmission) -> bool:
         "ioerr",
         "busy_unreleased_scope",
         "busy_open_connection_transaction",
+        "busy_at_begin",
     ),
 )
 def test_only_released_plain_busy_claim_retries_and_every_other_failure_latches(
@@ -1539,10 +1541,16 @@ def test_only_released_plain_busy_claim_retries_and_every_other_failure_latches(
         "locked": sqlite3.SQLITE_LOCKED,
         "ioerr": sqlite3.SQLITE_IOERR,
     }
-    contended = fault == "busy"
+    contended = fault in {"busy", "busy_at_begin"}
     path = tmp_path / "application.sqlite3"
     admission = OperationAdmission()
-    pipeline = _pipeline(root, path, admission=admission)
+    pipeline = _pipeline(
+        root, path, blocked_settlement=fault == "busy_at_begin", admission=admission
+    )
+    # A real writer holding RESERVED makes the claim's BEGIN IMMEDIATE itself busy.
+    blocker = sqlite3.connect(
+        path, timeout=0, isolation_level=None, check_same_thread=False
+    )
     pipeline._observation_repository_factory = lambda: open_repository(
         path, authority=root.authority, cross_thread=True
     )
@@ -1560,6 +1568,8 @@ def test_only_released_plain_busy_claim_retries_and_every_other_failure_latches(
     original_commit = TransactionScope.commit
 
     def begin(scope: TransactionScope) -> None:
+        if claim_scope(scope):
+            scopes.append(scope)
         if fault == "busy_open_connection_transaction" and claim_scope(scope):
             # BEGIN's own unwind could not be proven: the scope never started,
             # but its connection is still inside a transaction.
@@ -1568,8 +1578,7 @@ def test_only_released_plain_busy_claim_retries_and_every_other_failure_latches(
         original_begin(scope)
 
     def commit(scope: TransactionScope, **kwargs: object) -> None:
-        if claim_scope(scope):
-            scopes.append(scope)
+        if claim_scope(scope) and fault != "busy_at_begin":
             raise failure()
         original_commit(scope, **kwargs)  # type: ignore[arg-type]
 
@@ -1586,7 +1595,11 @@ def test_only_released_plain_busy_claim_retries_and_every_other_failure_latches(
         monkeypatch.setattr(TransactionScope, "started", property(unreleased))
 
     if contended:
+        if fault == "busy_at_begin":
+            blocker.execute("BEGIN IMMEDIATE")
         assert pipeline.run_next() is False
+        if fault == "busy_at_begin":
+            blocker.execute("ROLLBACK")
         (scope,) = scopes
         assert not scope.started
         assert not admission.held
@@ -1610,6 +1623,8 @@ def test_only_released_plain_busy_claim_retries_and_every_other_failure_latches(
     original_claim = SQLiteMetadataReportRepository.claim_review_pipeline_action
 
     def counted(repository: SQLiteMetadataReportRepository, claimed_at: int):
+        if fault == "busy_at_begin" and not blocker.in_transaction:
+            blocker.execute("BEGIN IMMEDIATE")
         try:
             return original_claim(repository, claimed_at)
         finally:
@@ -1636,6 +1651,9 @@ def test_only_released_plain_busy_claim_retries_and_every_other_failure_latches(
             } == {("discovery", "persistence")}
     finally:
         supervisor.stop()
+        if blocker.in_transaction:
+            blocker.execute("ROLLBACK")
+        blocker.close()
     assert _preparation_rows(root) == before
     lines = capsys.readouterr().err.splitlines()
     assert lines == [_CONTENTION_LOG] * len(lines)
@@ -1717,11 +1735,33 @@ def test_claim_blocked_by_a_long_reader_resumes_once_the_read_ends(
         "SELECT stage,state FROM review_preparation_work"
     )
     assert (stage, state) != ("extraction", "queued")
-    # Resumed work may reach this helper's refusing proposal stub and log it.
-    contended = [
-        line
-        for line in capsys.readouterr().err.splitlines()
-        if '"preparation_claim_contended"' in line
-    ]
-    assert len(contended) >= 2
-    assert set(contended) == {_CONTENTION_LOG}
+    lines = capsys.readouterr().err.splitlines()
+    assert lines.count(_CONTENTION_LOG) >= 2
+    # Resumed work may reach this helper's refusing proposal stub, which logs
+    # exactly one known unknown-failure record; nothing else may appear.
+    others = [json.loads(line) for line in lines if line != _CONTENTION_LOG]
+    assert len(others) <= 1
+    for record in others:
+        frames = record.pop("frames")
+        assert [(frame["module"], frame["function"]) for frame in frames] == [
+            (
+                "mechanical_librarian.application.review_pipeline",
+                "_execute_claimed_action",
+            )
+        ]
+        assert record == {
+            "attempt": 1,
+            "chain_truncated": False,
+            "code": "unknown",
+            "cycle": False,
+            "event": "preparation_unknown_failure",
+            "exceptions": [{"module": "builtins", "type": "AssertionError"}],
+            "execution_stage": "proposal",
+            "frames_truncated": False,
+            "level": "warning",
+            "observation": "before_fail",
+            "owned_stage": "proposal",
+            "recovery_attempt": 0,
+            "reference": "prep-31c82ea5b1c9f5be",
+            "restart_reference": "prep-d6a7008e59c62303",
+        }

@@ -16,10 +16,13 @@ Preparation's process-local recovery stop exposes only that same closed referenc
 stage, primary code and attempt, with optional `settlement_code: persistence`.
 `preparation_restart_required` has runtime scope; an uncommitted settlement never
 becomes invented durable failure evidence. No raw exception value is projected.
-A claim failing with plain `SQLITE_BUSY` once its transaction and connection are
-proven released committed and retained nothing, so its lane retries on the next
-ordinary wake instead of stopping. Extended busy codes, every other failure and
-any unprovable release still stop for recovery (#1216).
+A claim failing with plain `SQLITE_BUSY` once its transaction scope has ended and
+its connection holds no open transaction committed nothing, so its lane retries
+on the next ordinary wake instead of stopping. That check proves SQLite state;
+admission and connection-lock balance remain the transaction scope's own release
+contract. Extended busy codes, every other failure, a connection still in a
+transaction, and a blocked failure settlement of a claimed stage (#1217) still
+stop for recovery (#1216).
 
 Unknown preparation diagnostics use one directly testable privacy projection:
 validated ASCII exception module/class and package-owned module/function/line

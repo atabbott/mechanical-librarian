@@ -79,13 +79,15 @@ not durable audit history and cannot reconstruct a failure from before this chan
 Logging failure does not change settlement, recovery or retry behavior (#1136).
 
 A preparation claim that loses SQLite's writer lock to a long reader, failing
-with plain `SQLITE_BUSY` after its rollback released every lock, committed
-nothing, so its lane retries on the next one-second wake instead of stopping
-preparation (#1216). Each retry writes one fixed WARNING line,
-`preparation_claim_contended` with `code: contention` and no other field. A run
-of them means a reader is holding the database past the five-second busy
-timeout; status meanwhile shows preparation active with unchanged counts. Any
-other claim failure still reports **Preparation stopped** as above.
+with plain `SQLITE_BUSY` once its transaction scope has ended and its connection
+holds no open transaction, committed nothing, so its lane retries on the next
+one-second wake instead of stopping preparation (#1216). Each retry writes one
+fixed WARNING line, `preparation_claim_contended` with `code: contention` and no
+value-bearing field. A run of them means a reader is holding the database past
+the five-second busy timeout; status meanwhile shows preparation active with
+unchanged counts. Any other claim failure still reports **Preparation stopped**
+as above, and so does a claimed stage whose failure settlement is blocked by the
+same long read; #1217 tracks that settlement case.
 
 `GET /api/v1/operations/support/preview` shows the exact allow-listed bundle
 shape and size. Authenticated, CSRF-bound
