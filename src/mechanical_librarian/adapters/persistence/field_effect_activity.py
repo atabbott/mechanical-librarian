@@ -978,6 +978,15 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                     "(pending.occurred_at=? AND pending.decision_id>?)) "
                 )
                 parameters = (after[0], after[0], after[1])
+            # A decision's case must hold a current lineage. As a correlated
+            # EXISTS that test scanned every lineage once per decision (#1205);
+            # as an uncorrelated IN the lineage list is built once per
+            # statement. A caseless lineage makes the IN NULL rather than false
+            # for a case it lacks, which this never-negated WHERE treats alike.
+            # The unary plus keeps the automatic arm scanning in rowid order,
+            # which the unordered example's answer depends on, and that arm
+            # still extracts its outcome before testing membership, so the
+            # same rows reach every JSON function.
             rows = self._connection.execute(
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
@@ -986,8 +995,7 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 + _CORRECTIVE_KEEP_CURRENT_SQL
                 + ")) AND "
                 + _RECORDED_ONLY_EXCLUDED_SQL
-                + "(EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
-                "WHERE lineage.review_case_id=human.review_case_id) OR ("
+                + "(human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) OR ("
                 "human.destination='cover' AND EXISTS (SELECT 1 FROM "
                 "cover_consideration_events selected JOIN current_cover_considerations current "
                 "ON current.consideration_id=selected.consideration_id "
@@ -1003,13 +1011,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.occurred_at,automatic.document "
                 "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
-                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
+                "json_extract(automatic.document,'$.outcome') IN ('candidate','keep_current') AND "
+                "+automatic.review_case_id IN (SELECT lineage.review_case_id FROM current_review_case_lineages lineage JOIN "
                 "current_review_packages package ON package.connection_name=lineage.connection_name "
                 "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
                 "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
-                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint "
-                "WHERE lineage.review_case_id=automatic.review_case_id) AND "
-                "json_extract(automatic.document,'$.outcome') IN ('candidate','keep_current') AND NOT EXISTS ("
+                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint)"
+                " AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
                 "human.review_case_id=automatic.review_case_id AND "
                 "human.destination=automatic.destination AND NOT EXISTS ("
@@ -1060,6 +1068,8 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
         (#639).
         """
         try:
+            # The automatic arm's lineage list is built once, as in the
+            # documents statement (#1205).
             rows = self._connection.execute(
                 "WITH pending AS ("
                 "SELECT human.decision_id,human.review_case_id,human.destination,'human' origin "
@@ -1078,13 +1088,13 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "returned.destination=human.destination AND returned.active=0) UNION ALL "
                 "SELECT automatic.decision_id,automatic.review_case_id,automatic.destination,'automatic' origin "
                 "FROM automatic_decisions automatic WHERE NOT EXISTS (SELECT 1 FROM current_description_decisions authored WHERE authored.review_case_id=automatic.review_case_id AND automatic.destination='description') AND "
-                "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
+                "json_extract(automatic.document,'$.outcome')='candidate' AND "
+                "+automatic.review_case_id IN (SELECT lineage.review_case_id FROM current_review_case_lineages lineage JOIN "
                 "current_review_packages package ON package.connection_name=lineage.connection_name "
                 "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
                 "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
-                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint "
-                "WHERE lineage.review_case_id=automatic.review_case_id) AND "
-                "json_extract(automatic.document,'$.outcome')='candidate' AND NOT EXISTS ("
+                "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint)"
+                " AND NOT EXISTS ("
                 "SELECT 1 FROM human_decisions human WHERE "
                 "human.review_case_id=automatic.review_case_id AND "
                 "human.destination=automatic.destination AND NOT EXISTS ("

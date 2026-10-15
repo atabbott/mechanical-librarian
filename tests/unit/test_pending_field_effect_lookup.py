@@ -1024,3 +1024,368 @@ def test_description_application_history_breaks_tied_times_as_displayed(
     ]
     assert limited == repository.get_review_case_history(binding.review_case_id, 50)[:4]
     repository.close()
+
+
+# #1205: a pending decision's case must hold a current lineage. The documents
+# statements asked that with a correlated EXISTS for each decision, which the
+# planner served by scanning every lineage, and both statements did the same
+# for the automatic arm's lineage and package. Each is now an uncorrelated IN
+# list built once per statement. These are the texts as they stood at #1204.
+_PACKAGE_JOIN = (
+    "current_review_packages package ON package.connection_name=lineage.connection_name "
+    "AND package.library_name=lineage.library_name AND package.item_id=lineage.item_id "
+    "AND package.proposal_set_id=lineage.proposal_set_id AND package.report_id=lineage.report_id "
+    "AND package.review_case_id=lineage.review_case_id AND package.checkpoint=lineage.checkpoint"
+)
+_HUMAN_LINEAGE = (
+    "(EXISTS (SELECT 1 FROM current_review_case_lineages lineage "
+    "WHERE lineage.review_case_id=human.review_case_id) OR (",
+    "(human.review_case_id IN (SELECT review_case_id FROM current_review_case_lineages) OR (",
+)
+
+
+def _automatic_lineage(outcome: str) -> tuple[str, str]:
+    extract = "json_extract(automatic.document,'$.outcome')" + outcome
+    return (
+        "EXISTS (SELECT 1 FROM current_review_case_lineages lineage JOIN "
+        + _PACKAGE_JOIN
+        + " WHERE lineage.review_case_id=automatic.review_case_id) AND "
+        + extract
+        + " AND NOT EXISTS (",
+        extract
+        + " AND +automatic.review_case_id IN (SELECT lineage.review_case_id FROM "
+        "current_review_case_lineages lineage JOIN "
+        + _PACKAGE_JOIN
+        + ") AND NOT EXISTS (",
+    )
+
+
+_LINEAGE_REWRITES = {
+    "documents": (
+        _HUMAN_LINEAGE,
+        _automatic_lineage(" IN ('candidate','keep_current')"),
+    ),
+    "counts": (_automatic_lineage("='candidate'"),),
+}
+
+
+def _before_1205(name: str, statement: str) -> str:
+    for before, after in _LINEAGE_REWRITES[
+        "counts" if name == "counts" else "documents"
+    ]:
+        assert statement.count(after) == 1, name
+        statement = statement.replace(after, before)
+    return statement
+
+
+def _answer(connection: sqlite3.Connection, statement: str) -> object:
+    try:
+        return connection.execute(statement).fetchall()
+    except sqlite3.OperationalError as error:
+        return ("refused", str(error))
+
+
+def _assert_lineage_oracle(
+    connection: sqlite3.Connection, statements: dict[str, str]
+) -> dict[str, object]:
+    answers = {}
+    for name, statement in statements.items():
+        answers[name] = _answer(connection, statement)
+        assert answers[name] == _answer(connection, _before_1205(name, statement)), name
+    return answers
+
+
+def _lineage_row(connection: sqlite3.Connection, case_id: str) -> tuple[Any, ...]:
+    return tuple(
+        connection.execute(
+            "SELECT connection_name,library_name,item_id,proposal_set_id,report_id,"
+            "review_case_id,transition_id,checkpoint,outcome "
+            "FROM current_review_case_lineages WHERE review_case_id=?",
+            (case_id,),
+        ).fetchone()
+    )
+
+
+def _forget_lineage(connection: sqlite3.Connection, case_id: str) -> None:
+    for table in ("current_review_case_lineages", "current_review_packages"):
+        connection.execute(f"DELETE FROM {table} WHERE review_case_id=?", (case_id,))
+
+
+def _pending_ids(connection: sqlite3.Connection, statement: str) -> list[str]:
+    return [
+        row[0]
+        for row in connection.execute(
+            statement.replace(
+                "SELECT pending.document FROM", "SELECT pending.decision_id FROM", 1
+            )
+        )
+    ]
+
+
+def test_lineage_membership_restores_the_1204_text(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    connection, _ = store
+    for name, statement in _statements(connection).items():
+        restored = _before_1205(name, statement)
+        assert "IN (SELECT review_case_id FROM current_review_case_lineages" not in (
+            restored
+        )
+        assert "IN (SELECT lineage.review_case_id" not in restored
+
+
+def test_lineage_membership_equals_the_correlated_test_across_lineage_shapes(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    connection, pending = store
+    repository = SQLiteMetadataReportRepository(connection)
+    statements = _statements(connection)
+    before = _assert_lineage_oracle(connection, statements)
+    automatic = [value for value in pending if value.startswith("automatic_")]
+    cases = dict(
+        connection.execute(
+            "SELECT decision_id,review_case_id FROM automatic_decisions "
+            "UNION ALL SELECT decision_id,review_case_id FROM human_decisions"
+        ).fetchall()
+    )
+    # Retired, no-case and tombstoned lineages carry no case at all.
+    template = _lineage_row(connection, cases[automatic[0]])
+    for index, outcome in enumerate(("retired", "no_case", "tombstoned")):
+        row = (*template[:2], f"caseless-{index}", *template[3:5], None, *template[6:8])
+        connection.execute(
+            "INSERT INTO current_review_case_lineages VALUES(?,?,?,?,?,?,?,?,?)",
+            (*row, outcome),
+        )
+    # One case current under two items, each with its own matching package:
+    # still one pending row per decision.
+    doubled = cases[automatic[1]]
+    row = _lineage_row(connection, doubled)
+    connection.execute(
+        "INSERT INTO current_review_case_lineages VALUES(?,?,?,?,?,?,?,?,?)",
+        (row[0], row[1], "second-item", *row[3:]),
+    )
+    connection.execute(
+        "INSERT INTO current_review_packages(connection_name,library_name,item_id,"
+        "proposal_set_id,report_id,review_case_id,checkpoint,outcome) "
+        "VALUES(?,?,?,?,?,?,?,?)",
+        (row[0], row[1], "second-item", row[3], row[4], row[5], row[7], row[8]),
+    )
+    # A case whose package no longer matches its lineage: its owner decision
+    # stays pending, its automatic decision does not.
+    mismatched = cases[automatic[2]]
+    connection.execute(
+        "UPDATE current_review_packages SET checkpoint=checkpoint+1 "
+        "WHERE review_case_id=?",
+        (mismatched,),
+    )
+    # A case with no current lineage at all.
+    forgotten = cases[automatic[3]]
+    _forget_lineage(connection, forgotten)
+    # An owner cover decision on a lineage-less case reaches the pending set
+    # only through its current selected consideration.
+    cover_case, consideration = connection.execute(
+        "SELECT review_case_id,consideration_id FROM current_cover_considerations "
+        "ORDER BY review_case_id LIMIT 1"
+    ).fetchone()
+    cover_id = "human_decision_" + _digest("cover-owner")
+    connection.execute(
+        "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+        "target_fingerprint,destination,actor,outcome,selected_value_document,"
+        "idempotency_digest,request_digest,occurred_at,document) "
+        "VALUES(?,?,?,?,'cover','owner','accept','null',?,?,0,?)",
+        (
+            cover_id,
+            cover_case,
+            "review_proposal_" + _digest("cover-proposal"),
+            _digest("cover-fingerprint"),
+            _digest("cover-idempotency"),
+            _digest("cover-request"),
+            json.dumps({"decision_id": cover_id}),
+        ),
+    )
+    connection.execute(
+        "INSERT INTO cover_consideration_events(event_id,consideration_id,"
+        "review_case_id,kind,decision_id,occurred_at,document) "
+        "VALUES(?,?,?,'selected',?,0,'{}')",
+        (
+            "cover_consideration_event_" + _digest("selected"),
+            consideration,
+            cover_case,
+            cover_id,
+        ),
+    )
+    _forget_lineage(connection, cover_case)
+    connection.commit()
+    after = _assert_lineage_oracle(connection, statements)
+    assert after != before
+    ids = _pending_ids(connection, statements["documents"])
+    assert len(ids) == len(set(ids))
+    assert cover_id in ids
+    owner = {value: case for value, case in cases.items() if value.startswith("human_")}
+    for value, case in cases.items():
+        if case == doubled:
+            assert value in ids
+        if case == mismatched:
+            assert (value in ids) == value.startswith("human_")
+        if case == forgotten:
+            assert value not in ids
+    assert any(case == mismatched for case in owner.values())
+    counts = repository.pending_field_effect_decision_counts()
+    assert sum(int(str(row["count"])) for row in counts) > 0
+
+
+# Each corrupted document sits on a case with a lineage and on one without; a
+# refusal depends on which rows reach the JSON function, so the membership test
+# must not filter a row before the corrective check or outcome extraction see it.
+@pytest.mark.parametrize("lineage", [True, False], ids=["lineage", "no-lineage"])
+@pytest.mark.parametrize("corrupted", ["review", "owner", "automatic"])
+def test_lineage_membership_refuses_malformed_documents_as_before(
+    store: tuple[sqlite3.Connection, list[str]], corrupted: str, lineage: bool
+) -> None:
+    connection, pending = store
+    statements = _statements(connection)
+    automatic_id = next(value for value in pending if value.startswith("automatic_"))
+    (case_id,) = connection.execute(
+        "SELECT review_case_id FROM automatic_decisions WHERE decision_id=?",
+        (automatic_id,),
+    ).fetchone()
+    earlier_id, ordinal = connection.execute(
+        "SELECT decision_id,ordinal FROM human_decisions WHERE review_case_id=? "
+        "AND destination='authors'",
+        (case_id,),
+    ).fetchone()
+    # A corrective keep_current after a verified effect of the case's earlier
+    # owner decision reads the case's review document.
+    later_id = "human_decision_" + _digest("corrective")
+    connection.execute(
+        "INSERT INTO human_decisions(decision_id,review_case_id,proposal_id,"
+        "target_fingerprint,destination,actor,outcome,selected_value_document,"
+        "idempotency_digest,request_digest,occurred_at,document) "
+        "SELECT ?,review_case_id,proposal_id,target_fingerprint,destination,actor,"
+        "'keep_current',selected_value_document,?,?,occurred_at+1,? "
+        "FROM human_decisions WHERE ordinal=?",
+        (
+            later_id,
+            _digest("corrective-idempotency"),
+            _digest("corrective-request"),
+            json.dumps({"decision_id": later_id}),
+            ordinal,
+        ),
+    )
+    _effect(connection, "corrective-prior", earlier_id, "{}", "verified")
+    if not lineage:
+        _forget_lineage(connection, case_id)
+    table, key, trigger = {
+        "review": ("review_cases", "review_case_id", "review_cases_no_update"),
+        "owner": ("human_decisions", "decision_id", "human_decisions_no_update"),
+        "automatic": (
+            "automatic_decisions",
+            "decision_id",
+            "automatic_decisions_no_update",
+        ),
+    }[corrupted]
+    connection.execute(f"DROP TRIGGER {trigger}")
+    connection.execute(
+        f"UPDATE {table} SET document='{{not json' WHERE {key}=?",
+        ({"review": case_id, "owner": later_id, "automatic": automatic_id}[corrupted],),
+    )
+    connection.commit()
+    answers = _assert_lineage_oracle(connection, statements)
+    # Every statement that reads past the first pending row reaches the
+    # corrupted document, lineage or not; the unordered example stops first.
+    refused = ("refused", "malformed JSON")
+    assert [name for name, answer in answers.items() if answer == refused] == [
+        "documents",
+        "cursor",
+        "counts",
+    ]
+
+
+def _plan_tree(connection: sqlite3.Connection, statement: str) -> list[tuple[str, ...]]:
+    """Each plan step with the details of the steps it sits under."""
+    rows = connection.execute(
+        f"EXPLAIN QUERY PLAN {statement} -- {next(_REPLANS)}"
+    ).fetchall()
+    parents = {row[0]: row[1] for row in rows}
+    details = {row[0]: row[3] for row in rows}
+    paths = []
+    for step, _, _, detail in rows:
+        path = [detail]
+        while parents.get(step, 0) in details:
+            step = parents[step]
+            path.append(details[step])
+        paths.append(tuple(path))
+    return paths
+
+
+def _scans_lineage_per_decision(connection: sqlite3.Connection, statement: str) -> bool:
+    return any(
+        re.match(r"SCAN (lineage|current_review_case_lineages)\b", path[0])
+        and any(step.startswith("CORRELATED") for step in path[1:])
+        for path in _plan_tree(connection, statement)
+    )
+
+
+def _arm_drivers(connection: sqlite3.Connection, statement: str) -> set[str]:
+    return {
+        path[0]
+        for path in _plan_tree(connection, statement)
+        if re.match(r"(SCAN|SEARCH) (human|automatic)\b", path[0])
+        and not any(step.startswith(("CORRELATED", "LIST")) for step in path[1:])
+    }
+
+
+def test_lineage_lists_are_built_once_and_arms_keep_their_scans(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    connection, _ = store
+    for name, statement in _statements(connection).items():
+        assert not _scans_lineage_per_decision(connection, statement), name
+        assert _arm_drivers(connection, statement) == {"SCAN human", "SCAN automatic"}
+        lists = sum(
+            path[0].startswith("LIST SUBQUERY")
+            for path in _plan_tree(connection, statement)
+        )
+        assert lists == (1 if name == "counts" else 2), name
+        # The correlated test is the per-decision scan being removed.
+        assert _scans_lineage_per_decision(connection, _before_1205(name, statement))
+        # Without the unary plus the planner drives the automatic arm from the
+        # lineage list, so the arm's rows arrive in case order, not rowid order.
+        bare = statement.replace(
+            "+automatic.review_case_id IN", "automatic.review_case_id IN"
+        )
+        assert "SCAN automatic" not in _arm_drivers(connection, bare), name
+
+
+def test_example_keeps_rowid_order_without_an_order_by(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    connection, pending = store
+    statement = _statements(connection)["example"]
+    # Only automatic decisions remain pending: a live effect claims each owner
+    # decision.
+    for value in pending:
+        if value.startswith("human_"):
+            _effect(connection, "claimed-" + value, value, "{}")
+    rows = connection.execute(
+        "SELECT decision_id,review_case_id FROM automatic_decisions ORDER BY rowid"
+    ).fetchall()
+    pending_rows = [row for row in rows if row[0] in pending]
+    first, later = next(
+        (first, later)
+        for index, first in enumerate(pending_rows)
+        for later in pending_rows[index + 1 :]
+        if later[1] < first[1]
+    )
+    for value, _ in rows:
+        if value not in (first[0], later[0]):
+            _effect(connection, "claimed-" + value, value, "{}")
+    connection.commit()
+    (answer,) = connection.execute(statement).fetchall()
+    assert json.loads(answer[0])["decision_id"] == first[0]
+    assert [answer] == connection.execute(_before_1205("example", statement)).fetchall()
+    bare = statement.replace(
+        "+automatic.review_case_id IN", "automatic.review_case_id IN"
+    )
+    (other,) = connection.execute(bare).fetchall()
+    assert json.loads(other[0])["decision_id"] == later[0]
