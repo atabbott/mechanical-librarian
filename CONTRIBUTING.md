@@ -177,7 +177,7 @@ of this table can be checked against the workflow rather than trusted.
 | The shipped container image builds from the exact revision, restoring unchanged layers from the Actions cache | gate | `docker/build-push-action` with `tags: mechanical-librarian:gate` and `cache-to: type=gha,mode=max` in `container-image` |
 | The probe tier runs the image's own pinned binary, never the runner's | gate | `docker create mechanical-librarian:gate`, `docker cp`, `docker rm`, `sudo install -m 0755 "$RUNNER_TEMP/ffprobe" /usr/local/bin/ffprobe`, the `FFMPEG_VERSION` readback with `ffprobe -version`, and the removal of `/usr/bin/ffprobe`, in `container-image` |
 | Real-probe execution over generated media | gate | `scripts/run_test_tier.py probe` in `container-image` |
-| Plan and read-budget assertions run on the SQLite the image ships, never the runner's | gate | `mkdir "$RUNNER_TEMP/shipped-sqlite"`, `docker cp -L`, the `LD_LIBRARY_PATH` prefix, the `libsqlite3-0` version readback with `sqlite3.sqlite_version`, and `scripts/run_test_tier.py shipped-sqlite`, in `container-image` |
+| Plan and VM-step read-budget assertions run on the SQLite the image ships, never the runner's | gate | `mkdir "$RUNNER_TEMP/shipped-sqlite"`, `docker cp -L`, the `LD_LIBRARY_PATH` prefix, the `libsqlite3-0` version readback with `sqlite3.sqlite_version`, and `scripts/run_test_tier.py shipped-sqlite`, in `container-image` |
 | Advisories against the locked dependency closure | gate | `--lockfile=uv.lock` in `dependency-audit` |
 | Explicit slow tier: scale, endurance, resource ceilings | maintainer-manual | `qualify_exact_artifact.py --test-tier slow` |
 | One-command complete exact-head qualification | maintainer-manual | `run_test_tier.py complete` |

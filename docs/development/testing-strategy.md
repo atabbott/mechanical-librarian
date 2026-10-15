@@ -26,9 +26,10 @@ of source tests. `probe` overlaps the same way: it is exactly the audio-probe
 file `slow` already owns, because its distinct invariant is execution against
 the shipped image's pinned binary rather than a different set of tests.
 `shipped-sqlite` is exactly the `fast` and `slow` files that assert a query plan
-or a read budget, because its distinct invariant is execution on the SQLite
-library the shipped image carries, which plans some reads differently from a
-newer one (#1211).
+or a VM-step read budget, because its distinct invariant is execution on the
+SQLite library the shipped image carries, which plans some reads differently
+from a newer one (#1211). Wall-clock budgets measure the host rather than the
+engine and stay out of it.
 `scripts/run_test_tier.py` is the only way a tier is run
 or listed, so a cohort admits exactly the paths its declared patterns match.
 `scripts/run_test_tier.py --list`, with no tier, emits a

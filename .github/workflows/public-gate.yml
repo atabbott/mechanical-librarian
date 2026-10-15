@@ -454,7 +454,7 @@ jobs:
 
       # The image runs on the SQLite its Debian base ships, which plans some
       # reads differently from the runner's newer library (#1211), so every
-      # plan and read-budget assertion reruns on the library extracted above.
+      # plan and VM-step budget assertion reruns on the library extracted above.
       # The readback fails the step unless Python loaded exactly the version
       # the image's package database records: an interpreter that bundles its
       # own SQLite, or ignores the library path, cannot pass in its place. The

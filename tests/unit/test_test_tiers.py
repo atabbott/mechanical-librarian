@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import importlib
 import json
 import os
@@ -254,24 +255,91 @@ def test_the_probe_cohort_is_exactly_the_audio_probe_slice_of_slow() -> None:
     )
 
 
-def test_the_shipped_sqlite_cohort_is_every_plan_asserting_file() -> None:
-    """The hosted gate reruns each plan or read-budget assertion on the image's
-    SQLite (#1211), so a new one cannot pass only on the runner's newer engine.
+# What makes a statement's plan or its VM-step cost observable to a test.
+_PLAN_OR_BUDGET_MARKERS = ("QUERY PLAN", "set_progress_handler")
 
-    A file asserts a plan when it runs `EXPLAIN QUERY PLAN` itself or calls the
-    `_plan` helper of the read-index suite, which the slow read budget does.
+
+def _plan_or_budget_files(root: Path) -> list[Path]:
+    """Every test file under `root` that asserts a query plan or a VM-step budget.
+
+    A file qualifies when it runs `EXPLAIN QUERY PLAN` or installs a progress
+    handler itself, or uses a function of another test or support module that
+    does, directly or through that module's own functions.
+    """
+
+    modules = {
+        ".".join(path.relative_to(root).with_suffix("").parts): path
+        for path in sorted((root / "tests").glob("*/*.py"))
+        if path != Path(__file__).resolve()
+    }
+    trees = {
+        name: ast.parse(path.read_text(encoding="utf-8"))
+        for name, path in modules.items()
+    }
+    helpers: dict[str, set[str]] = {}
+    for name, tree in trees.items():
+        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+        found: set[str] = set()
+        while True:
+            grown = {
+                function.name
+                for function in functions
+                if any(
+                    marker in ast.unparse(function)
+                    for marker in _PLAN_OR_BUDGET_MARKERS
+                )
+                or any(
+                    isinstance(node, ast.Name) and node.id in found
+                    for node in ast.walk(function)
+                )
+            }
+            if grown == found:
+                break
+            found = grown
+        helpers[name] = found
+
+    def asserts(name: str) -> bool:
+        if any(
+            marker in modules[name].read_text(encoding="utf-8")
+            for marker in _PLAN_OR_BUDGET_MARKERS
+        ):
+            return True
+        aliases: dict[str, str] = {}
+        for node in ast.walk(trees[name]):
+            if isinstance(node, ast.ImportFrom) and node.module:
+                for alias in node.names:
+                    if alias.name in helpers.get(node.module, ()):
+                        return True
+                    if f"{node.module}.{alias.name}" in helpers:
+                        aliases[alias.asname or alias.name] = (
+                            f"{node.module}.{alias.name}"
+                        )
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name in helpers:
+                        aliases[alias.asname or alias.name] = alias.name
+        return any(
+            isinstance(node, ast.Attribute)
+            and isinstance(node.value, ast.Name)
+            and node.attr in helpers.get(aliases.get(node.value.id, ""), ())
+            for node in ast.walk(trees[name])
+        )
+
+    return sorted(
+        path
+        for name, path in modules.items()
+        if path.name.startswith("test_") and asserts(name)
+    )
+
+
+def test_the_shipped_sqlite_cohort_is_every_plan_asserting_file() -> None:
+    """The hosted gate reruns each plan or VM-step budget assertion on the
+    image's SQLite (#1211), so a new one cannot pass only on the runner's
+    newer engine.
     """
 
     root = Path(__file__).resolve().parents[2]
-    asserting = sorted(
-        path
-        for path in (root / "tests").glob("*/test_*.py")
-        if path != Path(__file__).resolve()
-        and (
-            "QUERY PLAN" in (text := path.read_text(encoding="utf-8"))
-            or ("test_review_read_indexes" in text and re.search(r"\b_plan\(", text))
-        )
-    )
+    asserting = _plan_or_budget_files(root)
     assert len(asserting) == 5
     targets = cohort_targets(root, "shipped-sqlite")
     assert sorted(Path(target) for target in targets) == asserting
@@ -279,6 +347,55 @@ def test_the_shipped_sqlite_cohort_is_every_plan_asserting_file() -> None:
     assert members
     assert members < set(collect_cohort(root, "fast")) | set(
         collect_cohort(root, "slow")
+    )
+
+
+def test_plan_or_budget_detection_follows_markers_and_helpers(
+    tmp_path: Path,
+) -> None:
+    """A budget assertion alone, or a borrowed plan or budget helper, joins."""
+
+    files = {
+        "unit/test_member.py": (
+            "def _steps(connection):\n"
+            "    connection.set_progress_handler(None, 0)\n"
+            "def _bounded(connection):\n"
+            "    return _steps(connection)\n"
+            "def _unrelated():\n"
+            "    return 1\n"
+        ),
+        "unit/test_budget_only.py": (
+            "def test_budget(connection):\n"
+            "    connection.set_progress_handler(lambda: 0, 10)\n"
+        ),
+        "unit/test_plan_only.py": "PLAN = 'EXPLAIN QUERY PLAN SELECT 1'\n",
+        "unit/test_imports_helper.py": (
+            "from tests.unit.test_member import _bounded\n"
+        ),
+        "slow/test_module_alias.py": (
+            "from tests.unit import test_member as support\n"
+            "def test_it(c):\n"
+            "    support._steps(c)\n"
+        ),
+        "support/plans.py": (
+            "def plan(c, sql):\n"
+            "    return c.execute('EXPLAIN QUERY PLAN ' + sql).fetchall()\n"
+        ),
+        "unit/test_support_helper.py": "from tests.support.plans import plan\n",
+        "unit/test_unrelated_import.py": (
+            "from tests.unit.test_member import _unrelated\n"
+            "from tests.unit import test_member as support\n"
+            "support._unrelated()\n"
+        ),
+    }
+    for relative, source in files.items():
+        path = tmp_path / "tests" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    assert _plan_or_budget_files(tmp_path) == sorted(
+        tmp_path / "tests" / relative
+        for relative in files
+        if relative not in {"support/plans.py", "unit/test_unrelated_import.py"}
     )
 
 
