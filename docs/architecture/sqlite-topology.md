@@ -77,11 +77,11 @@ also re-verifies the next 256 admitted append-only rows, covering every rowid
 including zero and negative ones, and so does an Activity read whose revision is
 unchanged, republishing only when its slice differs. A change that keeps the mark
 and count (an in-place change, or a `REPLACE` into an unused rowid at or below the
-mark) is therefore found within ⌈rows / 256⌉ refreshes or unchanged reads, even on
-an idle library. The classification is re-derived from the
-live triggers in every refresh and reads `pragma_table_list`, which needs SQLite
-3.37 or later. This shortens the shared read that delays the preparation writer's
-commit; journal mode stays `DELETE`.
+mark) is therefore found within ⌈rows / 256⌉ refreshes or unchanged reads, even
+on an idle library. The classification is re-derived from the live triggers in
+every refresh and reads `pragma_table_list`, which needs SQLite 3.37 or later.
+This shortens the shared read that delays the preparation writer's commit;
+journal mode stays `DELETE`.
 
 Library and Attention need no additional browse borrower. Membership, counts and
 row facts share a short deferred transaction; visible projection remains inside

@@ -122,7 +122,8 @@ unless it finds a difference, so every row is re-verified at least once per
 visible across that many reads of an idle library; the sweep covers every rowid,
 including zero and negative rowids; construction and every new borrower
 generation still perform a full witness; an unchanged revision with a changed
-file identity still refuses.
+file identity still refuses. Concurrent reads may repeat a slice but never skip
+one, so the bound counts reads that advance the sweep.
 
 A clean slice in an unchanged-revision read moves only the cursor: the published
 snapshot stays the same object and nothing is reprojected. A slice that finds a
@@ -153,16 +154,15 @@ Marks and the sweep cursor count toward the 64 MiB bound. Overflow, a decoding
 failure and schema drift keep the canonical fallback. The classification reads
 `pragma_table_list`, so the store requires SQLite 3.37 or later. The sweep
 cursor lives beside the published snapshot, so a refresh or unchanged read that
-changes nothing keeps the published store version. The product holds no route that changes an
-append-only row in place: a static test refuses `OR REPLACE`, `REPLACE INTO`,
-BLOB I/O and `writable_schema` in the source, and a schema test requires both
-refusal triggers on every incrementally witnessed table.
+changes nothing keeps the published store version. The product holds no route
+that changes an append-only row in place: a static test refuses `OR REPLACE`,
+`REPLACE INTO`, BLOB I/O and `writable_schema` in the source, and a schema test
+requires both refusal triggers on every incrementally witnessed table.
 
 Consequences replace the earlier statement that a changed revision scans all
 source bytes: it now scans the mutable tables, the rows above each mark and one
-sweep slice, and an unchanged-revision read scans one sweep slice; a new borrower
-generation still performs a full witness against the
-previous snapshot. Activity facts feed no write path, so the detection delay for
-an in-place change outside SQL's ordinary routes is display-only and bounded by
-the sweep. Journal mode, schema, startup admission and the canonical projection are
-unchanged.
+sweep slice, and an unchanged-revision read scans one sweep slice; a new
+borrower generation still performs a full witness against the previous snapshot.
+Activity facts feed no write path, so the detection delay for an in-place change
+outside SQL's ordinary routes is display-only and bounded by the sweep. Journal
+mode, schema, startup admission and the canonical projection are unchanged.
