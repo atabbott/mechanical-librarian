@@ -130,7 +130,11 @@ snapshot stays the same object and nothing is reprojected. A slice that finds a
 difference re-witnesses that table and republishes exactly as a changed refresh
 does. The cursor moves only by compare-and-swap against the snapshot and cursor
 the read started from, so a borrower that loses that race skips its advance and
-never publishes over a newer snapshot.
+never publishes over a newer snapshot. A changed refresh still publishes its
+snapshot but keeps a cursor that unchanged reads advanced while it ran. Each
+table's pass stops at the mark the table had when the cursor entered it, so rows
+appended meanwhile wait for the next lap and appends cannot hold the sweep in
+one table.
 
 A row whose witness differs re-witnesses its whole table in that refresh, and so
 does any table whose `max(rowid)` is SQLite's largest rowid: SQLite then

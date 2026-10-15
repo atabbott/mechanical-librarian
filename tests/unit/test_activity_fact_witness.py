@@ -189,7 +189,7 @@ class _Ledger:
     def advance_into(self, table: str) -> int:
         """Refresh until the cursor has just re-verified a row of ``table``."""
         for _ in range(4 * self.admitted_rows()):
-            index, after = self.store._cursor
+            index, after, _ = self.store._cursor
             if _TABLES[index] == table and after is not None:
                 return after
             self.commit()
@@ -591,6 +591,66 @@ def test_racing_unchanged_reads_advance_the_cursor_once(
         ]
     finally:
         second.close()
+
+
+def test_changed_refresh_keeps_a_cursor_advanced_while_it_ran(
+    ledger: _Ledger, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unchanged reads that sweep during a changed refresh are not undone."""
+    store = ActivityFactStore()
+    published = _witness_refresh(store, ledger.path)
+    ledger.commit()
+    reverify = activity_facts._reverify
+    advanced: list[activity_facts.Cursor] = []
+
+    def racing(*args: object) -> object:
+        if not advanced:
+            advanced.append(store._cursor)
+            for _ in range(2):
+                connection = sqlite3.connect(f"file:{ledger.path}?mode=ro", uri=True)
+                try:
+                    connection.execute("BEGIN")
+                    unchanged = store.refresh(
+                        connection, lambda *_: {}, unchanged=published
+                    )
+                    assert unchanged is published
+                finally:
+                    connection.close()
+            advanced.append(store._cursor)
+        return reverify(*args)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(activity_facts, "_reverify", racing)
+    current = _witness_refresh(store, ledger.path)
+    assert current is not published and store.snapshot() is current
+    assert advanced[0] != advanced[1] == store._cursor
+
+
+def test_appends_cannot_hold_the_sweep_in_one_table(ledger: _Ledger) -> None:
+    """Rows admitted after the cursor entered a table wait for the next lap."""
+    table = "field_effect_events"
+    store = ActivityFactStore()
+    snapshot = _witness_refresh(store, ledger.path)
+    for _ in range(4 * ledger.admitted_rows()):
+        if _TABLES[store._cursor[0]] == table and store._cursor[1] is not None:
+            break
+        snapshot = _witness_refresh(store, ledger.path)
+    rows = snapshot.marks[table][1]
+    source = _event_row(ledger, 1)
+    for lap in range(math.ceil(rows / SLICE) + 1):
+        # Each refresh admits a whole slice of new rows into the same table.
+        for offset in range(SLICE):
+            sequence = 1000 + lap * SLICE + offset
+            ledger.root._connection.execute(
+                "INSERT INTO field_effect_events"
+                "(event_id,plan_id,sequence,kind,occurred_at,document) "
+                "VALUES (?,?,?,?,?,?)",
+                (f"effect_event_{sequence:064x}", source[1], sequence, *source[3:]),
+            )
+        ledger.root._connection.commit()
+        _witness_refresh(store, ledger.path)
+        if _TABLES[store._cursor[0]] != table:
+            return
+    raise AssertionError("appends held the re-verification sweep in one table")
 
 
 def test_sweep_covers_rowid_zero_from_its_first_refresh(ledger: _Ledger) -> None:

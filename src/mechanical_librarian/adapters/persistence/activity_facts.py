@@ -43,10 +43,11 @@ Candidate = tuple[str, str]
 # A changed revision re-verifies this many previously admitted append-only rows
 # (ADR-0082, #1200); construction still witnesses every row.
 _REVERIFY_ROWS = 256
-# (_TABLES index, last re-verified rowid); None is the table's start, so rowid
-# zero and negative rowids are swept as well.
-Cursor = tuple[int, int | None]
-_START: Cursor = (0, None)
+# (_TABLES index, last re-verified rowid, the table's mark when the cursor
+# entered it); None is the table's start, so rowid zero and negative rowids are
+# swept as well, and rows admitted after entry wait for the next lap.
+Cursor = tuple[int, int | None, int | None]
+_START: Cursor = (0, None, None)
 # The only trigger shape that proves a table refuses every UPDATE or DELETE.
 _REFUSAL = re.compile(
     r"CREATE TRIGGER \w+ BEFORE (UPDATE|DELETE) ON (\w+) "
@@ -57,7 +58,7 @@ _ROWID_NAMES = frozenset({"rowid", "oid", "_rowid_"})
 # can keep both mark and count; such a table is never admitted incrementally.
 _MAX_ROWID = 2**63 - 1
 _MARK_BYTES = 16  # max(rowid) and count(*) per append-only table.
-_CURSOR_BYTES = 16  # Re-verification table index and rowid.
+_CURSOR_BYTES = 24  # Re-verification table index, rowid and entry mark.
 _CASE_CHUNK = 500
 
 
@@ -216,7 +217,7 @@ def _reverify(
     an in-place change that preserves rowid and count is found within
     ceil(rows / slice) refreshes. A disagreeing table is re-witnessed in full.
     """
-    index, after = cursor
+    index, after, ceiling = cursor
     eligible = append_only & previous.marks.keys()
     suspect: set[str] = set()
     budget = _REVERIFY_ROWS
@@ -230,6 +231,10 @@ def _reverify(
             admitted = previous.witnesses[table]
             read = 0
             mark = previous.marks[table][0]
+            if after is not None and ceiling is not None:
+                # Appends cannot hold the cursor in one table: rows admitted
+                # after it entered are re-verified in the next lap.
+                mark = min(mark, ceiling)
             rows = (
                 connection.execute(
                     f"SELECT rowid,{shape.selections} FROM {table} "
@@ -257,9 +262,9 @@ def _reverify(
                 rows.close()
             budget -= read
             if budget == 0 and table not in suspect:
-                return frozenset(suspect), (index, after)
-        index, after = (index + 1) % len(_TABLES), None
-    return frozenset(suspect), (index, after)
+                return frozenset(suspect), (index, after, mark)
+        index, after, ceiling = (index + 1) % len(_TABLES), None, None
+    return frozenset(suspect), (index, after, ceiling)
 
 
 def _bindings(
@@ -677,7 +682,9 @@ class ActivityFactStore:
                     marks,
                     previous.version,
                 )
-            self._publish(previous, result, cursor)
+            self._publish(
+                previous, result, cursor, None if full or previous is None else swept
+            )
             return result
         affected: set[Candidate] | None
         if previous is None:
@@ -757,16 +764,28 @@ class ActivityFactStore:
             witness_bytes,
             marks,
         )
-        self._publish(previous, result, cursor)
+        self._publish(
+            previous, result, cursor, None if full or previous is None else swept
+        )
         return result
 
     def _publish(
-        self, expected: _Snapshot | None, result: _Snapshot, cursor: Cursor
+        self,
+        expected: _Snapshot | None,
+        result: _Snapshot,
+        cursor: Cursor,
+        swept: Cursor | None,
     ) -> None:
+        """Publish ``result``; keep a cursor that unchanged reads advanced meanwhile.
+
+        ``swept`` is the cursor this refresh started from, or None when a full
+        witness restarts the sweep.
+        """
         with self._lock:
             if self._snapshot is expected:
                 self._snapshot = result
-                self._cursor = cursor
+                if swept is None or self._cursor == swept:
+                    self._cursor = cursor
 
     def _disable(self) -> None:
         with self._lock:
