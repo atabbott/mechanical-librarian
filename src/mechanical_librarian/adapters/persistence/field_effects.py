@@ -54,6 +54,9 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _EPUB_INAPPLICABLE_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
 )
+from mechanical_librarian.adapters.persistence.schema import (
+    _FIELD_EFFECT_COMPANION_DECISION_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -1367,7 +1370,10 @@ class SQLiteFieldEffectRepository(ConnectionScoped):
                 (changed_at, canonical_effect_json(raw), decision_id),
             )
         rows = self._connection.execute(
-            "SELECT document,state FROM field_effects WHERE (decision_id=? OR json_extract(document,'$.plan.subtitle_companion.authority.decision_id')=?) AND state IN ('planned','retryable')",
+            "SELECT document,state FROM field_effects WHERE rowid IN (SELECT rowid FROM field_effects WHERE decision_id=? "
+            "UNION ALL SELECT rowid FROM field_effects WHERE "
+            + _FIELD_EFFECT_COMPANION_DECISION_SQL
+            + "=?) AND state IN ('planned','retryable') ORDER BY rowid",
             (decision_id, decision_id),
         ).fetchall()
         for document, state in rows:

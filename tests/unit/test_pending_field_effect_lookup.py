@@ -11,6 +11,7 @@ ones over the same store.
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
 import re
 import sqlite3
@@ -24,8 +25,12 @@ from mechanical_librarian.adapters.persistence.metadata_reports import (
 )
 from mechanical_librarian.adapters.persistence.schema import (
     _FIELD_EFFECT_COMPANION_DECISION_SQL,
+    _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL,
+    _FIELD_EFFECTS_DECISION_INDEX_SQL,
 )
 from mechanical_librarian.domain.field_effect import FieldEffectError
+from mechanical_librarian.domain.human_decision import HumanDecision
+from mechanical_librarian.domain.review_case import ReviewCase
 from tests.unit.test_review_read_indexes import (
     _plan,
     _representative_database,
@@ -51,6 +56,7 @@ _CURRENT_PREDICATE = (
 _DECISION_ARM = (
     "SEARCH field_effects USING INDEX field_effects_decision (decision_id=?)"
 )
+_REPLANS = itertools.count()
 _COMPANION_ARM = (
     "SEARCH field_effects USING INDEX field_effects_companion_decision (<expr>=?)"
 )
@@ -290,6 +296,12 @@ def test_companion_cast_preserves_the_original_comparison_affinity() -> None:
     connection.close()
 
 
+def _replanned(connection: sqlite3.Connection, statement: str) -> tuple[str, ...]:
+    # A cached EXPLAIN of identical text was seen to report the plan from before
+    # an index was dropped; a distinct text forces a fresh plan.
+    return _plan(connection, f"{statement} -- {next(_REPLANS)}", ())
+
+
 def _scans_effects(plan: tuple[str, ...]) -> bool:
     return any(re.match(r"SCAN (field_effects|effect)\b", step) for step in plan)
 
@@ -318,7 +330,7 @@ def test_dropping_either_index_restores_the_effect_scan(
     statements = _statements(connection)
     connection.execute(f"DROP INDEX {index_name}")
     for statement in statements.values():
-        assert _scans_effects(_plan(connection, statement, ()))
+        assert _scans_effects(_replanned(connection, statement))
 
 
 def test_a_companion_expression_other_than_the_indexed_one_scans(
@@ -355,3 +367,264 @@ def test_malformed_effect_json_is_refused_at_write_and_still_at_read(
             call()
         with pytest.raises(sqlite3.OperationalError, match="malformed JSON"):
             connection.execute(_original(statements[name])).fetchall()
+
+
+# The other lookups that asked whether a live effect claims a decision by its
+# own or its companion's authority, each exactly as it stood before #1204. The
+# revocation of a library consent matches consent ids, not decisions, and is
+# not among them.
+_JSON = "json_extract(document," + _COMPANION_PATH + ")"
+_EFFECT_JSON = "json_extract(effect.document," + _COMPANION_PATH + ")"
+_RECORDED_HISTORY = (
+    "SELECT earlier.decision_id,earlier.ordinal FROM human_decisions earlier "
+    "WHERE earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<? "
+    "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
+    "WHERE earlier.review_case_id=? AND earlier.destination=?"
+)
+_RECORDED_AUTHORITY = (
+    "SELECT decision_id,ordinal FROM human_decisions earlier WHERE "
+    "earlier.review_case_id=? AND earlier.destination=? AND earlier.ordinal<("
+    "SELECT ordinal FROM human_decisions WHERE decision_id=?) UNION ALL "
+    "SELECT decision_id,-1 FROM automatic_decisions earlier WHERE "
+    "earlier.review_case_id=? AND earlier.destination=?"
+)
+_RECORDED_CASE = (
+    "SELECT destination,decision_id FROM automatic_decisions WHERE review_case_id=? "
+    "UNION ALL SELECT 'cover',selection.decision_id FROM current_review_case_lineages lineage "
+    "JOIN current_cover_selection_authorities current ON "
+    "current.connection_name=lineage.connection_name AND "
+    "current.library_name=lineage.library_name AND current.item_id=lineage.item_id "
+    "JOIN cover_selection_authorities selection ON selection.selection_id=current.selection_id "
+    "WHERE lineage.review_case_id=? UNION ALL "
+    "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
+)
+_ORIGINAL_LOOKUPS = {
+    "revoke": "SELECT document,state FROM field_effects WHERE (decision_id=? OR "
+    + _JSON
+    + "=?) AND state IN ('planned','retryable')",
+    "replacement": "SELECT 1 FROM field_effects WHERE (decision_id=? OR "
+    + _JSON
+    + "=?) AND (state IN ('claimed','applying','reconciling') OR "
+    "(state='verified' AND ?)) LIMIT 1",
+    "history": "SELECT effect.document FROM field_effects effect JOIN ("
+    + _RECORDED_HISTORY
+    + ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
+    + _EFFECT_JSON
+    + ") WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
+    "authority": "SELECT effect.document FROM field_effects effect JOIN ("
+    + _RECORDED_AUTHORITY
+    + ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
+    + _EFFECT_JSON
+    + ") WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
+    "override": "SELECT DISTINCT recorded.destination FROM ("
+    + _RECORDED_CASE
+    + ") recorded JOIN field_effects effect ON (effect.decision_id=recorded.decision_id "
+    "OR "
+    + _EFFECT_JSON
+    + "=recorded.decision_id) WHERE effect.state IN ('claimed','applying','reconciling') "
+    "OR (effect.state='verified' AND recorded.destination='cover') "
+    "ORDER BY recorded.destination",
+}
+
+
+def _lookups(
+    connection: sqlite3.Connection,
+) -> tuple[str, dict[str, tuple[str, tuple[object, ...]]]]:
+    """Run every lookup through its own code path, before any effect exists.
+
+    Returns the earlier owner decision the lookups ask about, and for each
+    lookup its traced current statement and the original's parameters.
+    """
+    repository = SQLiteMetadataReportRepository(connection)
+    earlier_id, document = connection.execute(
+        "SELECT decision.decision_id,decision.document FROM human_decisions decision "
+        "JOIN human_decision_events event ON event.decision_id=decision.decision_id "
+        "ORDER BY decision.ordinal LIMIT 1"
+    ).fetchone()
+    earlier = HumanDecision.from_json(document)
+    case = ReviewCase.create_from_data(
+        json.loads(repository.get_review_case(earlier.review_case_id))["case"]
+    )
+    later = HumanDecision.create(
+        case,
+        proposal_id=earlier.proposal_id,
+        target_fingerprint=earlier.target_fingerprint,
+        destination=earlier.destination,
+        actor="owner",
+        outcome="keep_current",
+        selected_value=None,
+        idempotency_key="pending-field-effect-lookup-later",
+        occurred_at=earlier.occurred_at + 1,
+    )
+    connection.execute(
+        "INSERT INTO field_effect_authorities(decision_id,current,updated_at,document) "
+        "VALUES(?,1,0,'{}')",
+        (earlier_id,),
+    )
+    connection.commit()
+    case_id, destination = case.review_case_id, later.destination
+    repository = SQLiteMetadataReportRepository(connection)
+    calls: dict[str, tuple[Callable[[], object], str]] = {
+        "revoke": (
+            lambda: repository.revoke_field_effect_authority(earlier_id, 1),
+            "SELECT document,state FROM field_effects WHERE rowid IN",
+        ),
+        "replacement": (
+            lambda: repository.record_human_decision(later),
+            "SELECT 1 FROM field_effects WHERE decision_id=",
+        ),
+        "history": (
+            lambda: repository.get_review_case_history(case_id, 20),
+            "SELECT earlier.decision_id,earlier.ordinal",
+        ),
+        "authority": (
+            lambda: repository.field_effect_authority_source(later),
+            "SELECT ordinal FROM human_decisions WHERE decision_id=",
+        ),
+        "override": (
+            lambda: repository.read_current_review_case(case_id, 20),
+            "SELECT DISTINCT recorded.destination",
+        ),
+    }
+    traced = {}
+    for name, (call, marker) in calls.items():
+        traced[name] = {
+            statement
+            for statement in _traced_selects(connection, call)
+            if marker in statement and _FIELD_EFFECT_COMPANION_DECISION_SQL in statement
+        }
+    (ordinal,) = connection.execute(
+        "SELECT ordinal FROM human_decisions WHERE decision_id=?",
+        (later.decision_id,),
+    ).fetchone()
+    # History asks once per event; keep the later decision's question.
+    traced["history"] = {
+        statement
+        for statement in traced["history"]
+        if f"earlier.ordinal<{ordinal} " in statement
+    }
+    parameters: dict[str, tuple[object, ...]] = {
+        "revoke": (earlier_id, earlier_id),
+        "replacement": (earlier_id, earlier_id, False),
+        "history": (case_id, destination, ordinal, case_id, destination),
+        "authority": (case_id, destination, later.decision_id, case_id, destination),
+        "override": (case_id, case_id, case_id),
+    }
+    lookups = {}
+    for name, statements in traced.items():
+        (statement,) = statements
+        lookups[name] = (statement, parameters[name])
+    return earlier_id, lookups
+
+
+def _assert_lookup_oracle(
+    connection: sqlite3.Connection,
+    lookups: dict[str, tuple[str, tuple[object, ...]]],
+) -> None:
+    for name, (statement, parameters) in lookups.items():
+        current = connection.execute(statement).fetchall()
+        original = connection.execute(_ORIGINAL_LOOKUPS[name], parameters).fetchall()
+        assert current == original, name
+
+
+def test_remaining_authority_lookups_equal_the_original(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    connection, _ = store
+    earlier, lookups = _lookups(connection)
+    assert set(lookups) == set(_ORIGINAL_LOOKUPS)
+    _assert_lookup_oracle(connection, lookups)
+    seen: dict[str, set[object]] = {name: set() for name in lookups}
+
+    def compare() -> None:
+        connection.commit()
+        _assert_lookup_oracle(connection, lookups)
+        for name, (statement, _) in lookups.items():
+            seen[name].add(repr(connection.execute(statement).fetchall()))
+
+    # Own authority, verified: the predecessor and history lookups find it.
+    _effect(
+        connection, "own-verified", earlier, json.dumps({"plan": {"n": 1}}), "verified"
+    )
+    compare()
+    # A later companion claim on the same decision ties on its ordinal; the
+    # lower rowid wins, as the original's scan order made it.
+    _effect(
+        connection,
+        "companion-verified",
+        "human_decision_x",
+        _companion(earlier),
+        "verified",
+    )
+    compare()
+    connection.execute(
+        "DELETE FROM field_effects WHERE plan_id=?",
+        ("effect_plan_" + _digest("own-verified"),),
+    )
+    _effect(
+        connection,
+        "own-verified-later",
+        earlier,
+        json.dumps({"plan": {"n": 2}}),
+        "verified",
+    )
+    compare()
+    # Live states each lookup filters on, by either authority, in either order.
+    for state in ("planned", "claimed", "retryable", "applying", "superseded"):
+        _effect(
+            connection,
+            f"companion-{state}",
+            "human_decision_y",
+            _companion(earlier),
+            state,
+        )
+        _effect(connection, f"own-{state}", earlier, "{}", state)
+        compare()
+    # Both arms on one row, missing paths and non-text companion values.
+    _effect(connection, "both", earlier, _companion(earlier), "planned")
+    for label, document in {
+        "empty": "{}",
+        "no-authority": json.dumps({"plan": {"subtitle_companion": {}}}),
+        "plan-text": json.dumps({"plan": "text"}),
+        "integer": _companion(5),
+        "real": _companion(1.5),
+        "true": _companion(True),
+        "null": _companion(None),
+        "object": _companion({"decision_id": earlier}),
+        "array": _companion([earlier]),
+    }.items():
+        _effect(connection, label, "human_decision_" + label, document, "claimed")
+    compare()
+    # Every lookup's answer changed at least once, so the oracle compared
+    # something other than empty results throughout.
+    assert all(len(answers) > 1 for answers in seen.values()), seen
+
+
+def test_remaining_authority_lookups_reach_effects_by_index_only(
+    store: tuple[sqlite3.Connection, list[str]],
+) -> None:
+    connection, _ = store
+    _, lookups = _lookups(connection)
+    for name, (statement, parameters) in lookups.items():
+        plan = _plan(connection, statement, ())
+        assert not _scans_effects(plan), name
+        assert any("INDEX field_effects_decision " in step for step in plan), name
+        assert any(
+            "INDEX field_effects_companion_decision " in step for step in plan
+        ), name
+        assert _scans_effects(_plan(connection, _ORIGINAL_LOOKUPS[name], parameters))
+    for index_name, definition in (
+        ("field_effects_decision", _FIELD_EFFECTS_DECISION_INDEX_SQL),
+        (
+            "field_effects_companion_decision",
+            _FIELD_EFFECTS_COMPANION_DECISION_INDEX_SQL,
+        ),
+    ):
+        connection.execute(f"DROP INDEX {index_name}")
+        for statement, _ in lookups.values():
+            assert _scans_effects(_replanned(connection, statement)), index_name
+        connection.execute(definition)
+    bare = "json_extract(document," + _COMPANION_PATH + ")"
+    for statement, _ in lookups.values():
+        altered = statement.replace(_FIELD_EFFECT_COMPANION_DECISION_SQL, bare)
+        assert _scans_effects(_plan(connection, altered, ()))

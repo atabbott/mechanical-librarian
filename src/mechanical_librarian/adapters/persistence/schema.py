@@ -684,9 +684,9 @@ _FIELD_EFFECTS_SQL = (
     "attempt INTEGER NOT NULL CHECK(attempt BETWEEN 0 AND 3), updated_at INTEGER NOT NULL CHECK(updated_at>=0), "
     "document TEXT NOT NULL CHECK(typeof(document)='text' AND length(CAST(document AS BLOB)) BETWEEN 2 AND 131072))"
 )
-# Pending field-effect documents and counts ask whether a live effect names a
-# decision as its own authority or as its subtitle companion's; without these
-# every pending candidate scanned every effect (#1204). The companion arm
+# Pending, revocation, replacement, history and override reads ask which effects
+# name a decision as their own authority or as their subtitle companion's;
+# without these each such read scanned every effect (#1204). The companion arm
 # compares this CAST, which is the TEXT conversion the comparison with a TEXT
 # decision id applies to a bare json_extract, so the index can serve it; a
 # statement must use this exact expression for the planner to choose it.

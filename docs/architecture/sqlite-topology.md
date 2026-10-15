@@ -364,7 +364,10 @@ automatic index.
 #1202's `human_decisions_case_destination` and
 `metadata_policy_resolutions_resolved`, and #1204's `field_effects_decision` and
 `field_effects_companion_decision`, postdate this snapshot, so they are listed
-without measurements and are not in its sums.
+without measurements and are not in its sums. Because
+`field_effects_companion_decision` evaluates `json_extract` over every
+`field_effects` document on write, an insert or update whose document is not
+well-formed JSON is now refused at write time instead of only at read.
 
 | Exact index | Parent | Entries | KiB |
 | --- | --- | ---: | ---: |
@@ -538,11 +541,13 @@ use `shadow_outcome_field_facts_case`; and #1202's Library, Attention, search an
 count predicates reach a case's decisions per destination through
 `human_decisions_case_destination` and a proposal's policy resolution through
 `metadata_policy_resolutions_resolved`, where both histories were scanned once
-per candidate; and #1204's pending field-effect documents and counts ask whether
-a live effect names a decision as its own authority through
-`field_effects_decision`, or as its subtitle companion's through the partial
-expression index `field_effects_companion_decision` over the TEXT cast of that
-companion authority, where every effect was scanned once per candidate.
+per candidate; and #1204's pending field-effect documents and counts, authority
+revocation, replacement blocking, review-case history and override reads, and
+the authority predecessor ask which effects name a decision as their own
+authority through `field_effects_decision`, or as their subtitle companion's
+through the partial expression index `field_effects_companion_decision` over
+the TEXT cast of that companion authority, where every effect was scanned once
+per candidate or per lookup.
 Primary and unique keys provide the
 remaining exact indexes; the schema validates their SQLite automatic-index
 objects too.

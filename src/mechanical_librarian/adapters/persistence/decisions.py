@@ -35,6 +35,9 @@ from mechanical_librarian.adapters.persistence.documents import _canonical_json
 from mechanical_librarian.adapters.persistence.review_sql import (
     _SHADOW_OUTCOME_HISTORY_SQL,
 )
+from mechanical_librarian.adapters.persistence.schema import (
+    _FIELD_EFFECT_COMPANION_DECISION_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -542,11 +545,19 @@ class SQLiteDecisionRepository(ConnectionScoped):
                 automatic = cover_automatic
             if previous is not None:
                 effect = self._connection.execute(
-                    "SELECT 1 FROM field_effects WHERE (decision_id=? OR json_extract(document,'$.plan.subtitle_companion.authority.decision_id')=?) AND "
+                    "SELECT 1 FROM field_effects WHERE decision_id=? AND "
                     + _REPLACEMENT_BLOCKING_EFFECT_SQL
-                    + " "
-                    "LIMIT 1",
-                    (previous[0], previous[0], decision.destination == "cover"),
+                    + " UNION ALL SELECT 1 FROM field_effects WHERE "
+                    + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                    + "=? AND "
+                    + _REPLACEMENT_BLOCKING_EFFECT_SQL
+                    + " LIMIT 1",
+                    (
+                        previous[0],
+                        decision.destination == "cover",
+                        previous[0],
+                        decision.destination == "cover",
+                    ),
                 ).fetchone()
                 if effect is not None:
                     raise HumanDecisionError("already_decided")
@@ -1046,8 +1057,10 @@ class SQLiteDecisionRepository(ConnectionScoped):
                     "UNION ALL SELECT earlier.decision_id,-1 FROM automatic_decisions earlier "
                     "WHERE earlier.review_case_id=? AND earlier.destination=?"
                     ") recorded ON (recorded.decision_id=effect.decision_id "
-                    "OR recorded.decision_id=json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')) "
-                    "WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
+                    "OR recorded.decision_id="
+                    + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                    + ") WHERE effect.state='verified' "
+                    "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
                     (
                         review_case_id,
                         decision.destination,

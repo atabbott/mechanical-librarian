@@ -52,6 +52,9 @@ from mechanical_librarian.adapters.persistence.review_sql import (
     _POLICY_ASK_ATTENTION_SQL,
     _REVIEW_FIELD_ATTENTION_SQL,
 )
+from mechanical_librarian.adapters.persistence.schema import (
+    _FIELD_EFFECT_COMPANION_DECISION_SQL,
+)
 from mechanical_librarian.adapters.persistence.transactions import (
     ConnectionScoped,
     local_operation,
@@ -643,8 +646,9 @@ class SQLiteReviewProjectionRepository(ConnectionScoped):
             "WHERE lineage.review_case_id=? "
             "UNION ALL "
             "SELECT destination,decision_id FROM human_decisions WHERE review_case_id=?"
-            ") recorded JOIN field_effects effect ON (effect.decision_id=recorded.decision_id "
-            "OR json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')=recorded.decision_id) "
+            ") recorded JOIN field_effects effect ON (effect.decision_id=recorded.decision_id OR "
+            + _FIELD_EFFECT_COMPANION_DECISION_SQL
+            + "=recorded.decision_id) "
             "WHERE effect.state IN ('claimed','applying','reconciling') OR "
             "(effect.state='verified' AND recorded.destination='cover') "
             "ORDER BY recorded.destination",

@@ -610,8 +610,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 "SELECT ordinal FROM human_decisions WHERE decision_id=?) UNION ALL "
                 "SELECT decision_id,-1 FROM automatic_decisions earlier WHERE "
                 "earlier.review_case_id=? AND earlier.destination=?"
-                ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id=json_extract(effect.document,'$.plan.subtitle_companion.authority.decision_id')) "
-                "WHERE effect.state='verified' ORDER BY recorded.ordinal DESC LIMIT 1",
+                ") recorded ON (recorded.decision_id=effect.decision_id OR recorded.decision_id="
+                + _FIELD_EFFECT_COMPANION_DECISION_SQL
+                + ") WHERE effect.state='verified' "
+                "ORDER BY recorded.ordinal DESC,effect.rowid LIMIT 1",
                 (
                     decision.review_case_id,
                     decision.destination,
