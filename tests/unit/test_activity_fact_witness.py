@@ -190,7 +190,7 @@ class _Ledger:
         """Refresh until the cursor has just re-verified a row of ``table``."""
         for _ in range(4 * self.admitted_rows()):
             index, after = self.store._cursor
-            if _TABLES[index] == table and after > 0:
+            if _TABLES[index] == table and after is not None:
                 return after
             self.commit()
             self.read()
@@ -448,10 +448,52 @@ def _blob_write(ledger: _Ledger, rowid: int) -> None:
         raw.close()
 
 
+def _replace_at(target: int, *, new_key: bool) -> Callable[[_Ledger, int], None]:
+    """REPLACE the row at ``rowid`` into an unused rowid at or below the mark.
+
+    A primary-key conflict moves the same key with a changed document; a
+    UNIQUE(plan_id, sequence) conflict moves a new key. Either silently deletes
+    the original row, so the mark and count both stay where they were.
+    """
+
+    def mutate(ledger: _Ledger, rowid: int) -> None:
+        row = _event_row(ledger, rowid)
+        row[5] = _changed_document(row[5])
+        if new_key:
+            row[0] = f"effect_event_{target + 1000:064x}"
+        ledger.root._connection.execute(
+            "INSERT OR REPLACE INTO field_effect_events"
+            "(rowid,event_id,plan_id,sequence,kind,occurred_at,document) "
+            "VALUES (?,?,?,?,?,?,?)",
+            (target, *row),
+        )
+        ledger.root._connection.commit()
+
+    return mutate
+
+
 @pytest.mark.parametrize(
     "mutation",
-    (_replace_in_place, _corrupt_bytes, _bypass_trigger, _blob_write),
-    ids=("replace_rowid", "raw_bytes", "writable_schema_bypass", "blob_io"),
+    (
+        _replace_in_place,
+        _corrupt_bytes,
+        _bypass_trigger,
+        _blob_write,
+        _replace_at(0, new_key=False),
+        _replace_at(-1, new_key=False),
+        _replace_at(0, new_key=True),
+        _replace_at(-7, new_key=True),
+    ),
+    ids=(
+        "replace_rowid",
+        "raw_bytes",
+        "writable_schema_bypass",
+        "blob_io",
+        "replace_key_into_rowid_zero",
+        "replace_key_into_negative_rowid",
+        "replace_new_key_into_rowid_zero",
+        "replace_new_key_into_negative_rowid",
+    ),
 )
 def test_in_place_change_is_detected_by_the_rolling_sweep_within_its_bound(
     ledger: _Ledger, mutation: Callable[[_Ledger, int], None]
@@ -468,6 +510,31 @@ def test_in_place_change_is_detected_by_the_rolling_sweep_within_its_bound(
     assert ledger.serving() and not ledger.exact()
     detected = 1 + ledger.detect(bound - 1)
     assert 1 < detected <= bound
+    ledger.assert_exact()
+
+
+def test_sweep_covers_rowid_zero_from_its_first_refresh(ledger: _Ledger) -> None:
+    """The cursor starts at a table's start, not at rowid zero."""
+    table = _TABLES[0]
+    connection = ledger.root._connection
+    names = [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
+    row = list(
+        connection.execute(
+            f"SELECT {','.join(names)} FROM {table} ORDER BY rowid LIMIT 1"
+        ).fetchone()
+    )
+    row[names.index("content_digest")] = "f" * 64
+    connection.execute(
+        f"INSERT OR REPLACE INTO {table}(rowid,{','.join(names)}) "
+        f"VALUES (0,{','.join('?' * len(names))})",
+        row,
+    )
+    connection.commit()
+    assert _full_witness(ledger.path).marks[table] == ledger.snapshot().marks[table]
+    assert ledger.serving() and not ledger.exact()
+    # Construction leaves the cursor at the first table's start, so the first
+    # refresh re-verifies rowid zero before any other row.
+    assert ledger.detect(1) == 1
     ledger.assert_exact()
 
 
@@ -501,6 +568,74 @@ def test_schema_drift_serves_the_canonical_projection(ledger: _Ledger) -> None:
     ledger.root._connection.commit()
     ledger.read()
     assert not ledger.serving()
+    ledger.assert_exact()
+
+
+def test_new_borrower_generation_witnesses_every_row_itself(ledger: _Ledger) -> None:
+    """A table recreated with identical DDL and rowids cannot inherit witnesses."""
+    raw = _raw(ledger.path)
+    try:
+        ddl = raw.execute(
+            "SELECT sql FROM sqlite_schema WHERE tbl_name='field_effect_events' "
+            "AND sql IS NOT NULL ORDER BY type='table' DESC"
+        ).fetchall()
+        rows = raw.execute("SELECT rowid,* FROM field_effect_events").fetchall()
+        raw.execute("BEGIN")
+        raw.execute("DROP TABLE field_effect_events")
+        for (sql,) in ddl:
+            raw.execute(sql)
+        for index, row in enumerate(rows):
+            values = list(row)
+            if index == 0:
+                values[6] = _changed_document(values[6])
+            raw.execute(
+                "INSERT INTO field_effect_events"
+                "(rowid,event_id,plan_id,sequence,kind,occurred_at,document) "
+                "VALUES (?,?,?,?,?,?,?)",
+                values,
+            )
+        raw.execute("COMMIT")
+    finally:
+        raw.close()
+    ledger.read()
+    assert not ledger.serving()
+    published = ledger.snapshot()
+    borrower = open_repository(
+        ledger.path, create=False, authority=ledger.root.authority
+    )
+    try:
+        borrower.configure_activity_page_reader(ledger.store)
+        borrower.initialize_activity_facts()
+        # The changed event no longer projects, so a full construction falls
+        # back to the canonical path; reuse would have served the old fact.
+        assert _pages(borrower) == _pages(ledger.canonical)
+        if borrower._field_effect_activity._activity_facts is not None:
+            current = ledger.snapshot()
+            assert current is not published
+            assert current.witnesses == _full_witness(ledger.path).witnesses
+    finally:
+        borrower.close()
+
+
+def test_trigger_changes_move_only_the_marks_and_keep_the_version(
+    ledger: _Ledger,
+) -> None:
+    table = "field_effect_events"
+    published = ledger.snapshot()
+    # Each writable_schema commit moves the revision without changing a row.
+    sql = _drop_trigger(ledger.path, f"{table}_no_delete")
+    ledger.read()
+    dropped = ledger.snapshot()
+    assert table not in dropped.marks
+    _restore_trigger(ledger.path, f"{table}_no_delete", table, sql)
+    ledger.read()
+    restored = ledger.snapshot()
+    assert restored.marks == _full_witness(ledger.path).marks == published.marks
+    # Only the marks moved, so borrowers' stamps stay on the same version.
+    for snapshot in (dropped, restored):
+        assert snapshot is not published
+        assert snapshot.version is published.version
+        assert snapshot.facts is published.facts
     ledger.assert_exact()
 
 
@@ -746,7 +881,8 @@ def _bypass_findings(root: Path, append_only: frozenset[str]) -> list[str]:
         for line, literal in _literals(ast.parse(text)):
             for pattern in (_REPLACE, _UPDATE_REPLACE):
                 for match in pattern.finditer(literal):
-                    target = match[1].split("(")[0].strip('"`[]').lower()
+                    # A schema qualifier names the same table: judge its last part.
+                    target = match[1].split("(")[0].split(".")[-1].strip('"`[]').lower()
                     # An interpolated target cannot be proven mutable.
                     if target in append_only or "{" in target:
                         findings.append(f"{path.name}:{line}: {match[0]}")
@@ -769,11 +905,13 @@ def test_bypass_scan_recognizes_each_route(tmp_path: Path) -> None:
         "E = connection.blobopen('metadata_reports', 'document', 1)\n"
         "F = 'PRAGMA writable_schema=ON'\n"
         "G = 'INSERT OR REPLACE INTO field_effects VALUES (?)'\n"
-        "H = 'title'.replace('a', 'b')\n",
+        "H = 'title'.replace('a', 'b')\n"
+        "I = 'INSERT OR REPLACE INTO main.review_cases VALUES (?)'\n"
+        'J = \'REPLACE INTO "main"."field_effect_events" VALUES (?)\'\n',
         encoding="utf-8",
     )
     findings = _bypass_findings(tmp_path, APPEND_ONLY)
-    assert len(findings) == 6
+    assert len(findings) == 8
     assert not any("field_effects " in finding for finding in findings)
 
 

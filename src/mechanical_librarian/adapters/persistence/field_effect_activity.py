@@ -2601,8 +2601,11 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
                 or prior != (revision, identity, snapshot.version)
             ):
                 try:
+                    # A new borrower generation witnesses every row itself.
                     snapshot = store.refresh(
-                        self._connection, self._project_activity_facts
+                        self._connection,
+                        self._project_activity_facts,
+                        full=prior is None,
                     )
                 except (
                     FieldEffectError,

@@ -43,6 +43,10 @@ Candidate = tuple[str, str]
 # A changed revision re-verifies this many previously admitted append-only rows
 # (ADR-0082, #1200); construction still witnesses every row.
 _REVERIFY_ROWS = 256
+# (_TABLES index, last re-verified rowid); None is the table's start, so rowid
+# zero and negative rowids are swept as well.
+Cursor = tuple[int, int | None]
+_START: Cursor = (0, None)
 # The only trigger shape that proves a table refuses every UPDATE or DELETE.
 _REFUSAL = re.compile(
     r"CREATE TRIGGER \w+ BEFORE (UPDATE|DELETE) ON (\w+) "
@@ -164,6 +168,7 @@ def _append_only(
     rowid_tables = {
         name
         for name, without_rowid in connection.execute(
+            # pragma_table_list needs SQLite 3.37 or later.
             "SELECT name,wr FROM pragma_table_list WHERE schema='main' AND type='table'"
         )
         if without_rowid == 0
@@ -195,18 +200,13 @@ def _witness_bytes(key: Key, witness: _Witness) -> int:
     )
 
 
-def _lookup(nodes: dict[str, dict[Key, _Witness]], key: Key) -> _Witness | None:
-    rows = nodes.get(key[0])
-    return None if rows is None else rows.get(key)
-
-
 def _reverify(
     connection: sqlite3.Connection,
     previous: _Snapshot,
-    cursor: tuple[int, int],
+    cursor: Cursor,
     shapes: dict[str, _Shape],
     append_only: frozenset[str],
-) -> tuple[frozenset[str], tuple[int, int]]:
+) -> tuple[frozenset[str], Cursor]:
     """Re-verify the next bounded slice of rows admitted before this refresh.
 
     The cursor walks every admitted append-only row in (table, rowid) order, so
@@ -226,10 +226,19 @@ def _reverify(
             shape = shapes[table]
             admitted = previous.witnesses[table]
             read = 0
-            rows = connection.execute(
-                f"SELECT rowid,{shape.selections} FROM {table} "
-                "WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT ?",
-                (after, previous.marks[table][0], budget),
+            mark = previous.marks[table][0]
+            rows = (
+                connection.execute(
+                    f"SELECT rowid,{shape.selections} FROM {table} "
+                    "WHERE rowid<=? ORDER BY rowid LIMIT ?",
+                    (mark, budget),
+                )
+                if after is None
+                else connection.execute(
+                    f"SELECT rowid,{shape.selections} FROM {table} "
+                    "WHERE rowid>? AND rowid<=? ORDER BY rowid LIMIT ?",
+                    (after, mark, budget),
+                )
             )
             try:
                 for rowid, *row in rows:
@@ -246,7 +255,7 @@ def _reverify(
             budget -= read
             if budget == 0 and table not in suspect:
                 return frozenset(suspect), (index, after)
-        index, after = (index + 1) % len(_TABLES), 0
+        index, after = (index + 1) % len(_TABLES), None
     return frozenset(suspect), (index, after)
 
 
@@ -478,10 +487,10 @@ class ActivityFactStore:
         self.max_bytes = max_bytes
         self._lock = Lock()
         self._snapshot: _Snapshot | None = None
-        # (_TABLES index, last rowid) of the rolling re-verification. It lives
-        # beside the published snapshot so an unchanged refresh keeps the
-        # published identity while the sweep still advances.
-        self._cursor = (0, 0)
+        # The rolling re-verification cursor lives beside the published
+        # snapshot so an unchanged refresh keeps the published identity while
+        # the sweep still advances.
+        self._cursor = _START
         self._disabled = False
 
     def snapshot(self) -> _Snapshot | None:
@@ -492,12 +501,21 @@ class ActivityFactStore:
         self,
         connection: sqlite3.Connection,
         project: Callable[[set[Candidate] | None, int], dict[Candidate, ActivityFact]],
+        *,
+        full: bool = False,
     ) -> _Snapshot | None:
+        """Admit this borrower's snapshot; ``full`` constructs from nothing.
+
+        A new borrower generation passes ``full`` so that it witnesses and
+        projects every row in its own snapshot instead of trusting state that
+        an earlier generation admitted, possibly under another schema.
+        """
         with self._lock:
             if self._disabled:
                 return None
-            previous = self._snapshot
-            cursor = self._cursor if previous is not None else (0, 0)
+            current = self._snapshot
+            previous = None if full else current
+            cursor = self._cursor if previous is not None else _START
         # Every witness below is read from this borrower's own SQLite snapshot.
         # No object parser or shared connection revision can stand in for it.
         shapes = {table: _shape(connection, table) for table in _TABLES}
@@ -637,7 +655,7 @@ class ActivityFactStore:
                     marks,
                     previous.version,
                 )
-            self._publish(previous, result, cursor)
+            self._publish(current, result, cursor)
             return result
         affected: set[Candidate] | None
         if previous is None:
@@ -673,7 +691,7 @@ class ActivityFactStore:
                 key = pending.popleft()
                 affected.update(currentness.get(key, ()))
                 for nodes in (witnesses, previous.witnesses):
-                    reached_witness = _lookup(nodes, key)
+                    reached_witness = nodes.get(key[0], {}).get(key)
                     if reached_witness is not None:
                         affected.update(reached_witness.candidates)
                 for dependent in reverse.get(key, ()):
@@ -717,19 +735,28 @@ class ActivityFactStore:
             witness_bytes,
             marks,
         )
-        self._publish(previous, result, cursor)
+        if (
+            current is not None
+            and previous is None
+            and (current.witnesses, current.marks, current.facts)
+            == (witnesses, marks, facts)
+        ):
+            # A full construction that agrees with the published store keeps
+            # its version, so other borrowers' stamps stay current.
+            result = current
+        self._publish(current, result, cursor)
         return result
 
     def _publish(
-        self, previous: _Snapshot | None, result: _Snapshot, cursor: tuple[int, int]
+        self, expected: _Snapshot | None, result: _Snapshot, cursor: Cursor
     ) -> None:
         with self._lock:
-            if self._snapshot is previous:
+            if self._snapshot is expected:
                 self._snapshot = result
                 self._cursor = cursor
 
     def _disable(self) -> None:
         with self._lock:
             self._snapshot = None
-            self._cursor = (0, 0)
+            self._cursor = _START
             self._disabled = True

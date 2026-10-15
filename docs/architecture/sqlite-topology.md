@@ -57,8 +57,9 @@ any statement executed without the lock.
 
 [ADR-0082](decisions/0082-runtime-activity-facts.md) adds a root-owned, 64 MiB
 serialized Activity fact store borrowed by those query-only readers. Initial
-composition completes before readiness. Every new borrower scans exact scalar and
-raw-document byte witnesses inside its own snapshot; later reuse requires its own
+composition completes before readiness. Every new borrower generation constructs
+from no previous snapshot, scanning exact scalar and raw-document byte witnesses
+inside its own snapshot; later reuse requires its own
 unchanged revision, file identity and store version. Changed witnesses refresh
 only dependent candidates using old and new bindings. The temporary reverse index
 is discarded before projection. Store locks never span SQL or parsing, and closing
@@ -70,11 +71,14 @@ A changed revision re-witnesses the six mutable source tables in full (#1200).
 Every other source table refuses UPDATE and DELETE by trigger, so the store
 records its `max(rowid)` and `count(*)` and a later borrower streams only rows
 above that mark. A decreased mark, a reused key above it, or a count that the
-appended rows do not explain re-witnesses the whole table. Each refresh also
-re-verifies the next 256 admitted append-only rows, so an in-place change that
-keeps rowid and count is found within ⌈rows / 256⌉ refreshes. The classification
-is re-derived from the live triggers in every refresh. This shortens the shared
-read that delays the preparation writer's commit; journal mode stays `DELETE`.
+appended rows do not explain re-witnesses the whole table at the next refresh.
+Each refresh also re-verifies the next 256 admitted append-only rows, covering
+every rowid including zero and negative ones, so a change that keeps the mark and
+count (an in-place change, or a `REPLACE` into an unused rowid at or below the
+mark) is found within ⌈rows / 256⌉ refreshes. The classification is re-derived
+from the live triggers in every refresh and reads `pragma_table_list`, which
+needs SQLite 3.37 or later. This shortens the shared read that delays the
+preparation writer's commit; journal mode stays `DELETE`.
 
 Library and Attention need no additional browse borrower. Membership, counts and
 row facts share a short deferred transaction; visible projection remains inside

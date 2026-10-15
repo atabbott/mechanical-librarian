@@ -1204,9 +1204,9 @@ def test_configured_borrowers_rescan_after_another_reader_wins_publication(
     refreshes = []
     refresh = facts.refresh
 
-    def observe_refresh(connection, project):
+    def observe_refresh(connection, project, **options):
         refreshes.append(connection)
-        return refresh(connection, project)
+        return refresh(connection, project, **options)
 
     monkeypatch.setattr(facts, "refresh", observe_refresh)
     projection = readers[0]._field_effect_activity
