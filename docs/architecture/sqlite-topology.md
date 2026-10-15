@@ -71,14 +71,15 @@ A changed revision re-witnesses the six mutable source tables in full (#1200).
 Every other source table refuses UPDATE and DELETE by trigger, so the store
 records its `max(rowid)` and `count(*)` and a later borrower streams only rows
 above that mark. A decreased mark, a reused key above it, or a count that the
-appended rows do not explain re-witnesses the whole table at the next refresh.
-Each refresh also re-verifies the next 256 admitted append-only rows, covering
-every rowid including zero and negative ones, so a change that keeps the mark and
-count (an in-place change, or a `REPLACE` into an unused rowid at or below the
-mark) is found within ⌈rows / 256⌉ refreshes. The classification is re-derived
-from the live triggers in every refresh and reads `pragma_table_list`, which
-needs SQLite 3.37 or later. This shortens the shared read that delays the
-preparation writer's commit; journal mode stays `DELETE`.
+appended rows do not explain re-witnesses the whole table at the next refresh, as
+does a table at SQLite's largest rowid, where new rowids are random. Each refresh
+also re-verifies the next 256 admitted append-only rows, covering every rowid
+including zero and negative ones, so a change that keeps the mark and count (an
+in-place change, or a `REPLACE` into an unused rowid at or below the mark) is
+found within ⌈rows / 256⌉ refreshes. The classification is re-derived from the
+live triggers in every refresh and reads `pragma_table_list`, which needs SQLite
+3.37 or later. This shortens the shared read that delays the preparation writer's
+commit; journal mode stays `DELETE`.
 
 Library and Attention need no additional browse borrower. Membership, counts and
 row facts share a short deferred transaction; visible projection remains inside

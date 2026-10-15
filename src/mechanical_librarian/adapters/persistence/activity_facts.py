@@ -53,6 +53,9 @@ _REFUSAL = re.compile(
     r"BEGIN SELECT RAISE\(ABORT, ?'[^']*'\); END"
 )
 _ROWID_NAMES = frozenset({"rowid", "oid", "_rowid_"})
+# At this rowid SQLite allocates new rowids at random below it, so a REPLACE
+# can keep both mark and count; such a table is never admitted incrementally.
+_MAX_ROWID = 2**63 - 1
 _MARK_BYTES = 16  # max(rowid) and count(*) per append-only table.
 _CURSOR_BYTES = 16  # Re-verification table index and rowid.
 _CASE_CHUNK = 500
@@ -553,7 +556,7 @@ class ActivityFactStore:
                 and not full
                 and mark is not None
                 and prior_mark is not None
-                and mark[0] >= prior_mark[0]
+                and prior_mark[0] <= mark[0] < _MAX_ROWID
                 and table not in suspect
                 and not (table == "shadow_decision_outcomes" and cases_rewitnessed)
             ):

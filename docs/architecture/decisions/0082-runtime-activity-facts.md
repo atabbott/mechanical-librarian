@@ -121,11 +121,14 @@ rowid, including zero and negative rowids; construction and every new borrower
 generation still perform a full witness; an unchanged revision with a changed
 file identity still refuses.
 
-A row whose witness differs re-witnesses its whole table in that refresh. A new
-borrower generation performs a full witness against the previous snapshot in its
-own read: it streams every row of every source table, reprojects only candidates
-whose witnesses differ, records fresh marks and counts, and restarts the sweep. It
-never admits a table from marks recorded by an earlier generation.
+A row whose witness differs re-witnesses its whole table in that refresh, and so
+does any table whose `max(rowid)` is SQLite's largest rowid: SQLite then
+allocates new rowids at random below it, so a replacement could keep both mark
+and count. A new borrower generation performs a full witness against the
+previous snapshot in its own read: it streams every row of every source table,
+reprojects only candidates whose witnesses differ, records fresh marks and
+counts, and restarts the sweep. It never admits a table from marks recorded by
+an earlier generation.
 
 The table classification is derived from the schema's triggers and verified at
 construction, so a table that loses its append-only triggers falls back to full

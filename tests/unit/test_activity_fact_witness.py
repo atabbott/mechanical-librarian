@@ -869,6 +869,24 @@ def test_replacement_key_above_the_mark_is_detected_when_the_count_agrees(
     ledger.assert_exact()
 
 
+def test_table_at_the_largest_rowid_is_rewitnessed_in_full(ledger: _Ledger) -> None:
+    """SQLite allocates at random below the largest rowid, so REPLACE keeps both."""
+    _move_newest(ledger.path, (("field_effect_events", 2**63 - 1),))
+    store = ActivityFactStore()
+    marks = _witness_refresh(store, ledger.path).marks["field_effect_events"]
+    row = _event_row(ledger, 2)
+    row[5] = _changed_document(row[5])
+    ledger.root._connection.execute(
+        "INSERT OR REPLACE INTO field_effect_events"
+        "(event_id,plan_id,sequence,kind,occurred_at,document) VALUES (?,?,?,?,?,?)",
+        row,
+    )
+    ledger.root._connection.commit()
+    current = _witness_refresh(store, ledger.path)
+    assert current.marks["field_effect_events"] == marks
+    assert current.witnesses == _full_witness(ledger.path).witnesses
+
+
 def _delete_event(ledger: _Ledger, where: str) -> None:
     sql = _drop_trigger(ledger.path, "field_effect_events_no_delete")
     raw = _raw(ledger.path)
