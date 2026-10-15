@@ -17,7 +17,7 @@ untracked artifact.
 
 ## Tiers
 
-The public suite has five explicit qualification tiers, declared in `COHORTS`.
+The public suite has six explicit qualification tiers, declared in `COHORTS`.
 The three source cohorts — `fast`, `browser` and `slow` — are disjoint by
 directory. `required-installed` is not: it is the existing fast-source subset
 plus one installed-only exact-wheel smoke, deliberately, because its distinct
@@ -25,6 +25,11 @@ invariant is execution through the installed wheel rather than a different set
 of source tests. `probe` overlaps the same way: it is exactly the audio-probe
 file `slow` already owns, because its distinct invariant is execution against
 the shipped image's pinned binary rather than a different set of tests.
+`shipped-sqlite` is exactly the `fast` and `slow` files that assert a query plan
+or a VM-step read budget, because its distinct invariant is execution on the
+SQLite library the shipped image carries, which plans some reads differently
+from a newer one (#1211). Wall-clock budgets measure the host rather than the
+engine and stay out of it.
 `scripts/run_test_tier.py` is the only way a tier is run
 or listed, so a cohort admits exactly the paths its declared patterns match.
 `scripts/run_test_tier.py --list`, with no tier, emits a
@@ -236,11 +241,14 @@ candidates cannot break `main` together in silence. Each job checks out
 on both events, and only pull-request work is cancelled by a superseding head. An
 seventh `container-image` job builds the shipped image at that same revision, so
 a Dockerfile regression fails the gate; it loads the image solely to extract
-the pinned `ffprobe` for the probe tier, and never starts or pushes it.
+the pinned `ffprobe` for the probe tier and the SQLite library for the
+`shipped-sqlite` tier, and never starts or pushes it.
 
 The `fast-source` job has a 25-minute deadline covering toolchain and dependency
 setup as well as qualification. This operational margin preserves every check
 and test; it is not a runtime guarantee for the fast tier.
+`container-image` has 15 minutes, since it runs the `shipped-sqlite` tier after
+the image build and the probe tier (#1211).
 
 The fast tier runs as four shards, one per job: `fast-source` runs shard 1
 after its static and frontend checks, and `fast-source-2`, `fast-source-3` and

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Library and work detail stay within their read budget on the SQLite the image
+  ships, and on newer SQLite once any field-effect suspension exists: each row
+  reaches its case's lineage and package by index instead of walking every
+  work. Rows, counts, order and refusals are unchanged; clean rebuild required
+  (#1211).
+
 - Permission readiness and the pending field-change list and counts now grow
   with decision history alone rather than with decisions times current reviews:
   each request finds the cases holding a current review once instead of once

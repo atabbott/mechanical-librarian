@@ -385,6 +385,18 @@ _CURRENT_REVIEW_PACKAGES_SQL = (
     "OR (outcome IN ('no_case','retired') AND proposal_set_id IS NOT NULL AND review_case_id IS NULL AND checkpoint IS NOT NULL)), "
     "PRIMARY KEY(connection_name,library_name,item_id))"
 )
+# Library, Attention and detail reach a case's current lineage and package by
+# its case id. Without these each visible row walked every lineage and package;
+# newer SQLite skipped the walk only while field_effect_suspensions was empty
+# (#1211).
+_CURRENT_REVIEW_CASE_LINEAGES_CASE_INDEX_SQL = (
+    "CREATE INDEX current_review_case_lineages_case "
+    "ON current_review_case_lineages(review_case_id)"
+)
+_CURRENT_REVIEW_PACKAGES_CASE_INDEX_SQL = (
+    "CREATE INDEX current_review_packages_case "
+    "ON current_review_packages(review_case_id)"
+)
 _PROVIDER_RECOVERY_OUTBOX_SQL = (
     "CREATE TABLE provider_recovery_outbox ("
     "outbox_id TEXT PRIMARY KEY NOT NULL CHECK(outbox_id GLOB 'recovery_outbox_[0-9a-f]*' AND length(outbox_id)=80), "
@@ -951,7 +963,9 @@ def _create_schema(connection: sqlite3.Connection) -> None:
     connection.execute(_REVIEW_CASE_FIELD_FACTS_SQL)
     connection.execute(_REVIEW_CASE_FIELD_FACTS_INSERT_SQL)
     connection.execute(_REVIEW_POINTERS_SQL)
+    connection.execute(_CURRENT_REVIEW_CASE_LINEAGES_CASE_INDEX_SQL)
     connection.execute(_CURRENT_REVIEW_PACKAGES_SQL)
+    connection.execute(_CURRENT_REVIEW_PACKAGES_CASE_INDEX_SQL)
     connection.execute(_PROVIDER_RECOVERY_OUTBOX_SQL)
     connection.execute(_REVIEW_TRANSITIONS_SQL)
     connection.execute(_REVIEW_SCANS_SQL)
@@ -1102,6 +1116,16 @@ def _expected_schema_objects() -> list[tuple[str, str, str | None]]:
             ("index", "sqlite_autoindex_current_metadata_report_lineages_1", None),
             ("index", "sqlite_autoindex_current_review_case_lineages_1", None),
             ("index", "sqlite_autoindex_current_review_packages_1", None),
+            (
+                "index",
+                "current_review_case_lineages_case",
+                _CURRENT_REVIEW_CASE_LINEAGES_CASE_INDEX_SQL,
+            ),
+            (
+                "index",
+                "current_review_packages_case",
+                _CURRENT_REVIEW_PACKAGES_CASE_INDEX_SQL,
+            ),
             ("index", "sqlite_autoindex_provider_recovery_outbox_1", None),
             ("index", "sqlite_autoindex_metadata_report_cover_references_1", None),
             (

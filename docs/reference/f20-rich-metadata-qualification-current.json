@@ -38,13 +38,13 @@
       "tags:fill_empty",
       "tags:replace"
     ],
-    "semantic_input_sha256": "bc795bbc6f30f8afff8a07c2dc44610ba052678b564c73358a403a77ddb0b707",
-    "semantic_revision": 31
+    "semantic_input_sha256": "27ef080d5cebdf2747654efa66ea67718533e9075aecac58249542f67fd24be2",
+    "semantic_revision": 32
   },
   "predecessor": {
     "path": "docs/reference/f20-rich-metadata-qualification-current.json",
-    "sha256": "174518920279cb1326996c03e7a2910d911e0ffdafccd2f6a90c7b4e4e9c4609",
-    "source_sha": "2dcf75cd15352cfe93cb7248d9ebefecb90337f6"
+    "sha256": "15055e5bd7b1d740cd3661d1fb156a1021ce350e694206f3374dc27af51b4bc1",
+    "source_sha": "46cf6e2cd95dcf8d9e901146ba472c732fd4277b"
   },
   "provenance": "qualification-provenance-current.json",
   "schema": "qualification-current-v1"

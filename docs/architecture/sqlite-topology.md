@@ -365,7 +365,8 @@ automatic index.
 `metadata_policy_resolutions_resolved`, and #1204's `field_effects_decision`,
 `field_effects_companion_decision`, `field_effects_ready`,
 `field_effects_waiting`, `field_effects_target` and
-`description_decisions_case`, postdate this snapshot, so they are listed
+`description_decisions_case`, and #1211's `current_review_case_lineages_case`
+and `current_review_packages_case`, postdate this snapshot, so they are listed
 without measurements and are not in its sums. Because
 `field_effects_companion_decision` evaluates `json_extract` over every
 `field_effects` document on write, an insert or update whose document is not
@@ -373,6 +374,8 @@ well-formed JSON is now refused at write time instead of only at read.
 
 | Exact index | Parent | Entries | KiB |
 | --- | --- | ---: | ---: |
+| `current_review_case_lineages_case` | `current_review_case_lineages` | — | — |
+| `current_review_packages_case` | `current_review_packages` | — | — |
 | `description_decisions_case` | `description_decisions` | — | — |
 | `field_effects_companion_decision` | `field_effects` | — | — |
 | `field_effects_decision` | `field_effects` | — | — |
@@ -536,7 +539,7 @@ own closed checks and/or domain-document validation.
 
 ## Exact indexes and triggers
 
-The schema expects twenty-one named indexes, all live production access paths:
+The schema expects twenty-three named indexes, all live production access paths:
 cover artifact and preview lookups use
 `metadata_report_cover_references_artifact_id` and
 `metadata_report_cover_references_preview_digest`; fair claims use
@@ -565,7 +568,13 @@ and `field_effects_waiting`, each serving only a statement whose state list is
 the one its WHERE clause names, and a consent revocation walks
 `field_effects_ready` too, then sorts the few live effects it finds into rowid
 order; and description advice's target check reaches
-one target's effects through `field_effects_target`.
+one target's effects through `field_effects_target`. #1211's Library rows and
+detail reach a case's current lineage through
+`current_review_case_lineages_case` and its current package through
+`current_review_packages_case` for suspensions, attention counts, overrides and
+cover selection, where every lineage or package was walked once per row; SQLite
+3.53 skipped the lineage walk only while no field-effect suspension existed,
+and the shipped 3.40.1 never did.
 Primary and unique keys provide the
 remaining exact indexes; the schema validates their SQLite automatic-index
 objects too.

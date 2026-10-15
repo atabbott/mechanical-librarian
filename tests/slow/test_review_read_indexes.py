@@ -225,6 +225,23 @@ def test_production_surfaces_use_measured_indexes_within_scale_budget() -> None:
             )
             for statement in history_statements
         )
+
+        # SQLite 3.53 skipped the per-row lineage walk only while no
+        # suspension existed; one for another connection changes no result
+        # and must leave every surface inside the same budget (#1211).
+        connection.execute(
+            "INSERT INTO field_effect_suspensions(scope,connection_name,destination,"
+            "reason,updated_at,document) VALUES('connection','other','',"
+            "'connection_unavailable',0,'{}')"
+        )
+        connection.commit()
+        for name, call in calls:
+            result, steps, elapsed = support._call_with_step_limit(
+                connection, support._READ_VM_STEP_BUDGET, call
+            )
+            assert result is not None, name
+            assert steps <= support._READ_VM_STEP_BUDGET, name
+            assert elapsed < support._READ_WALL_BUDGET_SECONDS, name
         repository.close()
 
 
