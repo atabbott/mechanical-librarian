@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Activity's prepared-write counts and the pending decisions handed to writing
+  no longer slow as applied changes accumulate: each pending decision reaches its
+  field effects by index instead of scanning every effect. Which decisions are
+  pending, and the counts, are unchanged; clean rebuild required (#1204).
+
 - Library, Attention, search and work detail do less work per request and no
   longer slow as decisions and policy changes accumulate: indexes reach that
   history directly, cover currentness is evaluated only where it can change a row

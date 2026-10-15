@@ -362,11 +362,14 @@ index; `field_effect_no_changes` consequently exposes only its distinct event
 automatic index.
 
 #1202's `human_decisions_case_destination` and
-`metadata_policy_resolutions_resolved` postdate this snapshot, so they are listed
+`metadata_policy_resolutions_resolved`, and #1204's `field_effects_decision` and
+`field_effects_companion_decision`, postdate this snapshot, so they are listed
 without measurements and are not in its sums.
 
 | Exact index | Parent | Entries | KiB |
 | --- | --- | ---: | ---: |
+| `field_effects_companion_decision` | `field_effects` | — | — |
+| `field_effects_decision` | `field_effects` | — | — |
 | `human_decisions_case_destination` | `human_decisions` | — | — |
 | `metadata_policy_resolutions_resolved` | `metadata_policy_resolutions` | — | — |
 | `metadata_report_cover_references_artifact_id` | `metadata_report_cover_references` | 6,216 | 560 |
@@ -524,7 +527,7 @@ own closed checks and/or domain-document validation.
 
 ## Exact indexes and triggers
 
-The nine named indexes are all live production access paths: cover artifact
+The eleven named indexes are all live production access paths: cover artifact
 and preview lookups use `metadata_report_cover_references_artifact_id` and
 `metadata_report_cover_references_preview_digest`; fair claims use
 `review_preparation_work_aged_claim` and
@@ -535,7 +538,12 @@ use `shadow_outcome_field_facts_case`; and #1202's Library, Attention, search an
 count predicates reach a case's decisions per destination through
 `human_decisions_case_destination` and a proposal's policy resolution through
 `metadata_policy_resolutions_resolved`, where both histories were scanned once
-per candidate. Primary and unique keys provide the
+per candidate; and #1204's pending field-effect documents and counts ask whether
+a live effect names a decision as its own authority through
+`field_effects_decision`, or as its subtitle companion's through the partial
+expression index `field_effects_companion_decision` over the TEXT cast of that
+companion authority, where every effect was scanned once per candidate.
+Primary and unique keys provide the
 remaining exact indexes; the schema validates their SQLite automatic-index
 objects too.
 
