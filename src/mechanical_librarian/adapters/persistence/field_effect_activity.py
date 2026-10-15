@@ -986,9 +986,10 @@ class SQLiteFieldEffectActivityRepository(ConnectionScoped):
             # The unary plus keeps the automatic arm a scan in rowid order,
             # which the unordered example's answer depends on. It also decides
             # which rows reach the JSON functions: driven from the list, the
-            # arm would never extract a caseless decision's outcome, so a
-            # malformed one would no longer be refused. The arm still extracts
-            # its outcome before testing membership for the same reason.
+            # arm would never extract the outcome of a decision without a
+            # current lineage, so a malformed one would no longer be refused.
+            # The arm still extracts its outcome before testing membership for
+            # the same reason.
             rows = self._connection.execute(
                 "SELECT pending.document FROM ("
                 "SELECT human.decision_id,human.occurred_at,human.document "
